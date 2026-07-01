@@ -85,10 +85,15 @@ launches and loads the DB without crashing; verify the visuals by running it):
 
 - **Fluid buffer meter** (`BufferMeter.{h,cpp}`): a 2D Navier-Stokes "stable
   fluids" solver drives a little tank of liquid whose level tracks stream health
-  (full = healthy buffer; drains as it goes chunky/low), sloshing while data
-  arrives. Rendered to a DIB, stretched into the transport strip. **Right-click to
-  hide** (persisted in the `buffer_hidden` setting) since motion can distract. The
-  sim only runs while there's fluid (no idle CPU). Tunables at the top of the .cpp.
+  (full = healthy buffer; drains as it goes chunky/low). It flows right→left with a
+  wavy, splashy free surface — density-scaled gravity + hydrostatic buoyancy
+  (travelling waves), vorticity confinement (swirls), splash bursts that intensify
+  when the stream is chunky, and a soft surface-band-exempt level relaxation.
+  Rendered as an iso-surface (bilinear sample, d=0.5 contour) with a coral foam
+  crest and a left-drifting advected-phase shimmer, 2× supersampled to a DIB and
+  HALFTONE-stretched into the strip. **Right-click to hide** (persisted in
+  `buffer_hidden`); the sim runs only while there's fluid (no idle CPU). All knobs
+  are the `constexpr` tunables block at the top of the .cpp.
 - **Draggable sidebar splitter** (`ReVSplitter` in MainWindow): drag to resize the
   nav sidebar (clamped); width persisted in the `sidebar_w` setting.
 - **Type-a-number jump**: type a channel number in the grid to select/scroll to

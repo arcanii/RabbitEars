@@ -305,10 +305,11 @@ void layout(HWND hwnd, AppState* st) {
     MoveWindow(st->volBar, x, by, volW, btnH, TRUE); x += volW + pad;
     const int fullW = dp(110, st->dpi);
     MoveWindow(st->btnFull, x, by, fullW, btnH, TRUE); x += fullW + pad * 2;
-    // Buffer meter pinned right; status fills the gap.
-    const int meterW = dp(200, st->dpi);
-    const int meterX = W - pad - meterW;
-    MoveWindow(st->bufferMeter, meterX, by, meterW, btnH, TRUE);
+    // Buffer meter pinned right (taller than the buttons so the fluid waves show);
+    // status fills the gap.
+    const int meterW = dp(230, st->dpi), meterH = dp(40, st->dpi);
+    const int meterX = W - pad - meterW, meterY = stripY + (sHt - meterH) / 2;
+    MoveWindow(st->bufferMeter, meterX, meterY, meterW, meterH, TRUE);
     MoveWindow(st->status, x, by, std::max(0, meterX - pad - x), btnH, TRUE);
 
     const int gridY = stripY + sHt;
