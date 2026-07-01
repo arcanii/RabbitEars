@@ -18,7 +18,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API
 
 | Component     | Choice                                                        |
 |---------------|---------------------------------------------------------------|
-| Language      | C++17, Windows SDK                                             |
+| Language      | C++20, Windows SDK                                             |
 | UI            | Custom Win32 chrome + Direct2D/GDI owner-draw (shared Theme.h) |
 | Media engine  | libVLC 3.0.x (VideoLAN.LibVLC.Windows NuGet, provisioned)      |
 | Storage       | SQLite (vendored amalgamation, C API)                          |
@@ -114,6 +114,24 @@ launches and loads the DB without crashing; verify the visuals by running it):
   Alive. Passive detection — no mass pinging.
 - **Still to do:** resume-last-channel on launch; DPI-change re-layout; a proper
   background dead-link checker (roadmap). Then Layer C/D per docs/architecture.md.
+
+## Infrastructure
+
+- **C++20** (`CMAKE_CXX_STANDARD 20`; the siblings are C++17). Built clean at `/W4
+  /permissive-`.
+- **Auto-update (WinSparkle)**: vendored under `third_party/winsparkle/`;
+  `src/platform/Updater.{h,cpp}` (init/check/shutdown) wired into `runApp` (startup
+  background checks) with a **Check for Updates…** button in the About box.
+  `src/version.h.in` → `build/generated/version.h` (APP_VERSION + git commit count).
+  Appcast at `packaging/appcast.xml`; `scripts/make-appcast.ps1` generates a release
+  entry. **Before shipping signed updates**: run WinSparkle's `generate_keys`,
+  replace the placeholder EdDSA public key in `Updater.cpp`, set the real appcast
+  URL, and sign each installer with `sign_update`. (An installer — Inno Setup like
+  the sibling — is still TODO for Layer D.)
+- **Modularization**: the About + text-prompt dialogs moved out of the (large)
+  `MainWindow.cpp` into `src/ui/Dialogs.{h,cpp}`. Further candidates: the owner-draw
+  command-bar chrome and the splitter (both couple to `AppState`, so they'd take a
+  small context struct).
 
 The engine (parser + store) and build system (Layer A) are complete, build clean
 at `/W4`, and are proven end-to-end.

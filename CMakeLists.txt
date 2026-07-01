@@ -6,7 +6,7 @@ if(NOT WIN32)
   message(FATAL_ERROR "RabbitEars is Win32-only for now (macOS/Linux targets are on the roadmap).")
 endif()
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -41,6 +41,25 @@ if(MSVC)
     WINVER=0x0A00 _WIN32_WINNT=0x0A00 NTDDI_VERSION=0x0A000006
     _CRT_SECURE_NO_WARNINGS)
 endif()
+
+# ---------------------------------------------------------------------------
+# Version header — APP_VERSION + git commit count -> build/generated/version.h
+# (BUILD_NUMBER is monotonic per commit, for WinSparkle update comparison).
+# ---------------------------------------------------------------------------
+set(APP_VERSION "0.1.0")
+find_package(Git QUIET)
+set(BUILD_NUMBER 0)
+if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-list --count HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE BUILD_NUMBER OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+if(NOT BUILD_NUMBER MATCHES "^[0-9]+$")
+  set(BUILD_NUMBER 0)
+endif()
+configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in"
+               "${CMAKE_BINARY_DIR}/generated/version.h" @ONLY)
 
 # ---------------------------------------------------------------------------
 # sqlite3 — vendored public-domain amalgamation (copied from the sibling app).
@@ -87,21 +106,33 @@ if(RABBITEARS_BUILD_GUI)
     message(FATAL_ERROR "RABBITEARS_BUILD_GUI is ON but libVLC could not be provisioned.")
   endif()
 
+  # WinSparkle (auto-update) — vendored prebuilt DLL/lib/header (copied from the
+  # sibling app). Same appcast/EdDSA scheme; see src/platform/Updater.cpp.
+  set(WS_DIR "${CMAKE_SOURCE_DIR}/third_party/winsparkle")
+  add_library(WinSparkle SHARED IMPORTED)
+  set_target_properties(WinSparkle PROPERTIES
+    IMPORTED_IMPLIB "${WS_DIR}/lib/WinSparkle.lib"
+    IMPORTED_LOCATION "${WS_DIR}/bin/WinSparkle.dll"
+    INTERFACE_INCLUDE_DIRECTORIES "${WS_DIR}/include")
+
   add_executable(RabbitEars WIN32
     src/WinMain.cpp
     src/ui/MainWindow.cpp
     src/ui/ChannelGridControl.cpp
     src/ui/BufferMeter.cpp
+    src/ui/Dialogs.cpp
     src/ui/VlcPlayer.cpp
+    src/platform/Updater.cpp
     packaging/RabbitEars.rc)
   # The .rc pulls in app.manifest, app.ico, and the About PNG — declare them so
   # editing any forces a .res rebuild (RC dependency scanning misses these).
   set_source_files_properties(packaging/RabbitEars.rc PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/app.manifest;${CMAKE_CURRENT_SOURCE_DIR}/packaging/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/art/RabbitEars.png")
-  target_include_directories(RabbitEars PRIVATE src ${LIBVLC_INCLUDE_DIR})
+  target_include_directories(RabbitEars PRIVATE src ${LIBVLC_INCLUDE_DIR}
+    "${CMAKE_BINARY_DIR}/generated")
   target_link_directories(RabbitEars PRIVATE ${LIBVLC_LIB_DIR})
   target_link_libraries(RabbitEars PRIVATE
-    RabbitEarsCore ${LIBVLC_LIBS}
+    RabbitEarsCore ${LIBVLC_LIBS} WinSparkle
     comctl32 comdlg32 dwmapi uxtheme gdi32 gdiplus shell32 user32 kernel32 ole32 version
     d2d1 dwrite windowscodecs winhttp)
   if(MSVC)
@@ -120,4 +151,8 @@ if(RABBITEARS_BUILD_GUI)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${LIBVLC_PLUGINS_DIR}" "$<TARGET_FILE_DIR:RabbitEars>/plugins"
     COMMENT "Copying libVLC plugins/ next to RabbitEars.exe")
+  add_custom_command(TARGET RabbitEars POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${WS_DIR}/bin/WinSparkle.dll" "$<TARGET_FILE_DIR:RabbitEars>"
+    COMMENT "Copying WinSparkle.dll next to RabbitEars.exe")
 endif()
