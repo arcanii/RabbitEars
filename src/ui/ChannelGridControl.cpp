@@ -100,8 +100,15 @@ bool ensureDevice(GridState* st, HWND hwnd) {
     RECT rc;
     GetClientRect(hwnd, &rc);
     const D2D1_SIZE_U size = D2D1::SizeU(std::max<LONG>(rc.right, 1), std::max<LONG>(rc.bottom, 1));
-    if (FAILED(f->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
-                                         D2D1::HwndRenderTargetProperties(hwnd, size), &st->rt)) ||
+    // Pin the target to 96 DPI so 1 D2D unit == 1 physical pixel. Otherwise the RT
+    // inherits the desktop DPI (e.g. 144 at 150%) and scales all our pixel-space
+    // drawing, while mouse hit-testing stays in physical pixels — so the selected
+    // row drifts below the cursor. We do our own DPI scaling via dpx() already.
+    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+    props.dpiX = 96.0f;
+    props.dpiY = 96.0f;
+    if (FAILED(f->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(hwnd, size),
+                                         &st->rt)) ||
         !st->rt)
         return false;
     st->rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &st->brush);
