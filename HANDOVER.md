@@ -199,8 +199,13 @@ deep analysis of both sibling apps + libVLC/M3U research). Summary:
   such artifact.
 - **`EnableWindow(mainHwnd, FALSE)` does not cascade** to the custom command/title
   bar (separate HWND) — track a `busy` flag explicitly during playlist fetch/parse.
+- **libVLC 3.x `stop()`/`release()` are SYNCHRONOUS and block** until the stream
+  tears down — seconds, on a stuck/dead stream. Calling them on the UI thread
+  froze the app on channel switches. `VlcPlayer` now runs all media-player
+  lifecycle on a dedicated worker thread (serialized command queue, with
+  coalescing of rapid switches); the UI only enqueues and returns. Keep it that way.
 - **libVLC event callbacks run on a libVLC thread** — never touch Win32/DB state
-  from them; `PostMessage` a `WM_APP+n` to the UI thread.
+  from them; only atomics + `PostMessage` a `WM_APP+n` to the UI thread.
 - **`libvlc_media_player_set_hwnd` must be called before `play()`** or libVLC opens
   its own top-level output window instead of rendering into the child HWND.
 - **libVLC is LGPLv2.1**: dynamic-link + ship unmodified DLLs/plugins keeps

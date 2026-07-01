@@ -1,23 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// VlcPlayer — thin RAII wrapper over libVLC for embedded IPTV playback. Renders
-// into a child HWND via libvlc_media_player_set_hwnd (called before play, or
-// libVLC opens its own top-level output window). libVLC event callbacks run on a
-// libVLC thread, so they are marshaled to the UI thread via PostMessage.
+// VlcPlayer — libVLC wrapper for embedded IPTV playback.
 //
-// libVLC headers are included only in the .cpp; the handle types are forward-
-// declared here so including VlcPlayer.h stays cheap.
+// All media-player lifecycle work runs on a dedicated worker thread, because
+// libVLC 3.x's stop()/release() are SYNCHRONOUS and block until the stream
+// actually tears down — which can hang for seconds on a stuck/dead stream. Doing
+// that on the UI thread froze the app on channel switches. The UI thread only
+// enqueues commands (play/stop/pause/volume) and returns immediately; the worker
+// serializes them and owns the media player. libVLC events are marshaled to the
+// UI thread via PostMessage.
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include <windows.h>
 
 struct libvlc_instance_t;
 struct libvlc_media_player_t;
+struct libvlc_event_t;
 
 namespace rabbitears {
 
-// Playback state, posted to the event target's message (as wParam).
 enum class PlayerEvent : unsigned {
     Opening = 0,
     Buffering = 1,  // lParam = percent 0..100
@@ -35,38 +42,53 @@ public:
     VlcPlayer(const VlcPlayer&) = delete;
     VlcPlayer& operator=(const VlcPlayer&) = delete;
 
-    // Create the libVLC instance. Returns false (and the app should degrade) if
-    // the libVLC runtime could not be loaded.
     bool init();
     bool isReady() const { return inst_ != nullptr; }
 
-    // Where playback events are posted: PostMessage(target, msg, (WPARAM)PlayerEvent, lParam).
     void setEventTarget(HWND target, UINT msg) { evtTarget_ = target; evtMsg_ = msg; }
-
-    // Render into `video` (a WS_CHILD window). Call before play().
     void attach(HWND video) { video_ = video; }
 
-    // Start playing a stream. Optional per-channel HTTP hints become libVLC media
-    // options (:http-user-agent / :http-referrer).
+    // All of these return immediately; the worker performs the (possibly blocking)
+    // libVLC work off the UI thread.
     bool play(const std::wstring& url, const std::wstring& userAgent = {},
               const std::wstring& referrer = {});
     void togglePause();
     void stop();
-
     void setVolume(int volume);            // 0..100
-    int volume() const { return volume_; }
-    void setAspectRatio(const char* ar);   // "16:9" / "4:3" / nullptr (default)
-    bool isPlaying() const;
+    int volume() const { return volume_.load(); }
+    void setAspectRatio(const char* ar);   // "16:9" / "4:3" / nullptr
+    bool isPlaying() const { return playing_.load(); }
+
+    // Called from the libVLC event thread via a C thunk — do not call directly.
+    void handleVlcEvent(const libvlc_event_t* e);
 
 private:
-    void destroyPlayer();
+    struct Cmd {
+        enum Type { Play, Stop, Pause, Volume, Aspect, Quit } type;
+        std::wstring url, userAgent, referrer;
+        int          ivalue = 0;
+        std::string  svalue;
+    };
+    void enqueue(Cmd c);
+    void workerLoop();
+    void doPlay(const Cmd& c);
+    void doStop();
+    bool hasNewerPlayOrStop();  // for coalescing rapid channel switches
 
     libvlc_instance_t*     inst_ = nullptr;
-    libvlc_media_player_t* mp_ = nullptr;
+    libvlc_media_player_t* mp_ = nullptr;   // worker-thread only
     HWND                   video_ = nullptr;
     HWND                   evtTarget_ = nullptr;
     UINT                   evtMsg_ = 0;
-    int                    volume_ = 80;
+    std::atomic<int>       volume_{80};
+    std::atomic<bool>      playing_{false};
+
+    std::thread              worker_;
+    std::mutex               mtx_;
+    std::condition_variable  cv_;
+    std::deque<Cmd>          queue_;
+    bool                     quit_ = false;
+    bool                     started_ = false;
 };
 
 }  // namespace rabbitears

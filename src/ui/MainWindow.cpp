@@ -375,7 +375,7 @@ void playChannel(AppState* st, const Channel& c) {
     st->nowPlayingName = c.name;
     channelGridSetNowPlaying(st->grid, c.id);
     st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
-    bufferMeterSet(st->bufferMeter, 0);
+    bufferMeterSetActive(st->bufferMeter, true);
     setStatus(st, L"Opening: " + c.name);
 }
 
@@ -974,7 +974,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     st->player.stop();
                     st->nowPlayingId = 0;
                     channelGridSetNowPlaying(st->grid, 0);
-                    bufferMeterSet(st->bufferMeter, 0);
+                    bufferMeterSetActive(st->bufferMeter, false);
                     setStatus(st, L"Stopped");
                     return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
@@ -1000,27 +1000,30 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_APP_VLC:
             switch (static_cast<PlayerEvent>(wParam)) {
                 case PlayerEvent::Opening:
-                    bufferMeterSet(st->bufferMeter, 0);
+                    bufferMeterSetActive(st->bufferMeter, true);
                     setStatus(st, L"Opening: " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Buffering: {
                     const int pct = static_cast<int>(lParam);
-                    bufferMeterSet(st->bufferMeter, pct);
+                    bufferMeterSetActive(st->bufferMeter, true);
                     setStatus(st, L"Buffering " + std::to_wstring(pct) + L"%  —  " + st->nowPlayingName);
                     break;
                 }
                 case PlayerEvent::Playing:
-                    bufferMeterSet(st->bufferMeter, 100);
+                    bufferMeterSetActive(st->bufferMeter, true);
                     setStatus(st, L"Playing: " + st->nowPlayingName);
                     break;
-                case PlayerEvent::Paused: setStatus(st, L"Paused: " + st->nowPlayingName); break;
-                case PlayerEvent::Stopped: bufferMeterSet(st->bufferMeter, 0); break;
+                case PlayerEvent::Paused:
+                    bufferMeterSetActive(st->bufferMeter, false);
+                    setStatus(st, L"Paused: " + st->nowPlayingName);
+                    break;
+                case PlayerEvent::Stopped: bufferMeterSetActive(st->bufferMeter, false); break;
                 case PlayerEvent::EndReached:
-                    bufferMeterSet(st->bufferMeter, 0);
+                    bufferMeterSetActive(st->bufferMeter, false);
                     setStatus(st, L"Stream ended");
                     break;
                 case PlayerEvent::Error:
-                    bufferMeterSet(st->bufferMeter, 0);
+                    bufferMeterSetActive(st->bufferMeter, false);
                     setStatus(st, L"Playback error");
                     break;
             }
