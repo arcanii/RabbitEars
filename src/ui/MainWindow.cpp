@@ -231,8 +231,10 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DrawTextW(mem, L"A simple IPTV viewer for Windows.\r\nVersion 0.1.0", -1, &br,
                       DT_LEFT | DT_TOP | DT_WORDBREAK);
 
+            // Attribution sits above the OK button's row (which occupies the
+            // bottom ~dp(52)); keep it clear of the button so no line is hidden.
             SetTextColor(mem, th.textMuted);
-            RECT ar{tx, rc.bottom - dp(64, st->dpi), rc.right - m, rc.bottom - dp(16, st->dpi)};
+            RECT ar{tx, rc.bottom - dp(100, st->dpi), rc.right - m, rc.bottom - dp(58, st->dpi)};
             DrawTextW(mem, L"Plays media with libVLC (LGPL-2.1)\r\n© VideoLAN and the VLC contributors.",
                       -1, &ar, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
@@ -286,7 +288,7 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     st.titleFont = mkFont(22, FW_SEMIBOLD);
     st.bodyFont = mkFont(14, FW_NORMAL);
 
-    const int W = dp(470, dpi), H = dp(324, dpi);
+    const int W = dp(470, dpi), H = dp(348, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;
