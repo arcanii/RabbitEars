@@ -127,7 +127,7 @@ if(RABBITEARS_BUILD_GUI)
   # The .rc pulls in app.manifest, app.ico, and the About PNG — declare them so
   # editing any forces a .res rebuild (RC dependency scanning misses these).
   set_source_files_properties(packaging/RabbitEars.rc PROPERTIES
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/app.manifest;${CMAKE_CURRENT_SOURCE_DIR}/packaging/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/art/RabbitEars.png")
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/app.manifest;${CMAKE_CURRENT_SOURCE_DIR}/packaging/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/art/RabbitEars3.png")
   target_include_directories(RabbitEars PRIVATE src ${LIBVLC_INCLUDE_DIR}
     "${CMAKE_BINARY_DIR}/generated")
   target_link_directories(RabbitEars PRIVATE ${LIBVLC_LIB_DIR})

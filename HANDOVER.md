@@ -53,8 +53,10 @@ DLL chain resolves (`RabbitEars.exe → libvlc.dll → libvlccore.dll → system
   window that buffers then plays video, with a working volume slider and pause/stop.
 - **Branding:** the app icon (`packaging/app.ico`, generated from
   `art/RabbitEars_icon.png` by `scripts/make_ico.py`) is embedded via the `.rc`
-  and set as the window/taskbar icon. An **About box** renders `art/RabbitEars.png`
-  (RCDATA + GDI+) with name/version and the libVLC (LGPL-2.1) attribution.
+  and set as the window/taskbar icon. The **About box** renders `art/RabbitEars3.png`
+  (RCDATA + GDI+) with name/version and the libVLC (LGPL-2.1) attribution. The
+  **README hero** uses `art/RabbitEars_logo.png`. (`art/RabbitEars.png` is the older
+  mascot, no longer referenced by the build.)
 
 ## Layer B1b — real player (built)
 
@@ -166,13 +168,19 @@ RabbitEarsCore  src/core/, src/db/    engine: M3uParser (bytes -> ParsedChannel)
                 src/models/           Database (SQLite DAO). No UI, no libVLC — so
                 src/platform/         it and the CLI build/test with zero downloads.
                                       Encoding.h = UTF-8<->UTF-16 (copied verbatim).
-RabbitEarsCli   src/cli/              headless core test/inspection tool.
-RabbitEars      src/ui/, src/WinMain  [NOT BUILT YET] the Win32 GUI. Gated behind
- (GUI, Layer B)                       RABBITEARS_BUILD_GUI (provisions libVLC).
+RabbitEarsCli   src/cli/              headless core test/inspection tool
+                                      (--selftest, --fetch, --import).
+RabbitEars      src/ui/, src/WinMain  the Win32 GUI (BUILT). Gated behind
+ (GUI)          src/platform/Updater  RABBITEARS_BUILD_GUI (provisions libVLC).
+                                      MainWindow (chrome+layout+wiring),
+                                      ChannelGridControl (D2D grid), BufferMeter
+                                      (fluid), VlcPlayer (worker-thread libVLC),
+                                      Dialogs (About/prompt), Updater (WinSparkle).
 ```
 
-Reusable UI foundation already placed (not yet compiled): `src/ui/Theme.h` (the
-locked palette), `src/ui/D2DSupport.h` (D2D/DWrite factories), `packaging/app.manifest`.
+The `src/ui/*` current-state details are in the Layer B1/B1b/B1c sections above; the
+sections below (Roadmap / Reuse map) are the original Layer-A plan, kept for
+context — "Layer B" items marked "next"/"port" there are now **done**.
 
 ## Toolchain (same as the siblings — non-obvious)
 
@@ -259,7 +267,69 @@ deep analysis of both sibling apps + libVLC/M3U research). Summary:
   RabbitEars proprietary; include the LGPL text + attribution, don't add GPL-only
   plugins (e.g. libdvdcss).
 
-## Not a versioned checkpoint yet
+## Git state
 
-The repo has only the initial commit; Layer A is uncommitted. If you `git commit`,
-do it as an explicit step the owner asks for.
+Active development on `main` (the owner pushes). Engine + full GUI (Layers A, B1,
+B1b, B1c) + infrastructure (WinSparkle, C++20) are committed. Commit or push only
+when the owner asks; end commit messages with the Co-Authored-By trailer.
+
+## Immediate next steps (pick up here)
+
+- **Resume last channel** on launch (the `last_channel_id` setting is already
+  written on play — read it in `WM_CREATE` and auto-play).
+- **DPI-change re-layout** (`WM_DPICHANGED`): recreate fonts + relayout + push the
+  new DPI to the grid/meter (`channelGridUpdateDpi`, `bufferMeterSetDpi`).
+- **Further `MainWindow.cpp` modularization**: extract the owner-draw command-bar
+  chrome and the splitter (both couple to `AppState`, so pass a small context).
+- **Layer D packaging**: an Inno Setup installer (model
+  `SQLTerminal-Win32/packaging/installer.iss`) — the last big infra piece. Then the
+  WinSparkle ship-time TODOs (real EdDSA key, appcast URL, signing).
+- **Roadmap features** (docs/architecture.md §7 / Layer C): XMLTV EPG now/next
+  (tvg-id is already stored + indexed), background dead-link checker, recording via
+  `--sout`, import/export favourites as `.m3u`.
+- **Fine-tune the fluid meter** if the owner has feedback — all knobs are the
+  `constexpr` block atop `src/ui/BufferMeter.cpp`.
+
+## Seed prompt for a new session
+
+Paste this verbatim to start a fresh session with working context restored:
+
+> You are continuing work on **RabbitEars** (`G:\RabbitEars`), a native **Windows
+> Win32 / C++20** IPTV player built on **libVLC**, themed to match its sibling apps
+> `G:\SQLTerminal-Win32` and `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral
+> accent `#D97757`, custom title-bar chrome, CMake + Ninja + MSVC via **VS 2026
+> Community**, dependencies vendored / NuGet-provisioned, **no Visual Studio
+> project**). **Read `HANDOVER.md` and `docs/architecture.md` first** — they hold
+> the full state, the reuse map from the siblings, and the design blueprints.
+>
+> Current state: the engine (M3U parser + SQLite DAO + `RabbitEarsCli`) and the full
+> GUI are built and committed on `main`. The GUI has: custom `WM_NCCALCSIZE`
+> title-bar chrome + owner-draw command bar, a nav TreeView sidebar with a draggable
+> splitter, a Direct2D `ChannelGridControl` (logo thumbnails via async WIC + disk
+> cache, `# | ★ | logo | name | group`, inline `#` editing, type-a-number jump,
+> dead/geo-locked greying), a `VlcPlayer` that runs all libVLC lifecycle on a worker
+> thread (so blocking `stop()`/`release()` never freeze the UI), a Navier-Stokes
+> **fluid buffer meter**, Add-Playlist (WinHTTP worker or local file), global search,
+> favourites, an About box + text-prompt in `src/ui/Dialogs.{h,cpp}`, and WinSparkle
+> auto-update (`src/platform/Updater`).
+>
+> Build/verify:
+> ```
+> scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON      # GUI (downloads libVLC once)
+> build\RabbitEarsCli.exe --selftest               # 30 core assertions
+> build\RabbitEars.exe                              # the app
+> ```
+> Toolchain gotchas: `cmake`/`cl` aren't on PATH — always use `scripts\build.cmd`.
+> `LINK1168: cannot open RabbitEars.exe` means an instance is still running —
+> `Stop-Process -Name RabbitEars -Force` then rebuild. Static CRT (`/MT`); the exe
+> needs no VC++ redist. **libVLC `stop()`/`release()` are blocking — keep them on the
+> `VlcPlayer` worker thread.** libVLC event callbacks run on a libVLC thread — only
+> `PostMessage` to the UI. The channel grid's D2D target is pinned to 96 DPI so
+> drawing and mouse hit-testing share pixel space (don't remove that).
+>
+> This dev sandbox blocks *launching* the built exe (`Start-Process` hangs, `cmd
+> start` → "Access is denied"); use `dangerouslyDisableSandbox` for a launch
+> smoke-test (process alive + memory), and hand visual verification to the owner.
+> Commit only when the owner asks; stage specific paths (the owner keeps adding
+> `art/*.png` — don't sweep them in with `git add -A`). Immediate next steps are
+> listed above in HANDOVER.md.
