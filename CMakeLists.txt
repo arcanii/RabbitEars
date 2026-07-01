@@ -91,6 +91,7 @@ if(RABBITEARS_BUILD_GUI)
     src/WinMain.cpp
     src/ui/MainWindow.cpp
     src/ui/ChannelGridControl.cpp
+    src/ui/BufferMeter.cpp
     src/ui/VlcPlayer.cpp
     packaging/RabbitEars.rc)
   # The .rc pulls in app.manifest, app.ico, and the About PNG — declare them so

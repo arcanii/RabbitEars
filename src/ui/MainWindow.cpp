@@ -26,6 +26,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/M3uParser.h"
 #include "db/Database.h"
 #include "resource.h"
+#include "ui/BufferMeter.h"
 #include "ui/ChannelGridControl.h"
 #include "ui/Theme.h"
 #include "ui/VlcPlayer.h"
@@ -51,6 +52,7 @@ constexpr int ID_BTN_PLAY = 2010;
 constexpr int ID_BTN_STOP = 2011;
 constexpr int ID_VOL = 2012;
 constexpr int ID_BTN_FULL = 2013;
+constexpr int ID_BUFFER = 2014;
 constexpr int ID_SEARCH = 2020;
 constexpr int ID_GRID = 2021;
 constexpr int ID_NAV = 2022;
@@ -97,6 +99,7 @@ struct AppState {
     HWND       btnFull = nullptr;
     HWND       volBar = nullptr;
     HWND       status = nullptr;
+    HWND       bufferMeter = nullptr;
     HFONT      uiFont = nullptr;
     HFONT      titleFont = nullptr;
     UINT       dpi = 96;
@@ -105,6 +108,7 @@ struct AppState {
     bool       fullscreen = false;
     bool       busy = false;
     long long  nowPlayingId = 0;
+    std::wstring nowPlayingName;
     ViewFilter filter;
     std::vector<ViewFilter> navFilters;  // indexed by tree item lParam
 };
@@ -266,13 +270,13 @@ void layout(HWND hwnd, AppState* st) {
 
     if (st->fullscreen) {
         for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->volBar,
-                       st->btnFull, st->status})
+                       st->btnFull, st->status, st->bufferMeter})
             ShowWindow(h, SW_HIDE);
         MoveWindow(st->video, 0, 0, W, H, TRUE);
         return;
     }
     for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->volBar, st->btnFull,
-                   st->status})
+                   st->status, st->bufferMeter})
         ShowWindow(h, SW_SHOW);
 
     const int navW = navWidth(st->dpi);
@@ -296,7 +300,11 @@ void layout(HWND hwnd, AppState* st) {
     MoveWindow(st->volBar, x, by, volW, btnH, TRUE); x += volW + pad;
     const int fullW = dp(110, st->dpi);
     MoveWindow(st->btnFull, x, by, fullW, btnH, TRUE); x += fullW + pad * 2;
-    MoveWindow(st->status, x, by, std::max(0, (W - pad) - x), btnH, TRUE);
+    // Buffer meter pinned right; status fills the gap.
+    const int meterW = dp(200, st->dpi);
+    const int meterX = W - pad - meterW;
+    MoveWindow(st->bufferMeter, meterX, by, meterW, btnH, TRUE);
+    MoveWindow(st->status, x, by, std::max(0, meterX - pad - x), btnH, TRUE);
 
     const int gridY = stripY + sHt;
     MoveWindow(st->grid, cx, gridY, cw, std::max(0, H - gridY), TRUE);
@@ -364,9 +372,11 @@ void refreshNav(AppState* st) {
 void playChannel(AppState* st, const Channel& c) {
     if (st->player.isReady()) st->player.play(c.streamUrl, c.userAgent, c.referrer);
     st->nowPlayingId = c.id;
+    st->nowPlayingName = c.name;
     channelGridSetNowPlaying(st->grid, c.id);
     st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
-    setStatus(st, L"Playing: " + c.name);
+    bufferMeterSet(st->bufferMeter, 0);
+    setStatus(st, L"Opening: " + c.name);
 }
 
 std::wstring nameFromSource(const std::wstring& src, bool isUrl) {
@@ -778,6 +788,8 @@ void createChildren(HWND hwnd, AppState* st) {
                                   hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_FULL)), hInst, nullptr);
     st->status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 10,
                                  10, hwnd, nullptr, hInst, nullptr);
+    registerBufferMeterClass(hInst);
+    st->bufferMeter = createBufferMeter(hwnd, hInst, ID_BUFFER, st->dpi);
 
     SendMessageW(st->volBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
     SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->player.volume());
@@ -962,6 +974,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     st->player.stop();
                     st->nowPlayingId = 0;
                     channelGridSetNowPlaying(st->grid, 0);
+                    bufferMeterSet(st->bufferMeter, 0);
                     setStatus(st, L"Stopped");
                     return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
@@ -986,12 +999,30 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_APP_VLC:
             switch (static_cast<PlayerEvent>(wParam)) {
-                case PlayerEvent::Buffering:
-                    setStatus(st, L"Buffering " + std::to_wstring(static_cast<int>(lParam)) + L"%");
+                case PlayerEvent::Opening:
+                    bufferMeterSet(st->bufferMeter, 0);
+                    setStatus(st, L"Opening: " + st->nowPlayingName);
                     break;
-                case PlayerEvent::Error: setStatus(st, L"Playback error"); break;
-                case PlayerEvent::EndReached: setStatus(st, L"Stream ended"); break;
-                default: break;
+                case PlayerEvent::Buffering: {
+                    const int pct = static_cast<int>(lParam);
+                    bufferMeterSet(st->bufferMeter, pct);
+                    setStatus(st, L"Buffering " + std::to_wstring(pct) + L"%  —  " + st->nowPlayingName);
+                    break;
+                }
+                case PlayerEvent::Playing:
+                    bufferMeterSet(st->bufferMeter, 100);
+                    setStatus(st, L"Playing: " + st->nowPlayingName);
+                    break;
+                case PlayerEvent::Paused: setStatus(st, L"Paused: " + st->nowPlayingName); break;
+                case PlayerEvent::Stopped: bufferMeterSet(st->bufferMeter, 0); break;
+                case PlayerEvent::EndReached:
+                    bufferMeterSet(st->bufferMeter, 0);
+                    setStatus(st, L"Stream ended");
+                    break;
+                case PlayerEvent::Error:
+                    bufferMeterSet(st->bufferMeter, 0);
+                    setStatus(st, L"Playback error");
+                    break;
             }
             return 0;
         case WM_APP_PLAYLIST_DONE:
