@@ -19,6 +19,7 @@ namespace rabbitears {
 namespace {
 
 constexpr wchar_t kClass[] = L"ReChannelGrid";
+constexpr UINT_PTR kTypeTimer = 2;  // resets the type-a-number accumulator
 enum Col { COL_NUM = 0, COL_FAV, COL_NAME, COL_GROUP, COL_COUNT };
 
 int dpx(UINT dpi, int v) { return MulDiv(v, static_cast<int>(dpi), 96); }
@@ -40,6 +41,7 @@ struct GridState {
     int                  rowH = 30;
     int                  headerH = 30;
     bool                 tracking = false;
+    int                  typeNum = 0;   // type-a-number-to-jump accumulator
     ChannelGridCallbacks cb;
 
     ID2D1HwndRenderTarget* rt = nullptr;
@@ -381,6 +383,31 @@ LRESULT CALLBACK GridProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
+        case WM_CHAR:
+            // Type a channel number to jump to it (LCN); resets after ~0.9s idle.
+            if (wParam >= L'0' && wParam <= L'9') {
+                st->typeNum = st->typeNum * 10 + static_cast<int>(wParam - L'0');
+                if (st->typeNum > 999999) st->typeNum = static_cast<int>(wParam - L'0');
+                KillTimer(hwnd, kTypeTimer);
+                SetTimer(hwnd, kTypeTimer, 900, nullptr);
+                for (int r = 0; r < static_cast<int>(st->rowOrder.size()); ++r) {
+                    const Channel& c = st->channels[st->rowOrder[r]];
+                    if (c.lcn && *c.lcn == st->typeNum) {
+                        st->selectedRow = r;
+                        ensureVisible(hwnd, st, r);
+                        updateScrollbar(hwnd, st);
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        break;
+                    }
+                }
+            }
+            return 0;
+        case WM_TIMER:
+            if (wParam == kTypeTimer) {
+                st->typeNum = 0;
+                KillTimer(hwnd, kTypeTimer);
+            }
+            return 0;
         case WM_NCDESTROY:
             discardDevice(st);
             releaseFormats(st);

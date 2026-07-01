@@ -81,10 +81,22 @@ launches and loads the DB without crashing; verify the visuals by running it):
 - CLI additions: `--fetch <url>` (test WinHTTP+parse) and `--import <url|file>`
   (import into the app's real DB — used to seed a first playlist).
 
-- **Next (B1c) — polish:** async tvg-logo thumbnails (WIC + background fetch +
-  disk cache) in a logo column; a draggable sidebar/grid splitter; inline LCN
-  editing + type-a-number jump; resume last channel on launch; DPI-change
-  re-layout. Then Layer C/D per docs/architecture.md.
+## Layer B1c — polish (in progress)
+
+- **Fluid buffer meter** (`BufferMeter.{h,cpp}`): a 2D Navier-Stokes "stable
+  fluids" solver drives a little tank of liquid whose level tracks stream health
+  (full = healthy buffer; drains as it goes chunky/low), sloshing while data
+  arrives. Rendered to a DIB, stretched into the transport strip. **Right-click to
+  hide** (persisted in the `buffer_hidden` setting) since motion can distract. The
+  sim only runs while there's fluid (no idle CPU). Tunables at the top of the .cpp.
+- **Draggable sidebar splitter** (`ReVSplitter` in MainWindow): drag to resize the
+  nav sidebar (clamped); width persisted in the `sidebar_w` setting.
+- **Type-a-number jump**: type a channel number in the grid to select/scroll to
+  the matching LCN (resets after ~0.9s idle).
+- **Still to do:** async **tvg-logo thumbnails** (WIC + background fetch + disk
+  cache, lazy per visible row) — the biggest remaining piece; **inline LCN editing**
+  (overlay EDIT on the # cell); resume-last-channel on launch; DPI-change re-layout.
+  Then Layer C/D per docs/architecture.md.
 
 The engine (parser + store) and build system (Layer A) are complete, build clean
 at `/W4`, and are proven end-to-end.

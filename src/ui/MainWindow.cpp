@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <string>
 #include <thread>
@@ -92,6 +93,7 @@ struct AppState {
     HWND       hwnd = nullptr;
     HWND       video = nullptr;
     HWND       nav = nullptr;
+    HWND       splitter = nullptr;
     HWND       grid = nullptr;
     HWND       search = nullptr;
     HWND       btnPlay = nullptr;
@@ -103,6 +105,7 @@ struct AppState {
     HFONT      uiFont = nullptr;
     HFONT      titleFont = nullptr;
     UINT       dpi = 96;
+    int        sidebarW = 240;  // nav width in px (draggable via the splitter)
     int        cmdHover = -1;  // hovered toolbar button index
     int        capHover = -1;  // hovered caption button (0 min,1 max,2 close)
     bool       fullscreen = false;
@@ -269,22 +272,24 @@ void layout(HWND hwnd, AppState* st) {
     MoveWindow(st->search, sx, (cmdH - sh) / 2, sw, sh, TRUE);
 
     if (st->fullscreen) {
-        for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->volBar,
-                       st->btnFull, st->status, st->bufferMeter})
+        for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop,
+                       st->volBar, st->btnFull, st->status, st->bufferMeter})
             ShowWindow(h, SW_HIDE);
         MoveWindow(st->video, 0, 0, W, H, TRUE);
         return;
     }
-    for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->volBar, st->btnFull,
-                   st->status, st->bufferMeter})
+    for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop, st->volBar,
+                   st->btnFull, st->status, st->bufferMeter})
         ShowWindow(h, SW_SHOW);
 
-    const int navW = navWidth(st->dpi);
     const int contentTop = cmdH;
     const int contentH = H - cmdH;
+    const int splitW = dp(5, st->dpi);
+    const int navW = std::clamp(st->sidebarW, dp(160, st->dpi), std::max(dp(160, st->dpi), W - dp(360, st->dpi)));
     MoveWindow(st->nav, 0, contentTop, navW, contentH, TRUE);
+    MoveWindow(st->splitter, navW, contentTop, splitW, contentH, TRUE);
 
-    const int cx = navW, cw = W - navW;
+    const int cx = navW + splitW, cw = W - navW - splitW;
     const int sHt = stripH(st->dpi);
     int videoH = (contentH - sHt) * 58 / 100;
     if (videoH < dp(120, st->dpi)) videoH = dp(120, st->dpi);
@@ -308,6 +313,47 @@ void layout(HWND hwnd, AppState* st) {
 
     const int gridY = stripY + sHt;
     MoveWindow(st->grid, cx, gridY, cw, std::max(0, H - gridY), TRUE);
+}
+
+// Draggable vertical splitter between the nav sidebar and the content pane.
+LRESULT CALLBACK VSplitterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    static bool dragging = false;
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().windowBg));
+            return 1;
+        }
+        case WM_LBUTTONDOWN:
+            SetCapture(hwnd);
+            dragging = true;
+            return 0;
+        case WM_MOUSEMOVE:
+            if (dragging) {
+                HWND parent = GetParent(hwnd);
+                AppState* st = stateOf(parent);
+                if (!st) return 0;
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(parent, &pt);
+                RECT prc;
+                GetClientRect(parent, &prc);
+                const int maxW = std::max(dp(160, st->dpi), static_cast<int>(prc.right) - dp(360, st->dpi));
+                st->sidebarW = std::clamp(static_cast<int>(pt.x), dp(160, st->dpi), maxW);
+                layout(parent, st);
+            }
+            return 0;
+        case WM_LBUTTONUP:
+            if (dragging) {
+                dragging = false;
+                ReleaseCapture();
+                if (AppState* st = stateOf(GetParent(hwnd)))
+                    st->db.setSetting(L"sidebar_w", std::to_wstring(st->sidebarW));
+            }
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 // ---- data ------------------------------------------------------------------
@@ -375,7 +421,7 @@ void playChannel(AppState* st, const Channel& c) {
     st->nowPlayingName = c.name;
     channelGridSetNowPlaying(st->grid, c.id);
     st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
-    bufferMeterSetActive(st->bufferMeter, true);
+    bufferMeterSetHealth(st->bufferMeter, 15);
     setStatus(st, L"Opening: " + c.name);
 }
 
@@ -769,6 +815,8 @@ void createChildren(HWND hwnd, AppState* st) {
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
                               0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_NAV)),
                               hInst, nullptr);
+    st->splitter = CreateWindowExW(0, L"ReVSplitter", L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0,
+                                   0, 10, 10, hwnd, nullptr, hInst, nullptr);
     registerChannelGridClass(hInst);
     st->grid = createChannelGrid(hwnd, hInst, ID_GRID, st->dpi);
     st->search = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -790,6 +838,8 @@ void createChildren(HWND hwnd, AppState* st) {
                                  10, hwnd, nullptr, hInst, nullptr);
     registerBufferMeterClass(hInst);
     st->bufferMeter = createBufferMeter(hwnd, hInst, ID_BUFFER, st->dpi);
+    bufferMeterSetOnHiddenChanged(st->bufferMeter,
+                                  [st](bool hidden) { st->db.setSetting(L"buffer_hidden", hidden ? L"1" : L"0"); });
 
     SendMessageW(st->volBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
     SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->player.volume());
@@ -823,6 +873,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CREATE: {
             st->hwnd = hwnd;
             st->dpi = GetDpiForWindow(hwnd);
+            st->sidebarW = navWidth(st->dpi);
             applyDarkChrome(hwnd);
             st->player.init();
             createChildren(hwnd, st);
@@ -831,6 +882,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             std::wstring err;
             if (st->db.open(Database::defaultDbPath(), &err)) {
+                if (auto sw = st->db.getSetting(L"sidebar_w")) st->sidebarW = _wtoi(sw->c_str());
+                if (auto bh = st->db.getSetting(L"buffer_hidden"); bh && *bh == L"1")
+                    bufferMeterSetHidden(st->bufferMeter, true);
                 refreshNav(st);
                 st->filter = {ViewKind::All};
                 loadForFilter(st);
@@ -974,7 +1028,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     st->player.stop();
                     st->nowPlayingId = 0;
                     channelGridSetNowPlaying(st->grid, 0);
-                    bufferMeterSetActive(st->bufferMeter, false);
+                    bufferMeterSetHealth(st->bufferMeter, 0);
                     setStatus(st, L"Stopped");
                     return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
@@ -1000,30 +1054,29 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_APP_VLC:
             switch (static_cast<PlayerEvent>(wParam)) {
                 case PlayerEvent::Opening:
-                    bufferMeterSetActive(st->bufferMeter, true);
+                    bufferMeterSetHealth(st->bufferMeter, 15);
                     setStatus(st, L"Opening: " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Buffering: {
                     const int pct = static_cast<int>(lParam);
-                    bufferMeterSetActive(st->bufferMeter, true);
+                    bufferMeterSetHealth(st->bufferMeter, pct);
                     setStatus(st, L"Buffering " + std::to_wstring(pct) + L"%  —  " + st->nowPlayingName);
                     break;
                 }
                 case PlayerEvent::Playing:
-                    bufferMeterSetActive(st->bufferMeter, true);
+                    bufferMeterSetHealth(st->bufferMeter, 100);
                     setStatus(st, L"Playing: " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Paused:
-                    bufferMeterSetActive(st->bufferMeter, false);
                     setStatus(st, L"Paused: " + st->nowPlayingName);
                     break;
-                case PlayerEvent::Stopped: bufferMeterSetActive(st->bufferMeter, false); break;
+                case PlayerEvent::Stopped: bufferMeterSetHealth(st->bufferMeter, 0); break;
                 case PlayerEvent::EndReached:
-                    bufferMeterSetActive(st->bufferMeter, false);
+                    bufferMeterSetHealth(st->bufferMeter, 0);
                     setStatus(st, L"Stream ended");
                     break;
                 case PlayerEvent::Error:
-                    bufferMeterSetActive(st->bufferMeter, false);
+                    bufferMeterSetHealth(st->bufferMeter, 0);
                     setStatus(st, L"Playback error");
                     break;
             }
@@ -1096,6 +1149,16 @@ void registerClasses(HINSTANCE hInst) {
     vc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     vc.lpszClassName = kVideoClass;
     RegisterClassExW(&vc);
+
+    WNDCLASSEXW sc{};
+    sc.cbSize = sizeof(sc);
+    sc.style = CS_HREDRAW | CS_VREDRAW;
+    sc.lpfnWndProc = VSplitterProc;
+    sc.hInstance = hInst;
+    sc.hCursor = LoadCursorW(nullptr, IDC_SIZEWE);
+    sc.hbrBackground = nullptr;
+    sc.lpszClassName = L"ReVSplitter";
+    RegisterClassExW(&sc);
 }
 
 }  // namespace
