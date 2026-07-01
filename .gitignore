@@ -1,0 +1,23 @@
+# Build output
+/build/
+/out/
+
+# libVLC provisioning download (re-fetched at configure time)
+/build/libvlc_pkg/
+*.nupkg
+
+# Large candidate art variants not used by the build (the build uses only
+# art/RabbitEars.png and art/RabbitEars_icon.png).
+/art/A_*.png
+
+# Stray/scratch images dropped at the repo root (real art lives in art/*.png).
+/*.jpg
+
+# Debug/probe artifacts
+/build/rabbitears_debug.log
+
+# Editor / OS cruft
+.vs/
+*.user
+Thumbs.db
+desktop.ini

@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include <windows.h>
+#include "../src/resource.h"
+
+// Application icon (window title bar, taskbar, Alt-Tab, exe in Explorer).
+IDI_APPICON ICON "app.ico"
+
+// About-box artwork, embedded as raw PNG bytes; loaded via GDI+ at runtime.
+IDR_ABOUT_PNG RCDATA "../art/RabbitEars.png"
+
+// Application manifest (per-monitor-v2 DPI, Common Controls v6, UTF-8).
+// CREATEPROCESS_MANIFEST_RESOURCE_ID (1) / RT_MANIFEST (24). Path relative to
+// this .rc file (packaging/).
+1 24 "app.manifest"
