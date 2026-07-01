@@ -857,6 +857,7 @@ void createChildren(HWND hwnd, AppState* st) {
         st->db.setFavourite(c.id, c.favourite);
         if (st->filter.kind == ViewKind::Favourites) loadForFilter(st);
     };
+    cb.onSetNumber = [st](const Channel& c) { st->db.setChannelNumber(c.id, c.lcn); };
     channelGridSetCallbacks(st->grid, cb);
 }
 
@@ -1013,8 +1014,16 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (id == ID_SEARCH && HIWORD(wParam) == EN_CHANGE) {
                 wchar_t buf[256] = L"";
                 GetWindowTextW(st->search, buf, ARRAYSIZE(buf));
-                channelGridSetFilter(st->grid, buf);
-                updateCounts(st);
+                const std::wstring q = buf;
+                if (q.empty()) {
+                    loadForFilter(st);  // back to the current nav view
+                } else {
+                    // Global search across the whole library (any name/group/tvg match),
+                    // not just the current nav view.
+                    channelGridSetChannels(st->grid, st->db.searchChannels(q));
+                    channelGridSetNowPlaying(st->grid, st->nowPlayingId);
+                    updateCounts(st);
+                }
                 return 0;
             }
             switch (id) {
@@ -1066,6 +1075,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case PlayerEvent::Playing:
                     bufferMeterSetHealth(st->bufferMeter, 100);
                     setStatus(st, L"Playing: " + st->nowPlayingName);
+                    if (st->nowPlayingId) {
+                        st->db.setDeadStatus(st->nowPlayingId, DeadStatus::Alive,
+                                             static_cast<long long>(time(nullptr)));
+                        channelGridSetDeadStatus(st->grid, st->nowPlayingId, DeadStatus::Alive);
+                    }
                     break;
                 case PlayerEvent::Paused:
                     setStatus(st, L"Paused: " + st->nowPlayingName);
@@ -1077,7 +1091,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
-                    setStatus(st, L"Playback error");
+                    setStatus(st, L"Unavailable (offline or geo-locked): " + st->nowPlayingName);
+                    if (st->nowPlayingId) {
+                        st->db.setDeadStatus(st->nowPlayingId, DeadStatus::Dead,
+                                             static_cast<long long>(time(nullptr)));
+                        channelGridSetDeadStatus(st->grid, st->nowPlayingId, DeadStatus::Dead);
+                    }
                     break;
             }
             return 0;

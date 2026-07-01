@@ -93,10 +93,22 @@ launches and loads the DB without crashing; verify the visuals by running it):
   nav sidebar (clamped); width persisted in the `sidebar_w` setting.
 - **Type-a-number jump**: type a channel number in the grid to select/scroll to
   the matching LCN (resets after ~0.9s idle).
-- **Still to do:** async **tvg-logo thumbnails** (WIC + background fetch + disk
-  cache, lazy per visible row) — the biggest remaining piece; **inline LCN editing**
-  (overlay EDIT on the # cell); resume-last-channel on launch; DPI-change re-layout.
-  Then Layer C/D per docs/architecture.md.
+- **Logo thumbnails** (`ChannelGridControl.cpp`): a LOGO column with async
+  tvg-logo thumbnails — 3 background workers fetch (short-timeout `httpGet`),
+  WIC-decode to premultiplied BGRA, disk-cache under `%LOCALAPPDATA%\RabbitEars\
+  logos\`, and hand pixels to the UI thread which makes the `ID2D1Bitmap` lazily;
+  only visible rows are fetched, deduped by URL. Placeholder = a chip with the
+  channel's initial. Cache is a `shared_ptr` so detached workers can't outlive-crash.
+- **Inline # editing**: double-click the # cell to overlay a numeric EDIT (Enter
+  commits via `onSetNumber` → `setChannelNumber`, Esc cancels, commits on
+  scroll/focus-loss).
+- **Global search**: the command-bar box now searches the whole library
+  (`db.searchChannels`, any name/group/tvg match), not just the current nav view.
+- **Dead / geo-locked greying**: a channel that errors on playback is marked
+  `dead_status=Dead` (persisted) and greyed in the grid; a successful play marks it
+  Alive. Passive detection — no mass pinging.
+- **Still to do:** resume-last-channel on launch; DPI-change re-layout; a proper
+  background dead-link checker (roadmap). Then Layer C/D per docs/architecture.md.
 
 The engine (parser + store) and build system (Layer A) are complete, build clean
 at `/W4`, and are proven end-to-end.

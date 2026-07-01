@@ -17,7 +17,7 @@ struct Handle {
 
 }  // namespace
 
-bool httpGet(const std::wstring& url, std::string& out, std::wstring& error) {
+bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int timeoutMs) {
     out.clear();
 
     URL_COMPONENTS uc{};
@@ -41,6 +41,8 @@ bool httpGet(const std::wstring& url, std::string& out, std::wstring& error) {
         error = L"WinHttpOpen failed.";
         return false;
     }
+    if (timeoutMs > 0)
+        WinHttpSetTimeouts(session, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
     // Best-effort gzip/deflate; ignore failure on older systems.
     DWORD decomp = WINHTTP_DECOMPRESSION_FLAG_ALL;
     WinHttpSetOption(session, WINHTTP_OPTION_DECOMPRESSION, &decomp, sizeof(decomp));

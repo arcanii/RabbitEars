@@ -19,6 +19,7 @@ namespace rabbitears {
 struct ChannelGridCallbacks {
     std::function<void(const Channel&)> onActivate;         // play this channel
     std::function<void(const Channel&)> onToggleFavourite;  // star toggled
+    std::function<void(const Channel&)> onSetNumber;        // inline # (LCN) edited
 };
 
 void registerChannelGridClass(HINSTANCE hInst);
@@ -32,5 +33,7 @@ void channelGridApplyTheme(HWND grid);
 void channelGridGetCounts(HWND grid, int* shown, int* total);
 // Mark a channel id as now-playing (highlighted); pass 0 to clear.
 void channelGridSetNowPlaying(HWND grid, long long channelId);
+// Update a channel's dead/geolocked status (greys it out); no-op if not loaded.
+void channelGridSetDeadStatus(HWND grid, long long channelId, DeadStatus status);
 
 }  // namespace rabbitears

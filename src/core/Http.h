@@ -8,7 +8,7 @@
 namespace rabbitears {
 
 // Download `url` (http/https) into `out` (raw bytes). Returns false and sets
-// `error` on failure.
-bool httpGet(const std::wstring& url, std::string& out, std::wstring& error);
+// `error` on failure. `timeoutMs` (per phase) is applied when > 0.
+bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int timeoutMs = 0);
 
 }  // namespace rabbitears
