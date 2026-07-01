@@ -53,12 +53,38 @@ DLL chain resolves (`RabbitEars.exe → libvlc.dll → libvlccore.dll → system
   window that buffers then plays video, with a working volume slider and pause/stop.
 - **Branding:** the app icon (`packaging/app.ico`, generated from
   `art/RabbitEars_icon.png` by `scripts/make_ico.py`) is embedded via the `.rc`
-  and set as the window/taskbar icon. An **About box** (an "About" button for
-  now; moves to the command bar in B1b) renders `art/RabbitEars.png` — embedded as
-  an RCDATA resource and drawn with GDI+ — plus name/version and the libVLC
-  (LGPL-2.1) attribution.
-- **Next (B1b):** replace the smoke-test window with the full custom title-bar
-  chrome + nav sidebar + channel grid fed from the DB (see docs/architecture.md §2–3).
+  and set as the window/taskbar icon. An **About box** renders `art/RabbitEars.png`
+  (RCDATA + GDI+) with name/version and the libVLC (LGPL-2.1) attribution.
+
+## Layer B1b — real player (built)
+
+The smoke-test window is replaced by the actual player (builds clean at `/W4`,
+launches and loads the DB without crashing; verify the visuals by running it):
+
+- **Custom title-bar chrome** (`MainWindow.cpp`): reclaims the non-client area via
+  `WM_NCCALCSIZE` and paints an owner-draw command bar — app title, a coral
+  "+ Add Playlist" pill, "Open File", "About", a search box, and hand-drawn
+  min/max/close caption buttons (hover states, drag, double-click-maximize,
+  top-edge resize).
+- **Nav sidebar**: a dark TreeView — All Channels / ★ Favourites / Groups / Playlists;
+  selecting a node filters the grid.
+- **Channel grid** (`ChannelGridControl.{h,cpp}`): Direct2D owner-draw, windowed
+  painting (smooth at 12k+ rows), columns # | ★ | Channel | Group, zebra rows,
+  hover/selection, now-playing accent bar, vertical scroll, keyboard nav, live
+  search filter. Single-click a row → play; click ★ → toggle favourite.
+- **Add Playlist**: "+ Add Playlist" prompts for a URL (WinHTTP download on a
+  worker thread, `core/Http`), "Open File" for a local `.m3u`; parse → store →
+  refresh. Verified headlessly: `RabbitEarsCli --fetch <url>` and `--import <src>`.
+- **Data flow**: opens the DB on startup, loads channels into the grid, plays the
+  selected channel via `VlcPlayer` (with per-channel user-agent/referrer),
+  persists `last_channel_id`. Fullscreen toggle (button / double-click video / Esc).
+- CLI additions: `--fetch <url>` (test WinHTTP+parse) and `--import <url|file>`
+  (import into the app's real DB — used to seed a first playlist).
+
+- **Next (B1c) — polish:** async tvg-logo thumbnails (WIC + background fetch +
+  disk cache) in a logo column; a draggable sidebar/grid splitter; inline LCN
+  editing + type-a-number jump; resume last channel on launch; DPI-change
+  re-layout. Then Layer C/D per docs/architecture.md.
 
 The engine (parser + store) and build system (Layer A) are complete, build clean
 at `/W4`, and are proven end-to-end.

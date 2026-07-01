@@ -11,6 +11,7 @@
 
 #include <windows.h>
 
+#include "core/Http.h"
 #include "core/M3uParser.h"
 #include "db/Database.h"
 #include "platform/Encoding.h"
@@ -199,9 +200,59 @@ int dumpFile(const std::wstring& path, int limit) {
 
 }  // namespace
 
+int fetch(const std::wstring& url) {
+    line(L"Fetching " + url);
+    std::string bytes;
+    std::wstring err;
+    if (!httpGet(url, bytes, err)) {
+        line(L"Download failed: " + err);
+        return 1;
+    }
+    line(L"Downloaded " + std::to_wstring(bytes.size()) + L" bytes");
+    const M3uDocument doc = parseM3u(bytes);
+    line(L"Parsed " + std::to_wstring(doc.channels.size()) + L" channels" +
+         (doc.epgUrl.empty() ? L"" : L"; EPG: " + doc.epgUrl));
+    return doc.channels.empty() ? 1 : 0;
+}
+
+// Import a URL or local file into the app's real DB (%LOCALAPPDATA%\RabbitEars).
+int importSource(const std::wstring& source) {
+    Database db;
+    std::wstring err;
+    if (!db.open(Database::defaultDbPath(), &err)) {
+        line(L"DB open failed: " + err);
+        return 1;
+    }
+    const bool isUrl = source.rfind(L"http", 0) == 0;
+    M3uDocument doc;
+    if (isUrl) {
+        std::string bytes;
+        if (!httpGet(source, bytes, err)) {
+            line(L"Download failed: " + err);
+            return 1;
+        }
+        doc = parseM3u(bytes);
+    } else {
+        doc = parseM3uFile(source, &err);
+        if (!err.empty()) {
+            line(L"Read failed: " + err);
+            return 1;
+        }
+    }
+    size_t slash = source.find_last_of(isUrl ? L"/" : L"\\/");
+    std::wstring name = (slash == std::wstring::npos) ? source : source.substr(slash + 1);
+    const long long now = static_cast<long long>(time(nullptr));
+    const long long pid = db.addPlaylist(name, source, isUrl, now);
+    const int n = db.bulkInsertChannels(pid, doc.channels, now);
+    line(L"Imported " + std::to_wstring(n) + L" channels into " + Database::defaultDbPath());
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     if (argc >= 2 && std::wstring(argv[1]) == L"--selftest") return selftest();
+    if (argc >= 3 && std::wstring(argv[1]) == L"--fetch") return fetch(argv[2]);
+    if (argc >= 3 && std::wstring(argv[1]) == L"--import") return importSource(argv[2]);
     if (argc >= 2) {
         int limit = 20;
         for (int i = 2; i < argc - 1; ++i)
@@ -210,6 +261,8 @@ int wmain(int argc, wchar_t** argv) {
     }
     out("RabbitEarsCli — RabbitEars core test tool\n"
         "  RabbitEarsCli --selftest\n"
+        "  RabbitEarsCli --fetch <url>\n"
+        "  RabbitEarsCli --import <url|file>   (into the app's real DB)\n"
         "  RabbitEarsCli <file.m3u> [--limit N]\n");
     return 0;
 }

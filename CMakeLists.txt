@@ -63,9 +63,10 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsCore STATIC
   src/core/M3uParser.cpp
+  src/core/Http.cpp
   src/db/Database.cpp)
 target_include_directories(RabbitEarsCore PUBLIC src)
-target_link_libraries(RabbitEarsCore PUBLIC sqlite3 shell32 ole32)
+target_link_libraries(RabbitEarsCore PUBLIC sqlite3 shell32 ole32 winhttp)
 
 # ---------------------------------------------------------------------------
 # RabbitEarsCli — headless test/inspection tool for the core (--selftest).
@@ -89,6 +90,7 @@ if(RABBITEARS_BUILD_GUI)
   add_executable(RabbitEars WIN32
     src/WinMain.cpp
     src/ui/MainWindow.cpp
+    src/ui/ChannelGridControl.cpp
     src/ui/VlcPlayer.cpp
     packaging/RabbitEars.rc)
   # The .rc pulls in app.manifest, app.ico, and the About PNG — declare them so
