@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/VlcPlayer.h"
 
+#include <algorithm>
+
 #include <vlc/vlc.h>
 
 #include "platform/Encoding.h"
 
 namespace rabbitears {
 namespace {
+
+// While a stream is loaded the worker wakes on this cadence to sample libVLC's
+// media stats (throughput + packet health) even when no command is queued.
+constexpr int kStatsPollMs = 250;
 
 // C thunk registered with libVLC; forwards to the instance. Runs on a libVLC
 // thread — only touches atomics + PostMessage (thread-safe), never mp_.
@@ -34,8 +40,10 @@ VlcPlayer::~VlcPlayer() {
 
 bool VlcPlayer::init() {
     if (inst_) return true;
+    // NB: stats collection is left ENABLED (no "--no-stats") so we can sample
+    // real throughput + packet health per media and drive the buffer meter.
     const char* args[] = {
-        "--intf=dummy",       "--no-video-title-show", "--no-osd", "--no-stats",
+        "--intf=dummy",       "--no-video-title-show", "--no-osd",
         "--network-caching=1000", "--http-reconnect",  "--quiet",
     };
     inst_ = libvlc_new(static_cast<int>(sizeof(args) / sizeof(args[0])), args);
@@ -64,11 +72,26 @@ bool VlcPlayer::hasNewerPlayOrStop() {
 void VlcPlayer::workerLoop() {
     for (;;) {
         Cmd c;
+        bool haveCmd = false;
         {
             std::unique_lock<std::mutex> lk(mtx_);
-            cv_.wait(lk, [&] { return !queue_.empty(); });
-            c = std::move(queue_.front());
-            queue_.pop_front();
+            // With a stream loaded, wake periodically to sample stats; otherwise
+            // sleep until a command arrives. (mp_ is worker-thread-owned, so
+            // reading it here on the worker thread is race-free.)
+            if (mp_)
+                cv_.wait_for(lk, std::chrono::milliseconds(kStatsPollMs),
+                             [&] { return !queue_.empty(); });
+            else
+                cv_.wait(lk, [&] { return !queue_.empty(); });
+            if (!queue_.empty()) {
+                c = std::move(queue_.front());
+                queue_.pop_front();
+                haveCmd = true;
+            }
+        }
+        if (!haveCmd) {
+            sampleStats();  // periodic wake while playing
+            continue;
         }
         switch (c.type) {
             case Cmd::Quit:
@@ -102,7 +125,15 @@ void VlcPlayer::doStop() {
         libvlc_media_player_release(mp_);
         mp_ = nullptr;
     }
+    if (media_) {
+        libvlc_media_release(media_);
+        media_ = nullptr;
+    }
     playing_.store(false);
+    {
+        std::lock_guard<std::mutex> lk(statsMtx_);
+        snapshot_ = FlowStats{};
+    }
 }
 
 void VlcPlayer::doPlay(const Cmd& c) {
@@ -118,8 +149,16 @@ void VlcPlayer::doPlay(const Cmd& c) {
         libvlc_media_add_option(m, (":http-referrer=" + utf8FromWide(c.referrer)).c_str());
 
     mp_ = libvlc_media_player_new_from_media(m);
-    libvlc_media_release(m);
-    if (!mp_) return;
+    if (!mp_) {
+        libvlc_media_release(m);
+        return;
+    }
+    media_ = m;  // retain the media ref so sampleStats() can read its counters
+
+    // Reset per-stream stats accumulators for a clean first delta.
+    firstSample_ = true;
+    prevReadBytes_ = prevDemuxBytes_ = 0;
+    prevCorrupted_ = prevDiscontinuity_ = prevLostPictures_ = 0;
 
     if (video_) libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
     if (auto* em = libvlc_media_player_event_manager(mp_)) {
@@ -131,6 +170,54 @@ void VlcPlayer::doPlay(const Cmd& c) {
     }
     libvlc_audio_set_volume(mp_, volume_.load());
     libvlc_media_player_play(mp_);
+}
+
+// Worker-thread only. Reads libVLC's cumulative media stats, turns them into
+// real per-second rates (byte-counter deltas over wall-clock) plus per-sample
+// event deltas, publishes the snapshot, and nudges the UI to repaint the meter.
+void VlcPlayer::sampleStats() {
+    if (!mp_ || !media_) return;
+    libvlc_media_stats_t s{};
+    if (!libvlc_media_get_stats(media_, &s)) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    double dt = std::chrono::duration<double>(now - lastSampleTime_).count();
+    if (dt < 0.001) dt = 0.001;
+
+    FlowStats fs;
+    fs.playing = playing_.load();
+    if (!firstSample_) {
+        // Cumulative byte counters are 32-bit ints in libVLC 3.x and can wrap on
+        // long streams; a negative delta means a wrap/reset — treat it as 0.
+        const auto perSec = [dt](long long cur, long long prev) {
+            const long long d = cur - prev;
+            return d > 0 ? static_cast<double>(d) / dt : 0.0;
+        };
+        fs.demuxBytesPerSec = perSec(s.i_demux_read_bytes, prevDemuxBytes_);
+        fs.readBytesPerSec = perSec(s.i_read_bytes, prevReadBytes_);
+        fs.corruptedDelta = std::max(0, s.i_demux_corrupted - prevCorrupted_);
+        fs.discontinuityDelta = std::max(0, s.i_demux_discontinuity - prevDiscontinuity_);
+        fs.lostPicturesDelta = std::max(0, s.i_lost_pictures - prevLostPictures_);
+    }
+    prevDemuxBytes_ = s.i_demux_read_bytes;
+    prevReadBytes_ = s.i_read_bytes;
+    prevCorrupted_ = s.i_demux_corrupted;
+    prevDiscontinuity_ = s.i_demux_discontinuity;
+    prevLostPictures_ = s.i_lost_pictures;
+    lastSampleTime_ = now;
+    firstSample_ = false;
+
+    {
+        std::lock_guard<std::mutex> lk(statsMtx_);
+        snapshot_ = fs;
+    }
+    if (evtTarget_ && evtMsg_)
+        PostMessageW(evtTarget_, evtMsg_, static_cast<WPARAM>(PlayerEvent::Stats), 0);
+}
+
+FlowStats VlcPlayer::flowStats() const {
+    std::lock_guard<std::mutex> lk(statsMtx_);
+    return snapshot_;
 }
 
 void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {

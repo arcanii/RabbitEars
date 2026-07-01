@@ -5,6 +5,7 @@
 #include "ui/MainWindow.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -797,6 +798,25 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case PlayerEvent::Paused:
                     setStatus(st, L"Paused: " + st->nowPlayingName);
                     break;
+                case PlayerEvent::Stats: {
+                    // Turn real stream stats into honest meter signals.
+                    const FlowStats fs = st->player.flowStats();
+                    // Throughput -> 0..1 current speed. Exponential soft-knee so
+                    // healthy bitrates saturate near 1 while a stall reads ~0;
+                    // K ~= 768 kbps, tuned for typical IPTV (SD flows slower than HD).
+                    constexpr double kFlowRef = 96000.0;  // bytes/s
+                    const float flow =
+                        fs.playing ? static_cast<float>(1.0 - std::exp(-fs.demuxBytesPerSec / kFlowRef))
+                                   : 0.0f;
+                    // Corruption + discontinuities + dropped frames -> 0..1 turbulence.
+                    constexpr float kTroubleRef = 6.0f;
+                    const float trouble = std::clamp(
+                        (fs.corruptedDelta + fs.discontinuityDelta + 0.5f * fs.lostPicturesDelta) /
+                            kTroubleRef,
+                        0.0f, 1.0f);
+                    bufferMeterSetFlow(st->bufferMeter, flow, trouble);
+                    break;
+                }
                 case PlayerEvent::Stopped: bufferMeterSetHealth(st->bufferMeter, 0); break;
                 case PlayerEvent::EndReached:
                     bufferMeterSetHealth(st->bufferMeter, 0);

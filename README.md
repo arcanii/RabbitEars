@@ -7,7 +7,7 @@
 <p align="center"><i>A simple, fast, native IPTV viewer for Windows.</i></p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++17">
+  <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Windows-11-0078D6?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows 11">
   <img src="https://img.shields.io/badge/libVLC-3.0-FF8800?style=for-the-badge&logo=vlcmediaplayer&logoColor=white" alt="libVLC">
   <img src="https://img.shields.io/badge/SQLite-3-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite">
@@ -24,7 +24,7 @@ playlist; it parses the channels (name, logo, group, stream URL), lets you
 search/filter, star favourites, assign custom channel numbers, and play with full
 libVLC transport. Everything persists in a local SQLite database.
 
-It is a native **Win32 / C++17** app — custom-drawn chrome and a Direct2D channel
+It is a native **Win32 / C++20** app — custom-drawn chrome and a Direct2D channel
 grid — built to match its sibling apps rather than a cross-platform UI toolkit.
 
 ## Features

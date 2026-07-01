@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // A 2D Navier-Stokes "stable fluids" solver (Jos Stam) driving a little tank of
-// liquid whose level tracks stream health. Data streams in on the RIGHT and
-// drains LEFT; the surface waves and splashes (buoyancy + travelling waves +
-// vorticity confinement), and a chunky/low stream turns turbulent and drains.
-// Rendered as an iso-surface with a foam crest and a left-drifting shimmer.
-// Right-click hides it (motion can distract). Tunables are grouped below.
+// liquid whose level tracks stream health. The motion is *honest*, fed from real
+// libVLC media stats: data streams in on the RIGHT and drains LEFT, and the
+// inflow-current speed + wave energy track the stream's actual throughput (demux
+// bytes/s) — a stalled stream's surface goes still — while real packet
+// corruption/loss/dropped frames drive turbulence + violent splashes. A depleted
+// buffer also turns turbulent and drains. Rendered as a blocky LED dot-matrix:
+// the fluid field is quantized onto a grid of small lit squares (foam crest +
+// left-drifting shimmer), and a healthy stream rests ~half-full so there's
+// visible drain headroom. Right-click hides it. Tunables are grouped below.
 #include "ui/BufferMeter.h"
 
 #include <algorithm>
@@ -24,11 +28,15 @@ constexpr UINT_PTR kTimerId = 1;
 constexpr UINT kTimerMs = 33;  // ~30 fps
 constexpr int MENU_HIDE = 1;
 
-// Fluid grid (interior NX x NY, +1-cell border) and 2x supersampled DIB.
+// Fluid grid (interior NX x NY, +1-cell border).
 constexpr int NX = 96, NY = 28;
 constexpr int GW = NX + 2, GH = NY + 2;
 inline int IX(int i, int j) { return i + GW * j; }
-constexpr int RMUL = 2, RW = NX * RMUL, RH = NY * RMUL;
+
+// LED dot-matrix render: each cell is a small lit square with a dark gap around
+// it. Sizes are 96-dpi design values (DPI-scaled at draw time).
+constexpr int LED_PITCH = 5;  // cell + gap
+constexpr int LED_GAP   = 1;  // dark gap between cells
 
 // ---- tunables --------------------------------------------------------------
 constexpr int   ITER      = 8;
@@ -43,6 +51,7 @@ constexpr float INFLOW_VX = -6.0f;   // baseline right->left current (cells/s, u
 constexpr float WAVE_AMP  = 7.0f;    // travelling-wave impulse
 constexpr float SPLASH_VY = -22.0f;  // upward droplet ejection (v<0 = up)
 constexpr float VMAX      = 26.0f;   // velocity clamp (stability at dt=0.12)
+constexpr float NORMAL_FILL = 0.5f;  // a healthy (100%) stream rests ~half-full
 
 int dpx(UINT dpi, int v) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
@@ -183,6 +192,9 @@ struct MeterState {
     Fluid fluid;
     float target = 0.0f;   // fill 0..1 (buffer health)
     float phase = 0.0f;    // sim time (wave + shimmer clock)
+    // Honest stream signals (eased toward the *Target each step for smoothness).
+    float flow = 0.0f, flowTarget = 0.0f;        // 0..1 throughput -> current speed / wave energy
+    float trouble = 0.0f, troubleTarget = 0.0f;  // 0..1 packet loss -> turbulence / splashes
     bool  hidden = false;
     bool  timerOn = false;
     UINT  dpi = 96;
@@ -190,6 +202,7 @@ struct MeterState {
     HBITMAP dib = nullptr;
     HDC     dibDC = nullptr;
     uint32_t* bits = nullptr;
+    int     dibW = 0, dibH = 0;  // current DIB size (client px); recreated on resize
     std::function<void(bool)> onHidden;
 };
 MeterState* stateOf(HWND h) { return reinterpret_cast<MeterState*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
@@ -228,18 +241,32 @@ void step(MeterState* st) {
     const float fill = std::clamp(st->target, 0.0f, 1.0f);
     st->phase += SIM_DT;
     const float surf = waterlineJ(fill);
-    // "chunkiness": a struggling (low but non-zero) stream turns turbulent.
-    const float chunk = (fill > 0.05f) ? std::clamp((0.55f - fill) / 0.55f, 0.0f, 1.0f) : 0.0f;
+    // Ease the honest stream signals toward their latest targets (stats arrive
+    // ~4x/s; easing keeps the surface smooth between samples). Flow is sustained;
+    // trouble is bursty, so its target self-decays unless a new loss refreshes it.
+    st->flow += (st->flowTarget - st->flow) * 0.18f;
+    st->troubleTarget *= 0.90f;
+    st->trouble += (st->troubleTarget - st->trouble) * 0.30f;
+    const float flow = std::clamp(st->flow, 0.0f, 1.0f);
+    // "chunkiness": a badly depleted buffer (well below the healthy resting level)
+    // turns turbulent. Combined with real packet loss -> `struggle` drives thrash.
+    const float lowThresh = NORMAL_FILL * 0.5f;
+    const float chunk = (fill > 0.05f) ? std::clamp((lowThresh - fill) / lowThresh, 0.0f, 1.0f) : 0.0f;
+    const float struggle = std::clamp(std::max(chunk, st->trouble), 0.0f, 1.0f);
 
     // (1) inflow current on the RIGHT + gentle global left drift (right -> left).
+    // Speed tracks real throughput: `flow`=0 (stalled) freezes the inflow jet; the
+    // global drift keeps a faint baseline so a stalled-but-full tank isn't dead.
     if (fill > 0.02f) {
+        const float jet = flow;                    // right-side inflow (data landing)
+        const float drift = 0.15f + 0.85f * flow;  // global right->left drift
         for (int j = 1; j <= NY; ++j) {
             if (j + 0.5f < surf) continue;
             for (int i = NX - 8; i <= NX; ++i) {
                 const float w = (i - (NX - 8)) / 8.0f;
-                f.u[IX(i, j)] += INFLOW_VX * (0.4f + 0.6f * w) * SIM_DT * 6.0f;
+                f.u[IX(i, j)] += INFLOW_VX * (0.4f + 0.6f * w) * SIM_DT * 6.0f * jet;
             }
-            for (int i = 1; i <= NX; ++i) f.u[IX(i, j)] += INFLOW_VX * 0.15f * SIM_DT * 6.0f;
+            for (int i = 1; i <= NX; ++i) f.u[IX(i, j)] += INFLOW_VX * 0.15f * SIM_DT * 6.0f * drift;
         }
     }
     // (2) density-scaled gravity + hydrostatic buoyancy -> a real wavy surface.
@@ -253,7 +280,9 @@ void step(MeterState* st) {
             f.v[IX(i, j)] -= BUOY * SIM_DT * (want - d) * 0.5f;
         }
     // (3) travelling surface waves (crests move right -> left) + noisy ripples.
+    // Wave energy tracks throughput too: a stalled stream's surface goes calm.
     if (fill > 0.03f) {
+        const float waveScale = 0.25f + 0.75f * flow;
         const int sj = std::clamp(static_cast<int>(surf), 1, NY);
         for (int i = 1; i <= NX; ++i) {
             const float ph = st->phase * 3.2f + i * 0.55f;
@@ -261,27 +290,30 @@ void step(MeterState* st) {
             for (int dj = -1; dj <= 1; ++dj) {
                 const int j = std::clamp(sj + dj, 1, NY);
                 const float env = 1.0f - std::min(1.0f, std::abs(dj) * 0.5f);
-                f.v[IX(i, j)] += WAVE_AMP * SIM_DT * wv * env;
+                f.v[IX(i, j)] += WAVE_AMP * SIM_DT * wv * env * waveScale;
             }
         }
         for (int g = 0; g < 4; ++g) {
             const int gi = 1 + static_cast<int>(frand(st->rng) * NX);
             const int gj = std::clamp(sj + static_cast<int>((frand(st->rng) - 0.5f) * 3), 1, NY);
-            addVel(f, gi, gj, (frand(st->rng) - 0.7f) * 6.0f, (frand(st->rng) - 0.5f) * 6.0f);
+            addVel(f, gi, gj, (frand(st->rng) - 0.7f) * 6.0f * waveScale,
+                   (frand(st->rng) - 0.5f) * 6.0f * waveScale);
         }
     }
-    // (4) splashes: steady where the stream lands on the right; violent when chunky.
-    if (fill > 0.05f && frand(st->rng) < 0.6f) {
+    // (4) splashes: droplets where data lands on the RIGHT — scaled by throughput,
+    //     so a stalled stream stops splashing; violent bursts anywhere when the
+    //     stream struggles (depleted buffer or real packet loss/corruption).
+    if (fill > 0.05f && flow > 0.02f && frand(st->rng) < 0.6f * flow) {
         const int sj = std::clamp(static_cast<int>(surf), 1, NY);
-        splash(f, st->rng, NX - 1 - static_cast<int>(frand(st->rng) * 4), sj, 0.5f + 0.5f * fill);
+        splash(f, st->rng, NX - 1 - static_cast<int>(frand(st->rng) * 4), sj, (0.4f + 0.6f * fill) * flow);
     }
-    if (chunk > 0.0f) {
-        const int bursts = 1 + static_cast<int>(chunk * 4.0f);
+    if (struggle > 0.0f && fill > 0.03f) {
+        const int bursts = 1 + static_cast<int>(struggle * 5.0f);
         const int sj = std::clamp(static_cast<int>(surf), 1, NY);
         for (int b = 0; b < bursts; ++b) {
             const int bi = 1 + static_cast<int>(frand(st->rng) * NX);
             const int bj = std::clamp(sj + static_cast<int>((frand(st->rng) - 0.6f) * 4), 1, NY);
-            splash(f, st->rng, bi, bj, 0.5f + chunk);
+            splash(f, st->rng, bi, bj, 0.5f + struggle);
         }
     }
     // (5) SOFT level relaxation — firm far from the surface, almost none within a
@@ -306,7 +338,7 @@ void step(MeterState* st) {
     advect_phase(f, SIM_DT, st->phase);
 }
 
-// ---- rendering (iso-surface + foam crest + left-drift shimmer) --------------
+// ---- rendering (LED dot-matrix + foam crest + left-drift shimmer) -----------
 
 uint32_t packRGB(int r, int g, int b) {
     r = std::clamp(r, 0, 255); g = std::clamp(g, 0, 255); b = std::clamp(b, 0, 255);
@@ -327,63 +359,106 @@ float smoothstep01(float e0, float e1, float v) {
     return t * t * (3 - 2 * t);
 }
 
-void renderFluidBits(MeterState* st, const Theme& th) {
+// Quantize the fluid field onto an LED grid: one small lit square per cell,
+// coloured by the density (depth-shaded body, whitish foam at the surface, a
+// left-drifting specular shimmer). Dry cells show a faint "off" dot so the
+// matrix reads even above the waterline; gaps stay the panel background.
+void renderLedBits(MeterState* st, const Theme& th, int W, int H) {
     const Fluid& f = st->fluid;
-    const float bgR = GetRValue(th.windowBg), bgG = GetGValue(th.windowBg), bgB = GetBValue(th.windowBg);
+    const int bgR = GetRValue(th.windowBg), bgG = GetGValue(th.windowBg), bgB = GetBValue(th.windowBg);
     const float coR = GetRValue(th.accent), coG = GetGValue(th.accent);
-    const float SURF = 0.5f, invRMUL = 1.0f / RMUL;
-    for (int py = 0; py < RH; ++py) {
-        const float fj = (py + 0.5f) * invRMUL;
-        for (int px = 0; px < RW; ++px) {
-            const float fi = (px + 0.5f) * invRMUL;
+    // Unlit LED: a faint neutral dot (bg nudged toward the border colour).
+    const int offR = bgR + (GetRValue(th.border) - bgR) * 6 / 10;
+    const int offG = bgG + (GetGValue(th.border) - bgG) * 6 / 10;
+    const int offB = bgB + (GetBValue(th.border) - bgB) * 6 / 10;
+    const uint32_t bg = packRGB(bgR, bgG, bgB);
+    const uint32_t off = packRGB(offR, offG, offB);
+
+    // Flood the panel with background; the gaps between LEDs keep this colour.
+    const int total = W * H;
+    for (int k = 0; k < total; ++k) st->bits[k] = bg;
+
+    // LED geometry in device pixels; grid centred in the panel.
+    const int gap = std::max(1, dpx(st->dpi, LED_GAP));
+    const int pitch = std::max(gap + 2, dpx(st->dpi, LED_PITCH));
+    const int cellPx = pitch - gap;
+    const int cols = std::max(1, (W + gap) / pitch);
+    const int rows = std::max(1, (H + gap) / pitch);
+    const int ox = (W - (cols * pitch - gap)) / 2;
+    const int oy = (H - (rows * pitch - gap)) / 2;
+
+    const float SURF = 0.5f;
+    for (int row = 0; row < rows; ++row) {
+        const float fj = (row + 0.5f) / rows * NY;
+        for (int col = 0; col < cols; ++col) {
+            const float fi = (col + 0.5f) / cols * NX;
             const float d = sampleField(f.d.data(), fi, fj);
-            const float gy = sampleField(f.d.data(), fi, fj + 0.6f) - sampleField(f.d.data(), fi, fj - 0.6f);
-            const float aa = std::clamp(0.35f * std::fabs(gy) + 0.06f, 0.03f, 0.30f);
-            const float cover = smoothstep01(SURF - aa, SURF + aa, d);
-            if (cover <= 0.004f) {
-                st->bits[py * RW + px] = packRGB(static_cast<int>(bgR), static_cast<int>(bgG),
-                                                 static_cast<int>(bgB));
-                continue;
+            const float lit = smoothstep01(SURF - 0.14f, SURF + 0.14f, d);
+
+            uint32_t cell;
+            if (lit <= 0.02f) {
+                cell = off;
+            } else {
+                const float depth = std::clamp((d - SURF) * 1.35f, 0.0f, 1.0f);
+                float lr = 190 - depth * 120, lg = 158 - depth * 116, lb = 244 - depth * 128;
+                const float band = 4.0f * lit * (1.0f - lit);  // peaks at the surface row
+                const float foam = band * band;
+                lr += (255 - lr) * foam * 0.80f + (coR - lr) * foam * 0.20f;
+                lg += (240 - lg) * foam * 0.80f + (coG - lg) * foam * 0.15f;
+                lb += (255 - lb) * foam * 0.80f;
+                const float ph = sampleField(f.phase.data(), fi, fj);
+                const float uu = sampleField(f.u.data(), fi, fj);
+                float shim = 0.5f + 0.5f * std::sin(ph);
+                shim = shim * shim * shim;
+                const float leftGate = std::clamp(-uu * 0.10f, 0.0f, 1.0f);
+                const float spec = shim * (0.25f + 0.75f * leftGate) * (0.30f + 0.70f * band);
+                lr += (255 - lr) * spec * 0.55f;
+                lg += (250 - lg) * spec * 0.55f;
+                lb += (255 - lb) * spec * 0.55f;
+                const int r = static_cast<int>(offR + (lr - offR) * lit);
+                const int g = static_cast<int>(offG + (lg - offG) * lit);
+                const int b = static_cast<int>(offB + (lb - offB) * lit);
+                cell = packRGB(r, g, b);
             }
-            const float depth = std::clamp((d - SURF) * 1.35f, 0.0f, 1.0f);
-            float lr = 190 - depth * 120, lg = 158 - depth * 116, lb = 244 - depth * 128;
-            const float band = 4.0f * cover * (1.0f - cover);
-            const float foam = band * band;
-            lr += (255 - lr) * foam * 0.85f + (coR - lr) * foam * 0.15f;
-            lg += (240 - lg) * foam * 0.85f + (coG - lg) * foam * 0.10f;
-            lb += (255 - lb) * foam * 0.85f;
-            const float ph = sampleField(f.phase.data(), fi, fj);
-            const float uu = sampleField(f.u.data(), fi, fj);
-            float shim = 0.5f + 0.5f * std::sin(ph);
-            shim = shim * shim * shim;
-            const float leftGate = std::clamp(-uu * 0.10f, 0.0f, 1.0f);
-            const float spec = shim * (0.25f + 0.75f * leftGate) * (0.30f + 0.70f * band);
-            lr += (255 - lr) * spec * 0.55f;
-            lg += (250 - lg) * spec * 0.55f;
-            lb += (255 - lb) * spec * 0.55f;
-            const int r = static_cast<int>(bgR + (lr - bgR) * cover);
-            const int g = static_cast<int>(bgG + (lg - bgG) * cover);
-            const int b = static_cast<int>(bgB + (lb - bgB) * cover);
-            st->bits[py * RW + px] = packRGB(r, g, b);
+
+            const int x0 = ox + col * pitch, y0 = oy + row * pitch;
+            for (int yy = 0; yy < cellPx; ++yy) {
+                const int py = y0 + yy;
+                if (py < 0 || py >= H) continue;
+                uint32_t* dst = st->bits + py * W + x0;
+                for (int xx = 0; xx < cellPx; ++xx) {
+                    const int px = x0 + xx;
+                    if (px >= 0 && px < W) dst[xx] = cell;
+                }
+            }
         }
     }
 }
 
-void ensureDib(HWND hwnd, MeterState* st) {
-    if (st->dib) return;
-    HDC hdc = GetDC(hwnd);
-    st->dibDC = CreateCompatibleDC(hdc);
+void ensureDib(HWND hwnd, MeterState* st, int W, int H) {
+    if (st->dib && st->dibW == W && st->dibH == H) return;
+    if (!st->dibDC) {
+        HDC hdc = GetDC(hwnd);
+        st->dibDC = CreateCompatibleDC(hdc);
+        ReleaseDC(hwnd, hdc);
+    }
+    if (st->dib) {
+        DeleteObject(st->dib);
+        st->dib = nullptr;
+        st->bits = nullptr;
+    }
+    st->dibW = W;
+    st->dibH = H;
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = RW;
-    bmi.bmiHeader.biHeight = -RH;  // top-down
+    bmi.bmiHeader.biWidth = W;
+    bmi.bmiHeader.biHeight = -H;  // top-down
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
     st->dib = CreateDIBSection(st->dibDC, &bmi, DIB_RGB_COLORS,
                                reinterpret_cast<void**>(&st->bits), nullptr, 0);
     if (st->dib) SelectObject(st->dibDC, st->dib);
-    ReleaseDC(hwnd, hdc);
 }
 
 void render(HWND hwnd, MeterState* st) {
@@ -391,6 +466,7 @@ void render(HWND hwnd, MeterState* st) {
     HDC hdc = BeginPaint(hwnd, &ps);
     RECT rc;
     GetClientRect(hwnd, &rc);
+    const int W = rc.right, H = rc.bottom;
     const Theme& th = currentTheme();
     if (st->hidden) {
         FillRect(hdc, &rc, themeBrush(th.windowBg));
@@ -399,12 +475,12 @@ void render(HWND hwnd, MeterState* st) {
         EndPaint(hwnd, &ps);
         return;
     }
-    ensureDib(hwnd, st);
-    if (st->bits) {
-        renderFluidBits(st, th);
-        SetStretchBltMode(hdc, HALFTONE);
-        SetBrushOrgEx(hdc, 0, 0, nullptr);
-        StretchBlt(hdc, 0, 0, rc.right, rc.bottom, st->dibDC, 0, 0, RW, RH, SRCCOPY);
+    if (W > 0 && H > 0) {
+        ensureDib(hwnd, st, W, H);
+        if (st->bits) {
+            renderLedBits(st, th, W, H);
+            BitBlt(hdc, 0, 0, W, H, st->dibDC, 0, 0, SRCCOPY);
+        }
     }
     EndPaint(hwnd, &ps);
 }
@@ -503,7 +579,20 @@ HWND createBufferMeter(HWND parent, HINSTANCE hInst, int id, UINT dpi) {
 void bufferMeterSetHealth(HWND meter, int percent) {
     MeterState* st = stateOf(meter);
     if (!st) return;
-    st->target = std::clamp(percent, 0, 100) / 100.0f;
+    st->target = std::clamp(percent, 0, 100) / 100.0f * NORMAL_FILL;
+    if (percent <= 0) {  // stopped / ended / error: no stream, so no flow either
+        st->flowTarget = 0.0f;
+        st->troubleTarget = 0.0f;
+    }
+    if (!st->hidden) startTimer(meter, st);
+}
+
+void bufferMeterSetFlow(HWND meter, float flowRate, float trouble) {
+    MeterState* st = stateOf(meter);
+    if (!st) return;
+    st->flowTarget = std::clamp(flowRate, 0.0f, 1.0f);
+    // Latch the strongest recent trouble; step() decays it between samples.
+    st->troubleTarget = std::max(st->troubleTarget, std::clamp(trouble, 0.0f, 1.0f));
     if (!st->hidden) startTimer(meter, st);
 }
 
