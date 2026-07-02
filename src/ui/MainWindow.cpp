@@ -796,6 +796,8 @@ void refreshNav(AppState* st) {
     TreeView_Expand(st->nav, playlists, TVE_EXPAND);
 }
 
+void resetStatMeters(AppState* st);  // defined below — clear the stat meters on switch
+
 void playChannel(AppState* st, const Channel& c) {
     diag::info(L"select channel #" + std::to_wstring(c.id) + L" \"" + c.name + L"\" ua=[" +
                c.userAgent + L"] ref=[" + c.referrer + L"]");
@@ -806,6 +808,9 @@ void playChannel(AppState* st, const Channel& c) {
     channelGridSetNowPlaying(st->grid, c.id);
     st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
     bufferMeterSetHealth(st->bufferMeter, 15);
+    resetStatMeters(st);  // clear signal/bitrate/frames so switching to a dead/stalled
+                          // stream can't leave the previous channel's readings frozen on
+                          // the meters (no new Stats arrive to overwrite them otherwise)
     setStatus(st, L"Opening: " + c.name);
 }
 
@@ -1424,6 +1429,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 st->dock.setRatio(st->dragGutter.node, ratio);
                 layout(hwnd, st);  // relayout + gutter repaint (layout() invalidates)
+                // Force a synchronous parent+children repaint on each drag step. layout()
+                // only queues an async WM_PAINT (InvalidateRect), so during a fast drag the
+                // moved panels and the parent-drawn divider gutters lag and the old gutter
+                // positions smear as vertical streaks. RDW_UPDATENOW paints now,
+                // RDW_ALLCHILDREN pulls the moved panels with it, RDW_NOERASE avoids a
+                // flash (the background is drawn in WM_PAINT). Mirrors ManorLords-SGE.
+                RedrawWindow(hwnd, nullptr, nullptr,
+                             RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
                 return 0;
             }
             int cmdHover = -1, capHover = -1;

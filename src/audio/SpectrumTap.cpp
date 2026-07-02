@@ -18,6 +18,7 @@
 #include <audioclientactivationparams.h>
 #include <mmdeviceapi.h>
 #include <mmreg.h>
+#include <objidl.h>  // IAgileObject — the async-activation completion handler must be agile
 #include <propidl.h>
 
 #include "platform/Log.h"
@@ -88,7 +89,13 @@ public:
     }
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
         if (!ppv) return E_POINTER;
+        // Answer IAgileObject: ActivateAudioInterfaceAsync marshals the completion
+        // handler across apartments and rejects a non-agile handler *synchronously*
+        // with E_ILLEGAL_METHOD_CALL (0x8000000E) when invoked from our MTA capture
+        // thread — which is exactly why the spectrum meter was dead. IAgileObject is a
+        // pure marker (IUnknown vtable), so returning our own IUnknown head is agile.
         if (riid == __uuidof(IUnknown) ||
+            riid == __uuidof(IAgileObject) ||
             riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
             *ppv = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
             AddRef();
