@@ -120,6 +120,7 @@ void VlcPlayer::workerLoop() {
         switch (c.type) {
             case Cmd::Quit:
                 doStop();
+                doRecordStop();  // finalize any recording before shutdown
                 return;
             case Cmd::Play:
                 // Coalesce rapid channel switches: if a newer Play/Stop is queued,
@@ -138,6 +139,12 @@ void VlcPlayer::workerLoop() {
                 break;
             case Cmd::Aspect:
                 if (mp_) libvlc_video_set_aspect_ratio(mp_, c.svalue.empty() ? nullptr : c.svalue.c_str());
+                break;
+            case Cmd::RecordStart:
+                doRecordStart(c);
+                break;
+            case Cmd::RecordStop:
+                doRecordStop();
                 break;
         }
     }
@@ -188,6 +195,7 @@ void VlcPlayer::doPlay(const Cmd& c) {
     firstSample_ = true;
     prevReadBytes_ = prevDemuxBytes_ = 0;
     prevCorrupted_ = prevDiscontinuity_ = prevLostPictures_ = 0;
+    prevDisplayedPictures_ = 0;
 
     if (video_) libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
     if (auto* em = libvlc_media_player_event_manager(mp_)) {
@@ -231,12 +239,15 @@ void VlcPlayer::sampleStats() {
         fs.corruptedDelta = std::max(0, s.i_demux_corrupted - prevCorrupted_);
         fs.discontinuityDelta = std::max(0, s.i_demux_discontinuity - prevDiscontinuity_);
         fs.lostPicturesDelta = std::max(0, s.i_lost_pictures - prevLostPictures_);
+        const int shownDelta = std::max(0, s.i_displayed_pictures - prevDisplayedPictures_);
+        fs.displayedPerSec = shownDelta / dt;
     }
     prevDemuxBytes_ = s.i_demux_read_bytes;
     prevReadBytes_ = s.i_read_bytes;
     prevCorrupted_ = s.i_demux_corrupted;
     prevDiscontinuity_ = s.i_demux_discontinuity;
     prevLostPictures_ = s.i_lost_pictures;
+    prevDisplayedPictures_ = s.i_displayed_pictures;
     lastSampleTime_ = now;
     firstSample_ = false;
 
@@ -304,6 +315,89 @@ void VlcPlayer::setAspectRatio(const char* ar) {
     Cmd c{Cmd::Aspect};
     if (ar) c.svalue = ar;
     enqueue(std::move(c));
+}
+
+// ---- recording (headless second player, worker-thread only) ----------------
+
+void VlcPlayer::doRecordStart(const Cmd& c) {
+    doRecordStop();  // Phase 1: one recording at a time
+    if (!inst_) return;
+    const std::string u = utf8FromWide(c.url);
+    libvlc_media_t* m = libvlc_media_new_location(inst_, u.c_str());
+    if (!m) {
+        diag::error(L"record: media_new failed for " + c.url);
+        return;
+    }
+    // Stream-copy to a .ts file (no re-encode, low CPU). Forward slashes so the path
+    // parses; single-quote the value so spaces survive; and DOUBLE any literal ' —
+    // VLC's config-chain parser closes a single-quoted value on the first ' unless
+    // it's doubled. The channel name is sanitized, but the %USERPROFILE% directory
+    // may legitimately contain an apostrophe (e.g. C:\Users\O'Brien).
+    std::wstring path = c.recPath;
+    std::replace(path.begin(), path.end(), L'\\', L'/');
+    std::string dst = utf8FromWide(path);
+    for (size_t i = 0; (i = dst.find('\'', i)) != std::string::npos; i += 2) dst.insert(i, 1, '\'');
+    const std::string mux = c.svalue.empty() ? "ts" : c.svalue;  // container (stream copy)
+    libvlc_media_add_option(m, (":sout=#std{access=file,mux=" + mux + ",dst='" + dst + "'}").c_str());
+    libvlc_media_add_option(m, ":sout-keep");
+    libvlc_media_add_option(m, (":network-caching=" + std::to_string(cachingMs_.load())).c_str());
+    if (!c.userAgent.empty())
+        libvlc_media_add_option(m, (":http-user-agent=" + utf8FromWide(c.userAgent)).c_str());
+    if (!c.referrer.empty())
+        libvlc_media_add_option(m, (":http-referrer=" + utf8FromWide(c.referrer)).c_str());
+    rec_ = libvlc_media_player_new_from_media(m);
+    libvlc_media_release(m);
+    if (!rec_) {
+        diag::error(L"record: player_new failed");
+        return;
+    }
+    if (libvlc_media_player_play(rec_) != 0) {  // headless (no set_hwnd) -> ES muxed to file
+        diag::error(L"record: play failed to start");
+        libvlc_media_player_release(rec_);
+        rec_ = nullptr;
+        return;
+    }
+    recording_.store(true);
+    {
+        std::lock_guard<std::mutex> lk(recMtx_);
+        recFile_ = c.recPath;
+    }
+    diag::info(L"recording started -> " + c.recPath);
+}
+
+void VlcPlayer::doRecordStop() {
+    if (rec_) {
+        libvlc_media_player_stop(rec_);  // flushes + finalizes the .ts (TS needs no trailer)
+        libvlc_media_player_release(rec_);
+        rec_ = nullptr;
+        diag::info(L"recording stopped");
+    }
+    recording_.store(false);
+    {
+        std::lock_guard<std::mutex> lk(recMtx_);
+        recFile_.clear();
+    }
+}
+
+bool VlcPlayer::startRecording(const std::wstring& url, const std::wstring& userAgent,
+                               const std::wstring& referrer, const std::wstring& filePath,
+                               const std::string& mux) {
+    if (!inst_) return false;
+    Cmd c{Cmd::RecordStart};
+    c.url = url;
+    c.userAgent = userAgent;
+    c.referrer = referrer;
+    c.recPath = filePath;
+    c.svalue = mux;  // container: ts | mkv
+    enqueue(std::move(c));
+    return true;
+}
+
+void VlcPlayer::stopRecording() { enqueue({Cmd::RecordStop}); }
+
+std::wstring VlcPlayer::recordingFile() const {
+    std::lock_guard<std::mutex> lk(recMtx_);
+    return recFile_;
 }
 
 }  // namespace rabbitears

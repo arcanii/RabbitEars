@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cwctype>
 
+#include <commctrl.h>  // ListView (the categories checklist)
 #include <objbase.h>  // CreateStreamOnHGlobal (ole32)
 #include <objidl.h>   // IStream — required by gdiplus.h below
 // gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the
@@ -17,6 +19,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "version.h"
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "comctl32.lib")
 
 namespace rabbitears {
 namespace {
@@ -107,9 +110,20 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DrawTextW(mem, L"A simple IPTV viewer for Windows.\r\nVersion " RE_VERSION_DISPLAY_W, -1,
                       &br, DT_LEFT | DT_TOP | DT_WORDBREAK);
             SetTextColor(mem, th.textMuted);
-            RECT ar{tx, rc.bottom - dp(100, st->dpi), rc.right - m, rc.bottom - dp(58, st->dpi)};
+            RECT ar{tx, br.bottom + dp(10, st->dpi), rc.right - m, br.bottom + dp(58, st->dpi)};
             DrawTextW(mem, L"Plays media with libVLC (LGPL-2.1)\r\n© VideoLAN and the VLC contributors.",
                       -1, &ar, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            // Full-width legal disclaimer below the artwork, above the buttons.
+            const int discTop = m + dp(250, st->dpi);
+            RECT sep{m, discTop - dp(12, st->dpi), rc.right - m, discTop - dp(11, st->dpi)};
+            FillRect(mem, &sep, themeBrush(th.border));
+            RECT dr{m, discTop, rc.right - m, discTop + dp(96, st->dpi)};
+            SetTextColor(mem, th.textSecondary);
+            DrawTextW(mem,
+                      L"Rabbit Ears is provided only for educational purposes, and does not "
+                      L"represent supporting any illegal activity that you do with it. "
+                      L"We don't know, we don't care.",
+                      -1, &dr, DT_LEFT | DT_TOP | DT_WORDBREAK);
             SelectObject(mem, oldFont);
             BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
             SelectObject(mem, oldBmp);
@@ -193,6 +207,216 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// ---- categories checklist ---------------------------------------------------
+
+constexpr int ID_CAT_LV = 1301;
+constexpr int ID_CAT_FILTER = 1302;
+constexpr int ID_CAT_ALL = 1303;
+constexpr int ID_CAT_NONE = 1304;
+
+struct CategoriesState {
+    HWND  lv = nullptr;      // checkbox list of group titles
+    HWND  filter = nullptr;  // "Filter categories…" search box
+    HWND  count = nullptr;   // "N of M categories selected"
+    HFONT font = nullptr;
+    UINT  dpi = 96;
+    // The model — every group + its checked state. The ListView is a filtered
+    // view of this; each visible row's lParam is an index back into it.
+    std::vector<std::pair<std::wstring, bool>> items;
+    bool  syncing = false;  // ignore LVN_ITEMCHANGED while we repopulate the list
+    bool  ok = false;
+    bool  done = false;
+};
+
+std::wstring lowerCopy(std::wstring s) {
+    for (wchar_t& c : s) c = towlower(c);
+    return s;
+}
+
+void catUpdateCount(CategoriesState* st) {
+    int on = 0;
+    for (const auto& it : st->items)
+        if (it.second) ++on;
+    wchar_t b[64];
+    swprintf_s(b, L"%d of %d categories selected", on, static_cast<int>(st->items.size()));
+    SetWindowTextW(st->count, b);
+}
+
+// Rebuild the ListView from the model, filtered by the current search text.
+void catRepopulate(CategoriesState* st) {
+    wchar_t term[128] = L"";
+    GetWindowTextW(st->filter, term, ARRAYSIZE(term));
+    const std::wstring needle = lowerCopy(term);
+
+    st->syncing = true;
+    SendMessageW(st->lv, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(st->lv);
+    int row = 0;
+    for (int i = 0; i < static_cast<int>(st->items.size()); ++i) {
+        if (!needle.empty() && lowerCopy(st->items[i].first).find(needle) == std::wstring::npos)
+            continue;
+        LVITEMW it{};
+        it.mask = LVIF_TEXT | LVIF_PARAM;
+        it.iItem = row;
+        it.pszText = const_cast<LPWSTR>(st->items[i].first.c_str());
+        it.lParam = i;  // model index
+        const int idx = ListView_InsertItem(st->lv, &it);
+        ListView_SetCheckState(st->lv, idx, st->items[i].second ? TRUE : FALSE);
+        ++row;
+    }
+    SendMessageW(st->lv, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(st->lv, nullptr, TRUE);  // redraw was off during the rebuild; force a repaint
+    st->syncing = false;
+}
+
+void catSetAll(CategoriesState* st, bool on) {
+    for (auto& it : st->items) it.second = on;
+    catRepopulate(st);
+    catUpdateCount(st);
+}
+
+LRESULT CALLBACK CategoriesProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* st = reinterpret_cast<CategoriesState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, wParam);
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            SetBkMode(dc, TRANSPARENT);
+            HGDIOBJ of = SelectObject(dc, st->font);
+            SetTextColor(dc, currentTheme().textPrimary);
+            RECT lr{dp(18, st->dpi), dp(14, st->dpi), 100000, dp(38, st->dpi)};
+            DrawTextW(dc, L"Show channels only from the checked categories:", -1, &lr,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE);
+            SelectObject(dc, of);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_NOTIFY: {
+            auto* nh = reinterpret_cast<LPNMHDR>(lParam);
+            if (nh->idFrom == ID_CAT_LV && nh->code == LVN_ITEMCHANGED && !st->syncing) {
+                auto* nv = reinterpret_cast<LPNMLISTVIEW>(lParam);
+                if (nv->uChanged & LVIF_STATE) {
+                    // The 1-based state-image index encodes the checkbox: 1 = unchecked,
+                    // 2 = checked. A genuine user toggle moves between the two.
+                    const UINT wasImg = (nv->uOldState & LVIS_STATEIMAGEMASK) >> 12;
+                    const UINT nowImg = (nv->uNewState & LVIS_STATEIMAGEMASK) >> 12;
+                    if (nowImg != wasImg && (nowImg == 1 || nowImg == 2)) {
+                        const int mi = static_cast<int>(nv->lParam);
+                        if (mi >= 0 && mi < static_cast<int>(st->items.size())) {
+                            st->items[mi].second = (nowImg == 2);
+                            catUpdateCount(st);
+                        }
+                    }
+                }
+            }
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+                case ID_CAT_FILTER:
+                    if (HIWORD(wParam) == EN_CHANGE) catRepopulate(st);
+                    return 0;
+                case ID_CAT_ALL:
+                    catSetAll(st, true);
+                    return 0;
+                case ID_CAT_NONE:
+                    catSetAll(st, false);
+                    return 0;
+                case IDOK:
+                    st->ok = true;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                case IDCANCEL:
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// ---- first-run Terms of Use -------------------------------------------------
+
+constexpr int ID_TERMS_ACCEPT = 1401;
+
+constexpr wchar_t kTermsText[] =
+    L"Please read these terms before using RabbitEars. By choosing “I Accept” you "
+    L"agree to them. If you do not agree, choose “Decline” and the application will "
+    L"close.\r\n\r\n"
+    L"1.  Educational purpose.  RabbitEars is a media player provided for educational and "
+    L"personal use only. It is offered “as is”, without warranty of any kind, and you "
+    L"use it entirely at your own risk.\r\n\r\n"
+    L"2.  No content is included.  RabbitEars ships with no channels, playlists, or media of "
+    L"any kind. It plays only the playlists that you choose to add. You are solely responsible "
+    L"for obtaining your playlists from lawful sources and for ensuring that your use complies "
+    L"with all applicable laws and the rights of content owners in your jurisdiction.\r\n\r\n"
+    L"3.  No endorsement.  The authors of RabbitEars do not provide, host, recommend, or "
+    L"endorse any stream or content, and have no knowledge of or control over what you choose "
+    L"to play. As the project puts it: we don’t know, and we don’t care.\r\n\r\n"
+    L"4.  Your responsibility.  Any illegal activity carried out with this software is yours "
+    L"alone and is not supported, encouraged, or condoned by the authors.\r\n\r\n"
+    L"5.  Open source.  RabbitEars plays media using libVLC, © VideoLAN and the VLC "
+    L"contributors, under the GNU LGPL v2.1.\r\n\r\n"
+    L"By clicking “I Accept”, you confirm that you have read, understood, and agree to "
+    L"these terms.";
+
+struct TermsState {
+    HWND  edit = nullptr;
+    HFONT font = nullptr;
+    HFONT titleFont = nullptr;
+    bool  accepted = false;
+    bool  done = false;
+};
+
+LRESULT CALLBACK TermsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* st = reinterpret_cast<TermsState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, wParam);
+        case WM_COMMAND:
+            if (LOWORD(wParam) == ID_TERMS_ACCEPT) {
+                st->accepted = true;
+                st->done = true;
+                DestroyWindow(hwnd);
+            } else if (LOWORD(wParam) == IDCANCEL) {
+                st->accepted = false;
+                st->done = true;
+                DestroyWindow(hwnd);
+            }
+            return 0;
+        case WM_CLOSE:
+            st->accepted = false;
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
 }  // namespace
 
 void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
@@ -219,7 +443,7 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     st.titleFont = mkFont(22, FW_SEMIBOLD);
     st.bodyFont = mkFont(14, FW_NORMAL);
 
-    const int W = dp(470, dpi), H = dp(348, dpi);
+    const int W = dp(470, dpi), H = dp(470, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;
@@ -329,6 +553,206 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
     SetForegroundWindow(parent);
     DeleteObject(st.font);
     return st.ok;
+}
+
+bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
+                      const std::vector<std::wstring>& allGroups,
+                      std::set<std::wstring>& checked) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = CategoriesProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsCategories";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    CategoriesState st;
+    st.dpi = dpi;
+    st.items.reserve(allGroups.size());
+    for (const std::wstring& g : allGroups) st.items.emplace_back(g, checked.count(g) != 0);
+    st.font = CreateFontW(-dp(14, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                          VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+
+    const int W = dp(460, dpi), H = dp(560, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsCategories", L"Categories",
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        return false;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(18, dpi);
+    const int bw = dp(90, dpi), bh = dp(30, dpi);
+    const int btnY = cr.bottom - bh - dp(14, dpi);
+    const int countY = btnY - dp(26, dpi);
+    const int listTop = dp(80, dpi);
+    const int listBottom = countY - dp(8, dpi);
+
+    st.filter = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, m, dp(44, dpi),
+                                cr.right - 2 * m, dp(26, dpi), dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_FILTER)), hInst,
+                                nullptr);
+    SendMessageW(st.filter, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Filter categories…"));
+
+    st.lv = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_NOCOLUMNHEADER |
+                                LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+                            m, listTop, cr.right - 2 * m, listBottom - listTop, dlg,
+                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_LV)), hInst, nullptr);
+    ListView_SetExtendedListViewStyle(
+        st.lv, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    LVCOLUMNW col{};
+    col.mask = LVCF_WIDTH;
+    RECT lvc;
+    GetClientRect(st.lv, &lvc);
+    col.cx = lvc.right - GetSystemMetricsForDpi(SM_CXVSCROLL, dpi) - dp(6, dpi);
+    ListView_InsertColumn(st.lv, 0, &col);
+
+    st.count = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m,
+                               countY, cr.right - 2 * m, dp(20, dpi), dlg, nullptr, hInst, nullptr);
+
+    HWND all = CreateWindowExW(0, L"BUTTON", L"Select All", WS_CHILD | WS_VISIBLE | WS_TABSTOP, m,
+                               btnY, dp(96, dpi), bh, dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_ALL)), hInst,
+                               nullptr);
+    HWND none = CreateWindowExW(0, L"BUTTON", L"Clear", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                m + dp(96, dpi) + dp(8, dpi), btnY, dp(74, dpi), bh, dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_NONE)), hInst,
+                                nullptr);
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                              cr.right - 2 * bw - dp(28, dpi), btnY, bw, bh, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  cr.right - bw - dp(18, dpi), btnY, bw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
+                                  nullptr);
+
+    for (HWND h : {st.filter, st.lv, st.count, all, none, ok, cancel})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+
+    applyDialogDarkMode(dlg);
+    // Dark-mode the ListView surface itself (theme handles scrollbars + checkboxes).
+    const Theme& th = currentTheme();
+    ListView_SetBkColor(st.lv, th.windowBg);
+    ListView_SetTextBkColor(st.lv, th.windowBg);
+    ListView_SetTextColor(st.lv, th.textPrimary);
+
+    catRepopulate(&st);
+    catUpdateCount(&st);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(st.filter);
+    MSG msg;
+    while (!st.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    if (st.ok) {  // the model is the source of truth — no read-before-destroy needed
+        checked.clear();
+        for (const auto& it : st.items)
+            if (it.second) checked.insert(it.first);
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(st.font);
+    return st.ok;
+}
+
+bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = TermsProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsTerms";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    TermsState st;
+    auto mkFont = [&](int px, int weight) {
+        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    };
+    st.font = mkFont(14, FW_NORMAL);
+    st.titleFont = mkFont(20, FW_SEMIBOLD);
+
+    const int W = dp(560, dpi), H = dp(500, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsTerms", L"RabbitEars — Terms of Use",
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        DeleteObject(st.titleFont);
+        return false;  // fail open would be worse; a null dialog is treated as declined
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(20, dpi), bw = dp(110, dpi), bh = dp(30, dpi);
+    const int btnY = cr.bottom - bh - dp(16, dpi);
+
+    HWND head = CreateWindowExW(0, L"STATIC", L"Terms of Use", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                                m, dp(16, dpi), cr.right - 2 * m, dp(28, dpi), dlg, nullptr, hInst,
+                                nullptr);
+    st.edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", kTermsText,
+                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE |
+                                  ES_READONLY | ES_AUTOVSCROLL,
+                              m, dp(52, dpi), cr.right - 2 * m, btnY - dp(66, dpi), dlg, nullptr,
+                              hInst, nullptr);
+    HWND accept = CreateWindowExW(0, L"BUTTON", L"I Accept",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                  cr.right - bw - m, btnY, bw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TERMS_ACCEPT)),
+                                  hInst, nullptr);
+    HWND decline = CreateWindowExW(0, L"BUTTON", L"Decline", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                   cr.right - 2 * bw - m - dp(8, dpi), btnY, bw, bh, dlg,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
+                                   nullptr);
+    SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(st.titleFont), TRUE);
+    for (HWND h : {st.edit, accept, decline})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(accept);
+    MSG m2;
+    while (!st.done && GetMessageW(&m2, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(dlg, &m2)) {
+            TranslateMessage(&m2);
+            DispatchMessageW(&m2);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(st.font);
+    DeleteObject(st.titleFont);
+    return st.accepted;
 }
 
 }  // namespace rabbitears

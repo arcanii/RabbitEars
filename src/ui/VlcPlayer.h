@@ -45,6 +45,7 @@ enum class PlayerEvent : unsigned {
 struct FlowStats {
     double demuxBytesPerSec = 0.0;  // data the demux actually consumed (playback throughput)
     double readBytesPerSec = 0.0;   // bytes read off the network (arrival rate)
+    double displayedPerSec = 0.0;    // video frames displayed per second (≈ effective fps)
     int    corruptedDelta = 0;       // demux-corrupted blocks since last sample
     int    discontinuityDelta = 0;   // demux discontinuities since last sample
     int    lostPicturesDelta = 0;    // dropped video frames since last sample
@@ -84,13 +85,23 @@ public:
     // PlayerEvent::Stats is posted while a stream is loaded.
     FlowStats flowStats() const;
 
+    // Recording — a headless second player records `url` to `filePath` (a .ts
+    // stream copy, no re-encode) on the shared instance, independent of playback,
+    // so you can keep watching (even another channel). Returns immediately.
+    bool startRecording(const std::wstring& url, const std::wstring& userAgent,
+                        const std::wstring& referrer, const std::wstring& filePath,
+                        const std::string& mux = "ts");  // "ts" | "mkv" (stream copy)
+    void stopRecording();
+    bool isRecording() const { return recording_.load(); }
+    std::wstring recordingFile() const;  // thread-safe copy of the current path
+
     // Called from the libVLC event thread via a C thunk — do not call directly.
     void handleVlcEvent(const libvlc_event_t* e);
 
 private:
     struct Cmd {
-        enum Type { Play, Stop, Pause, Volume, Aspect, Quit } type;
-        std::wstring url, userAgent, referrer;
+        enum Type { Play, Stop, Pause, Volume, Aspect, Quit, RecordStart, RecordStop } type;
+        std::wstring url, userAgent, referrer, recPath;
         int          ivalue = 0;
         std::string  svalue;
     };
@@ -98,11 +109,14 @@ private:
     void workerLoop();
     void doPlay(const Cmd& c);
     void doStop();
+    void doRecordStart(const Cmd& c);  // worker-thread only
+    void doRecordStop();               // worker-thread only
     void sampleStats();         // worker-thread only: read libVLC stats -> snapshot_
     bool hasNewerPlayOrStop();  // for coalescing rapid channel switches
 
     libvlc_instance_t*     inst_ = nullptr;
-    libvlc_media_player_t* mp_ = nullptr;      // worker-thread only
+    libvlc_media_player_t* mp_ = nullptr;      // worker-thread only (playback)
+    libvlc_media_player_t* rec_ = nullptr;     // worker-thread only (recorder)
     libvlc_media_t*        media_ = nullptr;   // worker-thread only (retained for stats)
     HWND                   video_ = nullptr;
     HWND                   evtTarget_ = nullptr;
@@ -110,10 +124,14 @@ private:
     std::atomic<int>       volume_{80};
     std::atomic<int>       cachingMs_{1500};  // network-caching applied at media open
     std::atomic<bool>      playing_{false};
+    std::atomic<bool>      recording_{false};
+    mutable std::mutex     recMtx_;   // guards recFile_
+    std::wstring           recFile_;  // current recording path (empty when idle)
 
     // Stats accumulators — touched only on the worker thread.
     int  prevReadBytes_ = 0, prevDemuxBytes_ = 0;
     int  prevCorrupted_ = 0, prevDiscontinuity_ = 0, prevLostPictures_ = 0;
+    int  prevDisplayedPictures_ = 0;
     bool firstSample_ = true;
     std::chrono::steady_clock::time_point lastSampleTime_{};
     mutable std::mutex statsMtx_;   // guards snapshot_ (worker writes, UI reads)

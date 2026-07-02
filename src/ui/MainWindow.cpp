@@ -10,6 +10,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <cwchar>
+#include <filesystem>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -17,6 +19,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <dwmapi.h>
+#include <shlobj.h>  // SHGetKnownFolderPath (Videos folder for recordings)
 #include <objidl.h>  // IStream — required by gdiplus.h below
 #include <windowsx.h>
 // gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the
@@ -35,9 +38,12 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/BufferMeter.h"
 #include "ui/ChannelGridControl.h"
 #include "ui/Dialogs.h"
+#include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
 #include "ui/VlcPlayer.h"
+
+#include "audio/SpectrumTap.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -56,15 +62,29 @@ constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
 constexpr int ID_ADD_URL = 2001;
 constexpr int ID_OPEN_FILE = 2002;
 constexpr int ID_ABOUT = 2003;
+constexpr int ID_SETTINGS = 2004;   // command-bar Settings menu
+constexpr int ID_FMT_TS = 2005;     // recording format: MPEG-TS
+constexpr int ID_FMT_MKV = 2006;    // recording format: Matroska
+constexpr int ID_HIDE_DEAD = 2007;  // hide unavailable (dead/geo-blocked) channels
+constexpr int ID_CATEGORIES = 2008;  // Categories… include-filter dialog
 constexpr int ID_BTN_PLAY = 2010;
 constexpr int ID_BTN_STOP = 2011;
 constexpr int ID_VOL = 2012;
 constexpr int ID_BTN_FULL = 2013;
 constexpr int ID_BUFFER = 2014;
 constexpr int ID_BUF = 2015;  // buffer-size slider
+constexpr int ID_BTN_REC = 2016;
 constexpr int ID_SEARCH = 2020;
 constexpr int ID_GRID = 2021;
 constexpr int ID_NAV = 2022;
+constexpr int ID_METER_SPECTRUM = 2030;  // mini-meter control ids
+constexpr int ID_METER_SIGNAL = 2031;
+constexpr int ID_METER_BITRATE = 2032;
+constexpr int ID_METER_FRAMES = 2033;
+constexpr int ID_MTR_SPECTRUM = 2040;  // Settings → Meters toggle commands
+constexpr int ID_MTR_SIGNAL = 2041;
+constexpr int ID_MTR_BITRATE = 2042;
+constexpr int ID_MTR_FRAMES = 2043;
 
 int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
@@ -86,8 +106,7 @@ struct CmdBtn {
 };
 const CmdBtn kCmdBtns[] = {
     {ID_ADD_URL, L"+  Add Playlist", true},
-    {ID_OPEN_FILE, L"Open File", false},
-    {ID_ABOUT, L"About", false},
+    {ID_SETTINGS, L"Settings  ▾", false},
 };
 
 struct PlaylistResult {
@@ -110,6 +129,7 @@ struct AppState {
     HWND       search = nullptr;
     HWND       btnPlay = nullptr;
     HWND       btnStop = nullptr;
+    HWND       btnRec = nullptr;
     HWND       btnFull = nullptr;
     HWND       volIcon = nullptr;   // speaker glyph left of the volume slider
     HWND       volBar = nullptr;
@@ -118,6 +138,10 @@ struct AppState {
     HWND       tip = nullptr;       // shared tooltip (volume slider, buffer slider, meter)
     HWND       status = nullptr;
     HWND       bufferMeter = nullptr;
+    HWND       meterSpectrum = nullptr;  // modular LED mini-meters (Settings → Meters)
+    HWND       meterSignal = nullptr;
+    HWND       meterBitrate = nullptr;
+    HWND       meterFrames = nullptr;
     HFONT      uiFont = nullptr;
     HFONT      titleFont = nullptr;
     HFONT      glyphFont = nullptr;  // Segoe MDL2 Assets, for the speaker glyph
@@ -126,12 +150,23 @@ struct AppState {
     int        cmdHover = -1;  // hovered toolbar button index
     int        capHover = -1;  // hovered caption button (0 min,1 max,2 close)
     bool       fullscreen = false;
+    WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
+    LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
+    std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv"
+    bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
+    bool       categoryActive = false;    // is the Categories include-filter on?
+    std::set<std::wstring> categories;    // included group titles when active
+    bool       showSpectrum = true;       // Settings → Meters visibility (persisted)
+    bool       showSignal = true;
+    bool       showBitrate = false;
+    bool       showFrames = false;
     long long  nowPlayingId = 0;
     std::wstring nowPlayingName;
     Channel    nowPlaying;   // last channel passed to playChannel (for re-buffering)
     ViewFilter filter;
     std::vector<ViewFilter> navFilters;  // indexed by tree item lParam
+    SpectrumTap spectrumTap;             // read-only WASAPI process-loopback → spectrum meter
 };
 
 AppState* stateOf(HWND h) { return reinterpret_cast<AppState*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
@@ -291,14 +326,16 @@ void layout(HWND hwnd, AppState* st) {
 
     if (st->fullscreen) {
         for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop,
-                       st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
-                       st->bufferMeter})
+                       st->btnRec, st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull,
+                       st->status, st->bufferMeter, st->meterSpectrum, st->meterSignal,
+                       st->meterBitrate, st->meterFrames})
             ShowWindow(h, SW_HIDE);
         MoveWindow(st->video, 0, 0, W, H, TRUE);
         return;
     }
-    for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop, st->volIcon,
-                   st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status, st->bufferMeter})
+    for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
+                   st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
+                   st->bufferMeter})
         ShowWindow(h, SW_SHOW);
 
     const int contentTop = cmdH;
@@ -320,6 +357,7 @@ void layout(HWND hwnd, AppState* st) {
     int x = cx + pad;
     MoveWindow(st->btnPlay, x, by, bw, btnH, TRUE); x += bw + pad;
     MoveWindow(st->btnStop, x, by, bw, btnH, TRUE); x += bw + pad;
+    MoveWindow(st->btnRec, x, by, bw, btnH, TRUE); x += bw + pad;
     const int iconW = dp(20, st->dpi);
     MoveWindow(st->volIcon, x, by, iconW, btnH, TRUE); x += iconW + dp(2, st->dpi);
     const int volW = dp(126, st->dpi);
@@ -330,12 +368,34 @@ void layout(HWND hwnd, AppState* st) {
     const int bufLabelW = dp(84, st->dpi), bufBarW = dp(110, st->dpi);
     MoveWindow(st->bufLabel, x, by, bufLabelW, btnH, TRUE); x += bufLabelW + dp(2, st->dpi);
     MoveWindow(st->bufBar, x, by, bufBarW, btnH, TRUE); x += bufBarW + pad * 2;
-    // Buffer meter pinned right (taller than the buttons so the fluid waves show);
-    // status fills the gap.
-    const int meterW = dp(230, st->dpi), meterH = dp(30, st->dpi);
-    const int meterX = W - pad - meterW, meterY = stripY + (sHt - meterH) / 2;
-    MoveWindow(st->bufferMeter, meterX, meterY, meterW, meterH, TRUE);
-    MoveWindow(st->status, x, by, std::max(0, meterX - pad - x), btnH, TRUE);
+    // Meter tray, laid out right-to-left: the big fluid buffer meter is pinned to
+    // the right edge, then the enabled mini meters stack to its left; the status
+    // text fills whatever space is left. Disabled meters are hidden.
+    const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
+    const int bufMeterW = dp(230, st->dpi);
+    int rightX = W - pad;
+    MoveWindow(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH, TRUE);
+    rightX -= bufMeterW + pad;
+    struct MtrSlot { HWND h; bool on; int w; };
+    const MtrSlot slots[] = {  // rightmost first
+        {st->meterFrames, st->showFrames, dp(72, st->dpi)},
+        {st->meterBitrate, st->showBitrate, dp(96, st->dpi)},
+        {st->meterSignal, st->showSignal, dp(58, st->dpi)},
+        {st->meterSpectrum, st->showSpectrum, dp(112, st->dpi)},
+    };
+    for (const MtrSlot& s : slots) {
+        // Only place a meter if it genuinely fits to the left of the buffer meter and
+        // right of the transport controls; otherwise hide it (it reappears when the
+        // window is widened) so the tray never overlaps the buttons on a narrow strip.
+        if (s.on && rightX - s.w >= x + pad) {
+            MoveWindow(s.h, rightX - s.w, meterY, s.w, meterH, TRUE);
+            ShowWindow(s.h, SW_SHOW);
+            rightX -= s.w + dp(6, st->dpi);
+        } else {
+            ShowWindow(s.h, SW_HIDE);
+        }
+    }
+    MoveWindow(st->status, x, by, std::max(0, rightX - pad - x), btnH, TRUE);
 
     const int gridY = stripY + sHt;
     MoveWindow(st->grid, cx, gridY, cw, std::max(0, H - gridY), TRUE);
@@ -390,6 +450,24 @@ void updateCounts(AppState* st) {
     setStatus(st, std::to_wstring(shown) + L" channels");
 }
 
+// Apply the global view settings (currently: hide unavailable/geo-blocked). Reused
+// by the nav views and global search so the toggle is consistent everywhere.
+void applyChannelFilters(AppState* st, std::vector<Channel>& ch) {
+    if (st->hideDead)
+        ch.erase(std::remove_if(ch.begin(), ch.end(),
+                                [](const Channel& c) { return c.deadStatus == DeadStatus::Dead; }),
+                 ch.end());
+    if (st->categoryActive && !st->categories.empty())
+        ch.erase(std::remove_if(ch.begin(), ch.end(),
+                                [st](const Channel& c) {
+                                    // Uncategorized channels (blank group) can't be picked in
+                                    // the Categories dialog, so never hide them behind it.
+                                    return !c.groupTitle.empty() &&
+                                           st->categories.find(c.groupTitle) == st->categories.end();
+                                }),
+                 ch.end());
+}
+
 void loadForFilter(AppState* st) {
     std::vector<Channel> ch;
     switch (st->filter.kind) {
@@ -398,6 +476,7 @@ void loadForFilter(AppState* st) {
         case ViewKind::Group: ch = st->db.channelsByGroup(st->filter.group); break;
         case ViewKind::Playlist: ch = st->db.channelsByPlaylist(st->filter.playlistId); break;
     }
+    applyChannelFilters(st, ch);
     channelGridSetChannels(st->grid, std::move(ch));
     channelGridSetNowPlaying(st->grid, st->nowPlayingId);
     updateCounts(st);
@@ -523,7 +602,7 @@ void onAddUrl(AppState* st) {
         diag::warn(L"Add Playlist ignored: a playlist load is already in progress");
         return;
     }
-    std::wstring url = L"https://iptv-org.github.io/iptv/index.m3u";
+    std::wstring url;  // no bundled/default playlist — users supply their own source
     if (!promptText(st->hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
                     st->dpi, L"Add Playlist", L"Playlist URL (.m3u / .m3u8):", url))
         return;
@@ -568,10 +647,239 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
 }
 
 void toggleFullscreen(AppState* st) {
+    HWND hwnd = st->hwnd;
     st->fullscreen = !st->fullscreen;
-    layout(st->hwnd, st);
-    if (st->fullscreen) SetFocus(st->video);
-    InvalidateRect(st->hwnd, nullptr, TRUE);
+    if (st->fullscreen) {
+        // Real fullscreen: remember the window, drop the frame to a borderless
+        // popup, and cover the whole monitor (over the taskbar). Windows treats a
+        // borderless window covering the monitor as fullscreen and hides the shell.
+        st->prevPlacement.length = sizeof(st->prevPlacement);
+        GetWindowPlacement(hwnd, &st->prevPlacement);
+        st->prevStyle = GetWindowLongW(hwnd, GWL_STYLE);
+        MONITORINFO mi{sizeof(mi)};
+        GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLongW(hwnd, GWL_STYLE, (st->prevStyle & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        SetFocus(st->video);
+    } else {
+        SetWindowLongW(hwnd, GWL_STYLE, st->prevStyle);
+        SetWindowPlacement(hwnd, &st->prevPlacement);
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    layout(hwnd, st);
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+std::wstring recordingsDir() {
+    PWSTR vids = nullptr;
+    std::filesystem::path dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Videos, 0, nullptr, &vids)))
+        dir = std::filesystem::path(vids) / L"RabbitEars";
+    if (vids) CoTaskMemFree(vids);
+    if (dir.empty()) dir = std::filesystem::temp_directory_path() / L"RabbitEars";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir.wstring();
+}
+
+std::wstring recordingPath(const std::wstring& channelName, const std::wstring& ext) {
+    std::wstring name = channelName;
+    for (wchar_t& ch : name)
+        if (ch < 0x20 || wcschr(L"\\/:*?\"<>|'{},", ch)) ch = L'_';  // filename- + sout-safe
+    if (name.empty()) name = L"channel";
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    wchar_t ts[32];
+    swprintf_s(ts, L"%04d-%02d-%02d %02d-%02d-%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+               t.wSecond);
+    return recordingsDir() + L"\\" + name + L" - " + ts + ext;
+}
+
+void onToggleRecord(AppState* st) {
+    if (st->player.isRecording()) {
+        const std::wstring file = st->player.recordingFile();
+        st->player.stopRecording();
+        SetWindowTextW(st->btnRec, L"Record");
+        setStatus(st, L"Recording saved: " + file);
+        return;
+    }
+    if (st->nowPlaying.id == 0) {
+        setStatus(st, L"Play a channel first, then Record.");
+        return;
+    }
+    const std::wstring ext = (st->recFormat == L"mkv") ? L".mkv" : L".ts";
+    const std::string mux = (st->recFormat == L"mkv") ? "mkv" : "ts";
+    const std::wstring path = recordingPath(st->nowPlaying.name, ext);
+    if (st->player.startRecording(st->nowPlaying.streamUrl, st->nowPlaying.userAgent,
+                                  st->nowPlaying.referrer, path, mux)) {
+        SetWindowTextW(st->btnRec, L"Stop Rec");
+        setStatus(st, L"● Recording " + st->nowPlaying.name + L"  →  " + path);
+    }
+}
+
+// Serialize the category include-set as a newline-joined list. Group titles come
+// from a single M3U line so they never contain a newline; an empty stored value
+// means the filter is off (show everything).
+std::wstring joinCategories(const std::set<std::wstring>& s) {
+    std::wstring out;
+    for (const std::wstring& g : s) {
+        if (!out.empty()) out += L'\n';
+        out += g;
+    }
+    return out;
+}
+
+std::set<std::wstring> splitCategories(const std::wstring& s) {
+    std::set<std::wstring> out;
+    std::wstring cur;
+    for (wchar_t ch : s) {
+        if (ch == L'\n') {
+            if (!cur.empty()) out.insert(cur);
+            cur.clear();
+        } else {
+            cur += ch;
+        }
+    }
+    if (!cur.empty()) out.insert(cur);
+    return out;
+}
+
+// Settings → Categories…: a checklist over the distinct group titles. The include
+// set is normalized so "all checked" and "none checked" both mean no restriction.
+void onCategories(AppState* st) {
+    std::vector<std::wstring> groups = st->db.listGroups();
+    if (groups.empty()) {
+        setStatus(st, L"No categories yet — add a playlist first.");
+        return;
+    }
+    std::set<std::wstring> checked;
+    if (st->categoryActive)
+        checked = st->categories;
+    else
+        checked.insert(groups.begin(), groups.end());  // all checked == no restriction
+
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (!chooseCategories(st->hwnd, hInst, st->dpi, groups, checked))
+        return;  // cancelled — leave the current filter untouched
+
+    const std::set<std::wstring> allSet(groups.begin(), groups.end());
+    if (checked.empty() || checked == allSet) {
+        st->categoryActive = false;
+        st->categories.clear();
+        st->db.setSetting(L"category_filter", L"");
+    } else {
+        st->categoryActive = true;
+        st->categories = std::move(checked);
+        st->db.setSetting(L"category_filter", joinCategories(st->categories));
+    }
+    loadForFilter(st);  // re-apply to the current nav view (mirrors Hide unavailable)
+}
+
+// Start/stop the audio spectrum tap to match the spectrum meter's visibility (no
+// point capturing audio nobody's watching). The tap is read-only WASAPI loopback,
+// so this never affects playback; on failure it just delivers nothing.
+void syncSpectrumTap(AppState* st) {
+    if (st->showSpectrum && st->meterSpectrum) {
+        if (!st->spectrumTap.running()) {
+            HWND m = st->meterSpectrum;
+            st->spectrumTap.start(
+                [m](const float* bands) { miniMeterPushSpectrum(m, bands, SpectrumTap::kBands); });
+        }
+    } else {
+        st->spectrumTap.stop();
+    }
+}
+
+// Clear the stat-driven mini meters back to idle (the spectrum decays on its own
+// once the audio goes silent).
+void resetStatMeters(AppState* st) {
+    miniMeterReset(st->meterSignal);
+    miniMeterReset(st->meterBitrate);
+    miniMeterReset(st->meterFrames);
+}
+
+// Command-bar Settings menu: Open File, About, recording format, and view toggles.
+void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
+    HMENU fmt = CreatePopupMenu();
+    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mkv" ? 0u : MF_CHECKED), ID_FMT_TS,
+                L"MPEG-TS  (.ts)");
+    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mkv" ? MF_CHECKED : 0u), ID_FMT_MKV,
+                L"Matroska  (.mkv)");
+
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, ID_OPEN_FILE, L"Open File…");
+    AppendMenuW(m, MF_STRING, ID_ABOUT, L"About RabbitEars");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(fmt), L"Recording format");
+    AppendMenuW(m, MF_STRING | (st->hideDead ? MF_CHECKED : 0u), ID_HIDE_DEAD,
+                L"Hide unavailable channels");
+    std::wstring catLabel = L"Categories…";
+    if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
+    AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
+                catLabel.c_str());
+
+    HMENU meters = CreatePopupMenu();
+    AppendMenuW(meters, MF_STRING | (st->showSpectrum ? MF_CHECKED : 0u), ID_MTR_SPECTRUM,
+                L"Audio spectrum");
+    AppendMenuW(meters, MF_STRING | (st->showSignal ? MF_CHECKED : 0u), ID_MTR_SIGNAL,
+                L"Signal strength");
+    AppendMenuW(meters, MF_STRING | (st->showBitrate ? MF_CHECKED : 0u), ID_MTR_BITRATE, L"Bitrate");
+    AppendMenuW(meters, MF_STRING | (st->showFrames ? MF_CHECKED : 0u), ID_MTR_FRAMES, L"Frame rate");
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(meters), L"Meters");
+
+    POINT pt{anchor.left, anchor.bottom};
+    ClientToScreen(hwnd, &pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, nullptr);
+    DestroyMenu(m);  // frees the submenu too
+    switch (cmd) {
+        case ID_OPEN_FILE:
+            onOpenFile(st);
+            break;
+        case ID_ABOUT:
+            showAbout(hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
+                      st->dpi);
+            break;
+        case ID_FMT_TS:
+            st->recFormat = L"ts";
+            st->db.setSetting(L"rec_format", L"ts");
+            break;
+        case ID_FMT_MKV:
+            st->recFormat = L"mkv";
+            st->db.setSetting(L"rec_format", L"mkv");
+            break;
+        case ID_HIDE_DEAD:
+            st->hideDead = !st->hideDead;
+            st->db.setSetting(L"hide_dead", st->hideDead ? L"1" : L"0");
+            loadForFilter(st);
+            break;
+        case ID_CATEGORIES:
+            onCategories(st);
+            break;
+        case ID_MTR_SPECTRUM:
+            st->showSpectrum = !st->showSpectrum;
+            st->db.setSetting(L"meter_spectrum", st->showSpectrum ? L"1" : L"0");
+            syncSpectrumTap(st);
+            layout(hwnd, st);
+            break;
+        case ID_MTR_SIGNAL:
+            st->showSignal = !st->showSignal;
+            st->db.setSetting(L"meter_signal", st->showSignal ? L"1" : L"0");
+            layout(hwnd, st);
+            break;
+        case ID_MTR_BITRATE:
+            st->showBitrate = !st->showBitrate;
+            st->db.setSetting(L"meter_bitrate", st->showBitrate ? L"1" : L"0");
+            layout(hwnd, st);
+            break;
+        case ID_MTR_FRAMES:
+            st->showFrames = !st->showFrames;
+            st->db.setSetting(L"meter_frames", st->showFrames ? L"1" : L"0");
+            layout(hwnd, st);
+            break;
+    }
 }
 
 // ---- window procs ----------------------------------------------------------
@@ -609,6 +917,8 @@ void createChildren(HWND hwnd, AppState* st) {
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_PLAY)), hInst, nullptr);
     st->btnStop = CreateWindowExW(0, L"BUTTON", L"Stop", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_STOP)), hInst, nullptr);
+    st->btnRec = CreateWindowExW(0, L"BUTTON", L"Record", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_REC)), hInst, nullptr);
     // Speaker glyph (Segoe MDL2 "Volume") so the slider is obviously the volume.
     st->volIcon = CreateWindowExW(0, L"STATIC", L"",
                                   WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE | SS_NOTIFY, 0, 0,
@@ -629,6 +939,11 @@ void createChildren(HWND hwnd, AppState* st) {
     st->bufferMeter = createBufferMeter(hwnd, hInst, ID_BUFFER, st->dpi);
     bufferMeterSetOnHiddenChanged(st->bufferMeter,
                                   [st](bool hidden) { st->db.setSetting(L"buffer_hidden", hidden ? L"1" : L"0"); });
+    registerMiniMeterClass(hInst);
+    st->meterSpectrum = createMiniMeter(hwnd, hInst, ID_METER_SPECTRUM, st->dpi, MeterKind::Spectrum);
+    st->meterSignal = createMiniMeter(hwnd, hInst, ID_METER_SIGNAL, st->dpi, MeterKind::Signal);
+    st->meterBitrate = createMiniMeter(hwnd, hInst, ID_METER_BITRATE, st->dpi, MeterKind::Bitrate);
+    st->meterFrames = createMiniMeter(hwnd, hInst, ID_METER_FRAMES, st->dpi, MeterKind::Frames);
 
     SendMessageW(st->volBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
     SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->player.volume());
@@ -649,15 +964,16 @@ void createChildren(HWND hwnd, AppState* st) {
         ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
         ti.hwnd = hwnd;  // owner receives TTN_GETDISPINFO
         ti.lpszText = LPSTR_TEXTCALLBACKW;
-        for (HWND tool : {st->volBar, st->volIcon, st->bufBar, st->bufferMeter}) {
+        for (HWND tool : {st->volBar, st->volIcon, st->bufBar, st->bufferMeter, st->meterSpectrum,
+                          st->meterSignal, st->meterBitrate, st->meterFrames}) {
             ti.uId = reinterpret_cast<UINT_PTR>(tool);
             SendMessageW(st->tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
         }
         SendMessageW(st->tip, TTM_SETMAXTIPWIDTH, 0, dp(280, st->dpi));  // enable multiline (meter stats)
     }
 
-    for (HWND h : {st->search, st->btnPlay, st->btnStop, st->btnFull, st->status, st->volBar, st->bufBar,
-                   st->bufLabel, st->nav}) {
+    for (HWND h : {st->search, st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->status, st->volBar,
+                   st->bufBar, st->bufLabel, st->nav}) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
@@ -702,6 +1018,18 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     bufferMeterSetHidden(st->bufferMeter, true);
                 if (auto bm = st->db.getSetting(L"buffer_ms"); bm && !bm->empty())
                     setBufferMs(st, _wtoi(bm->c_str()), /*replay=*/false);
+                if (auto rf = st->db.getSetting(L"rec_format"); rf && (*rf == L"ts" || *rf == L"mkv"))
+                    st->recFormat = *rf;
+                if (auto hd = st->db.getSetting(L"hide_dead"); hd && *hd == L"1") st->hideDead = true;
+                if (auto cf = st->db.getSetting(L"category_filter"); cf && !cf->empty()) {
+                    st->categories = splitCategories(*cf);
+                    st->categoryActive = !st->categories.empty();
+                }
+                if (auto v = st->db.getSetting(L"meter_spectrum")) st->showSpectrum = (*v == L"1");
+                if (auto v = st->db.getSetting(L"meter_signal")) st->showSignal = (*v == L"1");
+                if (auto v = st->db.getSetting(L"meter_bitrate")) st->showBitrate = (*v == L"1");
+                if (auto v = st->db.getSetting(L"meter_frames")) st->showFrames = (*v == L"1");
+                syncSpectrumTap(st);
                 refreshNav(st);
                 st->filter = {ViewKind::All};
                 loadForFilter(st);
@@ -718,6 +1046,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_NCCALCSIZE:
             if (wParam) {
+                if (st->fullscreen) return 0;  // client fills the whole (borderless) window
                 const UINT dpi = st->dpi ? st->dpi : 96;
                 const int fx = GetSystemMetricsForDpi(SM_CXFRAME, dpi) +
                                GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
@@ -733,7 +1062,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         case WM_NCHITTEST: {
             LRESULT hit = DefWindowProcW(hwnd, msg, wParam, lParam);
-            if (hit == HTCLIENT && !IsZoomed(hwnd)) {
+            if (hit == HTCLIENT && !st->fullscreen && !IsZoomed(hwnd)) {
                 POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
                 ScreenToClient(hwnd, &pt);
                 if (pt.y < dp(6, st->dpi)) return HTTOP;
@@ -800,7 +1129,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             for (const BtnRect& b : cmdButtonRects(hwnd, st))
                 if (PtInRect(&b.rc, pt)) {
-                    SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(b.id, 0), 0);
+                    if (b.id == ID_SETTINGS)
+                        showSettingsMenu(hwnd, st, b.rc);
+                    else
+                        SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(b.id, 0), 0);
                     return 0;
                 }
             // empty area: drag the window
@@ -838,7 +1170,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 } else {
                     // Global search across the whole library (any name/group/tvg match),
                     // not just the current nav view.
-                    channelGridSetChannels(st->grid, st->db.searchChannels(q));
+                    std::vector<Channel> hits = st->db.searchChannels(q);
+                    applyChannelFilters(st, hits);
+                    channelGridSetChannels(st->grid, std::move(hits));
                     channelGridSetNowPlaying(st->grid, st->nowPlayingId);
                     updateCounts(st);
                 }
@@ -856,8 +1190,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     st->nowPlayingId = 0;
                     channelGridSetNowPlaying(st->grid, 0);
                     bufferMeterSetHealth(st->bufferMeter, 0);
+                    resetStatMeters(st);
                     setStatus(st, L"Stopped");
                     return 0;
+                case ID_BTN_REC: onToggleRecord(st); return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
             }
             return 0;
@@ -900,6 +1236,22 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     swprintf_s(buf, L"Network buffer: %.1f s (receive->show delay)",
                                st->player.networkCaching() / 1000.0);
                     di->lpszText = buf;
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterSpectrum)) {
+                    di->lpszText = const_cast<LPWSTR>(L"Audio spectrum (this app's sound)");
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterSignal)) {
+                    di->lpszText = const_cast<LPWSTR>(L"Signal strength (stream health)");
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterBitrate)) {
+                    di->lpszText = const_cast<LPWSTR>(L"Stream bitrate history");
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterFrames)) {
+                    di->lpszText = const_cast<LPWSTR>(L"Frame rate (flares red on dropped frames)");
                     return 0;
                 }
                 const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
@@ -1031,19 +1383,31 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             swprintf_s(m, L"%.0f kb/s", bps / 1.0e3);
                     }
                     bufferMeterSetMetrics(st->bufferMeter, m);
+                    // Feed the modular stat meters off the same real snapshot.
+                    const float strength =
+                        fs.playing ? std::clamp((0.35f + 0.65f * flow) * (1.0f - trouble), 0.0f, 1.0f)
+                                   : 0.0f;
+                    miniMeterSetSignal(st->meterSignal, strength, trouble);
+                    miniMeterPushBitrate(st->meterBitrate, fs.demuxBytesPerSec);
+                    miniMeterSetFrames(st->meterFrames,
+                                       static_cast<int>(std::lround(fs.displayedPerSec)),
+                                       fs.lostPicturesDelta);
                     break;
                 }
                 case PlayerEvent::Stopped:
                     bufferMeterSetHealth(st->bufferMeter, 0);
+                    resetStatMeters(st);
                     diag::info(L"event: Stopped");
                     break;
                 case PlayerEvent::EndReached:
                     bufferMeterSetHealth(st->bufferMeter, 0);
+                    resetStatMeters(st);
                     setStatus(st, L"Stream ended");
                     diag::info(L"event: EndReached — " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
+                    resetStatMeters(st);
                     setStatus(st, L"Unavailable (offline or geo-locked): " + st->nowPlayingName);
                     diag::error(L"event: PLAYBACK ERROR (offline / geo-locked / codec) — " +
                                 st->nowPlayingName);
@@ -1064,11 +1428,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_GETMINMAXINFO: {
             auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-            mmi->ptMinTrackSize.x = dp(960, st->dpi);
+            mmi->ptMinTrackSize.x = dp(1060, st->dpi);
             mmi->ptMinTrackSize.y = dp(480, st->dpi);
             return 0;
         }
         case WM_DESTROY:
+            st->spectrumTap.stop();  // join the capture thread before the meter HWNDs die
             st->player.stop();
             if (st->uiFont) DeleteObject(st->uiFont);
             if (st->titleFont) DeleteObject(st->titleFont);
@@ -1150,7 +1515,8 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     // so DWM keeps compositing it while this thread is busy building the main window.
     HWND splash = showSplash(hInst);
 
-    INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_BAR_CLASSES | ICC_TREEVIEW_CLASSES | ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_BAR_CLASSES | ICC_TREEVIEW_CLASSES |
+                                              ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
     registerClasses(hInst);
 
@@ -1164,10 +1530,28 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
         Gdiplus::GdiplusShutdown(gdipToken);
         return 1;
     }
+    // First run: require accepting the Terms of Use before the app is usable. The
+    // main window exists (DB opened in WM_CREATE) but is not shown yet, so the gate
+    // appears on its own; declining tears everything down and exits.
+    if (st->db.isOpen() && !st->db.getSetting(L"tos_accepted")) {
+        closeSplash(splash);  // don't leave the splash behind the modal gate
+        splash = nullptr;
+        if (!showTerms(hwnd, hInst, st->dpi)) {
+            diag::info(L"Terms declined — exiting");
+            DestroyWindow(hwnd);
+            delete st;
+            Gdiplus::GdiplusShutdown(gdipToken);
+            diag::shutdown();
+            return 0;
+        }
+        st->db.setSetting(L"tos_accepted", L"1");
+        diag::info(L"Terms accepted (first run)");
+    }
+
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
-    closeSplash(splash);  // main window is up
+    if (splash) closeSplash(splash);  // main window is up (already closed on the first-run path)
 
     initUpdater();  // WinSparkle: start background update checks
 

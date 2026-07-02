@@ -46,7 +46,7 @@ endif()
 # Version header — APP_VERSION + git commit count -> build/generated/version.h
 # (BUILD_NUMBER is monotonic per commit, for WinSparkle update comparison).
 # ---------------------------------------------------------------------------
-set(APP_VERSION "0.1.1")
+set(APP_VERSION "0.1.2")
 find_package(Git QUIET)
 set(BUILD_NUMBER 0)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -120,9 +120,11 @@ if(RABBITEARS_BUILD_GUI)
     src/ui/MainWindow.cpp
     src/ui/ChannelGridControl.cpp
     src/ui/BufferMeter.cpp
+    src/ui/MiniMeter.cpp
     src/ui/Dialogs.cpp
     src/ui/Splash.cpp
     src/ui/VlcPlayer.cpp
+    src/audio/SpectrumTap.cpp
     src/platform/Log.cpp
     src/platform/Updater.cpp
     packaging/RabbitEars.rc)
@@ -136,7 +138,7 @@ if(RABBITEARS_BUILD_GUI)
   target_link_libraries(RabbitEars PRIVATE
     RabbitEarsCore ${LIBVLC_LIBS} WinSparkle
     comctl32 comdlg32 dwmapi uxtheme gdi32 gdiplus shell32 user32 kernel32 ole32 version
-    d2d1 dwrite windowscodecs winhttp)
+    d2d1 dwrite windowscodecs winhttp mmdevapi)
   if(MSVC)
     target_link_options(RabbitEars PRIVATE /MANIFEST:NO)  # manifest is embedded via the .rc
   endif()
