@@ -15,11 +15,12 @@ void initUpdater() {
     // Report marketing.build (e.g. 0.1.0.42) so each committed build compares
     // correctly against the appcast's sparkle:version.
     win_sparkle_set_app_details(L"RabbitEars", L"RabbitEars", RE_VERSION_FULL_W);
-    // EdDSA public key — REPLACE with your own from WinSparkle's generate_keys.exe
-    // before shipping signed updates. The all-zero placeholder makes every update
-    // fail signature verification (safe: nothing installs until this is set), and
-    // sign each release enclosure with the matching private key via sign_update.
-    win_sparkle_set_eddsa_public_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+    // EdDSA public key — shared with the sibling apps' macOS Sparkle key pair (same
+    // string as their SUPublicEDKey), so release packages are signed on macOS with
+    // the existing private key via Sparkle's sign_update. See docs/RELEASING.md.
+    // (To isolate RabbitEars, generate a dedicated key pair and paste its public
+    // key here instead.)
+    win_sparkle_set_eddsa_public_key("sKPprIa95Hw+DX3bMoxWMsyC0w9vc4MzEpgx7TBDP1I=");
     win_sparkle_init();
 }
 

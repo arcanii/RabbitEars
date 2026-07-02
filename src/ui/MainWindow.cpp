@@ -27,8 +27,10 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/Http.h"
 #include "core/M3uParser.h"
 #include "db/Database.h"
+#include "platform/Log.h"
 #include "platform/Updater.h"
 #include "resource.h"
+#include "version.h"
 #include "ui/BufferMeter.h"
 #include "ui/ChannelGridControl.h"
 #include "ui/Dialogs.h"
@@ -420,6 +422,8 @@ void refreshNav(AppState* st) {
 }
 
 void playChannel(AppState* st, const Channel& c) {
+    diag::info(L"select channel #" + std::to_wstring(c.id) + L" \"" + c.name + L"\" ua=[" +
+               c.userAgent + L"] ref=[" + c.referrer + L"]");
     if (st->player.isReady()) st->player.play(c.streamUrl, c.userAgent, c.referrer);
     st->nowPlayingId = c.id;
     st->nowPlayingName = c.name;
@@ -497,9 +501,12 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
         st->filter = {ViewKind::Playlist, L"", pid};
         loadForFilter(st);
         setStatus(st, L"Added " + std::to_wstring(n) + L" channels from " + res->name);
+        diag::info(L"playlist added: \"" + res->name + L"\" (" + std::to_wstring(n) +
+                   L" channels) from " + res->source);
     } else {
         std::wstring msg = res->error.empty() ? L"No channels found." : res->error;
         setStatus(st, L"Add playlist failed: " + msg);
+        diag::error(L"playlist add failed from " + res->source + L": " + msg);
     }
     delete res;
 }
@@ -595,8 +602,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             st->player.attach(st->video);
             st->player.setEventTarget(hwnd, WM_APP_VLC);
 
+            const std::wstring dbPath = Database::defaultDbPath();
             std::wstring err;
-            if (st->db.open(Database::defaultDbPath(), &err)) {
+            if (st->db.open(dbPath, &err)) {
                 if (auto sw = st->db.getSetting(L"sidebar_w")) st->sidebarW = _wtoi(sw->c_str());
                 if (auto bh = st->db.getSetting(L"buffer_hidden"); bh && *bh == L"1")
                     bufferMeterSetHidden(st->bufferMeter, true);
@@ -606,8 +614,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 int total = 0;
                 channelGridGetCounts(st->grid, nullptr, &total);
                 if (total == 0) setStatus(st, L"No channels yet — click “+ Add Playlist”.");
+                diag::info(L"db opened: " + dbPath + L" (" + std::to_wstring(total) + L" channels)");
             } else {
                 setStatus(st, L"Database error: " + err);
+                diag::error(L"db open FAILED: " + dbPath + L" — " + err);
             }
             layout(hwnd, st);
             return 0;
@@ -779,6 +789,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case PlayerEvent::Opening:
                     bufferMeterSetHealth(st->bufferMeter, 15);
                     setStatus(st, L"Opening: " + st->nowPlayingName);
+                    diag::info(L"event: Opening — " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Buffering: {
                     const int pct = static_cast<int>(lParam);
@@ -789,6 +800,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case PlayerEvent::Playing:
                     bufferMeterSetHealth(st->bufferMeter, 100);
                     setStatus(st, L"Playing: " + st->nowPlayingName);
+                    diag::info(L"event: Playing — " + st->nowPlayingName);
                     if (st->nowPlayingId) {
                         st->db.setDeadStatus(st->nowPlayingId, DeadStatus::Alive,
                                              static_cast<long long>(time(nullptr)));
@@ -797,6 +809,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     break;
                 case PlayerEvent::Paused:
                     setStatus(st, L"Paused: " + st->nowPlayingName);
+                    diag::info(L"event: Paused — " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Stats: {
                     // Turn real stream stats into honest meter signals.
@@ -817,14 +830,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     bufferMeterSetFlow(st->bufferMeter, flow, trouble);
                     break;
                 }
-                case PlayerEvent::Stopped: bufferMeterSetHealth(st->bufferMeter, 0); break;
+                case PlayerEvent::Stopped:
+                    bufferMeterSetHealth(st->bufferMeter, 0);
+                    diag::info(L"event: Stopped");
+                    break;
                 case PlayerEvent::EndReached:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     setStatus(st, L"Stream ended");
+                    diag::info(L"event: EndReached — " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     setStatus(st, L"Unavailable (offline or geo-locked): " + st->nowPlayingName);
+                    diag::error(L"event: PLAYBACK ERROR (offline / geo-locked / codec) — " +
+                                st->nowPlayingName);
                     if (st->nowPlayingId) {
                         st->db.setDeadStatus(st->nowPlayingId, DeadStatus::Dead,
                                              static_cast<long long>(time(nullptr)));
@@ -916,6 +935,8 @@ void registerClasses(HINSTANCE hInst) {
 }  // namespace
 
 int runApp(HINSTANCE hInst, int nCmdShow) {
+    diag::init(RE_VERSION_DISPLAY_W);
+
     Gdiplus::GdiplusStartupInput gdipInput;
     ULONG_PTR gdipToken = 0;
     Gdiplus::GdiplusStartup(&gdipToken, &gdipInput, nullptr);
@@ -947,6 +968,7 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     shutdownUpdater();
     delete st;
     Gdiplus::GdiplusShutdown(gdipToken);
+    diag::shutdown();
     return static_cast<int>(m.wParam);
 }
 

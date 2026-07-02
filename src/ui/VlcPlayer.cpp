@@ -2,10 +2,13 @@
 #include "ui/VlcPlayer.h"
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 
 #include <vlc/vlc.h>
 
 #include "platform/Encoding.h"
+#include "platform/Log.h"
 
 namespace rabbitears {
 namespace {
@@ -18,6 +21,19 @@ constexpr int kStatsPollMs = 250;
 // thread — only touches atomics + PostMessage (thread-safe), never mp_.
 void vlcEventThunk(const libvlc_event_t* e, void* opaque) {
     static_cast<VlcPlayer*>(opaque)->handleVlcEvent(e);
+}
+
+// libVLC's own log, routed into our diagnostic file (warnings + errors only, so
+// it stays small). Runs on libVLC threads — diag::write is thread-safe. This is
+// the payload for diagnosing why a stream won't play on a tester's machine.
+void vlcLogCb(void*, int level, const libvlc_log_t*, const char* fmt, va_list args) {
+    if (level < LIBVLC_WARNING) return;
+    char buf[1024];
+    va_list ap;
+    va_copy(ap, args);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    diag::write(level >= LIBVLC_ERROR ? L"VLC-ERR" : L"VLC-WARN", wideFromUtf8(buf));
 }
 
 }  // namespace
@@ -33,6 +49,7 @@ VlcPlayer::~VlcPlayer() {
         if (worker_.joinable()) worker_.join();
     }
     if (inst_) {
+        libvlc_log_unset(inst_);
         libvlc_release(inst_);
         inst_ = nullptr;
     }
@@ -42,12 +59,19 @@ bool VlcPlayer::init() {
     if (inst_) return true;
     // NB: stats collection is left ENABLED (no "--no-stats") so we can sample
     // real throughput + packet health per media and drive the buffer meter.
+    // "--quiet" is dropped so libVLC emits its warning/error log, which we route
+    // to the diagnostic file via libvlc_log_set (invaluable for stream triage).
     const char* args[] = {
         "--intf=dummy",       "--no-video-title-show", "--no-osd",
-        "--network-caching=1000", "--http-reconnect",  "--quiet",
+        "--network-caching=1000", "--http-reconnect",
     };
     inst_ = libvlc_new(static_cast<int>(sizeof(args) / sizeof(args[0])), args);
-    if (!inst_) return false;
+    if (!inst_) {
+        diag::error(L"libVLC init failed (libvlc_new returned null)");
+        return false;
+    }
+    libvlc_log_set(inst_, vlcLogCb, this);
+    diag::info(L"libVLC " + wideFromUtf8(libvlc_get_version()) + L" initialized");
     worker_ = std::thread(&VlcPlayer::workerLoop, this);
     started_ = true;
     return true;
@@ -139,9 +163,13 @@ void VlcPlayer::doStop() {
 void VlcPlayer::doPlay(const Cmd& c) {
     doStop();
     if (!inst_) return;
+    diag::info(L"play: " + c.url);
     const std::string u = utf8FromWide(c.url);
     libvlc_media_t* m = libvlc_media_new_location(inst_, u.c_str());
-    if (!m) return;
+    if (!m) {
+        diag::error(L"libvlc_media_new_location failed for: " + c.url);
+        return;
+    }
     libvlc_media_add_option(m, ":network-caching=1500");
     if (!c.userAgent.empty())
         libvlc_media_add_option(m, (":http-user-agent=" + utf8FromWide(c.userAgent)).c_str());
@@ -151,6 +179,7 @@ void VlcPlayer::doPlay(const Cmd& c) {
     mp_ = libvlc_media_player_new_from_media(m);
     if (!mp_) {
         libvlc_media_release(m);
+        diag::error(L"libvlc_media_player_new_from_media failed");
         return;
     }
     media_ = m;  // retain the media ref so sampleStats() can read its counters

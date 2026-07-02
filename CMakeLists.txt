@@ -46,7 +46,7 @@ endif()
 # Version header — APP_VERSION + git commit count -> build/generated/version.h
 # (BUILD_NUMBER is monotonic per commit, for WinSparkle update comparison).
 # ---------------------------------------------------------------------------
-set(APP_VERSION "0.1.0")
+set(APP_VERSION "0.1.1")
 find_package(Git QUIET)
 set(BUILD_NUMBER 0)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -122,6 +122,7 @@ if(RABBITEARS_BUILD_GUI)
     src/ui/BufferMeter.cpp
     src/ui/Dialogs.cpp
     src/ui/VlcPlayer.cpp
+    src/platform/Log.cpp
     src/platform/Updater.cpp
     packaging/RabbitEars.rc)
   # The .rc pulls in app.manifest, app.ico, and the About PNG — declare them so
