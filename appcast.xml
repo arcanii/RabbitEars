@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>RabbitEars (Win32) Updates</title>
+    <link>https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml</link>
+    <description>Most recent updates to RabbitEars for Windows</description>
+    <language>en</language>
+    <item>
+      <title>Version 0.1.1.15</title>
+      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.1.1</sparkle:releaseNotesLink>
+      <pubDate>Thu, 02 Jul 2026 02:34:30 +0000</pubDate>
+      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.1.1/RabbitEars-0.1.1-setup.exe"
+                 sparkle:version="0.1.1.15"
+                 sparkle:edSignature="YyztUKw/tF4TPxrwD+M7K1d3/lRLQulD+MUIHG04k6cMEu81Mp4UanZ0/x3sti8uxaHwaxg+0lN2MpIbrDk3AA=="
+                 length="33389356"
+                 type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
