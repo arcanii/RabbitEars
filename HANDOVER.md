@@ -26,12 +26,13 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.1 SHIPPED; a 0.1.2 batch is in the working tree
+## Current state — v0.1.2 SHIPPED
 
-**Released:** `v0.1.1` (2026-07-02), tag `v0.1.1` @ `f76a7cb`, public GitHub
-release with a signed **`RabbitEars-0.1.1-setup.exe`** installer and a working
-**WinSparkle auto-update feed**. `origin/main` == `60f1f26` (appcast published).
-`v0.1.0` was an earlier portable-zip release.
+**Released:** `v0.1.2` (2026-07-02), tag `v0.1.2` @ `8c99254`, public GitHub release
+with a signed **`RabbitEars-0.1.2-setup.exe`** installer (full version `0.1.2.19`) and a
+**live WinSparkle auto-update feed**. `origin/main` == `713cb09` (appcast published).
+Earlier: `v0.1.1` (signed installer + live feed, baseline for auto-update), `v0.1.0`
+(portable zip). 0.1.1 users get 0.1.2 automatically.
 
 The engine + full GUI are complete and proven end-to-end. **Auto-update is confirmed
 working** (About → Check for Updates reports "up to date" against the live appcast).
@@ -43,8 +44,8 @@ working** (About → Check for Updates reports "up to date" against the live app
 > here and is the way to exercise the core headlessly. The owner runs on the same
 > machine (real DB at `%LOCALAPPDATA%\RabbitEars\`, ~12,905 channels from iptv-org).
 
-### Uncommitted 0.1.2 batch (working tree: `MainWindow.cpp`, `VlcPlayer.{h,cpp}`, `Dialogs.{h,cpp}`, new `ui/MiniMeter.{h,cpp}` + `audio/SpectrumTap.{h,cpp}`, `CMakeLists.txt`)
-All build clean at `/W4`; **not yet committed**. Verify visually, then commit.
+### Shipped in 0.1.2 (committed @ `8c99254`, tag `v0.1.2`)
+All `/W4` clean; committed + released. (These were the working-tree batch; now on `main`.)
 - **Real fullscreen** — Fullscreen (button / double-click video / Esc) now saves
   the window placement+style, switches to a **borderless popup covering the whole
   monitor** (taskbar hidden), and restores on exit. Frame-inset (`WM_NCCALCSIZE`)
@@ -271,23 +272,22 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-`HEAD == origin/main == 60f1f26`; tags `v0.1.0`, `v0.1.1`. The **0.1.2 batch**
-(fullscreen, recording, settings menu, format, hide-unavailable, **categories filter**,
-**modular meters + audio spectrum**) is **uncommitted** in `MainWindow.cpp` +
-`VlcPlayer.{h,cpp}` + `Dialogs.{h,cpp}` + new `ui/MiniMeter.{h,cpp}` +
-`audio/SpectrumTap.{h,cpp}` + `CMakeLists.txt`. Commit/push only when the owner asks;
+`HEAD == origin/main == 713cb09`; tags `v0.1.0`, `v0.1.1`, `v0.1.2`. The 0.1.2 batch
+(fullscreen, recording, settings menu, format, hide-unavailable, categories filter,
+modular meters + audio spectrum, first-run T&C, no bundled playlist) is **committed +
+released** (`8c99254`). The working tree is clean. Commit/push only when the owner asks;
 stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`);
 end commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **Owner:** run the 0.1.2 build — verify real fullscreen, Record (play → Record →
-   Stop Rec → open the `.ts` in VLC), the Settings menu, TS/MKV format, and
-   Hide-unavailable. Then commit the 0.1.2 batch.
-2. **Build the Categories… checklist dialog** (last of the requested batch).
-3. **Cut 0.1.2** (bump 4 places → build → installer → sign on Mac → appcast →
-   release) — this also gives auto-update its first real update test (0.1.1 → 0.1.2).
-4. Then Phase 2 scheduled recording, or backlog items above.
+1. **Owner:** verify the shipped 0.1.2 in the wild — the meters (Settings → Meters:
+   the audio spectrum should react to *this app's* audio only; signal/bitrate/frames),
+   the Categories filter, the first-run **T&C** gate, that **Add Playlist starts empty**,
+   real fullscreen, and recording. Confirm the **0.1.1 → 0.1.2 auto-update** prompt
+   appears (About → Check for Updates) — this is the first live update test.
+2. **Next:** Recording Phase 2 (scheduled), resume-last-channel on launch,
+   DPI-change relayout (`WM_DPICHANGED`), or Authenticode signing — see Backlog.
 
 ## Seed prompt for a new session
 
