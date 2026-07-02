@@ -49,8 +49,9 @@ portable zip for people who prefer it; those users update manually).
    the whole `plugins\` tree, WinSparkle, and LICENSE).
 4. **Sign the installer** with the private key and copy the printed
    `sparkle:edSignature`:
-   - macOS: `./bin/sign_update build/installer/RabbitEars-<ver>-setup.exe`
-   - Windows: `sign_update.exe build\installer\RabbitEars-<ver>-setup.exe`
+   - macOS (copy the installer over first): `scripts/sign-release.sh RabbitEars-<ver>-setup.exe`
+     — wraps Sparkle's `sign_update` (login-Keychain key) and prints just the signature.
+   - Windows (if the key is there): `sign_update.exe build\installer\RabbitEars-<ver>-setup.exe`
 5. **Generate the appcast** (writes `appcast.xml` at the repo root):
    ```cmd
    pwsh scripts\make-appcast.ps1 -Version 0.1.1.<build> ^
