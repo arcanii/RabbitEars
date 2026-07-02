@@ -8,6 +8,9 @@ IDI_APPICON ICON "app.ico"
 // About-box artwork, embedded as raw PNG bytes; loaded via GDI+ at runtime.
 IDR_ABOUT_PNG RCDATA "../art/RabbitEars3.png"
 
+// Startup splash artwork (the branded logo), embedded as raw PNG bytes.
+IDR_SPLASH_PNG RCDATA "../art/RabbitEars_logo.png"
+
 // Application manifest (per-monitor-v2 DPI, Common Controls v6, UTF-8).
 // CREATEPROCESS_MANIFEST_RESOURCE_ID (1) / RT_MANIFEST (24). Path relative to
 // this .rc file (packaging/).

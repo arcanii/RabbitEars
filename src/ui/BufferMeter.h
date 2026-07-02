@@ -23,6 +23,9 @@ void bufferMeterSetHealth(HWND meter, int percent);
 // corruption/loss pressure (drives turbulence + violent splashes). Fed from
 // libVLC media stats; both ease smoothly so the surface responds without jitter.
 void bufferMeterSetFlow(HWND meter, float flowRate, float trouble);
+// Compact throughput readout drawn in the meter's top-right (e.g. L"12.4 Mb/s").
+// Pass L"" to clear it. Cleared automatically when health drops to 0.
+void bufferMeterSetMetrics(HWND meter, const wchar_t* text);
 // Hide/show the visualizer; while hidden the sim is paused (no CPU).
 void bufferMeterSetHidden(HWND meter, bool hidden);
 // Notified when the user toggles hide via the right-click menu (for persistence).

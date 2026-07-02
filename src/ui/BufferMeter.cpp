@@ -37,6 +37,10 @@ inline int IX(int i, int j) { return i + GW * j; }
 // it. Sizes are 96-dpi design values (DPI-scaled at draw time).
 constexpr int LED_PITCH = 5;  // cell + gap
 constexpr int LED_GAP   = 1;  // dark gap between cells
+// The grid shows only the bottom kVisibleFill fraction of the simulated tank, so a
+// healthy stream (rests at NORMAL_FILL) reaches near the top with a little splash
+// headroom instead of leaving dead unlit rows above. Lower = tighter crop.
+constexpr float kVisibleFill = 0.68f;
 
 // ---- tunables --------------------------------------------------------------
 constexpr int   ITER      = 8;
@@ -50,6 +54,7 @@ constexpr float VORT      = 0.18f;   // vorticity confinement (swirls)
 constexpr float INFLOW_VX = -6.0f;   // baseline right->left current (cells/s, u<0 = left)
 constexpr float WAVE_AMP  = 7.0f;    // travelling-wave impulse
 constexpr float SPLASH_VY = -22.0f;  // upward droplet ejection (v<0 = up)
+constexpr float POUR_VY   = 18.0f;   // downward pour-in velocity at the top-right (v>0 = down)
 constexpr float VMAX      = 26.0f;   // velocity clamp (stability at dt=0.12)
 constexpr float NORMAL_FILL = 0.5f;  // a healthy (100%) stream rests ~half-full
 
@@ -203,6 +208,8 @@ struct MeterState {
     HDC     dibDC = nullptr;
     uint32_t* bits = nullptr;
     int     dibW = 0, dibH = 0;  // current DIB size (client px); recreated on resize
+    wchar_t metrics[40] = L"";   // compact throughput/delay readout drawn over the grid
+    HFONT   metricsFont = nullptr;
     std::function<void(bool)> onHidden;
 };
 MeterState* stateOf(HWND h) { return reinterpret_cast<MeterState*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
@@ -267,6 +274,20 @@ void step(MeterState* st) {
                 f.u[IX(i, j)] += INFLOW_VX * (0.4f + 0.6f * w) * SIM_DT * 6.0f * jet;
             }
             for (int i = 1; i <= NX; ++i) f.u[IX(i, j)] += INFLOW_VX * 0.15f * SIM_DT * 6.0f * drift;
+        }
+    }
+    // (1b) POUR-IN: data cascades DOWN from the top on the right (scaled by
+    // throughput), falling onto the pool below — reads as the buffer being filled.
+    // Origin is the top of the *visible* tank so the drops are seen from the edge.
+    if (flow > 0.02f && fill > 0.05f) {
+        const int topJ = std::clamp(static_cast<int>((1.0f - kVisibleFill) * NY) + 1, 1, NY);
+        const int drops = 2 + static_cast<int>(flow * 3.0f);
+        for (int c = 0; c < drops; ++c) {
+            const int pi = std::clamp(NX - 3 - static_cast<int>(frand(st->rng) * 9), 1, NX);
+            const float pw = 0.35f + 0.65f * flow;
+            f.d[IX(pi, topJ)] = std::min(1.4f, f.d[IX(pi, topJ)] + 0.55f * pw);
+            f.v[IX(pi, topJ)] += POUR_VY * pw;                     // downward (v>0 = down)
+            f.u[IX(pi, topJ)] += (frand(st->rng) - 0.5f) * 4.0f;   // slight horizontal scatter
         }
     }
     // (2) density-scaled gravity + hydrostatic buoyancy -> a real wavy surface.
@@ -388,8 +409,11 @@ void renderLedBits(MeterState* st, const Theme& th, int W, int H) {
     const int oy = (H - (rows * pitch - gap)) / 2;
 
     const float SURF = 0.5f;
+    // Map rows onto the bottom kVisibleFill of the tank, dropping the never-lit
+    // zone above the healthy waterline + splash headroom.
+    const float loJ = (1.0f - kVisibleFill) * NY;
     for (int row = 0; row < rows; ++row) {
-        const float fj = (row + 0.5f) / rows * NY;
+        const float fj = loJ + (row + 0.5f) / rows * (NY - loJ);
         for (int col = 0; col < cols; ++col) {
             const float fi = (col + 0.5f) / cols * NX;
             const float d = sampleField(f.d.data(), fi, fj);
@@ -461,6 +485,26 @@ void ensureDib(HWND hwnd, MeterState* st, int W, int H) {
     if (st->dib) SelectObject(st->dibDC, st->dib);
 }
 
+// Overlay a small throughput readout (e.g. "12.4 Mb/s") in the top-right, with a
+// 1px shadow so it stays legible over lit LEDs. Font is cached (DPI-scaled).
+void drawMetrics(HDC hdc, MeterState* st, const Theme& th, int W, int H) {
+    if (!st->metricsFont)
+        st->metricsFont = CreateFontW(-dpx(st->dpi, 11), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, st->metricsFont));
+    const int oldMode = SetBkMode(hdc, TRANSPARENT);
+    RECT tr{0, dpx(st->dpi, 1), W - dpx(st->dpi, 4), H};
+    RECT sh = tr;
+    OffsetRect(&sh, dpx(st->dpi, 1), dpx(st->dpi, 1));
+    SetTextColor(hdc, RGB(0, 0, 0));
+    DrawTextW(hdc, st->metrics, -1, &sh, DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOCLIP);
+    SetTextColor(hdc, th.textPrimary);
+    DrawTextW(hdc, st->metrics, -1, &tr, DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOCLIP);
+    SetBkMode(hdc, oldMode);
+    SelectObject(hdc, oldFont);
+}
+
 void render(HWND hwnd, MeterState* st) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -480,6 +524,7 @@ void render(HWND hwnd, MeterState* st) {
         if (st->bits) {
             renderLedBits(st, th, W, H);
             BitBlt(hdc, 0, 0, W, H, st->dibDC, 0, 0, SRCCOPY);
+            if (st->metrics[0]) drawMetrics(hdc, st, th, W, H);
         }
     }
     EndPaint(hwnd, &ps);
@@ -544,6 +589,7 @@ LRESULT CALLBACK MeterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             stopTimer(hwnd, st);
             if (st->dibDC) DeleteDC(st->dibDC);
             if (st->dib) DeleteObject(st->dib);
+            if (st->metricsFont) DeleteObject(st->metricsFont);
             delete st;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             return 0;
@@ -580,9 +626,10 @@ void bufferMeterSetHealth(HWND meter, int percent) {
     MeterState* st = stateOf(meter);
     if (!st) return;
     st->target = std::clamp(percent, 0, 100) / 100.0f * NORMAL_FILL;
-    if (percent <= 0) {  // stopped / ended / error: no stream, so no flow either
+    if (percent <= 0) {  // stopped / ended / error: no stream, so no flow / metrics
         st->flowTarget = 0.0f;
         st->troubleTarget = 0.0f;
+        st->metrics[0] = L'\0';
     }
     if (!st->hidden) startTimer(meter, st);
 }
@@ -594,6 +641,13 @@ void bufferMeterSetFlow(HWND meter, float flowRate, float trouble) {
     // Latch the strongest recent trouble; step() decays it between samples.
     st->troubleTarget = std::max(st->troubleTarget, std::clamp(trouble, 0.0f, 1.0f));
     if (!st->hidden) startTimer(meter, st);
+}
+
+void bufferMeterSetMetrics(HWND meter, const wchar_t* text) {
+    MeterState* st = stateOf(meter);
+    if (!st) return;
+    lstrcpynW(st->metrics, text ? text : L"", 40);
+    if (!st->hidden) InvalidateRect(meter, nullptr, FALSE);
 }
 
 void bufferMeterSetHidden(HWND meter, bool hidden) {
@@ -612,6 +666,10 @@ void bufferMeterSetOnHiddenChanged(HWND meter, std::function<void(bool)> cb) {
 void bufferMeterSetDpi(HWND meter, UINT dpi) {
     if (MeterState* st = stateOf(meter)) {
         st->dpi = dpi;
+        if (st->metricsFont) {  // recreate at the new DPI on next paint
+            DeleteObject(st->metricsFont);
+            st->metricsFont = nullptr;
+        }
         InvalidateRect(meter, nullptr, FALSE);
     }
 }

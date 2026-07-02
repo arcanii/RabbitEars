@@ -170,7 +170,7 @@ void VlcPlayer::doPlay(const Cmd& c) {
         diag::error(L"libvlc_media_new_location failed for: " + c.url);
         return;
     }
-    libvlc_media_add_option(m, ":network-caching=1500");
+    libvlc_media_add_option(m, (":network-caching=" + std::to_string(cachingMs_.load())).c_str());
     if (!c.userAgent.empty())
         libvlc_media_add_option(m, (":http-user-agent=" + utf8FromWide(c.userAgent)).c_str());
     if (!c.referrer.empty())
@@ -215,6 +215,10 @@ void VlcPlayer::sampleStats() {
 
     FlowStats fs;
     fs.playing = playing_.load();
+    // Snapshot (not a delta): data read off the network but not yet consumed by the
+    // demux ≈ how much is buffered ahead of playback.
+    fs.bufferedBytes = std::max(0LL, static_cast<long long>(s.i_read_bytes) -
+                                         static_cast<long long>(s.i_demux_read_bytes));
     if (!firstSample_) {
         // Cumulative byte counters are 32-bit ints in libVLC 3.x and can wrap on
         // long streams; a negative delta means a wrap/reset — treat it as 0.
@@ -290,6 +294,10 @@ void VlcPlayer::setVolume(int volume) {
     Cmd c{Cmd::Volume};
     c.ivalue = volume;
     enqueue(std::move(c));
+}
+
+void VlcPlayer::setNetworkCaching(int ms) {
+    cachingMs_.store(std::clamp(ms, 100, 60000));  // applied at the next media open
 }
 
 void VlcPlayer::setAspectRatio(const char* ar) {

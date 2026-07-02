@@ -48,6 +48,7 @@ struct FlowStats {
     int    corruptedDelta = 0;       // demux-corrupted blocks since last sample
     int    discontinuityDelta = 0;   // demux discontinuities since last sample
     int    lostPicturesDelta = 0;    // dropped video frames since last sample
+    long long bufferedBytes = 0;     // input read minus demux read = data buffered ahead
     bool   playing = false;
 };
 
@@ -72,6 +73,10 @@ public:
     void stop();
     void setVolume(int volume);            // 0..100
     int volume() const { return volume_.load(); }
+    // Network buffer depth in ms (libVLC network-caching) — the receive->show
+    // latency. Applied to the next stream opened (re-play to apply immediately).
+    void setNetworkCaching(int ms);
+    int networkCaching() const { return cachingMs_.load(); }
     void setAspectRatio(const char* ar);   // "16:9" / "4:3" / nullptr
     bool isPlaying() const { return playing_.load(); }
 
@@ -103,6 +108,7 @@ private:
     HWND                   evtTarget_ = nullptr;
     UINT                   evtMsg_ = 0;
     std::atomic<int>       volume_{80};
+    std::atomic<int>       cachingMs_{1500};  // network-caching applied at media open
     std::atomic<bool>      playing_{false};
 
     // Stats accumulators — touched only on the worker thread.

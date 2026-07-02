@@ -140,6 +140,7 @@ struct PromptState {
     HWND         edit = nullptr;
     HFONT        font = nullptr;
     std::wstring label;
+    std::wstring result;  // edit text, captured on OK before the window is destroyed
     UINT         dpi = 96;
     bool         ok = false;
     bool         done = false;
@@ -171,8 +172,18 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_COMMAND:
-            if (LOWORD(wParam) == IDOK) { st->ok = true; st->done = true; DestroyWindow(hwnd); }
-            else if (LOWORD(wParam) == IDCANCEL) { st->done = true; DestroyWindow(hwnd); }
+            if (LOWORD(wParam) == IDOK) {
+                // Read the edit text NOW — the window (and its edit) is about to die.
+                wchar_t buf[4096] = L"";
+                GetWindowTextW(st->edit, buf, ARRAYSIZE(buf));
+                st->result = buf;
+                st->ok = true;
+                st->done = true;
+                DestroyWindow(hwnd);
+            } else if (LOWORD(wParam) == IDCANCEL) {
+                st->done = true;
+                DestroyWindow(hwnd);
+            }
             return 0;
         case WM_CLOSE:
             st->done = true;
@@ -313,11 +324,7 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
             DispatchMessageW(&m);
         }
     }
-    if (st.ok) {
-        wchar_t buf[4096] = L"";
-        GetWindowTextW(st.edit, buf, ARRAYSIZE(buf));
-        value = buf;
-    }
+    if (st.ok) value = st.result;  // captured in PromptProc before the window was destroyed
     EnableWindow(parent, TRUE);
     SetForegroundWindow(parent);
     DeleteObject(st.font);

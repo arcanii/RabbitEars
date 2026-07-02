@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <cwchar>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,6 +35,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/BufferMeter.h"
 #include "ui/ChannelGridControl.h"
 #include "ui/Dialogs.h"
+#include "ui/Splash.h"
 #include "ui/Theme.h"
 #include "ui/VlcPlayer.h"
 
@@ -59,11 +61,16 @@ constexpr int ID_BTN_STOP = 2011;
 constexpr int ID_VOL = 2012;
 constexpr int ID_BTN_FULL = 2013;
 constexpr int ID_BUFFER = 2014;
+constexpr int ID_BUF = 2015;  // buffer-size slider
 constexpr int ID_SEARCH = 2020;
 constexpr int ID_GRID = 2021;
 constexpr int ID_NAV = 2022;
 
 int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
+
+// Buffer (network-caching) slider bounds in ms, snapped to kBufStepMs. This is the
+// receive->show latency the user trades for smoothness on flaky streams.
+constexpr int kBufMinMs = 500, kBufMaxMs = 8000, kBufStepMs = 250;
 
 enum class ViewKind { All, Favourites, Group, Playlist };
 struct ViewFilter {
@@ -104,11 +111,16 @@ struct AppState {
     HWND       btnPlay = nullptr;
     HWND       btnStop = nullptr;
     HWND       btnFull = nullptr;
+    HWND       volIcon = nullptr;   // speaker glyph left of the volume slider
     HWND       volBar = nullptr;
+    HWND       bufLabel = nullptr;  // "Buffer 1.5 s"
+    HWND       bufBar = nullptr;    // network-caching slider (receive->show delay)
+    HWND       tip = nullptr;       // shared tooltip (volume slider, buffer slider, meter)
     HWND       status = nullptr;
     HWND       bufferMeter = nullptr;
     HFONT      uiFont = nullptr;
     HFONT      titleFont = nullptr;
+    HFONT      glyphFont = nullptr;  // Segoe MDL2 Assets, for the speaker glyph
     UINT       dpi = 96;
     int        sidebarW = 240;  // nav width in px (draggable via the splitter)
     int        cmdHover = -1;  // hovered toolbar button index
@@ -117,6 +129,7 @@ struct AppState {
     bool       busy = false;
     long long  nowPlayingId = 0;
     std::wstring nowPlayingName;
+    Channel    nowPlaying;   // last channel passed to playChannel (for re-buffering)
     ViewFilter filter;
     std::vector<ViewFilter> navFilters;  // indexed by tree item lParam
 };
@@ -278,13 +291,14 @@ void layout(HWND hwnd, AppState* st) {
 
     if (st->fullscreen) {
         for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop,
-                       st->volBar, st->btnFull, st->status, st->bufferMeter})
+                       st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
+                       st->bufferMeter})
             ShowWindow(h, SW_HIDE);
         MoveWindow(st->video, 0, 0, W, H, TRUE);
         return;
     }
-    for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop, st->volBar,
-                   st->btnFull, st->status, st->bufferMeter})
+    for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop, st->volIcon,
+                   st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status, st->bufferMeter})
         ShowWindow(h, SW_SHOW);
 
     const int contentTop = cmdH;
@@ -306,13 +320,19 @@ void layout(HWND hwnd, AppState* st) {
     int x = cx + pad;
     MoveWindow(st->btnPlay, x, by, bw, btnH, TRUE); x += bw + pad;
     MoveWindow(st->btnStop, x, by, bw, btnH, TRUE); x += bw + pad;
-    const int volW = dp(140, st->dpi);
+    const int iconW = dp(20, st->dpi);
+    MoveWindow(st->volIcon, x, by, iconW, btnH, TRUE); x += iconW + dp(2, st->dpi);
+    const int volW = dp(126, st->dpi);
     MoveWindow(st->volBar, x, by, volW, btnH, TRUE); x += volW + pad;
     const int fullW = dp(110, st->dpi);
     MoveWindow(st->btnFull, x, by, fullW, btnH, TRUE); x += fullW + pad * 2;
+    // Buffer-size control: "Buffer 1.5 s" label + slider (the receive->show delay).
+    const int bufLabelW = dp(84, st->dpi), bufBarW = dp(110, st->dpi);
+    MoveWindow(st->bufLabel, x, by, bufLabelW, btnH, TRUE); x += bufLabelW + dp(2, st->dpi);
+    MoveWindow(st->bufBar, x, by, bufBarW, btnH, TRUE); x += bufBarW + pad * 2;
     // Buffer meter pinned right (taller than the buttons so the fluid waves show);
     // status fills the gap.
-    const int meterW = dp(230, st->dpi), meterH = dp(40, st->dpi);
+    const int meterW = dp(230, st->dpi), meterH = dp(30, st->dpi);
     const int meterX = W - pad - meterW, meterY = stripY + (sHt - meterH) / 2;
     MoveWindow(st->bufferMeter, meterX, meterY, meterW, meterH, TRUE);
     MoveWindow(st->status, x, by, std::max(0, meterX - pad - x), btnH, TRUE);
@@ -427,10 +447,28 @@ void playChannel(AppState* st, const Channel& c) {
     if (st->player.isReady()) st->player.play(c.streamUrl, c.userAgent, c.referrer);
     st->nowPlayingId = c.id;
     st->nowPlayingName = c.name;
+    st->nowPlaying = c;
     channelGridSetNowPlaying(st->grid, c.id);
     st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
     bufferMeterSetHealth(st->bufferMeter, 15);
     setStatus(st, L"Opening: " + c.name);
+}
+
+std::wstring bufLabelText(int ms) {
+    wchar_t b[24];
+    swprintf_s(b, L"Buffer %.1f s", ms / 1000.0);
+    return b;
+}
+
+// Snap + apply the network buffer size, persist it, sync the slider/label, and
+// (optionally) re-buffer the current stream so the change takes effect immediately.
+void setBufferMs(AppState* st, int ms, bool replay) {
+    ms = std::clamp((ms + kBufStepMs / 2) / kBufStepMs * kBufStepMs, kBufMinMs, kBufMaxMs);
+    st->player.setNetworkCaching(ms);
+    st->db.setSetting(L"buffer_ms", std::to_wstring(ms));
+    if (st->bufBar) SendMessageW(st->bufBar, TBM_SETPOS, TRUE, ms / kBufStepMs);
+    if (st->bufLabel) SetWindowTextW(st->bufLabel, bufLabelText(ms).c_str());
+    if (replay && st->player.isPlaying() && st->nowPlaying.id != 0) playChannel(st, st->nowPlaying);
 }
 
 std::wstring nameFromSource(const std::wstring& src, bool isUrl) {
@@ -444,6 +482,7 @@ void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl,
                          const std::wstring& name) {
     st->busy = true;
     setStatus(st, isUrl ? L"Downloading playlist…" : L"Loading playlist…");
+    diag::info((isUrl ? L"playlist download start: " : L"playlist load start: ") + source);
     HWND hwnd = st->hwnd;
     std::thread([hwnd, source, isUrl, name]() {
         auto* res = new PlaylistResult();
@@ -452,15 +491,25 @@ void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl,
         res->name = name;
         if (isUrl) {
             std::string bytes;
-            if (httpGet(source, bytes, res->error)) {
+            // 30 s per-phase timeout so a stalled connection can't hang the worker
+            // forever (which would latch `busy` and leave no feedback).
+            if (httpGet(source, bytes, res->error, 30000)) {
+                diag::info(L"downloaded " + std::to_wstring(bytes.size()) + L" bytes");
                 res->doc = parseM3u(bytes);
                 res->ok = true;
+                diag::info(L"parsed " + std::to_wstring(res->doc.channels.size()) + L" channels");
+            } else {
+                diag::error(L"download failed from " + source + L": " + res->error);
             }
         } else {
             std::wstring err;
             res->doc = parseM3uFile(source, &err);
             res->error = err;
             res->ok = err.empty();
+            if (res->ok)
+                diag::info(L"parsed " + std::to_wstring(res->doc.channels.size()) + L" channels");
+            else
+                diag::error(L"file load failed: " + err);
         }
         PostMessageW(hwnd, WM_APP_PLAYLIST_DONE, 0, reinterpret_cast<LPARAM>(res));
     }).detach();
@@ -469,7 +518,11 @@ void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl,
 // ---- command handlers ------------------------------------------------------
 
 void onAddUrl(AppState* st) {
-    if (st->busy) return;
+    if (st->busy) {
+        setStatus(st, L"A playlist is still loading — please wait…");
+        diag::warn(L"Add Playlist ignored: a playlist load is already in progress");
+        return;
+    }
     std::wstring url = L"https://iptv-org.github.io/iptv/index.m3u";
     if (!promptText(st->hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
                     st->dpi, L"Add Playlist", L"Playlist URL (.m3u / .m3u8):", url))
@@ -479,7 +532,10 @@ void onAddUrl(AppState* st) {
 }
 
 void onOpenFile(AppState* st) {
-    if (st->busy) return;
+    if (st->busy) {
+        setStatus(st, L"A playlist is still loading — please wait…");
+        return;
+    }
     wchar_t path[MAX_PATH] = L"";
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
@@ -528,6 +584,9 @@ void createChildren(HWND hwnd, AppState* st) {
     st->titleFont = CreateFontW(-dp(16, st->dpi), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                 VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    st->glyphFont = CreateFontW(-dp(13, st->dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
 
     st->video = CreateWindowExW(0, kVideoClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 10,
                                 10, hwnd, nullptr, hInst, nullptr);
@@ -550,8 +609,17 @@ void createChildren(HWND hwnd, AppState* st) {
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_PLAY)), hInst, nullptr);
     st->btnStop = CreateWindowExW(0, L"BUTTON", L"Stop", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_STOP)), hInst, nullptr);
+    // Speaker glyph (Segoe MDL2 "Volume") so the slider is obviously the volume.
+    st->volIcon = CreateWindowExW(0, L"STATIC", L"",
+                                  WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE | SS_NOTIFY, 0, 0,
+                                  10, 10, hwnd, nullptr, hInst, nullptr);
     st->volBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS,
                                  0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_VOL)),
+                                 hInst, nullptr);
+    st->bufLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 10,
+                                   10, hwnd, nullptr, hInst, nullptr);
+    st->bufBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS, 0,
+                                 0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUF)),
                                  hInst, nullptr);
     st->btnFull = CreateWindowExW(0, L"BUTTON", L"Fullscreen", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10,
                                   hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_FULL)), hInst, nullptr);
@@ -564,8 +632,32 @@ void createChildren(HWND hwnd, AppState* st) {
 
     SendMessageW(st->volBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
     SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->player.volume());
+    SendMessageW(st->bufBar, TBM_SETRANGE, TRUE,
+                 MAKELPARAM(kBufMinMs / kBufStepMs, kBufMaxMs / kBufStepMs));
+    SendMessageW(st->bufBar, TBM_SETPOS, TRUE, st->player.networkCaching() / kBufStepMs);
+    SetWindowTextW(st->bufLabel, bufLabelText(st->player.networkCaching()).c_str());
 
-    for (HWND h : {st->search, st->btnPlay, st->btnStop, st->btnFull, st->status, st->volBar, st->nav}) {
+    // Speaker glyph + a hover tooltip ("Volume: N%") so the slider self-explains.
+    SetWindowTextW(st->volIcon, L"");
+    SendMessageW(st->volIcon, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
+    st->tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                              CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, nullptr,
+                              hInst, nullptr);
+    if (st->tip) {
+        TOOLINFOW ti{};
+        ti.cbSize = sizeof(ti);
+        ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        ti.hwnd = hwnd;  // owner receives TTN_GETDISPINFO
+        ti.lpszText = LPSTR_TEXTCALLBACKW;
+        for (HWND tool : {st->volBar, st->volIcon, st->bufBar, st->bufferMeter}) {
+            ti.uId = reinterpret_cast<UINT_PTR>(tool);
+            SendMessageW(st->tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+        }
+        SendMessageW(st->tip, TTM_SETMAXTIPWIDTH, 0, dp(280, st->dpi));  // enable multiline (meter stats)
+    }
+
+    for (HWND h : {st->search, st->btnPlay, st->btnStop, st->btnFull, st->status, st->volBar, st->bufBar,
+                   st->bufLabel, st->nav}) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
@@ -608,6 +700,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto sw = st->db.getSetting(L"sidebar_w")) st->sidebarW = _wtoi(sw->c_str());
                 if (auto bh = st->db.getSetting(L"buffer_hidden"); bh && *bh == L"1")
                     bufferMeterSetHidden(st->bufferMeter, true);
+                if (auto bm = st->db.getSetting(L"buffer_ms"); bm && !bm->empty())
+                    setBufferMs(st, _wtoi(bm->c_str()), /*replay=*/false);
                 refreshNav(st);
                 st->filter = {ViewKind::All};
                 loadForFilter(st);
@@ -770,6 +864,93 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_NOTIFY: {
             auto* nh = reinterpret_cast<NMHDR*>(lParam);
+            if (nh->code == TTN_GETDISPINFOW) {
+                auto* di = reinterpret_cast<NMTTDISPINFOW*>(lParam);
+                di->hinst = nullptr;
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->bufferMeter)) {
+                    const FlowStats fs = st->player.flowStats();
+                    const double bufS = st->player.networkCaching() / 1000.0;
+                    static wchar_t buf[256];
+                    if (fs.playing) {
+                        const double cons = fs.demuxBytesPerSec * 8.0 / 1.0e6;
+                        const int loss =
+                            fs.corruptedDelta + fs.discontinuityDelta + fs.lostPicturesDelta;
+                        // Received / measured buffered-delay come from libVLC's input-byte
+                        // counter, which reads 0 for HLS/adaptive streams — only show them
+                        // when they're actually reported.
+                        wchar_t extra[96] = L"";
+                        if (fs.readBytesPerSec > 0.0) {
+                            const double rcv = fs.readBytesPerSec * 8.0 / 1.0e6;
+                            const double delay = fs.demuxBytesPerSec > 1000.0
+                                                     ? fs.bufferedBytes / fs.demuxBytesPerSec
+                                                     : 0.0;
+                            swprintf_s(extra, L"\r\nReceived: %.2f Mb/s\r\nBuffered: %.1f s", rcv, delay);
+                        }
+                        swprintf_s(
+                            buf, L"Consumption: %.2f Mb/s\r\nBuffer (latency): %.1f s\r\nRecent loss: %d%s",
+                            cons, bufS, loss, extra);
+                    } else {
+                        swprintf_s(buf, L"Not playing\r\nBuffer (latency): %.1f s", bufS);
+                    }
+                    di->lpszText = buf;
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->bufBar)) {
+                    static wchar_t buf[96];
+                    swprintf_s(buf, L"Network buffer: %.1f s (receive->show delay)",
+                               st->player.networkCaching() / 1000.0);
+                    di->lpszText = buf;
+                    return 0;
+                }
+                const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
+                swprintf_s(di->szText, L"Volume: %d%%", vol);
+                di->lpszText = di->szText;
+                return 0;
+            }
+            if (nh->idFrom == ID_NAV && nh->code == NM_RCLICK) {
+                // Right-click a playlist node -> "Delete Playlist".
+                const DWORD mp = GetMessagePos();
+                POINT scr{GET_X_LPARAM(mp), GET_Y_LPARAM(mp)}, cli = scr;
+                ScreenToClient(st->nav, &cli);
+                TVHITTESTINFO ht{};
+                ht.pt = cli;
+                HTREEITEM item = TreeView_HitTest(st->nav, &ht);
+                if (item) {
+                    wchar_t label[256] = L"";
+                    TVITEMW ti{};
+                    ti.mask = TVIF_PARAM | TVIF_TEXT;
+                    ti.hItem = item;
+                    ti.pszText = label;
+                    ti.cchTextMax = ARRAYSIZE(label);
+                    TreeView_GetItem(st->nav, &ti);
+                    const LPARAM fi = ti.lParam;
+                    if (fi >= 0 && fi < static_cast<LPARAM>(st->navFilters.size()) &&
+                        st->navFilters[fi].kind == ViewKind::Playlist) {
+                        TreeView_SelectItem(st->nav, item);
+                        HMENU menu = CreatePopupMenu();
+                        AppendMenuW(menu, MF_STRING, 1, L"Delete Playlist");
+                        const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
+                                                       scr.y, 0, hwnd, nullptr);
+                        DestroyMenu(menu);
+                        if (cmd == 1) {
+                            const std::wstring m = L"Delete playlist \"" + std::wstring(label) +
+                                                   L"\"?\n\nThis removes its channels from RabbitEars.";
+                            if (MessageBoxW(hwnd, m.c_str(), L"Delete Playlist",
+                                            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
+                                const long long pid = st->navFilters[fi].playlistId;
+                                st->db.deletePlaylist(pid);
+                                diag::info(L"deleted playlist id=" + std::to_wstring(pid) + L" (" +
+                                           label + L")");
+                                st->filter = {ViewKind::All};
+                                refreshNav(st);
+                                loadForFilter(st);
+                                setStatus(st, L"Playlist deleted");
+                            }
+                        }
+                    }
+                }
+                return TRUE;
+            }
             if (nh->idFrom == ID_NAV && nh->code == TVN_SELCHANGEDW) {
                 auto* tv = reinterpret_cast<NMTREEVIEWW*>(lParam);
                 const LPARAM idx = tv->itemNew.lParam;
@@ -780,10 +961,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
-        case WM_HSCROLL:
-            if (reinterpret_cast<HWND>(lParam) == st->volBar)
+        case WM_HSCROLL: {
+            HWND ctl = reinterpret_cast<HWND>(lParam);
+            if (ctl == st->volBar) {
                 st->player.setVolume(static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0)));
+            } else if (ctl == st->bufBar) {
+                const int ms = static_cast<int>(SendMessageW(st->bufBar, TBM_GETPOS, 0, 0)) * kBufStepMs;
+                if (LOWORD(wParam) == TB_THUMBTRACK)
+                    SetWindowTextW(st->bufLabel, bufLabelText(ms).c_str());  // live while dragging
+                else
+                    setBufferMs(st, ms, /*replay=*/true);  // apply + re-buffer on release/click/key
+            }
             return 0;
+        }
         case WM_APP_VLC:
             switch (static_cast<PlayerEvent>(wParam)) {
                 case PlayerEvent::Opening:
@@ -828,6 +1018,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             kTroubleRef,
                         0.0f, 1.0f);
                     bufferMeterSetFlow(st->bufferMeter, flow, trouble);
+                    // Meter overlay headline: the consumption rate (real throughput).
+                    // (The receive rate / measured delay come from libVLC's input-byte
+                    // counter, which stays 0 for HLS/adaptive — so they're not shown
+                    // here; the configured buffer latency is on the slider + tooltip.)
+                    wchar_t m[24] = L"";
+                    if (fs.playing && fs.demuxBytesPerSec > 0.0) {
+                        const double bps = fs.demuxBytesPerSec * 8.0;
+                        if (bps >= 1.0e6)
+                            swprintf_s(m, L"%.1f Mb/s", bps / 1.0e6);
+                        else
+                            swprintf_s(m, L"%.0f kb/s", bps / 1.0e3);
+                    }
+                    bufferMeterSetMetrics(st->bufferMeter, m);
                     break;
                 }
                 case PlayerEvent::Stopped:
@@ -861,7 +1064,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_GETMINMAXINFO: {
             auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-            mmi->ptMinTrackSize.x = dp(760, st->dpi);
+            mmi->ptMinTrackSize.x = dp(960, st->dpi);
             mmi->ptMinTrackSize.y = dp(480, st->dpi);
             return 0;
         }
@@ -869,6 +1072,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             st->player.stop();
             if (st->uiFont) DeleteObject(st->uiFont);
             if (st->titleFont) DeleteObject(st->titleFont);
+            if (st->glyphFont) DeleteObject(st->glyphFont);
             PostQuitMessage(0);
             return 0;
     }
@@ -941,6 +1145,11 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     ULONG_PTR gdipToken = 0;
     Gdiplus::GdiplusStartup(&gdipToken, &gdipInput, nullptr);
 
+    // Branded splash up front: the main window's WM_CREATE blocks for a few seconds
+    // (libVLC init + DB load), so show something immediately. It's a layered window,
+    // so DWM keeps compositing it while this thread is busy building the main window.
+    HWND splash = showSplash(hInst);
+
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_BAR_CLASSES | ICC_TREEVIEW_CLASSES | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
     registerClasses(hInst);
@@ -950,6 +1159,7 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
                                 CW_USEDEFAULT, CW_USEDEFAULT, dp(1180, 96), dp(760, 96), nullptr,
                                 nullptr, hInst, st);
     if (!hwnd) {
+        closeSplash(splash);
         delete st;
         Gdiplus::GdiplusShutdown(gdipToken);
         return 1;
@@ -957,6 +1167,7 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
+    closeSplash(splash);  // main window is up
 
     initUpdater();  // WinSparkle: start background update checks
 
