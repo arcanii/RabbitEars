@@ -26,13 +26,68 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.2 SHIPPED
+## Current state — v0.1.3 SHIPPED
 
-**Released:** `v0.1.2` (2026-07-02), tag `v0.1.2` @ `8c99254`, public GitHub release
-with a signed **`RabbitEars-0.1.2-setup.exe`** installer (full version `0.1.2.19`) and a
-**live WinSparkle auto-update feed**. `origin/main` == `713cb09` (appcast published).
-Earlier: `v0.1.1` (signed installer + live feed, baseline for auto-update), `v0.1.0`
-(portable zip). 0.1.1 users get 0.1.2 automatically.
+**Released:** `v0.1.3` (2026-07-02), tag `v0.1.3` @ `ebd71a8`, public GitHub release
+with a signed **`RabbitEars-0.1.3-setup.exe`** installer (full version `0.1.3.22`) and a
+**live WinSparkle auto-update feed** (appcast published @ `5f43c64`). Earlier: `v0.1.2`
+(tag @ `8c99254`, full `0.1.2.19`), `v0.1.1` (signed installer + live feed, the auto-update
+baseline), `v0.1.0` (portable zip). 0.1.1 / 0.1.2 users get 0.1.3 automatically.
+
+### 0.1.3 — SHIPPED (tag `v0.1.3` @ `ebd71a8`, full `0.1.3.22`; all `/W4` clean)
+Committed as `ebd71a8` (16 paths; version bumped in the four places), built, signed on
+macOS, released, appcast live. Changes:
+- **Transport/fullscreen icons** (`MainWindow.cpp`) — play/pause/stop/record + fullscreen
+  are Segoe MDL2 glyph buttons (`kGlyph*`), square + tooltipped; play↔pause and
+  record↔stop swap with state. Narrower buttons free strip width (helps the meter tray).
+- **Channel-switch hang fixed** (`VlcPlayer.cpp`) — the blocking `stop()`/`release()`
+  runs on a tracked reaper thread (`reapers_`) so a stuck stream can't wedge the next
+  channel; the destructor drains reapers before `libvlc_release`. Reviewed sound; one
+  cosmetic residual (two vouts briefly share the video HWND during a stuck stop —
+  follow-up: give each player its own child video HWND).
+- **Xtream / query-string URLs fixed** (`Http.cpp`) — `httpGet` was DROPPING the
+  `?query` (no `lpszExtraInfo` buffer) so `?username=&password=` never reached the
+  server; fixed (verified the query is sent), and the fetch User-Agent is now VLC-style.
+- **Spectrum tap diagnostics** (`SpectrumTap.cpp`) — logs activation/init HRESULTs and
+  "first audio window analysed" so `rabbitears.log` pinpoints the "audio meter doesn't
+  work" report (also: the icon change frees space so the spectrum meter is more likely
+  to be visible — the responsive tray had been hiding it on narrow windows).
+- **Dockable layout, Phase 1** — NEW `ui/DockLayout.{h,cpp}`: a pure split-tree over the
+  Nav/Video/Grid panels (serialize/parse with fallback, re-dock surgery), built into
+  **RabbitEarsCore** and covered by **9 CLI `--selftest` assertions**. `MainWindow`
+  renders the three regions from the tree (Video panel = video + the transport strip at
+  its bottom), with parent-painted resize **gutters** (drag persists to `dock_layout`,
+  `WM_CAPTURECHANGED`-safe) and a **Settings → Layout** menu (reset + move any region to
+  any edge). The old single nav splitter (`ReVSplitter`/`VSplitterProc`, `sidebar_w`) is
+  now dead code. 5-agent review → 1 high fixed (lost-capture sticky drag). `layout()`
+  moves every child in one atomic **`BeginDeferWindowPos`** pass with **`SWP_NOCOPYBITS`**
+  (the ManorLords-SGE fix) — this killed splitter-drag artifacts + stale transport-button
+  pixels on a panel move.
+- **Drag-to-redock (Phase 2, partial)** — each region has a small **grip** child (class
+  `ReDockGrip`, top-right corner, `Panel` id in `GWLP_USERDATA`); dragging it shows a
+  translucent coral **drop-zone overlay** (`ReDropOverlay`, layered popup) over the
+  target half and, on release, `dock()`s the region there (`beginPanelDrag`/
+  `updateDockTarget`/`endPanelDrag`; parent captures the mouse, `WM_CAPTURECHANGED`
+  cancels). Known caveat to verify: the **video** region's grip is a sibling of the
+  libVLC surface, so D3D/DWM may visually occlude it during playback (still clickable).
+  Remaining Phase 2: named saved layouts. The Settings → Layout "move to edge" menu is
+  kept as a fallback.
+- **T&C gate** (`runApp`) — the user must accept the Terms, and **re-accept on every
+  version change** (new install or update). `tos_accepted` stores the **full** version
+  (`RE_VERSION_FULL_W`, marketing.build) it was accepted for, so any bump re-prompts;
+  declining exits. (NB: build number = git commit count, so during dev this re-prompts
+  once per commit, not per rebuild.)
+- **Animated splash** (`Splash.cpp`) — the splash now runs on its **own thread** (owns
+  the window so UpdateLayeredWindow/DestroyWindow stay on the creating thread while the
+  UI thread blocks in libVLC init) and cycles tongue-in-cheek captions (`kMessages`:
+  "Finding the power plug…", "Bending the left ear to the right…", …) every 1.2 s.
+  `closeSplash` signals + joins the thread.
+- **By-country nav filter** — a **Countries** node in the sidebar (next to Groups). Since
+  the model has no country field, it's derived from the **tvg-id suffix** (iptv-org
+  `"<name>.<cc>"`): `Database::listCountries()`/`channelsByCountry()` (+ `countryFromTvgId`)
+  in Core, with a `ViewKind::Country`/`ViewFilter::country` + `countryLabel()` name map in
+  `MainWindow`. **5 CLI selftest assertions** cover the derivation. Caveat: playlists
+  whose channels lack `tvg-id` country codes (e.g. some Xtream feeds) won't populate it.
 
 The engine + full GUI are complete and proven end-to-end. **Auto-update is confirmed
 working** (About → Check for Updates reports "up to date" against the live appcast).
@@ -272,22 +327,28 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-`HEAD == origin/main == 713cb09`; tags `v0.1.0`, `v0.1.1`, `v0.1.2`. The 0.1.2 batch
-(fullscreen, recording, settings menu, format, hide-unavailable, categories filter,
-modular meters + audio spectrum, first-run T&C, no bundled playlist) is **committed +
-released** (`8c99254`). The working tree is clean. Commit/push only when the owner asks;
-stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`);
-end commit messages with the Co-Authored-By trailer.
+Tags `v0.1.0`, `v0.1.1`, `v0.1.2`, `v0.1.3` — **v0.1.3 released @ `ebd71a8`** (full
+`0.1.3.22`; appcast published @ `5f43c64`). The 0.1.3 batch is committed + pushed, so the
+working tree is **clean**. Build number = git commit count (the released 0.1.3 build was
+stamped at count **22**; the appcast + this doc commit are post-release bookkeeping and
+were not rebuilt — same as 0.1.2). Commit/push only when the owner asks; stage **specific
+paths** (the owner keeps adding `art/*.png` — never `git add -A`); end commit messages
+with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **Owner:** verify the shipped 0.1.2 in the wild — the meters (Settings → Meters:
-   the audio spectrum should react to *this app's* audio only; signal/bitrate/frames),
-   the Categories filter, the first-run **T&C** gate, that **Add Playlist starts empty**,
-   real fullscreen, and recording. Confirm the **0.1.1 → 0.1.2 auto-update** prompt
-   appears (About → Check for Updates) — this is the first live update test.
-2. **Next:** Recording Phase 2 (scheduled), resume-last-channel on launch,
-   DPI-change relayout (`WM_DPICHANGED`), or Authenticode signing — see Backlog.
+1. **Confirm the 0.1.2 → 0.1.3 auto-update in the wild** — on an installed 0.1.1/0.1.2,
+   **About → Check for Updates** should offer **0.1.3.22** from the live appcast and apply
+   the signed installer (the first end-to-end WinSparkle update test since 0.1.2). The
+   owner still does the GUI/runtime pass on the 0.1.3 features (the sandbox can't launch
+   the exe); `rabbitears.log` has `SpectrumTap:` lines if the audio meter looks dead.
+2. Remaining **Phase-2 layout**: **named saved layouts**. The `DockLayout` engine already
+   serializes/parses any tree, so this is a store (name → serialized tree, in settings) +
+   a **Settings → Layout** submenu to save / apply / delete named layouts; the "move to
+   edge" menu stays as a fallback.
+3. Backlog: scheduled recording, resume-last-channel, DPI-change relayout
+   (`WM_DPICHANGED`), Authenticode signing (SmartScreen), group-title country fallback for
+   Xtream feeds, per-view (not global) category filter, EPG (XMLTV now/next).
 
 ## Seed prompt for a new session
 
@@ -300,39 +361,53 @@ Paste this verbatim to start a fresh session with working context restored:
 > 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `HANDOVER.md` and
 > `docs/architecture.md` first.**
 >
-> **State: v0.1.1 is shipped** (tag `v0.1.1` @ `f76a7cb`, signed installer + **live
-> WinSparkle auto-update**; `origin/main` == `60f1f26`). A **0.1.2 batch is
-> uncommitted** in `src/ui/MainWindow.cpp` + `src/ui/VlcPlayer.{h,cpp}`: real
-> fullscreen, **Phase-1 manual recording** (headless `rec_` player → `.ts`/`.mkv`
-> stream copy to `%USERPROFILE%\Videos\RabbitEars`), a **Settings menu** (Open File /
-> About / Recording format / Hide-unavailable), and the hide-dead filter. All builds
-> clean at /W4. Next asked feature: a **Categories/countries include-filter** (checklist
-> dialog over the single `group` field, applied via `applyChannelFilters()`).
+> **State: v0.1.3 is SHIPPED** (tag `v0.1.3` @ `ebd71a8`, full `0.1.3.22`, signed
+> installer + **live WinSparkle auto-update**; appcast @ `5f43c64`). The 0.1.3 batch below
+> is committed, released, and its update feed is live; every piece is `/W4`-clean and
+> adversarially reviewed (the owner does visual/runtime checks — the sandbox can't launch
+> the exe). **Next: named saved layouts** (Phase-2), then backlog. 0.1.3 shipped:
+> - transport + fullscreen **icon buttons** (Segoe MDL2 glyphs);
+> - **channel-switch hang fix** — blocking libVLC `stop()`/`release()` moved off the
+>   worker onto tracked "reaper" threads in `VlcPlayer` (drained in the dtor);
+> - **Xtream / query-string fix** — `Http.cpp` was dropping the `?username=&password=`
+>   (no `lpszExtraInfo` buffer); fixed + a VLC-style fetch User-Agent;
+> - **SpectrumTap diagnostics** (activation/init HRESULTs → `rabbitears.log`);
+> - **by-country nav filter** — `Database::listCountries/channelsByCountry` derive ISO
+>   codes from tvg-id suffixes (`"CNN.us"`); 5 CLI selftest assertions;
+> - **first-run T&C** that RE-PROMPTS on every version change (`tos_accepted` = full
+>   version); **animated splash** (own thread, rotating captions);
+> - **dockable layout** — NEW `ui/DockLayout.{h,cpp}` (a split-tree over Nav/Video/Grid,
+>   serialize/parse, re-dock surgery; unit-tested by the CLI). `MainWindow` renders regions
+>   from the tree via ONE atomic `BeginDeferWindowPos` pass (`SWP_NOCOPYBITS`), with resize
+>   **gutters**, a **Settings → Layout** menu, and **drag-a-grip-to-redock** with a
+>   translucent snap overlay. Remaining Phase-2: **named saved layouts**.
 >
-> The GUI has: owner-draw command bar + Settings menu, nav TreeView (right-click a
-> playlist → Delete) with a splitter, a Direct2D `ChannelGridControl` (async WIC logo
-> thumbnails, inline `#` edit, type-a-number jump, dead greying), a `VlcPlayer` that
-> runs all libVLC lifecycle + a headless recorder on a worker thread, a **blocky LED
-> "honest" buffer meter** driven by real demux stats, a buffer-size slider, a startup
-> splash, a diagnostic log at `%LOCALAPPDATA%\RabbitEars\rabbitears.log`, and About/
-> prompt dialogs.
+> The GUI: owner-draw command bar + Settings menu; three **dockable regions** (nav
+> TreeView / video+transport strip / Direct2D `ChannelGridControl`) rearranged by dragging
+> corner grips or the divider gutters (persisted `dock_layout`); a `VlcPlayer` (all libVLC
+> lifecycle + a headless recorder on a worker thread); a blocky-LED buffer meter + modular
+> mini-meters (spectrum/signal/bitrate/frames — `ui/MiniMeter` + WASAPI process-loopback
+> `audio/SpectrumTap`); the log at `%LOCALAPPDATA%\RabbitEars\rabbitears.log`; themed dialogs.
 >
 > Build/verify:
 > ```
 > scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON      # from PowerShell: & "G:\RabbitEars\scripts\build.cmd" ...
-> build\RabbitEarsCli.exe --selftest               # 30 core assertions (runs headless)
+> build\RabbitEarsCli.exe --selftest               # core + dock-layout + country assertions (headless)
 > ```
-> Gotchas: `cmake`/`cl` aren't on PATH — use `scripts\build.cmd`. `LINK1168` = an
-> instance is running → `Stop-Process -Name RabbitEars -Force`, rebuild. Static CRT
-> (`/MT`). **libVLC `stop()`/`release()` block — keep on the VlcPlayer worker thread**;
-> event callbacks run on a libVLC thread → only `PostMessage`. The channel grid's D2D
-> target is pinned to 96 DPI (don't remove). libVLC `i_read_bytes` is 0 for HLS. VLC
-> sout single-quoted paths need `'` doubled. Modal dialogs must read controls before
-> `DestroyWindow`.
+> Gotchas: `cmake`/`cl` aren't on PATH — use `scripts\build.cmd`. `LINK1168` = an instance
+> is running → `Stop-Process -Name RabbitEars -Force`, rebuild. Static CRT (`/MT`). **libVLC
+> `stop()`/`release()` block** (now offloaded to reaper threads); event callbacks run on a
+> libVLC thread → only `PostMessage`. **RECT fields are `LONG`** → cast to `int` for
+> `std::max`/`MoveWindow` (or you hit ambiguous-overload errors). `themeBrush()` caches only
+> 12 colors — LED/grip drawing uses the GDI **DC brush** instead. **`Grep` renders `/` as
+> `\`** in this sandbox — trust `Read`, not `Grep`, for slash-containing lines. Channel grid
+> D2D target pinned to 96 DPI. libVLC `i_read_bytes` is 0 for HLS. VLC sout single-quoted
+> paths need `'` doubled. Modal dialogs must read controls before `DestroyWindow`.
 >
 > **This sandbox can't launch the GUI** (`Start-Process` hangs even with
 > `dangerouslyDisableSandbox`); build-verify + reason, run `RabbitEarsCli` for headless
-> checks, and hand visual/runtime verification to the owner (who reads
-> `rabbitears.log`). Commit only when asked; stage specific paths (never `git add -A` —
-> the owner adds `art/*.png`); end commits with the Co-Authored-By trailer. Releases
-> are signed on macOS with the shared family Ed25519 key — see `docs/RELEASING.md`.
+> checks (dock-tree + country logic live in `RabbitEarsCore` so they ARE selftested), and
+> hand visual/runtime verification to the owner (who reads `rabbitears.log`). Commit only
+> when asked; stage specific paths (never `git add -A` — the owner adds `art/*.png`); end
+> commits with the Co-Authored-By trailer. Releases are signed on macOS with the shared
+> family Ed25519 key — see `docs/RELEASING.md`.
