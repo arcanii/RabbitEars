@@ -2,6 +2,7 @@
 #include "ui/Splash.h"
 
 #include <algorithm>
+#include <thread>
 
 #include <objbase.h>  // CreateStreamOnHGlobal (ole32)
 #include <objidl.h>   // IStream — required by gdiplus.h below
@@ -20,9 +21,26 @@ constexpr wchar_t kSplashClass[] = L"RabbitEarsSplash";
 
 int sdpx(UINT dpi, int v) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
-// Load a PNG from an RCDATA resource into a GDI+ Image (same approach as the
-// About box). The returned stream must outlive the image and be Released by the
-// caller after drawing.
+// Rotating, tongue-in-cheek "what the antenna is doing" captions, cycled while the
+// (slow) libVLC init blocks the main thread. The splash runs on its own thread, so
+// these keep animating even though the UI thread is stuck in WM_CREATE.
+constexpr const wchar_t* kMessages[] = {
+    L"Finding the power plug…",
+    L"Connecting wires to the antenna…",
+    L"Bending the left ear to the right…",
+    L"Triangulating the wave-motion receptors…",
+    L"Warming up the vacuum tubes…",
+    L"Untangling the coaxial cable…",
+    L"Polishing the rabbit ears…",
+    L"Shooing off the static gremlins…",
+    L"Locking onto the nearest tower…",
+    L"Tuning the horizontal hold…",
+    L"Nudging the aerial a smidge…",
+    L"Almost picking up a signal…",
+};
+
+// Load a PNG from an RCDATA resource into a GDI+ Image. The returned stream must
+// outlive the image and be Released by the caller after drawing.
 Gdiplus::Image* loadPng(HINSTANCE hInst, int id, IStream** outStream) {
     *outStream = nullptr;
     HRSRC res = FindResourceW(hInst, MAKEINTRESOURCEW(id), RT_RCDATA);
@@ -56,6 +74,117 @@ Gdiplus::Color gc(COLORREF c, BYTE a) {
     return Gdiplus::Color(a, GetRValue(c), GetGValue(c), GetBValue(c));
 }
 
+struct SplashState {
+    HWND        hwnd = nullptr;
+    HINSTANCE   hInst = nullptr;
+    UINT        dpi = 96;
+    int         x = 0, y = 0, W = 0, H = 0, margin = 0, radius = 0, textH = 0;
+    HANDLE      stop = nullptr;
+    std::thread th;
+};
+SplashState* g_splash = nullptr;  // single splash instance
+
+// Draw one frame (branded card + logo + caption) into the layered window.
+void renderFrame(const SplashState& s, const wchar_t* message) {
+    HDC screen = GetDC(nullptr);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = s.W;
+    bi.bmiHeader.biHeight = -s.H;  // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!dib) {
+        ReleaseDC(nullptr, screen);
+        return;
+    }
+    {
+        Gdiplus::Bitmap bmp(s.W, s.H, s.W * 4, PixelFormat32bppPARGB, static_cast<BYTE*>(bits));
+        Gdiplus::Graphics g(&bmp);
+        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        g.Clear(Gdiplus::Color(0, 0, 0, 0));
+        const Theme& th = currentTheme();
+
+        // Rounded dark card with a hairline coral edge.
+        Gdiplus::GraphicsPath path;
+        const int d = s.radius * 2;
+        path.AddArc(0, 0, d, d, 180, 90);
+        path.AddArc(s.W - d - 1, 0, d, d, 270, 90);
+        path.AddArc(s.W - d - 1, s.H - d - 1, d, d, 0, 90);
+        path.AddArc(0, s.H - d - 1, d, d, 90, 90);
+        path.CloseFigure();
+        Gdiplus::SolidBrush card(gc(th.panelElevBg, 255));
+        g.FillPath(&card, &path);
+        Gdiplus::Pen edge(gc(th.accent, 255), 1.0f);
+        g.DrawPath(&edge, &path);
+
+        // Logo, aspect-fit into the area above the caption.
+        IStream* stream = nullptr;
+        Gdiplus::Image* logo = loadPng(s.hInst, IDR_SPLASH_PNG, &stream);
+        if (logo && logo->GetWidth() > 0 && logo->GetHeight() > 0) {
+            const int boxW = s.W - 2 * s.margin, boxH = s.H - 2 * s.margin - s.textH;
+            const double sc = std::min(static_cast<double>(boxW) / logo->GetWidth(),
+                                       static_cast<double>(boxH) / logo->GetHeight());
+            const int iw = static_cast<int>(logo->GetWidth() * sc);
+            const int ih = static_cast<int>(logo->GetHeight() * sc);
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            g.DrawImage(logo, (s.W - iw) / 2, s.margin + (boxH - ih) / 2, iw, ih);
+        }
+        delete logo;
+        if (stream) stream->Release();
+
+        // Rotating caption, centred near the bottom.
+        Gdiplus::FontFamily ff(L"Segoe UI");
+        Gdiplus::Font font(&ff, static_cast<Gdiplus::REAL>(sdpx(s.dpi, 11)),
+                           Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+        Gdiplus::SolidBrush tb(gc(th.textSecondary, 255));
+        Gdiplus::StringFormat sf;
+        sf.SetAlignment(Gdiplus::StringAlignmentCenter);
+        sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        Gdiplus::RectF tr(0.0f, static_cast<Gdiplus::REAL>(s.H - s.margin - s.textH),
+                          static_cast<Gdiplus::REAL>(s.W), static_cast<Gdiplus::REAL>(s.textH));
+        g.DrawString(message, -1, &font, tr, &sf, &tb);
+    }
+
+    HDC memDC = CreateCompatibleDC(screen);
+    HGDIOBJ oldBmp = SelectObject(memDC, dib);
+    POINT ptSrc{0, 0}, ptDst{s.x, s.y};
+    SIZE sz{s.W, s.H};
+    BLENDFUNCTION bf{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    UpdateLayeredWindow(s.hwnd, screen, &ptDst, &sz, memDC, &ptSrc, 0, &bf, ULW_ALPHA);
+    SelectObject(memDC, oldBmp);
+    DeleteDC(memDC);
+    DeleteObject(dib);  // ULW keeps its own copy
+    ReleaseDC(nullptr, screen);
+}
+
+// Owns the splash window for its whole life so UpdateLayeredWindow + DestroyWindow
+// stay on the creating thread (the UI thread is busy blocking in WM_CREATE).
+void splashThread(SplashState* s, HANDLE created) {
+    s->hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                              kSplashClass, L"RabbitEars", WS_POPUP, s->x, s->y, s->W, s->H, nullptr,
+                              nullptr, s->hInst, nullptr);
+    SetEvent(created);  // unblock showSplash (s->hwnd is now set)
+    if (!s->hwnd) return;
+    ShowWindow(s->hwnd, SW_SHOWNOACTIVATE);
+    renderFrame(*s, kMessages[0]);
+
+    int i = 0;
+    for (;;) {
+        const DWORD w = MsgWaitForMultipleObjects(1, &s->stop, FALSE, 1200, QS_ALLINPUT);
+        if (w == WAIT_OBJECT_0) break;  // closeSplash signalled
+        MSG m;
+        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&m);  // stay responsive
+        if (w == WAIT_TIMEOUT) {
+            i = (i + 1) % static_cast<int>(ARRAYSIZE(kMessages));
+            renderFrame(*s, kMessages[i]);
+        }
+    }
+    DestroyWindow(s->hwnd);
+}
+
 }  // namespace
 
 HWND showSplash(HINSTANCE hInst) {
@@ -71,100 +200,49 @@ HWND showSplash(HINSTANCE hInst) {
         registered = true;
     }
 
-    const UINT dpi = GetDpiForSystem();
-    const int W = sdpx(dpi, 400), H = sdpx(dpi, 240);
-    const int margin = sdpx(dpi, 26), radius = sdpx(dpi, 16), textH = sdpx(dpi, 30);
-
+    auto* s = new SplashState();
+    s->hInst = hInst;
+    s->dpi = GetDpiForSystem();
+    s->W = sdpx(s->dpi, 400);
+    s->H = sdpx(s->dpi, 240);
+    s->margin = sdpx(s->dpi, 26);
+    s->radius = sdpx(s->dpi, 16);
+    s->textH = sdpx(s->dpi, 30);
     RECT wa{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    const int x = wa.left + ((wa.right - wa.left) - W) / 2;
-    const int y = wa.top + ((wa.bottom - wa.top) - H) / 2;
+    s->x = wa.left + ((wa.right - wa.left) - s->W) / 2;
+    s->y = wa.top + ((wa.bottom - wa.top) - s->H) / 2;
+    s->stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
-    HWND hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                                kSplashClass, L"RabbitEars", WS_POPUP, x, y, W, H, nullptr, nullptr,
-                                hInst, nullptr);
-    if (!hwnd) return nullptr;
-
-    HDC screen = GetDC(nullptr);
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = W;
-    bi.bmiHeader.biHeight = -H;  // top-down
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!dib) {
-        ReleaseDC(nullptr, screen);
-        return hwnd;
+    HANDLE created = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    s->th = std::thread(splashThread, s, created);
+    if (created) {
+        WaitForSingleObject(created, 3000);  // return once the window handle exists
+        CloseHandle(created);
     }
-
-    {
-        Gdiplus::Bitmap bmp(W, H, W * 4, PixelFormat32bppPARGB, static_cast<BYTE*>(bits));
-        Gdiplus::Graphics g(&bmp);
-        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        g.Clear(Gdiplus::Color(0, 0, 0, 0));
-        const Theme& th = currentTheme();
-
-        // Rounded dark card with a hairline coral edge.
-        Gdiplus::GraphicsPath path;
-        const int d = radius * 2;
-        path.AddArc(0, 0, d, d, 180, 90);
-        path.AddArc(W - d - 1, 0, d, d, 270, 90);
-        path.AddArc(W - d - 1, H - d - 1, d, d, 0, 90);
-        path.AddArc(0, H - d - 1, d, d, 90, 90);
-        path.CloseFigure();
-        Gdiplus::SolidBrush card(gc(th.panelElevBg, 255));
-        g.FillPath(&card, &path);
-        Gdiplus::Pen edge(gc(th.accent, 255), 1.0f);
-        g.DrawPath(&edge, &path);
-
-        // Logo, aspect-fit into the area above the caption.
-        IStream* stream = nullptr;
-        Gdiplus::Image* logo = loadPng(hInst, IDR_SPLASH_PNG, &stream);
-        if (logo && logo->GetWidth() > 0 && logo->GetHeight() > 0) {
-            const int boxW = W - 2 * margin, boxH = H - 2 * margin - textH;
-            const double s = std::min(static_cast<double>(boxW) / logo->GetWidth(),
-                                      static_cast<double>(boxH) / logo->GetHeight());
-            const int iw = static_cast<int>(logo->GetWidth() * s);
-            const int ih = static_cast<int>(logo->GetHeight() * s);
-            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-            g.DrawImage(logo, (W - iw) / 2, margin + (boxH - ih) / 2, iw, ih);
-        }
-        delete logo;
-        if (stream) stream->Release();
-
-        // "Loading…" caption, centred near the bottom.
-        Gdiplus::FontFamily ff(L"Segoe UI");
-        Gdiplus::Font font(&ff, static_cast<Gdiplus::REAL>(sdpx(dpi, 11)),
-                           Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-        Gdiplus::SolidBrush tb(gc(th.textSecondary, 255));
-        Gdiplus::StringFormat sf;
-        sf.SetAlignment(Gdiplus::StringAlignmentCenter);
-        sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-        Gdiplus::RectF tr(0.0f, static_cast<Gdiplus::REAL>(H - margin - textH),
-                          static_cast<Gdiplus::REAL>(W), static_cast<Gdiplus::REAL>(textH));
-        g.DrawString(L"Loading…", -1, &font, tr, &sf, &tb);
+    if (!s->hwnd) {  // creation failed — tear the thread down and report nothing
+        SetEvent(s->stop);
+        if (s->th.joinable()) s->th.join();
+        CloseHandle(s->stop);
+        delete s;
+        return nullptr;
     }
-
-    HDC memDC = CreateCompatibleDC(screen);
-    HGDIOBJ oldBmp = SelectObject(memDC, dib);
-    POINT ptSrc{0, 0}, ptDst{x, y};
-    SIZE sz{W, H};
-    BLENDFUNCTION bf{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-    UpdateLayeredWindow(hwnd, screen, &ptDst, &sz, memDC, &ptSrc, 0, &bf, ULW_ALPHA);
-
-    SelectObject(memDC, oldBmp);
-    DeleteDC(memDC);
-    DeleteObject(dib);  // ULW keeps its own copy; safe to free now
-    ReleaseDC(nullptr, screen);
-    return hwnd;
+    g_splash = s;
+    return s->hwnd;
 }
 
 void closeSplash(HWND splash) {
-    if (splash) DestroyWindow(splash);
+    if (g_splash && g_splash->hwnd == splash) {
+        SetEvent(g_splash->stop);
+        if (g_splash->th.joinable()) g_splash->th.join();  // thread DestroyWindows on exit
+        CloseHandle(g_splash->stop);
+        delete g_splash;
+        g_splash = nullptr;
+    }
+    // No fallback DestroyWindow: the splash window is owned by its own thread, so it
+    // is only ever torn down there (via the join above). A non-matching/stale token
+    // means it's already gone — destroying a foreign thread's HWND here would just
+    // fail with ERROR_ACCESS_DENIED anyway.
 }
 
 }  // namespace rabbitears

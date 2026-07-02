@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -138,7 +139,17 @@ IAudioClient* activateProcessLoopback() {
         if (SUCCEEDED(handler->resultHr)) {
             client = handler->client;  // transfer ownership
             handler->client = nullptr;
+        } else {
+            wchar_t b[96];
+            swprintf_s(b, L"SpectrumTap: process-loopback activation failed (hr=0x%08lX)",
+                       static_cast<unsigned long>(handler->resultHr));
+            diag::warn(b);
         }
+    } else {
+        wchar_t b[96];
+        swprintf_s(b, L"SpectrumTap: ActivateAudioInterfaceAsync failed (hr=0x%08lX)",
+                   static_cast<unsigned long>(hr));
+        diag::warn(b);
     }
     if (op) op->Release();
     handler->Release();
@@ -174,6 +185,7 @@ void SpectrumTap::stop() {
 
 void SpectrumTap::run() {
     const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    diag::info(L"SpectrumTap: capture thread starting");
 
     IAudioClient*        client = activateProcessLoopback();
     IAudioCaptureClient* capture = nullptr;
@@ -205,9 +217,16 @@ void SpectrumTap::run() {
                                     reinterpret_cast<void**>(&capture));
         if (SUCCEEDED(hr)) hr = client->Start();
         started = SUCCEEDED(hr);
-        if (!started) diag::warn(L"SpectrumTap: WASAPI init failed — spectrum meter idle");
+        if (!started) {
+            wchar_t b[96];
+            swprintf_s(b, L"SpectrumTap: WASAPI init failed (hr=0x%08lX) — spectrum meter idle",
+                       static_cast<unsigned long>(hr));
+            diag::warn(b);
+        } else {
+            diag::info(L"SpectrumTap: capturing this process's audio (process loopback, 48kHz stereo)");
+        }
     } else {
-        diag::warn(L"SpectrumTap: process-loopback activation unavailable — spectrum meter idle");
+        diag::warn(L"SpectrumTap: process-loopback unavailable (older Windows?) — spectrum meter idle");
     }
 
     if (started) {
@@ -220,6 +239,7 @@ void SpectrumTap::run() {
         int wpos = 0;
         std::vector<float> re(kFftSize), im(kFftSize);
         float bands[SpectrumTap::kBands];
+        bool firstWindow = true;
 
         HANDLE waits[2] = {stopEvt_, sampleEvt};
         for (;;) {
@@ -262,6 +282,10 @@ void SpectrumTap::run() {
                             bands[b] = std::clamp((db + 72.0f) / 60.0f, 0.0f, 1.0f);
                         }
                         if (sink_) sink_(bands);
+                        if (firstWindow) {
+                            diag::info(L"SpectrumTap: first audio window analysed (audio is flowing)");
+                            firstWindow = false;
+                        }
                         wpos = 0;
                     }
                 }
@@ -275,6 +299,7 @@ void SpectrumTap::run() {
     if (client) client->Release();
     if (sampleEvt) CloseHandle(sampleEvt);
     if (SUCCEEDED(co)) CoUninitialize();
+    diag::info(L"SpectrumTap: capture thread stopped");
     // Clear on EVERY exit (incl. early activation/init failure) so running() stays
     // honest and syncSpectrumTap() can retry later instead of believing a dead tap
     // is still alive.

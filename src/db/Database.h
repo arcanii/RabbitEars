@@ -59,6 +59,10 @@ public:
     std::optional<Channel> channelByLcn(int lcn);
 
     std::vector<std::wstring> listGroups();
+    // Distinct ISO country codes (lowercase) derived from tvg-id suffixes
+    // (iptv-org convention: "<name>.<cc>", e.g. "CNN.us"); + channels for one code.
+    std::vector<std::wstring> listCountries();
+    std::vector<Channel> channelsByCountry(const std::wstring& code);
 
     void setFavourite(long long channelId, bool favourite);
     void toggleFavourite(long long channelId);

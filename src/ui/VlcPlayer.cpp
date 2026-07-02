@@ -48,6 +48,11 @@ VlcPlayer::~VlcPlayer() {
         cv_.notify_all();
         if (worker_.joinable()) worker_.join();
     }
+    // Drain any in-flight async stops before releasing the instance they ran on
+    // (worker is already joined, so reapers_ is ours now).
+    for (auto& r : reapers_)
+        if (r.th.joinable()) r.th.join();
+    reapers_.clear();
     if (inst_) {
         libvlc_log_unset(inst_);
         libvlc_release(inst_);
@@ -119,7 +124,7 @@ void VlcPlayer::workerLoop() {
         }
         switch (c.type) {
             case Cmd::Quit:
-                doStop();
+                doStop(/*async=*/false);  // synchronous so shutdown is clean
                 doRecordStop();  // finalize any recording before shutdown
                 return;
             case Cmd::Play:
@@ -129,7 +134,7 @@ void VlcPlayer::workerLoop() {
                 doPlay(c);
                 break;
             case Cmd::Stop:
-                doStop();
+                doStop(/*async=*/true);
                 break;
             case Cmd::Pause:
                 if (mp_) libvlc_media_player_pause(mp_);
@@ -150,13 +155,55 @@ void VlcPlayer::workerLoop() {
     }
 }
 
-void VlcPlayer::doStop() {
-    if (mp_) {
-        libvlc_media_player_stop(mp_);   // synchronous — but on the worker, not UI
-        libvlc_media_player_release(mp_);
-        mp_ = nullptr;
+void VlcPlayer::reapAsyncStops() {
+    for (auto it = reapers_.begin(); it != reapers_.end();) {
+        if (it->done->load()) {
+            if (it->th.joinable()) it->th.join();
+            it = reapers_.erase(it);
+        } else {
+            ++it;
+        }
     }
-    if (media_) {
+}
+
+void VlcPlayer::doStop(bool async) {
+    if (mp_) {
+        if (async) {
+            // Hand the (blocking) stop()/release() to a reaper thread so the worker
+            // stays free to open the next channel immediately — a stuck/dead stream's
+            // stop() can otherwise hang the worker for seconds and leave the next
+            // channel un-connected until the app is restarted.
+            libvlc_media_player_t* old = mp_;
+            libvlc_media_t* oldMedia = media_;
+            mp_ = nullptr;
+            media_ = nullptr;
+            // Detach our callbacks so this dying player can't post stale events (e.g.
+            // a Stopped/Error for the channel we just switched away from).
+            if (auto* em = libvlc_media_player_event_manager(old))
+                for (int ev : {libvlc_MediaPlayerOpening, libvlc_MediaPlayerBuffering,
+                               libvlc_MediaPlayerPlaying, libvlc_MediaPlayerPaused,
+                               libvlc_MediaPlayerStopped, libvlc_MediaPlayerEndReached,
+                               libvlc_MediaPlayerEncounteredError})
+                    libvlc_event_detach(em, ev, vlcEventThunk, this);
+            reapAsyncStops();  // drop any that have already finished
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            reapers_.push_back({std::thread([old, oldMedia, done] {
+                                    libvlc_media_player_stop(old);
+                                    libvlc_media_player_release(old);
+                                    if (oldMedia) libvlc_media_release(oldMedia);
+                                    done->store(true);
+                                }),
+                                done});
+        } else {
+            libvlc_media_player_stop(mp_);  // synchronous (shutdown/explicit stop)
+            libvlc_media_player_release(mp_);
+            mp_ = nullptr;
+            if (media_) {
+                libvlc_media_release(media_);
+                media_ = nullptr;
+            }
+        }
+    } else if (media_) {
         libvlc_media_release(media_);
         media_ = nullptr;
     }
@@ -168,7 +215,7 @@ void VlcPlayer::doStop() {
 }
 
 void VlcPlayer::doPlay(const Cmd& c) {
-    doStop();
+    doStop(/*async=*/true);  // tear the previous channel down off-thread — don't block this open
     if (!inst_) return;
     diag::info(L"play: " + c.url);
     const std::string u = utf8FromWide(c.url);

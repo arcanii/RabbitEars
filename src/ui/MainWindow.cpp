@@ -38,6 +38,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/BufferMeter.h"
 #include "ui/ChannelGridControl.h"
 #include "ui/Dialogs.h"
+#include "ui/DockLayout.h"
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -85,6 +86,16 @@ constexpr int ID_MTR_SPECTRUM = 2040;  // Settings → Meters toggle commands
 constexpr int ID_MTR_SIGNAL = 2041;
 constexpr int ID_MTR_BITRATE = 2042;
 constexpr int ID_MTR_FRAMES = 2043;
+constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
+constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
+
+// Segoe MDL2 Assets transport glyphs — rendered with the MDL2 glyph font on the
+// square transport buttons. Play/Pause and Record/Stop-rec swap with state.
+constexpr wchar_t kGlyphPlay[] = L"";
+constexpr wchar_t kGlyphPause[] = L"";
+constexpr wchar_t kGlyphStop[] = L"";
+constexpr wchar_t kGlyphRecord[] = L"";
+constexpr wchar_t kGlyphFull[] = L"";
 
 int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
@@ -92,11 +103,12 @@ int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 // receive->show latency the user trades for smoothness on flaky streams.
 constexpr int kBufMinMs = 500, kBufMaxMs = 8000, kBufStepMs = 250;
 
-enum class ViewKind { All, Favourites, Group, Playlist };
+enum class ViewKind { All, Favourites, Group, Country, Playlist };
 struct ViewFilter {
     ViewKind     kind = ViewKind::All;
     std::wstring group;
     long long    playlistId = 0;
+    std::wstring country;  // ISO code when kind == Country
 };
 
 struct CmdBtn {
@@ -167,6 +179,20 @@ struct AppState {
     ViewFilter filter;
     std::vector<ViewFilter> navFilters;  // indexed by tree item lParam
     SpectrumTap spectrumTap;             // read-only WASAPI process-loopback → spectrum meter
+    DockLayout  dock;                    // user-arrangeable region layout (persisted)
+    std::vector<DockLayout::Gutter> gutters;  // splitter gutters from the last layout()
+    bool        draggingGutter = false;
+    DockLayout::Gutter dragGutter{};
+    // Drag-to-redock: a small grip per region, a translucent drop-zone overlay, and
+    // the in-flight drag target.
+    HWND        gripNav = nullptr, gripVideo = nullptr, gripGrid = nullptr;
+    HWND        dockOverlay = nullptr;      // layered highlight, created lazily
+    RECT        panelRects[kPanelCount]{};  // last-laid-out rects, for drop hit-testing
+    bool        panelDragActive = false;
+    Panel       panelDragFrom = Panel::Nav;
+    Panel       panelDropTo = Panel::Nav;
+    DockSide    panelDropSide = DockSide::Left;
+    bool        panelDropValid = false;
 };
 
 AppState* stateOf(HWND h) { return reinterpret_cast<AppState*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
@@ -319,62 +345,101 @@ void layout(HWND hwnd, AppState* st) {
     const int W = rc.right, H = rc.bottom;
     const int cmdH = cmdBarH(st->dpi);
 
+    // Batch every child move into one atomic BeginDeferWindowPos pass so a resize /
+    // splitter drag repaints the panes together instead of child-by-child. The
+    // child-by-child churn is what left splitter drag artifacts + stale transport-
+    // button pixels when a panel moved (this is how ManorLords-SGE avoids the same).
+    // SWP_NOCOPYBITS: don't copy old client bits to the new position — repaint fresh,
+    // else a shifted control (the transport buttons) shows stale pixels.
+    constexpr UINT kSwp = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS;
+    HDWP dwp = BeginDeferWindowPos(24);
+    auto place = [&](HWND h, int px, int py, int pw, int ph) {
+        if (h && dwp)
+            dwp = DeferWindowPos(dwp, h, nullptr, px, py, std::max(0, pw), std::max(0, ph), kSwp);
+    };
+
     // search box in the command bar (before caption buttons)
     const int sw = dp(220, st->dpi), sh = dp(28, st->dpi);
     const int sx = W - 3 * capW(st->dpi) - sw - dp(12, st->dpi);
-    MoveWindow(st->search, sx, (cmdH - sh) / 2, sw, sh, TRUE);
+    place(st->search, sx, (cmdH - sh) / 2, sw, sh);
 
     if (st->fullscreen) {
-        for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop,
-                       st->btnRec, st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull,
-                       st->status, st->bufferMeter, st->meterSpectrum, st->meterSignal,
-                       st->meterBitrate, st->meterFrames})
+        for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
+                       st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
+                       st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
+                       st->meterFrames, st->gripNav, st->gripVideo, st->gripGrid})
             ShowWindow(h, SW_HIDE);
-        MoveWindow(st->video, 0, 0, W, H, TRUE);
+        place(st->video, 0, 0, W, H);
+        if (dwp) EndDeferWindowPos(dwp);
         return;
     }
-    for (HWND h : {st->nav, st->splitter, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
+    for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
                    st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
                    st->bufferMeter})
         ShowWindow(h, SW_SHOW);
 
+    // The three regions (Nav · Video+transport · Grid) are placed by the user's dock
+    // tree; the transport strip rides at the bottom of the Video panel. Divider gutters
+    // between regions are painted + dragged by the parent (WM_PAINT / WM_LBUTTONDOWN).
     const int contentTop = cmdH;
-    const int contentH = H - cmdH;
-    const int splitW = dp(5, st->dpi);
-    const int navW = std::clamp(st->sidebarW, dp(160, st->dpi), std::max(dp(160, st->dpi), W - dp(360, st->dpi)));
-    MoveWindow(st->nav, 0, contentTop, navW, contentH, TRUE);
-    MoveWindow(st->splitter, navW, contentTop, splitW, contentH, TRUE);
-
-    const int cx = navW + splitW, cw = W - navW - splitW;
     const int sHt = stripH(st->dpi);
-    int videoH = (contentH - sHt) * 58 / 100;
-    if (videoH < dp(120, st->dpi)) videoH = dp(120, st->dpi);
-    MoveWindow(st->video, cx, contentTop, cw, videoH, TRUE);
+    const RECT content{0, contentTop, W, H};
+    const int gutterW = dp(5, st->dpi);
+    const int minPanel = dp(140, st->dpi);
+    RECT rects[kPanelCount];
+    st->dock.computeRects(content, gutterW, minPanel, rects, st->gutters);
+    const RECT navR = rects[static_cast<int>(Panel::Nav)];
+    const RECT vidR = rects[static_cast<int>(Panel::Video)];
+    const RECT gridR = rects[static_cast<int>(Panel::Grid)];
 
-    const int stripY = contentTop + videoH;
+    place(st->nav, navR.left, navR.top, static_cast<int>(navR.right - navR.left),
+          static_cast<int>(navR.bottom - navR.top));
+    place(st->grid, gridR.left, gridR.top, static_cast<int>(gridR.right - gridR.left),
+          static_cast<int>(gridR.bottom - gridR.top));
+
+    const int vidW = static_cast<int>(vidR.right - vidR.left);
+    const int videoAreaH = std::max(0, static_cast<int>(vidR.bottom - vidR.top) - sHt);
+    place(st->video, vidR.left, vidR.top, vidW, videoAreaH);
+
+    // Remember panel rects (for drop hit-testing) + place the drag-to-redock grips in
+    // each region's top-right corner, kept above the region's content.
+    st->panelRects[static_cast<int>(Panel::Nav)] = navR;
+    st->panelRects[static_cast<int>(Panel::Video)] = vidR;
+    st->panelRects[static_cast<int>(Panel::Grid)] = gridR;
+    const int gw = dp(22, st->dpi), gh = dp(14, st->dpi), gm = dp(3, st->dpi);
+    auto placeGrip = [&](HWND g, const RECT& r) {
+        if (g && dwp)
+            dwp = DeferWindowPos(dwp, g, HWND_TOP, static_cast<int>(r.right) - gw - gm,
+                                 static_cast<int>(r.top) + gm, gw, gh, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    };
+    placeGrip(st->gripNav, navR);
+    placeGrip(st->gripVideo, vidR);
+    placeGrip(st->gripGrid, gridR);
+
+    const int stripY = vidR.top + videoAreaH;
     const int pad = dp(10, st->dpi), btnH = dp(30, st->dpi), by = stripY + (sHt - btnH) / 2;
-    const int bw = dp(84, st->dpi);
+    const int bw = dp(34, st->dpi), ig = dp(4, st->dpi);  // square icon buttons, tight cluster
+    const int cx = vidR.left;
     int x = cx + pad;
-    MoveWindow(st->btnPlay, x, by, bw, btnH, TRUE); x += bw + pad;
-    MoveWindow(st->btnStop, x, by, bw, btnH, TRUE); x += bw + pad;
-    MoveWindow(st->btnRec, x, by, bw, btnH, TRUE); x += bw + pad;
+    place(st->btnPlay, x, by, bw, btnH); x += bw + ig;
+    place(st->btnStop, x, by, bw, btnH); x += bw + ig;
+    place(st->btnRec, x, by, bw, btnH); x += bw + pad;
     const int iconW = dp(20, st->dpi);
-    MoveWindow(st->volIcon, x, by, iconW, btnH, TRUE); x += iconW + dp(2, st->dpi);
+    place(st->volIcon, x, by, iconW, btnH); x += iconW + dp(2, st->dpi);
     const int volW = dp(126, st->dpi);
-    MoveWindow(st->volBar, x, by, volW, btnH, TRUE); x += volW + pad;
-    const int fullW = dp(110, st->dpi);
-    MoveWindow(st->btnFull, x, by, fullW, btnH, TRUE); x += fullW + pad * 2;
+    place(st->volBar, x, by, volW, btnH); x += volW + pad;
+    const int fullW = dp(34, st->dpi);  // fullscreen icon
+    place(st->btnFull, x, by, fullW, btnH); x += fullW + pad * 2;
     // Buffer-size control: "Buffer 1.5 s" label + slider (the receive->show delay).
     const int bufLabelW = dp(84, st->dpi), bufBarW = dp(110, st->dpi);
-    MoveWindow(st->bufLabel, x, by, bufLabelW, btnH, TRUE); x += bufLabelW + dp(2, st->dpi);
-    MoveWindow(st->bufBar, x, by, bufBarW, btnH, TRUE); x += bufBarW + pad * 2;
-    // Meter tray, laid out right-to-left: the big fluid buffer meter is pinned to
-    // the right edge, then the enabled mini meters stack to its left; the status
-    // text fills whatever space is left. Disabled meters are hidden.
+    place(st->bufLabel, x, by, bufLabelW, btnH); x += bufLabelW + dp(2, st->dpi);
+    place(st->bufBar, x, by, bufBarW, btnH); x += bufBarW + pad * 2;
+    // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
+    // meters are hidden (also via the deferred pass, so show/move stay atomic).
     const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
     const int bufMeterW = dp(230, st->dpi);
-    int rightX = W - pad;
-    MoveWindow(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH, TRUE);
+    int rightX = vidR.right - pad;
+    place(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
     rightX -= bufMeterW + pad;
     struct MtrSlot { HWND h; bool on; int w; };
     const MtrSlot slots[] = {  // rightmost first
@@ -384,21 +449,191 @@ void layout(HWND hwnd, AppState* st) {
         {st->meterSpectrum, st->showSpectrum, dp(112, st->dpi)},
     };
     for (const MtrSlot& s : slots) {
-        // Only place a meter if it genuinely fits to the left of the buffer meter and
-        // right of the transport controls; otherwise hide it (it reappears when the
-        // window is widened) so the tray never overlaps the buttons on a narrow strip.
         if (s.on && rightX - s.w >= x + pad) {
-            MoveWindow(s.h, rightX - s.w, meterY, s.w, meterH, TRUE);
-            ShowWindow(s.h, SW_SHOW);
+            if (s.h && dwp)
+                dwp = DeferWindowPos(dwp, s.h, nullptr, rightX - s.w, meterY, s.w, meterH,
+                                     kSwp | SWP_SHOWWINDOW);
             rightX -= s.w + dp(6, st->dpi);
-        } else {
-            ShowWindow(s.h, SW_HIDE);
+        } else if (s.h && dwp) {
+            dwp = DeferWindowPos(dwp, s.h, nullptr, 0, 0, 0, 0,
+                                 kSwp | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
         }
     }
-    MoveWindow(st->status, x, by, std::max(0, rightX - pad - x), btnH, TRUE);
+    place(st->status, x, by, std::max(0, rightX - pad - x), btnH);
 
-    const int gridY = stripY + sHt;
-    MoveWindow(st->grid, cx, gridY, cw, std::max(0, H - gridY), TRUE);
+    if (dwp) EndDeferWindowPos(dwp);
+    InvalidateRect(hwnd, nullptr, FALSE);  // repaint the parent-drawn divider gutters
+}
+
+// ---- dock gutters + re-dock helpers ----------------------------------------
+
+const DockLayout::Gutter* gutterAt(AppState* st, POINT pt) {
+    for (const auto& g : st->gutters)
+        if (PtInRect(&g.rc, pt)) return &g;
+    return nullptr;
+}
+
+void paintGutters(AppState* st, HDC hdc) {
+    for (const auto& g : st->gutters) FillRect(hdc, &g.rc, themeBrush(currentTheme().border));
+}
+
+void persistDock(AppState* st) { st->db.setSetting(L"dock_layout", st->dock.serialize()); }
+
+void applyDockChange(HWND hwnd, AppState* st) {
+    layout(hwnd, st);
+    InvalidateRect(hwnd, nullptr, FALSE);
+    persistDock(st);
+}
+
+// Dock panel `p` against the outer `side` of the whole layout (outside whichever
+// other panel currently sits at that extreme).
+void dockToEdge(AppState* st, Panel p, DockSide side) {
+    RECT rects[kPanelCount];
+    std::vector<DockLayout::Gutter> g;
+    st->dock.computeRects(RECT{0, 0, 1000, 1000}, 0, 0, rects, g);
+    Panel target = p;
+    long best = 0;
+    bool first = true;
+    for (int k = 0; k < kPanelCount; ++k) {
+        if (k == static_cast<int>(p)) continue;
+        const RECT& r = rects[k];
+        const long v = (side == DockSide::Left)   ? r.left
+                       : (side == DockSide::Right) ? -r.right
+                       : (side == DockSide::Top)   ? r.top
+                                                   : -r.bottom;
+        if (first || v < best) {
+            best = v;
+            target = static_cast<Panel>(k);
+            first = false;
+        }
+    }
+    if (target != p) st->dock.dock(p, side, target);
+}
+
+// ---- drag-to-redock: grips + translucent snap-zone overlay ------------------
+
+constexpr wchar_t kGripClass[] = L"ReDockGrip";
+constexpr wchar_t kOverlayClass[] = L"ReDropOverlay";
+
+LRESULT CALLBACK DropOverlayProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_ERASEBKGND) {
+        RECT rc;
+        GetClientRect(h, &rc);
+        FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().accent));
+        return 1;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+HWND ensureDropOverlay(HWND parent, AppState* st) {
+    if (st->dockOverlay) return st->dockOverlay;
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(parent, GWLP_HINSTANCE));
+    st->dockOverlay = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
+                                          WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                                      kOverlayClass, L"", WS_POPUP, 0, 0, 10, 10, parent, nullptr,
+                                      hInst, nullptr);
+    if (st->dockOverlay)
+        SetLayeredWindowAttributes(st->dockOverlay, 0, 110, LWA_ALPHA);  // ~43% translucent coral
+    return st->dockOverlay;
+}
+
+void beginPanelDrag(HWND parent, AppState* st, Panel p) {
+    st->panelDragActive = true;
+    st->panelDragFrom = p;
+    st->panelDropValid = false;
+    ensureDropOverlay(parent, st);
+    SetCapture(parent);
+}
+
+// Find the drop target (panel + side) under `pt` (client coords) and position the
+// overlay over the half the region would take. Hidden when there is no valid target.
+void updateDockTarget(HWND hwnd, AppState* st, POINT pt) {
+    st->panelDropValid = false;
+    for (int k = 0; k < kPanelCount; ++k) {
+        if (static_cast<Panel>(k) == st->panelDragFrom) continue;
+        const RECT& r = st->panelRects[k];
+        if (r.right <= r.left || r.bottom <= r.top || !PtInRect(&r, pt)) continue;
+        const double wdt = r.right - r.left, hgt = r.bottom - r.top;
+        const double fx = (pt.x - r.left) / wdt, fy = (pt.y - r.top) / hgt;
+        const double dl = fx, dr = 1.0 - fx, dt = fy, db = 1.0 - fy;
+        const double mn = std::min(std::min(dl, dr), std::min(dt, db));
+        const DockSide side = (mn == dl)   ? DockSide::Left
+                              : (mn == dr) ? DockSide::Right
+                              : (mn == dt) ? DockSide::Top
+                                           : DockSide::Bottom;
+        RECT hl = r;
+        if (side == DockSide::Left) hl.right = r.left + static_cast<LONG>(wdt / 2);
+        else if (side == DockSide::Right) hl.left = r.left + static_cast<LONG>(wdt / 2);
+        else if (side == DockSide::Top) hl.bottom = r.top + static_cast<LONG>(hgt / 2);
+        else hl.top = r.top + static_cast<LONG>(hgt / 2);
+        st->panelDropTo = static_cast<Panel>(k);
+        st->panelDropSide = side;
+        st->panelDropValid = true;
+        POINT tl{hl.left, hl.top}, br{hl.right, hl.bottom};
+        ClientToScreen(hwnd, &tl);
+        ClientToScreen(hwnd, &br);
+        if (st->dockOverlay)
+            SetWindowPos(st->dockOverlay, HWND_TOPMOST, tl.x, tl.y, br.x - tl.x, br.y - tl.y,
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        return;
+    }
+    if (st->dockOverlay) ShowWindow(st->dockOverlay, SW_HIDE);
+}
+
+void endPanelDrag(HWND hwnd, AppState* st, bool commit) {
+    if (!st->panelDragActive) return;
+    st->panelDragActive = false;
+    ReleaseCapture();
+    if (st->dockOverlay) ShowWindow(st->dockOverlay, SW_HIDE);
+    if (commit && st->panelDropValid && st->panelDropTo != st->panelDragFrom) {
+        st->dock.dock(st->panelDragFrom, st->panelDropSide, st->panelDropTo);
+        applyDockChange(hwnd, st);
+    }
+    st->panelDropValid = false;
+}
+
+LRESULT CALLBACK DockGripProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            const Theme& th = currentTheme();
+            AppState* st = stateOf(GetParent(hwnd));
+            const UINT dpi = st ? st->dpi : 96u;
+            HBRUSH dcb = static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+            SetDCBrushColor(dc, th.panelElevBg);
+            FillRect(dc, &rc, dcb);
+            SetDCBrushColor(dc, th.border);
+            FrameRect(dc, &rc, dcb);
+            const int ds = std::max(2, dp(2, dpi)), gap = std::max(2, dp(2, dpi));
+            const int gwid = 2 * ds + gap, ghgt = 3 * ds + 2 * gap;
+            const int ox = rc.left + (rc.right - rc.left - gwid) / 2;
+            const int oy = rc.top + (rc.bottom - rc.top - ghgt) / 2;
+            SetDCBrushColor(dc, th.textMuted);
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 2; ++c) {
+                    RECT dot{ox + c * (ds + gap), oy + r * (ds + gap), ox + c * (ds + gap) + ds,
+                             oy + r * (ds + gap) + ds};
+                    FillRect(dc, &dot, dcb);
+                }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_SETCURSOR:
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+            return TRUE;
+        case WM_LBUTTONDOWN: {
+            HWND parent = GetParent(hwnd);
+            if (AppState* st = stateOf(parent))
+                beginPanelDrag(parent, st, static_cast<Panel>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)));
+            return 0;
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 // Draggable vertical splitter between the nav sidebar and the content pane.
@@ -474,6 +709,7 @@ void loadForFilter(AppState* st) {
         case ViewKind::All: ch = st->db.allChannels(); break;
         case ViewKind::Favourites: ch = st->db.favourites(); break;
         case ViewKind::Group: ch = st->db.channelsByGroup(st->filter.group); break;
+        case ViewKind::Country: ch = st->db.channelsByCountry(st->filter.country); break;
         case ViewKind::Playlist: ch = st->db.channelsByPlaylist(st->filter.playlistId); break;
     }
     applyChannelFilters(st, ch);
@@ -497,6 +733,36 @@ HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM
     return TreeView_InsertItem(nav, &is);
 }
 
+// Friendly name for an ISO-3166 alpha-2 country code (from the tvg-id suffix); the
+// uppercased code itself for anything not in the (common-IPTV-countries) table.
+std::wstring countryLabel(const std::wstring& code) {
+    struct CC { const wchar_t* code; const wchar_t* name; };
+    static const CC kNames[] = {
+        {L"us", L"United States"}, {L"uk", L"United Kingdom"}, {L"gb", L"United Kingdom"},
+        {L"ca", L"Canada"}, {L"au", L"Australia"}, {L"nz", L"New Zealand"}, {L"ie", L"Ireland"},
+        {L"de", L"Germany"}, {L"fr", L"France"}, {L"es", L"Spain"}, {L"it", L"Italy"},
+        {L"pt", L"Portugal"}, {L"nl", L"Netherlands"}, {L"be", L"Belgium"}, {L"ch", L"Switzerland"},
+        {L"at", L"Austria"}, {L"se", L"Sweden"}, {L"no", L"Norway"}, {L"dk", L"Denmark"},
+        {L"fi", L"Finland"}, {L"pl", L"Poland"}, {L"cz", L"Czechia"}, {L"sk", L"Slovakia"},
+        {L"hu", L"Hungary"}, {L"ro", L"Romania"}, {L"bg", L"Bulgaria"}, {L"gr", L"Greece"},
+        {L"tr", L"Turkey"}, {L"ru", L"Russia"}, {L"ua", L"Ukraine"}, {L"rs", L"Serbia"},
+        {L"hr", L"Croatia"}, {L"si", L"Slovenia"}, {L"al", L"Albania"}, {L"br", L"Brazil"},
+        {L"mx", L"Mexico"}, {L"ar", L"Argentina"}, {L"cl", L"Chile"}, {L"co", L"Colombia"},
+        {L"pe", L"Peru"}, {L"ve", L"Venezuela"}, {L"in", L"India"}, {L"pk", L"Pakistan"},
+        {L"bd", L"Bangladesh"}, {L"cn", L"China"}, {L"jp", L"Japan"}, {L"kr", L"South Korea"},
+        {L"id", L"Indonesia"}, {L"my", L"Malaysia"}, {L"sg", L"Singapore"}, {L"th", L"Thailand"},
+        {L"vn", L"Vietnam"}, {L"ph", L"Philippines"}, {L"sa", L"Saudi Arabia"}, {L"ae", L"UAE"},
+        {L"qa", L"Qatar"}, {L"il", L"Israel"}, {L"eg", L"Egypt"}, {L"ma", L"Morocco"},
+        {L"dz", L"Algeria"}, {L"za", L"South Africa"}, {L"ng", L"Nigeria"}, {L"ke", L"Kenya"},
+    };
+    for (const CC& e : kNames)
+        if (code == e.code) return e.name;
+    std::wstring up = code;
+    for (wchar_t& c : up)
+        if (c >= L'a' && c <= L'z') c = static_cast<wchar_t>(c - 32);
+    return up;
+}
+
 void refreshNav(AppState* st) {
     st->navFilters.clear();
     TreeView_DeleteAllItems(st->nav);
@@ -510,6 +776,16 @@ void refreshNav(AppState* st) {
     for (const std::wstring& g : st->db.listGroups()) {
         st->navFilters.push_back({ViewKind::Group, g, 0});
         navInsert(st->nav, groups, g, static_cast<LPARAM>(st->navFilters.size() - 1), false);
+    }
+    HTREEITEM countries = navInsert(st->nav, TVI_ROOT, L"Countries", -1, true);
+    {
+        std::vector<std::pair<std::wstring, std::wstring>> cs;  // (display name, code)
+        for (const std::wstring& cc : st->db.listCountries()) cs.emplace_back(countryLabel(cc), cc);
+        std::sort(cs.begin(), cs.end());  // alphabetical by name
+        for (const auto& [label, cc] : cs) {
+            st->navFilters.push_back({ViewKind::Country, L"", 0, cc});
+            navInsert(st->nav, countries, label, static_cast<LPARAM>(st->navFilters.size() - 1), false);
+        }
     }
     HTREEITEM playlists = navInsert(st->nav, TVI_ROOT, L"Playlists", -1, true);
     for (const Playlist& p : st->db.listPlaylists()) {
@@ -702,7 +978,7 @@ void onToggleRecord(AppState* st) {
     if (st->player.isRecording()) {
         const std::wstring file = st->player.recordingFile();
         st->player.stopRecording();
-        SetWindowTextW(st->btnRec, L"Record");
+        SetWindowTextW(st->btnRec, kGlyphRecord);
         setStatus(st, L"Recording saved: " + file);
         return;
     }
@@ -715,7 +991,7 @@ void onToggleRecord(AppState* st) {
     const std::wstring path = recordingPath(st->nowPlaying.name, ext);
     if (st->player.startRecording(st->nowPlaying.streamUrl, st->nowPlaying.userAgent,
                                   st->nowPlaying.referrer, path, mux)) {
-        SetWindowTextW(st->btnRec, L"Stop Rec");
+        SetWindowTextW(st->btnRec, kGlyphStop);
         setStatus(st, L"● Recording " + st->nowPlaying.name + L"  →  " + path);
     }
 }
@@ -830,10 +1106,35 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(meters, MF_STRING | (st->showFrames ? MF_CHECKED : 0u), ID_MTR_FRAMES, L"Frame rate");
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(meters), L"Meters");
 
+    HMENU layoutMenu = CreatePopupMenu();
+    AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, L"Reset to default");
+    AppendMenuW(layoutMenu, MF_SEPARATOR, 0, nullptr);
+    const struct { const wchar_t* name; Panel p; } dockPanels[] = {
+        {L"Move sidebar", Panel::Nav}, {L"Move video", Panel::Video}, {L"Move channels", Panel::Grid}};
+    const wchar_t* dockSides[] = {L"To left", L"To right", L"To top", L"To bottom"};
+    for (const auto& pn : dockPanels) {
+        HMENU sub = CreatePopupMenu();
+        for (int s = 0; s < 4; ++s)
+            AppendMenuW(sub, MF_STRING, ID_DOCK_BASE + static_cast<int>(pn.p) * 4 + s, dockSides[s]);
+        AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), pn.name);
+    }
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"Layout");
+
     POINT pt{anchor.left, anchor.bottom};
     ClientToScreen(hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, nullptr);
-    DestroyMenu(m);  // frees the submenu too
+    DestroyMenu(m);  // frees the submenus too
+    if (cmd == ID_LAYOUT_RESET) {
+        st->dock = DockLayout::makeDefault();
+        applyDockChange(hwnd, st);
+        return;
+    }
+    if (cmd >= ID_DOCK_BASE && cmd < ID_DOCK_BASE + kPanelCount * 4) {
+        const int off = cmd - ID_DOCK_BASE;
+        dockToEdge(st, static_cast<Panel>(off / 4), static_cast<DockSide>(off % 4));
+        applyDockChange(hwnd, st);
+        return;
+    }
     switch (cmd) {
         case ID_OPEN_FILE:
             onOpenFile(st);
@@ -903,8 +1204,8 @@ void createChildren(HWND hwnd, AppState* st) {
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
                               0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_NAV)),
                               hInst, nullptr);
-    st->splitter = CreateWindowExW(0, L"ReVSplitter", L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0,
-                                   0, 10, 10, hwnd, nullptr, hInst, nullptr);
+    // (The old single nav splitter is replaced by the dock tree's divider gutters,
+    // painted + dragged by the parent — see layout()/WM_PAINT/WM_LBUTTONDOWN.)
     registerChannelGridClass(hInst);
     st->grid = createChannelGrid(hwnd, hInst, ID_GRID, st->dpi);
     st->search = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -913,11 +1214,11 @@ void createChildren(HWND hwnd, AppState* st) {
                                  nullptr);
     SendMessageW(st->search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search channels…"));
 
-    st->btnPlay = CreateWindowExW(0, L"BUTTON", L"Pause", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd,
+    st->btnPlay = CreateWindowExW(0, L"BUTTON", kGlyphPlay, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_PLAY)), hInst, nullptr);
-    st->btnStop = CreateWindowExW(0, L"BUTTON", L"Stop", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd,
+    st->btnStop = CreateWindowExW(0, L"BUTTON", kGlyphStop, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_STOP)), hInst, nullptr);
-    st->btnRec = CreateWindowExW(0, L"BUTTON", L"Record", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd,
+    st->btnRec = CreateWindowExW(0, L"BUTTON", kGlyphRecord, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_REC)), hInst, nullptr);
     // Speaker glyph (Segoe MDL2 "Volume") so the slider is obviously the volume.
     st->volIcon = CreateWindowExW(0, L"STATIC", L"",
@@ -931,7 +1232,7 @@ void createChildren(HWND hwnd, AppState* st) {
     st->bufBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS, 0,
                                  0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUF)),
                                  hInst, nullptr);
-    st->btnFull = CreateWindowExW(0, L"BUTTON", L"Fullscreen", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10,
+    st->btnFull = CreateWindowExW(0, L"BUTTON", kGlyphFull, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10,
                                   hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_FULL)), hInst, nullptr);
     st->status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 10,
                                  10, hwnd, nullptr, hInst, nullptr);
@@ -944,6 +1245,13 @@ void createChildren(HWND hwnd, AppState* st) {
     st->meterSignal = createMiniMeter(hwnd, hInst, ID_METER_SIGNAL, st->dpi, MeterKind::Signal);
     st->meterBitrate = createMiniMeter(hwnd, hInst, ID_METER_BITRATE, st->dpi, MeterKind::Bitrate);
     st->meterFrames = createMiniMeter(hwnd, hInst, ID_METER_FRAMES, st->dpi, MeterKind::Frames);
+    // Drag-to-redock grips (one per region), positioned + shown by layout().
+    for (HWND* g : {&st->gripNav, &st->gripVideo, &st->gripGrid})
+        *g = CreateWindowExW(0, kGripClass, L"", WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 10, 10, hwnd,
+                             nullptr, hInst, nullptr);
+    SetWindowLongPtrW(st->gripNav, GWLP_USERDATA, static_cast<LONG_PTR>(Panel::Nav));
+    SetWindowLongPtrW(st->gripVideo, GWLP_USERDATA, static_cast<LONG_PTR>(Panel::Video));
+    SetWindowLongPtrW(st->gripGrid, GWLP_USERDATA, static_cast<LONG_PTR>(Panel::Grid));
 
     SendMessageW(st->volBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
     SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->player.volume());
@@ -965,16 +1273,21 @@ void createChildren(HWND hwnd, AppState* st) {
         ti.hwnd = hwnd;  // owner receives TTN_GETDISPINFO
         ti.lpszText = LPSTR_TEXTCALLBACKW;
         for (HWND tool : {st->volBar, st->volIcon, st->bufBar, st->bufferMeter, st->meterSpectrum,
-                          st->meterSignal, st->meterBitrate, st->meterFrames}) {
+                          st->meterSignal, st->meterBitrate, st->meterFrames, st->btnPlay,
+                          st->btnStop, st->btnRec, st->btnFull}) {
             ti.uId = reinterpret_cast<UINT_PTR>(tool);
             SendMessageW(st->tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
         }
         SendMessageW(st->tip, TTM_SETMAXTIPWIDTH, 0, dp(280, st->dpi));  // enable multiline (meter stats)
     }
 
-    for (HWND h : {st->search, st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->status, st->volBar,
-                   st->bufBar, st->bufLabel, st->nav}) {
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav}) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
+        SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
+    }
+    // Transport buttons render Segoe MDL2 icon glyphs, so they take the glyph font.
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull}) {
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
     TreeView_SetBkColor(st->nav, currentTheme().panelBg);
@@ -1009,6 +1322,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             createChildren(hwnd, st);
             st->player.attach(st->video);
             st->player.setEventTarget(hwnd, WM_APP_VLC);
+            st->dock = DockLayout::makeDefault();  // valid tree even if the DB fails below
 
             const std::wstring dbPath = Database::defaultDbPath();
             std::wstring err;
@@ -1029,6 +1343,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto v = st->db.getSetting(L"meter_signal")) st->showSignal = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_bitrate")) st->showBitrate = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_frames")) st->showFrames = (*v == L"1");
+                if (auto dl = st->db.getSetting(L"dock_layout"); dl && !dl->empty())
+                    st->dock = DockLayout::parse(*dl);
                 syncSpectrumTap(st);
                 refreshNav(st);
                 st->filter = {ViewKind::All};
@@ -1082,12 +1398,34 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
-            if (!st->fullscreen) drawCmdBar(hwnd, st, hdc);
+            if (!st->fullscreen) {
+                drawCmdBar(hwnd, st, hdc);
+                paintGutters(st, hdc);  // dock dividers live in the gaps between panels
+            }
             EndPaint(hwnd, &ps);
             return 0;
         }
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (st->panelDragActive && (wParam & MK_LBUTTON)) {
+                updateDockTarget(hwnd, st, pt);  // move the drop-zone highlight
+                return 0;
+            }
+            if (st->draggingGutter && (wParam & MK_LBUTTON)) {
+                const RECT& nr = st->dragGutter.nodeRect;
+                const int gutterW = dp(5, st->dpi);
+                double ratio;
+                if (st->dragGutter.vertical) {
+                    const int span = std::max(1, static_cast<int>(nr.bottom - nr.top) - gutterW);
+                    ratio = static_cast<double>(pt.y - nr.top) / span;
+                } else {
+                    const int span = std::max(1, static_cast<int>(nr.right - nr.left) - gutterW);
+                    ratio = static_cast<double>(pt.x - nr.left) / span;
+                }
+                st->dock.setRatio(st->dragGutter.node, ratio);
+                layout(hwnd, st);  // relayout + gutter repaint (layout() invalidates)
+                return 0;
+            }
             int cmdHover = -1, capHover = -1;
             if (pt.y < cmdBarH(st->dpi)) {
                 auto btns = cmdButtonRects(hwnd, st);
@@ -1117,6 +1455,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_LBUTTONDOWN: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (!st->fullscreen) {
+                if (const DockLayout::Gutter* g = gutterAt(st, pt)) {
+                    st->draggingGutter = true;
+                    st->dragGutter = *g;  // copy: node ptr + nodeRect stay valid through the drag
+                    SetCapture(hwnd);
+                    return 0;
+                }
+            }
             if (pt.y >= cmdBarH(st->dpi)) break;
             for (int i = 0; i < 3; ++i) {
                 RECT cb = captionRect(hwnd, st, i);
@@ -1152,9 +1498,40 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
-        case WM_SETCURSOR:
-            if (LOWORD(lParam) == HTTOP) { SetCursor(LoadCursorW(nullptr, IDC_SIZENS)); return TRUE; }
+        case WM_LBUTTONUP:
+            if (st->panelDragActive) {
+                endPanelDrag(hwnd, st, /*commit=*/true);
+                return 0;
+            }
+            if (st->draggingGutter) {
+                st->draggingGutter = false;
+                ReleaseCapture();
+                persistDock(st);  // save the new split ratios
+                return 0;
+            }
             break;
+        case WM_CAPTURECHANGED:
+            // Capture stolen mid-drag (Alt-Tab, UAC, Win+L, another app foregrounding)
+            // — end any drag cleanly so a divider / panel can't stick to the cursor.
+            if (st->panelDragActive) endPanelDrag(hwnd, st, /*commit=*/false);
+            if (st->draggingGutter) {
+                st->draggingGutter = false;
+                persistDock(st);
+            }
+            return 0;
+        case WM_SETCURSOR: {
+            if (LOWORD(lParam) == HTTOP) { SetCursor(LoadCursorW(nullptr, IDC_SIZENS)); return TRUE; }
+            if (LOWORD(lParam) == HTCLIENT && !st->fullscreen) {
+                POINT cp;
+                GetCursorPos(&cp);
+                ScreenToClient(hwnd, &cp);
+                if (const DockLayout::Gutter* g = gutterAt(st, cp)) {
+                    SetCursor(LoadCursorW(nullptr, g->vertical ? IDC_SIZENS : IDC_SIZEWE));
+                    return TRUE;
+                }
+            }
+            break;
+        }
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORBTN:
@@ -1254,6 +1631,23 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     di->lpszText = const_cast<LPWSTR>(L"Frame rate (flares red on dropped frames)");
                     return 0;
                 }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnPlay)) {
+                    di->lpszText = const_cast<LPWSTR>(st->player.isPlaying() ? L"Pause" : L"Play");
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnStop)) {
+                    di->lpszText = const_cast<LPWSTR>(L"Stop");
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnRec)) {
+                    di->lpszText = const_cast<LPWSTR>(st->player.isRecording() ? L"Stop recording"
+                                                                               : L"Record");
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnFull)) {
+                    di->lpszText = const_cast<LPWSTR>(L"Fullscreen");
+                    return 0;
+                }
                 const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
                 swprintf_s(di->szText, L"Volume: %d%%", vol);
                 di->lpszText = di->szText;
@@ -1341,6 +1735,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 case PlayerEvent::Playing:
                     bufferMeterSetHealth(st->bufferMeter, 100);
+                    SetWindowTextW(st->btnPlay, kGlyphPause);
                     setStatus(st, L"Playing: " + st->nowPlayingName);
                     diag::info(L"event: Playing — " + st->nowPlayingName);
                     if (st->nowPlayingId) {
@@ -1350,6 +1745,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     break;
                 case PlayerEvent::Paused:
+                    SetWindowTextW(st->btnPlay, kGlyphPlay);
                     setStatus(st, L"Paused: " + st->nowPlayingName);
                     diag::info(L"event: Paused — " + st->nowPlayingName);
                     break;
@@ -1397,17 +1793,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case PlayerEvent::Stopped:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
+                    SetWindowTextW(st->btnPlay, kGlyphPlay);
                     diag::info(L"event: Stopped");
                     break;
                 case PlayerEvent::EndReached:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
+                    SetWindowTextW(st->btnPlay, kGlyphPlay);
                     setStatus(st, L"Stream ended");
                     diag::info(L"event: EndReached — " + st->nowPlayingName);
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
+                    SetWindowTextW(st->btnPlay, kGlyphPlay);
                     setStatus(st, L"Unavailable (offline or geo-locked): " + st->nowPlayingName);
                     diag::error(L"event: PLAYBACK ERROR (offline / geo-locked / codec) — " +
                                 st->nowPlayingName);
@@ -1499,6 +1898,22 @@ void registerClasses(HINSTANCE hInst) {
     sc.hbrBackground = nullptr;
     sc.lpszClassName = L"ReVSplitter";
     RegisterClassExW(&sc);
+
+    WNDCLASSEXW gc{};  // drag-to-redock grip
+    gc.cbSize = sizeof(gc);
+    gc.lpfnWndProc = DockGripProc;
+    gc.hInstance = hInst;
+    gc.hCursor = LoadCursorW(nullptr, IDC_SIZEALL);
+    gc.lpszClassName = kGripClass;
+    RegisterClassExW(&gc);
+
+    WNDCLASSEXW oc{};  // translucent drop-zone overlay
+    oc.cbSize = sizeof(oc);
+    oc.lpfnWndProc = DropOverlayProc;
+    oc.hInstance = hInst;
+    oc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    oc.lpszClassName = kOverlayClass;
+    RegisterClassExW(&oc);
 }
 
 }  // namespace
@@ -1530,22 +1945,28 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
         Gdiplus::GdiplusShutdown(gdipToken);
         return 1;
     }
-    // First run: require accepting the Terms of Use before the app is usable. The
-    // main window exists (DB opened in WM_CREATE) but is not shown yet, so the gate
-    // appears on its own; declining tears everything down and exits.
-    if (st->db.isOpen() && !st->db.getSetting(L"tos_accepted")) {
-        closeSplash(splash);  // don't leave the splash behind the modal gate
-        splash = nullptr;
-        if (!showTerms(hwnd, hInst, st->dpi)) {
-            diag::info(L"Terms declined — exiting");
-            DestroyWindow(hwnd);
-            delete st;
-            Gdiplus::GdiplusShutdown(gdipToken);
-            diag::shutdown();
-            return 0;
+    // Terms of Use gate: the user must accept before the app is usable, and must
+    // RE-ACCEPT on every version change (new install OR update). `tos_accepted` stores
+    // the full version (marketing.build) it was last accepted for, so any bump
+    // re-prompts. The main window exists (DB opened in WM_CREATE) but is not shown yet,
+    // so the gate appears on its own; declining tears everything down and exits.
+    if (st->db.isOpen()) {
+        const std::wstring tosVer = RE_VERSION_FULL_W;
+        const auto accepted = st->db.getSetting(L"tos_accepted");
+        if (!accepted || *accepted != tosVer) {
+            closeSplash(splash);  // don't leave the splash behind the modal gate
+            splash = nullptr;
+            if (!showTerms(hwnd, hInst, st->dpi)) {
+                diag::info(L"Terms declined — exiting");
+                DestroyWindow(hwnd);
+                delete st;
+                Gdiplus::GdiplusShutdown(gdipToken);
+                diag::shutdown();
+                return 0;
+            }
+            st->db.setSetting(L"tos_accepted", tosVer);
+            diag::info(L"Terms accepted for " + tosVer);
         }
-        st->db.setSetting(L"tos_accepted", L"1");
-        diag::info(L"Terms accepted (first run)");
     }
 
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);

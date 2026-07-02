@@ -46,7 +46,7 @@ endif()
 # Version header — APP_VERSION + git commit count -> build/generated/version.h
 # (BUILD_NUMBER is monotonic per commit, for WinSparkle update comparison).
 # ---------------------------------------------------------------------------
-set(APP_VERSION "0.1.2")
+set(APP_VERSION "0.1.3")
 find_package(Git QUIET)
 set(BUILD_NUMBER 0)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -83,7 +83,8 @@ endif()
 add_library(RabbitEarsCore STATIC
   src/core/M3uParser.cpp
   src/core/Http.cpp
-  src/db/Database.cpp)
+  src/db/Database.cpp
+  src/ui/DockLayout.cpp)  # pure layout-tree logic (no HWNDs) — unit-tested by the CLI
 target_include_directories(RabbitEarsCore PUBLIC src)
 target_link_libraries(RabbitEarsCore PUBLIC sqlite3 shell32 ole32 winhttp)
 

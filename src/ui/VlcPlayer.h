@@ -14,9 +14,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <windows.h>
 
@@ -108,7 +110,8 @@ private:
     void enqueue(Cmd c);
     void workerLoop();
     void doPlay(const Cmd& c);
-    void doStop();
+    void doStop(bool async);  // async=true tears the old player down off-thread
+    void reapAsyncStops();    // join+drop finished reaper threads (worker-thread only)
     void doRecordStart(const Cmd& c);  // worker-thread only
     void doRecordStop();               // worker-thread only
     void sampleStats();         // worker-thread only: read libVLC stats -> snapshot_
@@ -143,6 +146,13 @@ private:
     std::deque<Cmd>          queue_;
     bool                     quit_ = false;
     bool                     started_ = false;
+
+    // Async teardown of superseded players: libVLC 3.x stop()/release() block until
+    // a stream tears down (seconds on a stuck feed), which would wedge the worker and
+    // the next channel switch. doStop(async) offloads them here; the worker prunes
+    // finished ones, and the destructor drains all before libvlc_release(inst_).
+    struct Reaper { std::thread th; std::shared_ptr<std::atomic<bool>> done; };
+    std::vector<Reaper>      reapers_;  // worker-thread only (+ destructor after join)
 };
 
 }  // namespace rabbitears

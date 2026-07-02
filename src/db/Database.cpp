@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 
 #include <shlobj.h>
 #include <windows.h>
@@ -113,6 +114,18 @@ std::vector<Channel> runChannelQuery(sqlite3* db, const std::string& sql,
     if (bindInt) q.bindInt(idx++, *bindInt);
     while (q.step()) out.push_back(readChannel(q));
     return out;
+}
+
+// The 2-letter country code from an iptv-org-style tvg-id ("<name>.<cc>"): the last
+// dot-segment iff it is exactly two ASCII letters, lowercased. "" otherwise.
+std::wstring countryFromTvgId(const std::wstring& tvgId) {
+    const size_t dot = tvgId.find_last_of(L'.');
+    if (dot == std::wstring::npos || dot + 3 != tvgId.size()) return L"";
+    auto isAlpha = [](wchar_t c) { return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); };
+    auto lower = [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c; };
+    const wchar_t a = tvgId[dot + 1], b = tvgId[dot + 2];
+    if (!isAlpha(a) || !isAlpha(b)) return L"";
+    return std::wstring{lower(a), lower(b)};
 }
 
 }  // namespace
@@ -373,6 +386,28 @@ std::vector<std::wstring> Database::listGroups() {
     if (!q) return out;
     while (q.step()) out.push_back(q.textCol(0));
     return out;
+}
+
+std::vector<std::wstring> Database::listCountries() {
+    std::set<std::wstring> codes;  // sorted + distinct
+    Stmt q(db_, "SELECT tvg_id FROM channels WHERE tvg_id IS NOT NULL AND tvg_id<>''");
+    if (!q) return {};
+    while (q.step()) {
+        std::wstring cc = countryFromTvgId(q.textCol(0));
+        if (!cc.empty()) codes.insert(std::move(cc));
+    }
+    return std::vector<std::wstring>(codes.begin(), codes.end());
+}
+
+std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
+    // Match tvg-ids ending in ".<code>". LIKE is ASCII-case-insensitive, and the code
+    // is exactly two letters, so this mirrors countryFromTvgId's last-segment rule.
+    const std::wstring pattern = L"%." + code;
+    return runChannelQuery(db_,
+                           std::string("SELECT ") + kChannelCols +
+                               " FROM channels WHERE tvg_id LIKE ? "
+                               "ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
+                           &pattern);
 }
 
 void Database::setFavourite(long long channelId, bool favourite) {

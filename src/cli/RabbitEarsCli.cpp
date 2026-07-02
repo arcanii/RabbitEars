@@ -15,6 +15,7 @@
 #include "core/M3uParser.h"
 #include "db/Database.h"
 #include "platform/Encoding.h"
+#include "ui/DockLayout.h"
 
 using namespace rabbitears;
 
@@ -145,6 +146,59 @@ int selftest() {
     db.setSetting(L"volume", L"80");
     auto vol = db.getSetting(L"volume");
     expect(vol && *vol == L"80", "settings get/set round-trip");
+
+    out("\n== By country (tvg-id suffix) ==\n");
+    {
+        const std::string ccSample = "#EXTM3U\n"
+                                     "#EXTINF:-1 tvg-id=\"CNN.us\",CNN\nhttp://s/cnn\n"
+                                     "#EXTINF:-1 tvg-id=\"Fox.us\",Fox\nhttp://s/fox\n"
+                                     "#EXTINF:-1 tvg-id=\"BBC.uk\",BBC\nhttp://s/bbc\n"
+                                     "#EXTINF:-1 tvg-id=\"NoCountry.longid\",NoCC\nhttp://s/nocc\n";
+        const M3uDocument ccDoc = parseM3u(ccSample);
+        const long long pid2 = db.addPlaylist(L"CC", L"http://cc", true, 3000);
+        db.bulkInsertChannels(pid2, ccDoc.channels, 3000);
+        auto countries = db.listCountries();
+        expect(hasGroup(countries, L"us") && hasGroup(countries, L"uk"),
+               "listCountries derives us + uk from tvg-id");
+        expect(!hasGroup(countries, L"longid"), "listCountries ignores non-2-letter suffixes");
+        expect(db.channelsByCountry(L"us").size() == 2, "channelsByCountry('us') -> 2 (CNN, Fox)");
+        expect(db.channelsByCountry(L"uk").size() == 1, "channelsByCountry('uk') -> 1 (BBC)");
+        expect(db.channelsByCountry(L"de").empty(), "channelsByCountry('de') -> 0");
+    }
+
+    out("\n== Dock layout ==\n");
+    {
+        DockLayout def = DockLayout::makeDefault();
+        const std::wstring s = def.serialize();
+        expect(s == L"|0.220(N,-0.600(V,G))", "default layout serializes canonically");
+        expect(DockLayout::parse(s).serialize() == s, "serialize -> parse round-trips");
+        expect(DockLayout::parse(L"garbage(((").serialize() == s, "malformed layout -> default");
+        expect(DockLayout::parse(L"|0.5(N,G)").serialize() == s, "layout missing a panel -> default");
+
+        const RECT content{0, 0, 1000, 800};
+        RECT r[kPanelCount];
+        std::vector<DockLayout::Gutter> g;
+        def.computeRects(content, 5, 60, r, g);
+        expect(r[(int)Panel::Nav].left == 0 && r[(int)Panel::Nav].right < r[(int)Panel::Video].left,
+               "default: nav is the left column");
+        expect(r[(int)Panel::Video].left == r[(int)Panel::Grid].left &&
+                   r[(int)Panel::Video].bottom <= r[(int)Panel::Grid].top,
+               "default: video sits above grid in the right column");
+        expect(g.size() == 2, "default has two draggable gutters");
+
+        DockLayout d2 = DockLayout::makeDefault();
+        d2.dock(Panel::Grid, DockSide::Left, Panel::Nav);
+        RECT r2[kPanelCount];
+        std::vector<DockLayout::Gutter> g2;
+        d2.computeRects(content, 5, 60, r2, g2);
+        expect(r2[(int)Panel::Grid].left == 0 &&
+                   r2[(int)Panel::Grid].right <= r2[(int)Panel::Nav].left,
+               "after dock Grid->left-of-Nav, grid is leftmost");
+        bool allPresent = true;
+        for (int k = 0; k < kPanelCount; ++k)
+            allPresent &= (r2[k].right > r2[k].left && r2[k].bottom > r2[k].top);
+        expect(allPresent, "re-dock keeps all three panels laid out");
+    }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");
     return g_fail == 0 ? 0 : 1;

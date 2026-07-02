@@ -22,20 +22,31 @@ bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int
 
     URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof(uc);
-    wchar_t host[256] = L"", path[4096] = L"";
+    wchar_t host[256] = L"", path[4096] = L"", extra[4096] = L"";
     uc.lpszHostName = host;
     uc.dwHostNameLength = ARRAYSIZE(host);
     uc.lpszUrlPath = path;
     uc.dwUrlPathLength = ARRAYSIZE(path);
+    // WinHttpCrackUrl splits the "?query#frag" into ExtraInfo — give it a buffer or it
+    // is silently dropped. Xtream-style playlists carry the credentials there
+    // (?username=…&password=…&type=m3u_plus), so losing it means an un-authenticated
+    // request and an empty/denied response.
+    uc.lpszExtraInfo = extra;
+    uc.dwExtraInfoLength = ARRAYSIZE(extra);
     uc.dwSchemeLength = 1;  // request scheme parsing
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
         error = L"Invalid URL.";
         return false;
     }
+    // WinHttpOpenRequest wants the path + query together as the object name.
+    const std::wstring object = std::wstring(path) + extra;
     const bool secure = (uc.nScheme == INTERNET_SCHEME_HTTPS);
 
     Handle session;
-    session.h = WinHttpOpen(L"RabbitEars/0.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    // Present a VLC-style User-Agent: many IPTV / Xtream-Codes panels gate playlist
+    // delivery on a recognized player UA and reject unknown ones. (We play via libVLC
+    // anyway.)
+    session.h = WinHttpOpen(L"VLC/3.0.23 LibVLC/3.0.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = L"WinHttpOpen failed.";
@@ -55,7 +66,7 @@ bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int
     }
 
     Handle request;
-    request.h = WinHttpOpenRequest(connect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+    request.h = WinHttpOpenRequest(connect, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                    WINHTTP_DEFAULT_ACCEPT_TYPES,
                                    secure ? WINHTTP_FLAG_SECURE : 0);
     if (!request) {
