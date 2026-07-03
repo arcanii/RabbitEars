@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// See VlcPlayerMac.h. SCAFFOLD STATE: the libVLC calls are compiled only when
-// RABBITEARS_HAVE_LIBVLC is defined (set by mac/cmake/Mac.cmake once libVLC is
-// provisioned for macOS). Until then the methods are safe no-ops that log, so
-// the app builds and the window opens without a media backend.
+// See VlcPlayerMac.h. The libVLC calls are compiled when RABBITEARS_HAVE_LIBVLC
+// is defined (Mac.cmake sets it once libVLC is provisioned); otherwise the
+// methods are safe no-ops that log, so the app still builds without a backend.
+// The plugin path + runtime rpath are wired by mac/CMakeLists.txt.
 //
-// TODO(phase-1): provision libVLC for macOS (VLCKit or the libvlc SDK dylibs +
-// headers), fill in the event-attach + NSNotification/dispatch marshaling that
-// replaces VlcPlayer.cpp's PostMessageW path, and wire the buffer/spectrum
-// meters to the mac UI.
+// TODO(phase-1+): libVLC event -> dispatch_async(main) marshaling for state /
+// buffering callbacks (the mac peer of VlcPlayer.cpp's PostMessageW path), and
+// the buffer/spectrum meters.
 #import "VlcPlayerMac.h"
 
+#include <cstdlib>
 #include <string>
 
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
@@ -32,9 +32,16 @@ struct VlcPlayerMac::Impl {
 
 VlcPlayerMac::VlcPlayerMac() : impl_(new Impl) {
 #if defined(RABBITEARS_HAVE_LIBVLC)
+#if defined(RABBITEARS_VLC_PLUGIN_PATH)
+    // Point libVLC at the provisioned plugins tree (unless the environment already
+    // set one). Needed when loading a relocated libvlc.dylib whose compiled-in
+    // plugin path doesn't match where the plugins actually live.
+    if (!getenv("VLC_PLUGIN_PATH")) setenv("VLC_PLUGIN_PATH", RABBITEARS_VLC_PLUGIN_PATH, 1);
+#endif
     const char* args[] = {"--no-video-title-show"};
     impl_->vlc = libvlc_new(sizeof(args) / sizeof(args[0]), args);
     if (impl_->vlc) impl_->player = libvlc_media_player_new(impl_->vlc);
+    diag::info(impl_->vlc ? L"libVLC instance created" : L"libVLC init FAILED (plugins/deps?)");
 #endif
 }
 

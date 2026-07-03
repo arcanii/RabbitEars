@@ -1,8 +1,10 @@
 # RabbitEars — macOS Port Plan
 
-**Status:** Phase‑0 merged; Phase‑2 core carve‑out in PR (`phase-2-core-carve-out`); repo **restructured into
-`common/` + `Win32/` + `mac/`** peer directories under a unified root CMake dispatcher (branch
-`restructure-common-win32`, stacked on Phase‑2).
+**Status:** Phase‑0, the Phase‑2 core carve‑out, and the `common/` + `Win32/` + `mac/` restructure are all
+**merged to `main`** (on 0.1.6, unified root CMake). **Phase‑1 macOS playback + native UI MVP** is in
+progress (branch `mac-phase1-playback`): the app loads an M3U (URL/file), lists channels from the shared
+`Database`, and **plays the selected stream via libVLC** in a native view (rpath + plugins wired;
+verified playing a live HLS stream). Sparkle auto‑update remains a stub.
 **Audience:** the Windows team and the product owner.
 **TL;DR:** Add macOS **in this repo** (monorepo). Phase 0 was additive‑only; **Phase 2** (below) makes the
 shared core genuinely platform‑neutral — `RabbitEarsCore` links only `sqlite3`, the Win32 bits move to

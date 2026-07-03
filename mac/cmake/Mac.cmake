@@ -27,6 +27,13 @@ function(rabbitears_provision_mac_deps)
     if(_p AND EXISTS "${_p}/include/vlc/vlc.h" AND EXISTS "${_p}/lib/libvlc.dylib")
       set(LIBVLC_MAC_INCLUDE_DIR "${_p}/include" PARENT_SCOPE)
       set(LIBVLC_MAC_LIB "${_p}/lib/libvlc.dylib" PARENT_SCOPE)
+      set(LIBVLC_MAC_LIB_DIR "${_p}/lib" PARENT_SCOPE)     # rpath so @rpath/libvlc.dylib resolves at runtime
+      # plugins tree: usually <prefix>/plugins (VLC.app) — fall back to lib/vlc/plugins.
+      if(EXISTS "${_p}/plugins")
+        set(LIBVLC_MAC_PLUGIN_DIR "${_p}/plugins" PARENT_SCOPE)
+      elseif(EXISTS "${_p}/lib/vlc/plugins")
+        set(LIBVLC_MAC_PLUGIN_DIR "${_p}/lib/vlc/plugins" PARENT_SCOPE)
+      endif()
       set(_have_libvlc TRUE)
       message(STATUS "libVLC(mac): using ${_p}")
       break()

@@ -37,7 +37,23 @@ shared core off the same unified root build.
 | `RabbitEarsCore` (`common/`) | sqlite3 | ✅ shared `M3uParser` + `Database` + `DockLayout` |
 | `RabbitEarsPlatformMac` | Foundation | ✅ `Http.mm` (NSURLSession) + `Paths.cpp` (Application Support db path) |
 | `RabbitEarsSelfTest` | PlatformMac | ✅ **verified ALL PASS on Apple clang** |
-| `RabbitEars.app` | libVLC, Sparkle, Cocoa | 🚧 window opens + opens the DB; playback/update/UI are Phase-1 |
+| `RabbitEars.app` | libVLC, Cocoa (Sparkle) | ✅ **plays** — native channel list (`Database`) + libVLC video + load-by-URL/file. Sparkle auto-update still a stub |
+| `RabbitEarsPlayProbe` | libVLC | ✅ headless play smoke test — reached `Playing` on a live HLS stream |
+
+## Running the mac app (playback)
+
+The app is a working MVP: load an M3U by URL or file, pick a channel, it plays.
+
+```sh
+scripts/build-mac.sh --app                 # builds RabbitEars.app + the probe
+open build-mac/mac/RabbitEars.app          # or run the binary directly
+build-mac/mac/RabbitEarsPlayProbe          # headless: verify libVLC plays (exit 0 = Playing)
+```
+
+**libVLC runtime** is wired automatically: `Mac.cmake` finds VLC.app (or `-DLIBVLC_MAC_PREFIX`),
+the app links `@rpath/libvlc.dylib` with an `rpath` to that lib dir, and `VlcPlayerMac` points
+`VLC_PLUGIN_PATH` at the provisioned plugins tree so codecs/demuxers load. Verified locally: the
+probe plays Apple's HLS reference stream.
 
 ## How the shared code stays cross-platform
 

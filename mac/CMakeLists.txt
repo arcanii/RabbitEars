@@ -41,6 +41,7 @@ if(RABBITEARS_BUILD_MAC)
   add_executable(RabbitEars MACOSX_BUNDLE
     src/app/main.mm
     src/app/AppDelegate.mm
+    src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
     platform/Log.mm
     platform/Updater.mm)
@@ -60,6 +61,23 @@ if(RABBITEARS_BUILD_MAC)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_LIBVLC)
     target_include_directories(RabbitEars PRIVATE "${LIBVLC_MAC_INCLUDE_DIR}")
     target_link_libraries(RabbitEars PRIVATE "${LIBVLC_MAC_LIB}")
+    # Runtime: rpath so @rpath/libvlc.dylib resolves, + point libVLC at its plugins.
+    set_target_properties(RabbitEars PROPERTIES
+      BUILD_RPATH "${LIBVLC_MAC_LIB_DIR}" INSTALL_RPATH "${LIBVLC_MAC_LIB_DIR}")
+    if(LIBVLC_MAC_PLUGIN_DIR)
+      target_compile_definitions(RabbitEars PRIVATE RABBITEARS_VLC_PLUGIN_PATH="${LIBVLC_MAC_PLUGIN_DIR}")
+    endif()
+
+    # RabbitEarsPlayProbe — headless libVLC smoke test (plugins load + can open a
+    # stream with no video/audio device). Manual: `RabbitEarsPlayProbe [url] [secs]`
+    # (needs network, so it is NOT a ctest).
+    add_executable(RabbitEarsPlayProbe src/tools/playprobe.mm)
+    target_include_directories(RabbitEarsPlayProbe PRIVATE "${LIBVLC_MAC_INCLUDE_DIR}")
+    target_link_libraries(RabbitEarsPlayProbe PRIVATE "${LIBVLC_MAC_LIB}" "-framework Foundation")
+    set_target_properties(RabbitEarsPlayProbe PROPERTIES BUILD_RPATH "${LIBVLC_MAC_LIB_DIR}")
+    if(LIBVLC_MAC_PLUGIN_DIR)
+      target_compile_definitions(RabbitEarsPlayProbe PRIVATE RABBITEARS_VLC_PLUGIN_PATH="${LIBVLC_MAC_PLUGIN_DIR}")
+    endif()
   endif()
   if(RABBITEARS_HAVE_SPARKLE)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_SPARKLE)
