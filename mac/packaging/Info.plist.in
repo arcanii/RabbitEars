@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- CMake substitutes the MACOSX_BUNDLE placeholders below from the target
+     properties set in mac/CMakeLists.txt. TODO(phase-1): confirm the bundle id
+     matches the family's real macOS identifier, and add the Sparkle
+     SUFeedURL / SUPublicEDKey keys once Sparkle is provisioned. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>              <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+  <key>CFBundleDisplayName</key>       <string>RabbitEars</string>
+  <key>CFBundleExecutable</key>        <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+  <key>CFBundleIdentifier</key>        <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+  <key>CFBundleShortVersionString</key><string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+  <key>CFBundleVersion</key>           <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+  <key>CFBundlePackageType</key>       <string>APPL</string>
+  <key>LSMinimumSystemVersion</key>    <string>11.0</string>
+  <key>NSHighResolutionCapable</key>   <true/>
+  <key>NSPrincipalClass</key>          <string>NSApplication</string>
+  <!-- TODO(phase-1): SUFeedURL -> the macOS appcast; SUPublicEDKey -> the shared family Ed25519 key. -->
+</dict>
+</plist>
