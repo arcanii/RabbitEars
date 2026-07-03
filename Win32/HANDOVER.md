@@ -7,6 +7,11 @@ CMake + Ninja + MSVC, dependencies vendored / NuGet-provisioned with **no Visual
 Studio project**). This is the single starting point for anyone (human or agent)
 continuing the work — read it before touching code.
 
+> **Location:** this is the **Windows team's** handover, kept under **`Win32/`** (with its
+> companion `Win32/BACKLOG.md` and design docs in `Win32/docs/`) so it doesn't collide with the
+> macOS team's edits on shared root-level files — they own **`mac/`** (`mac/README.md`) and share
+> `common/` + root `docs/`. Moved here from the repo root in the 0.2.x theme-engine stream.
+
 ## Stack decision (important)
 
 The design doc (`IPTV Player Application Design.docx`) lists a "WinUI 3 / EF Core"
@@ -464,9 +469,9 @@ commit messages with the Co-Authored-By trailer.
 
 1. **Nothing is blocking** — 0.1.7 is shipped and live. Pick the next item from
    **[`BACKLOG.md`](BACKLOG.md)** when ready; the headline is the **theme engine** (0.2.x epic —
-   full reskin + selectable D3D11/shader skins). Before starting it: write `docs/THEME_ENGINE.md` and
-   **flag the shared skin-model boundary to the macOS team** (skin *model* in `common/`, *renderer*
-   per-platform — see `BACKLOG.md` + memory `rabbitears-cross-platform`).
+   full reskin + selectable D3D11/shader skins). Before starting it: write `Win32/docs/THEME_ENGINE.md`
+   and **flag the shared skin-model boundary to the macOS team** (skin *model* in `common/`, *renderer*
+   per-platform — see `Win32/BACKLOG.md` + memory `rabbitears-cross-platform`).
 2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
    Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
    **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
@@ -482,7 +487,7 @@ Paste this verbatim to start a fresh session with working context restored:
 > Win32 / C++20** IPTV player on **libVLC 3.0.23**, themed to match its sibling apps
 > `G:\SQLTerminal-Win32` and `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral
 > `#D97757`, custom `WM_NCCALCSIZE` title-bar chrome, CMake + Ninja + MSVC via **VS
-> 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `HANDOVER.md` and
+> 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `Win32/HANDOVER.md` and
 > `docs/architecture.md` first.**
 >
 > **State: v0.1.7 is SHIPPED** (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`, signed installer +
@@ -495,9 +500,9 @@ Paste this verbatim to start a fresh session with working context restored:
 > is now `common/` + `Win32/` + `mac/` under a unified root CMake; the macOS team is mid **Phase-1**
 > (native grid + playback + Sparkle + CI `.app`), and pushes to `main`, so **`git fetch`/rebase before
 > a release**. **The theme engine** (full reskin + selectable D3D11/shader skins) is the headline
-> **backlog** item — see `BACKLOG.md` (write `docs/THEME_ENGINE.md` + flag the shared skin-model
-> boundary to the macOS team before starting). **JSON profiles** stay deferred. **Read the "0.1.7 — SHIPPED" + "Current state"
-> sections of `HANDOVER.md` for full detail.**
+> **backlog** item — see `Win32/BACKLOG.md` (write `Win32/docs/THEME_ENGINE.md` + flag the shared
+> skin-model boundary to the macOS team before starting). **JSON profiles** stay deferred. **Read the
+> "0.1.7 — SHIPPED" + "Current state" sections of `Win32/HANDOVER.md` for full detail.**
 >
 > **Cross-platform (important, see memory `rabbitears-cross-platform`):** RabbitEars is going
 > **macOS** — premium per platform, ~70% common core (engine + meter model/config) + platform-specific
