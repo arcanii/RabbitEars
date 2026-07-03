@@ -26,13 +26,36 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.3 SHIPPED
+## Current state — v0.1.4 SHIPPED
 
-**Released:** `v0.1.3` (2026-07-02), tag `v0.1.3` @ `ebd71a8`, public GitHub release
-with a signed **`RabbitEars-0.1.3-setup.exe`** installer (full version `0.1.3.22`) and a
-**live WinSparkle auto-update feed** (appcast published @ `5f43c64`). Earlier: `v0.1.2`
-(tag @ `8c99254`, full `0.1.2.19`), `v0.1.1` (signed installer + live feed, the auto-update
-baseline), `v0.1.0` (portable zip). 0.1.1 / 0.1.2 users get 0.1.3 automatically.
+**Released:** `v0.1.4` (2026-07-03), tag `v0.1.4` @ `8622e8a`, public GitHub release with a
+signed **`RabbitEars-0.1.4-setup.exe`** installer (full version `0.1.4.26`) and a **live
+WinSparkle auto-update feed** (appcast published @ `6cee2ed`; `origin/main` == `6cee2ed`).
+Earlier: `v0.1.3` (tag @ `ebd71a8`, full `0.1.3.22`), `v0.1.2` (`8c99254`, `0.1.2.19`),
+`v0.1.1` (auto-update baseline), `v0.1.0` (portable zip). 0.1.1–0.1.3 users get 0.1.4 automatically.
+
+### 0.1.4 — SHIPPED (tag `v0.1.4` @ `8622e8a`, full `0.1.4.26`; all `/W4` clean)
+Two commits: `47dc0fe` (agile audio-loopback handler + meters reset on switch) + `8622e8a`
+(the batch below). Built, signed on macOS, released, appcast live. A fix-and-polish batch:
+- **Audio spectrum meter fixed** — the process-loopback completion handler now implements
+  `IAgileObject`, so `ActivateAudioInterfaceAsync` no longer fails with `E_ILLEGAL_METHOD_CALL`
+  (`0x8000000E`) on the MTA capture thread. (`SpectrumTap.cpp`)
+- **Mini-meters animate reliably** — the ~30 fps timer syncs to real visibility
+  (`WM_WINDOWPOSCHANGED` + `WM_PAINT`), not just `WM_SHOWWINDOW` (which `DeferWindowPos`
+  never sends), so they no longer sit frozen until a minimize/restore. Meters also reset on
+  channel switch so a dead stream can't freeze the previous channel's readings. (`MiniMeter.cpp`)
+- **Transport-strip repaint** — `WM_PAINT` paints the strip band itself (not via
+  `WM_ERASEBKGND`), so relayouts / meter toggles leave no stale "blank grid" footprints or
+  top-edge seams. (`MainWindow.cpp`)
+- **Smooth splitter drag** — transport controls bit-copy to their new spot (no repaint → no
+  button flicker or video black-flash), nav/grid get a **paced** synchronous flush (no
+  streaks; `gutterFlushTick`), and a full settle repaint fires on release. (`MainWindow.cpp`)
+- **Import results dialog** — adding a playlist shows a themed `showInfoDialog` (channels
+  parsed / imported / skipped, group count, or the error). (`Dialogs.{h,cpp}`, `MainWindow.cpp`)
+- **Rename playlists** — right-click a playlist → **Rename…** (`Database::renamePlaylist`;
+  friendly display name only). **Categories…** now shows a "no categories" notice via
+  `showInfoDialog` when the library has no group titles (the owner's FAST/LG library has 0).
+- **Splash** shows the version string (+ one more caption); **About…** moved last in Settings.
 
 ### 0.1.3 — SHIPPED (tag `v0.1.3` @ `ebd71a8`, full `0.1.3.22`; all `/W4` clean)
 Committed as `ebd71a8` (16 paths; version bumped in the four places), built, signed on
@@ -327,28 +350,29 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`, `v0.1.1`, `v0.1.2`, `v0.1.3` — **v0.1.3 released @ `ebd71a8`** (full
-`0.1.3.22`; appcast published @ `5f43c64`). The 0.1.3 batch is committed + pushed, so the
-working tree is **clean**. Build number = git commit count (the released 0.1.3 build was
-stamped at count **22**; the appcast + this doc commit are post-release bookkeeping and
-were not rebuilt — same as 0.1.2). Commit/push only when the owner asks; stage **specific
-paths** (the owner keeps adding `art/*.png` — never `git add -A`); end commit messages
-with the Co-Authored-By trailer.
+Tags `v0.1.0`…`v0.1.4` — **v0.1.4 released @ `8622e8a`** (full `0.1.4.26`; appcast published
+@ `6cee2ed`, `origin/main` == `6cee2ed`). The 0.1.4 batch is committed + pushed, so the
+working tree is **clean**. Build number = git commit count (the released 0.1.4 build was
+stamped at count **26**; the appcast + this doc commit are post-release bookkeeping and were
+not rebuilt). 0.1.4 landed as two feature commits (`47dc0fe`, `8622e8a`) + the appcast commit.
+Commit/push only when the owner asks; stage **specific paths** (the owner keeps adding
+`art/*.png` — never `git add -A`); end commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **Confirm the 0.1.2 → 0.1.3 auto-update in the wild** — on an installed 0.1.1/0.1.2,
-   **About → Check for Updates** should offer **0.1.3.22** from the live appcast and apply
-   the signed installer (the first end-to-end WinSparkle update test since 0.1.2). The
-   owner still does the GUI/runtime pass on the 0.1.3 features (the sandbox can't launch
-   the exe); `rabbitears.log` has `SpectrumTap:` lines if the audio meter looks dead.
-2. Remaining **Phase-2 layout**: **named saved layouts**. The `DockLayout` engine already
-   serializes/parses any tree, so this is a store (name → serialized tree, in settings) +
-   a **Settings → Layout** submenu to save / apply / delete named layouts; the "move to
-   edge" menu stays as a fallback.
-3. Backlog: scheduled recording, resume-last-channel, DPI-change relayout
-   (`WM_DPICHANGED`), Authenticode signing (SmartScreen), group-title country fallback for
-   Xtream feeds, per-view (not global) category filter, EPG (XMLTV now/next).
+1. **0.1.5 — JSON profiles** (owner-approved scope, **next up**): each profile carries its
+   **own settings + which playlist sources are active**, with the **channel cache rebuilt
+   per profile** from its playlists. Today settings live in the SQLite K/V `settings` table
+   (`Database`), playlists in the `playlists` table. Design: a profile store (e.g.
+   `%LOCALAPPDATA%\RabbitEars\profiles\*.json` + an active-profile pointer), a profile
+   picker (Settings), and per-profile playlists (scope the `playlists` table by profile, or
+   a per-profile DB). Keep the ~197 MB channel cache OUT of the JSON. NB the owner's own
+   library is FAST/LG channels with **no group titles** (0 categories — Categories… now
+   shows a notice, which is correct, not a bug).
+2. **Named saved layouts** (deferred Phase-2): the `DockLayout` engine already serializes any
+   tree — a name → tree store in settings + a Settings → Layout save/apply/delete submenu.
+3. Backlog: scheduled recording, resume-last-channel, DPI-change relayout (`WM_DPICHANGED`),
+   Authenticode signing (SmartScreen), group-title country fallback for Xtream, EPG (XMLTV).
 
 ## Seed prompt for a new session
 
@@ -361,26 +385,21 @@ Paste this verbatim to start a fresh session with working context restored:
 > 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `HANDOVER.md` and
 > `docs/architecture.md` first.**
 >
-> **State: v0.1.3 is SHIPPED** (tag `v0.1.3` @ `ebd71a8`, full `0.1.3.22`, signed
-> installer + **live WinSparkle auto-update**; appcast @ `5f43c64`). The 0.1.3 batch below
-> is committed, released, and its update feed is live; every piece is `/W4`-clean and
-> adversarially reviewed (the owner does visual/runtime checks — the sandbox can't launch
-> the exe). **Next: named saved layouts** (Phase-2), then backlog. 0.1.3 shipped:
-> - transport + fullscreen **icon buttons** (Segoe MDL2 glyphs);
-> - **channel-switch hang fix** — blocking libVLC `stop()`/`release()` moved off the
->   worker onto tracked "reaper" threads in `VlcPlayer` (drained in the dtor);
-> - **Xtream / query-string fix** — `Http.cpp` was dropping the `?username=&password=`
->   (no `lpszExtraInfo` buffer); fixed + a VLC-style fetch User-Agent;
-> - **SpectrumTap diagnostics** (activation/init HRESULTs → `rabbitears.log`);
-> - **by-country nav filter** — `Database::listCountries/channelsByCountry` derive ISO
->   codes from tvg-id suffixes (`"CNN.us"`); 5 CLI selftest assertions;
-> - **first-run T&C** that RE-PROMPTS on every version change (`tos_accepted` = full
->   version); **animated splash** (own thread, rotating captions);
-> - **dockable layout** — NEW `ui/DockLayout.{h,cpp}` (a split-tree over Nav/Video/Grid,
->   serialize/parse, re-dock surgery; unit-tested by the CLI). `MainWindow` renders regions
->   from the tree via ONE atomic `BeginDeferWindowPos` pass (`SWP_NOCOPYBITS`), with resize
->   **gutters**, a **Settings → Layout** menu, and **drag-a-grip-to-redock** with a
->   translucent snap overlay. Remaining Phase-2: **named saved layouts**.
+> **State: v0.1.4 is SHIPPED** (tag `v0.1.4` @ `8622e8a`, full `0.1.4.26`, signed
+> installer + **live WinSparkle auto-update**; appcast @ `6cee2ed`, `origin/main` ==
+> `6cee2ed`). Everything through 0.1.4 is committed, released, and its update feed is live;
+> every piece is `/W4`-clean and adversarially reviewed (the owner does visual/runtime checks
+> — the sandbox can't launch the exe). **Next: 0.1.5 = JSON profiles** (owner-scoped:
+> per-profile settings + playlist sources, channel cache rebuilt per profile). 0.1.4 shipped a
+> fix-and-polish batch: the **audio spectrum meter** now works (the loopback completion handler
+> is now agile/`IAgileObject` — it was failing with `E_ILLEGAL_METHOD_CALL` on the MTA thread);
+> **mini-meters animate reliably** (timer synced to real visibility via `WM_WINDOWPOSCHANGED`,
+> reset on channel switch); the **transport strip repaints itself** (no stale meter
+> footprints/seams); **smooth splitter drag** (bit-copy movers + paced flush + settle); an
+> **Import results** dialog (`showInfoDialog`); **rename playlists** (right-click → Rename…);
+> a **Categories…** "no categories" notice; the **splash version string**; **About…** moved
+> last. See the "0.1.4 — SHIPPED" section for detail. (0.1.3 added the dockable layout,
+> by-country filter, channel-switch hang fix, Xtream query fix, and icon transport buttons.)
 >
 > The GUI: owner-draw command bar + Settings menu; three **dockable regions** (nav
 > TreeView / video+transport strip / Direct2D `ChannelGridControl`) rearranged by dragging
