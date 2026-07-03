@@ -48,3 +48,18 @@ jobs:
           fetch-depth: 0 # full history so version.h's BUILD_NUMBER (git commit count) is real
       - name: Build shared core + run self-test (Apple clang/libc++)
         run: bash scripts/build-mac.sh
+
+  # Build the Cocoa .app (RABBITEARS_BUILD_MAC=ON) so the macOS UI compiles/links
+  # — the peer of the Windows gui-build job. libVLC is best-effort: if VLC.app is
+  # present the playback path builds too, otherwise Mac.cmake falls back to the
+  # stub (non-fatal), still validating all the Cocoa/ObjC++ UI code.
+  app-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Provision libVLC (best-effort, for the playback path)
+        run: brew install --cask vlc || echo "VLC cask unavailable — building app in stub mode"
+      - name: Build RabbitEars.app
+        run: cmake -S . -B build-app -DRABBITEARS_BUILD_MAC=ON && cmake --build build-app
