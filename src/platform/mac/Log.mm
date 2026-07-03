@@ -13,7 +13,7 @@
 #include <mutex>
 #include <string>
 
-#include "platform/Encoding.h"  // resolves to the mac shim on this build
+#include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "platform/Log.h"
 
 namespace rabbitears::diag {

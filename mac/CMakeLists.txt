@@ -33,9 +33,10 @@ option(RABBITEARS_BUILD_MAC "Build the macOS .app bundle (needs libVLC + Sparkle
 
 # ---------------------------------------------------------------------------
 # Version header — reuse the SAME src/version.h.in + git-commit-count scheme as
-# the Windows build, so both platforms compare correctly against one appcast.
+# the Windows build, and the SAME shared APP_VERSION (cmake/AppVersion.cmake) so
+# the two platforms can never drift, comparing correctly against one appcast.
 # ---------------------------------------------------------------------------
-set(APP_VERSION "0.1.4")
+include("${REPO_ROOT}/cmake/AppVersion.cmake")  # sets APP_VERSION (shared with root)
 find_package(Git QUIET)
 set(BUILD_NUMBER 0)
 if(GIT_FOUND AND EXISTS "${REPO_ROOT}/.git")
@@ -59,17 +60,17 @@ target_compile_definitions(sqlite3 PRIVATE
 
 # ---------------------------------------------------------------------------
 # RabbitEarsCoreMac — the genuinely-portable shared logic compiled IN PLACE.
-# Pure C++ (no Foundation), so the self-test is a real portability proof.
-# The shim include dir is listed FIRST so `platform/Encoding.h` and `windows.h`
-# resolve to the mac shims (mac/src/shim/**) rather than the Windows headers.
+# Pure C++ (no Foundation), so the self-test is a real portability proof. The
+# shared headers (platform/Encoding.h, ui/DockLayout.h) now carry their own
+# non-Windows branch, so the old shim include dir is gone. Paths.cpp supplies
+# the macOS Database::defaultDbPath (peer of src/platform/win/Paths.cpp).
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsCoreMac STATIC
   "${SHARED_SRC}/core/M3uParser.cpp"
   "${SHARED_SRC}/db/Database.cpp"
-  "${SHARED_SRC}/ui/DockLayout.cpp")
-target_include_directories(RabbitEarsCoreMac PUBLIC
-  "${MAC_SRC}/shim"       # BEFORE ${SHARED_SRC} — shadows Encoding.h + windows.h
-  "${SHARED_SRC}")
+  "${SHARED_SRC}/ui/DockLayout.cpp"
+  "${SHARED_SRC}/platform/mac/Paths.cpp")
+target_include_directories(RabbitEarsCoreMac PUBLIC "${SHARED_SRC}")
 target_link_libraries(RabbitEarsCoreMac PUBLIC sqlite3)
 
 # ---------------------------------------------------------------------------
@@ -77,8 +78,8 @@ target_link_libraries(RabbitEarsCoreMac PUBLIC sqlite3)
 # the app, NOT by the self-test, keeping the self-test dependency-free.
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsPlatformMac STATIC
-  "${MAC_SRC}/platform/Http.mm"
-  "${MAC_SRC}/platform/Log.mm")
+  "${SHARED_SRC}/platform/mac/Http.mm"
+  "${SHARED_SRC}/platform/mac/Log.mm")
 target_link_libraries(RabbitEarsPlatformMac PUBLIC RabbitEarsCoreMac "-framework Foundation")
 
 # ---------------------------------------------------------------------------
@@ -102,9 +103,9 @@ if(RABBITEARS_BUILD_MAC)
     "${MAC_SRC}/app/main.mm"
     "${MAC_SRC}/app/AppDelegate.mm"
     "${MAC_SRC}/app/VlcPlayerMac.mm"
-    "${MAC_SRC}/platform/Updater.mm")
+    "${SHARED_SRC}/platform/mac/Updater.mm")
   target_include_directories(RabbitEars PRIVATE
-    "${MAC_SRC}/shim" "${SHARED_SRC}" "${CMAKE_BINARY_DIR}/generated")
+    "${SHARED_SRC}" "${CMAKE_BINARY_DIR}/generated")
   # PlatformMac PUBLIC-links CoreMac, so linking it alone gives the app both
   # libraries + their include dirs (listing CoreMac again just warns on dupes).
   target_link_libraries(RabbitEars PRIVATE

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 #include <cwctype>
 
 namespace rabbitears {
@@ -43,7 +44,7 @@ void serializeNode(const DockNode* n, std::wstring& out) {
         return;
     }
     wchar_t r[16];
-    swprintf_s(r, L"%.3f", n->ratio);
+    std::swprintf(r, sizeof(r) / sizeof(r[0]), L"%.3f", n->ratio);  // portable (was swprintf_s)
     out += n->vertical ? L'-' : L'|';
     out += r;
     out += L'(';
@@ -73,7 +74,7 @@ std::unique_ptr<DockNode> parseNode(const std::wstring& s, size_t& i, bool& ok) 
             ok = false;
             return nullptr;
         }
-        const double ratio = _wtof(s.substr(start, i - start).c_str());
+        const double ratio = std::wcstod(s.substr(start, i - start).c_str(), nullptr);  // portable (was _wtof)
         ++i;  // '('
         auto a = parseNode(s, i, ok);
         if (!ok || i >= s.size() || s[i] != L',') {
