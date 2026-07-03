@@ -73,6 +73,7 @@ struct Skin {
 // carries light/dark *variants* (vs. being one or the other) is deferred to then.
 Skin makeDarkSkin();
 Skin makeLightSkin();
+Skin makeCyberpunkSkin();                                 // neon-magenta-on-midnight (Phase 4, colours)
 const std::vector<Skin>&  builtinSkins();                  // immortal; index 0 == dark
 const Skin&               skinById(const std::string& id); // unknown -> builtinSkins()[0] (dark)
 std::vector<std::string>  builtinSkinIds();

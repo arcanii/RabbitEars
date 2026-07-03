@@ -232,9 +232,12 @@ int selftest() {
         // Registry: lookup, unknown-id fallback, count.
         expect(skinById("dark").id == "dark" && skinById("light").id == "light",
                "skinById resolves dark + light");
+        expect(skinById("cyberpunk").id == "cyberpunk" &&
+                   skinById("cyberpunk").palette.accent == SkinColor{244, 55, 148},
+               "cyberpunk skin registered with a neon-magenta accent");
         expect(skinById("bogus").id == "dark", "skinById unknown -> dark fallback");
-        expect(builtinSkins().size() >= 2 && std::string(defaultSkinId()) == "dark",
-               "at least two built-in skins; default is dark");
+        expect(builtinSkins().size() >= 3 && std::string(defaultSkinId()) == "dark",
+               "three built-in skins; default is dark");
         expect(skinById("dark").glyph.symbol && !skinById("dark").body.symbol,
                "glyph is a symbol font; body is not");
         expect(std::string(skinSettingKey()) == "skin", "shared skin settings key");

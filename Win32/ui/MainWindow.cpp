@@ -107,9 +107,8 @@ constexpr int ID_MTR_BITRATE = 2042;
 constexpr int ID_MTR_FRAMES = 2043;
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters → Setup… (the full dialog)
 #ifdef RABBITEARS_THEME_ENGINE
-constexpr int ID_THEME_SYSTEM = 2045;  // Settings → Theme (follow OS / dark / light)
-constexpr int ID_THEME_DARK = 2046;
-constexpr int ID_THEME_LIGHT = 2047;
+constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
+constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
 #endif
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
@@ -1306,9 +1305,10 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(themeMenu, MF_STRING | (skinSel == "system" ? MF_CHECKED : 0u), ID_THEME_SYSTEM,
                 L"Follow System");
     AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(themeMenu, MF_STRING | (skinSel == "dark" ? MF_CHECKED : 0u), ID_THEME_DARK, L"Dark");
-    AppendMenuW(themeMenu, MF_STRING | (skinSel == "light" ? MF_CHECKED : 0u), ID_THEME_LIGHT,
-                L"Light");
+    const auto& skins = builtinSkins();  // one item per registered skin (auto-grows in Phase 4)
+    for (size_t i = 0; i < skins.size(); ++i)
+        AppendMenuW(themeMenu, MF_STRING | (skinSel == skins[i].id ? MF_CHECKED : 0u),
+                    ID_THEME_SKIN_BASE + static_cast<int>(i), wideFromUtf8(skins[i].name).c_str());
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Theme");
 #endif
 
@@ -1330,6 +1330,17 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         applyDockChange(hwnd, st);
         return;
     }
+#ifdef RABBITEARS_THEME_ENGINE
+    if (cmd == ID_THEME_SYSTEM) {
+        setSkinSelection(hwnd, st, "system");
+        return;
+    }
+    if (cmd >= ID_THEME_SKIN_BASE &&
+        cmd < ID_THEME_SKIN_BASE + static_cast<int>(builtinSkins().size())) {
+        setSkinSelection(hwnd, st, builtinSkins()[cmd - ID_THEME_SKIN_BASE].id.c_str());
+        return;
+    }
+#endif
     switch (cmd) {
         case ID_OPEN_FILE:
             onOpenFile(st);
@@ -1378,17 +1389,6 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_METERS_SETUP:
             onMeters(st);
             break;
-#ifdef RABBITEARS_THEME_ENGINE
-        case ID_THEME_SYSTEM:
-            setSkinSelection(hwnd, st, "system");
-            break;
-        case ID_THEME_DARK:
-            setSkinSelection(hwnd, st, "dark");
-            break;
-        case ID_THEME_LIGHT:
-            setSkinSelection(hwnd, st, "light");
-            break;
-#endif
     }
 }
 

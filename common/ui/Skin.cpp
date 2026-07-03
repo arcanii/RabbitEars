@@ -54,8 +54,30 @@ Skin makeLightSkin() {
     return s;
 }
 
+// Cyberpunk: the first "authored" skin (Phase 4) — colours only, no shaders yet. A
+// near-black midnight-blue base with a neon-magenta accent and cyan-tinted text, so
+// switching to it visibly transforms the whole app and proves the engine end-to-end.
+// Fonts stay Segoe UI (+ the MDL2 glyph font) to match the not-yet-reskinned grid.
+Skin makeCyberpunkSkin() {
+    Skin s;
+    s.id = "cyberpunk";
+    s.name = "Cyberpunk";
+    s.dark = true;
+    s.palette = SkinPalette{
+        .windowBg = {9, 11, 18},    .panelBg = {13, 16, 26},   .panelElevBg = {20, 25, 40},
+        .altRowBg = {15, 19, 31},   .hoverBg = {28, 40, 64},   .border = {42, 78, 120},
+        .textPrimary = {224, 242, 255}, .textSecondary = {122, 190, 214}, .textMuted = {78, 120, 150},
+        .accent = {244, 55, 148},   .accentText = {18, 6, 14}, .selectionBg = {52, 24, 60},
+        .selectionText = {255, 236, 250}, .dangerHover = {255, 48, 72},
+    };
+    s.body = {"Segoe UI", 10.5f, 400};
+    s.title = {"Segoe UI", 12.0f, 600};
+    s.glyph = {"Segoe MDL2 Assets", 9.75f, 400, /*symbol=*/true};
+    return s;
+}
+
 const std::vector<Skin>& builtinSkins() {
-    static const std::vector<Skin> skins = {makeDarkSkin(), makeLightSkin()};
+    static const std::vector<Skin> skins = {makeDarkSkin(), makeLightSkin(), makeCyberpunkSkin()};
     return skins;
 }
 
