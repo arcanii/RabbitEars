@@ -196,24 +196,32 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [self refreshChannels];
 }
 
+// Build items manually (NOT addItemWithTitle, which de-dupes by title) so a real
+// M3U group named "All channels"/"★ Favourites" can't clobber a reserved item;
+// the true group name rides on representedObject and routing keys off tag +
+// representedObject, never the display title.
+- (void)addFilterItem:(NSString*)title tag:(NSInteger)tag group:(NSString*)group {
+    NSMenuItem* it = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+    it.tag = tag;
+    it.representedObject = group;
+    [_filter.menu addItem:it];
+}
+
 - (void)rebuildFilterMenu {
-    NSString* prev = _filter.titleOfSelectedItem;
     [_filter removeAllItems];
-    [_filter addItemWithTitle:@"All channels"];
-    _filter.lastItem.tag = kFilterAll;
-    [_filter addItemWithTitle:@"★ Favourites"];
-    _filter.lastItem.tag = kFilterFavourites;
+    [self addFilterItem:@"All channels" tag:kFilterAll group:nil];
+    [self addFilterItem:@"★ Favourites" tag:kFilterFavourites group:nil];
     if (_db) {
         const auto groups = _db->listGroups();
         if (!groups.empty()) [_filter.menu addItem:[NSMenuItem separatorItem]];
         for (const auto& g : groups) {
             if (g.empty()) continue;
-            [_filter addItemWithTitle:ns(g)];
-            _filter.lastItem.tag = kFilterGroup;
+            [self addFilterItem:ns(g) tag:kFilterGroup group:ns(g)];
         }
     }
-    if (prev && [_filter itemWithTitle:prev]) [_filter selectItemWithTitle:prev];
-    else [_filter selectItemAtIndex:0];
+    // Rebuild happens only on playlist load — always reset to "All channels" so a
+    // switch/import shows the new playlist in full, never a stale group filter.
+    [_filter selectItemAtIndex:0];
 }
 
 // Apply the current search text + filter selection and reload the table.
@@ -226,7 +234,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         NSMenuItem* sel = _filter.selectedItem;
         switch (sel.tag) {
             case kFilterFavourites: _channels = _db->favourites(); break;
-            case kFilterGroup:      _channels = _db->channelsByGroup(ws(sel.title)); break;
+            case kFilterGroup:      _channels = _db->channelsByGroup(ws(sel.representedObject)); break;
             default:                _channels = _currentPid ? _db->channelsByPlaylist(_currentPid)
                                                             : _db->allChannels(); break;
         }
