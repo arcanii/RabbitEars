@@ -61,6 +61,7 @@ struct MiniMeterState {
     MeterKind    kind = MeterKind::Spectrum;
     MeterStyle   style = MeterStyle::Led;
     MeterPalette palette = defaultMeterPalette(MeterKind::Spectrum);
+    MeterTuning  tuning = defaultMeterTuning();
     UINT      dpi = 96;
     bool      timerOn = false;
 
@@ -160,6 +161,9 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
         n = 2;
     }
 
+    const float gain = st->tuning.sensitivity * 2.0f;  // sensitivity knob (0.5 = unity)
+    for (int i = 0; i < n; ++i) vals[i] = std::clamp(vals[i] * gain, 0.0f, 1.0f);
+
     auto gcol = [](COLORREF c, BYTE a) {
         return Gdiplus::Color(a, GetRValue(c), GetGValue(c), GetBValue(c));
     };
@@ -190,8 +194,9 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
         p.SetEndCap(Gdiplus::LineCapRound);
         g.DrawLines(&p, pts, n);
     };
-    stroke(st->palette.accent, 45, pw * 3.2f);
-    stroke(st->palette.accent, 95, pw * 1.8f);
+    const float gs = st->tuning.glow * 2.0f;  // glow knob scales the phosphor bloom (0.5 = default)
+    stroke(st->palette.accent, static_cast<BYTE>(std::clamp(45.0f * gs, 0.0f, 255.0f)), pw * 3.2f);
+    stroke(st->palette.accent, static_cast<BYTE>(std::clamp(95.0f * gs, 0.0f, 255.0f)), pw * 1.8f);
     stroke(st->palette.peak, 255, pw);
 }
 
@@ -199,8 +204,9 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
 // the base pass), drawn with GDI+ so they're antialiased and additively bleed across
 // cell borders. Layered like the scope bloom — a wide dim halo, an inner glow, then a
 // bright core toward the peak colour. (Alphas/radii are aesthetic — tune to taste.)
-void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette& pal) {
+void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette& pal, float glow) {
     if (cells.empty()) return;
+    const float gs = glow * 2.0f;  // glow knob: 0.5 (default) -> 1.0 = current intensity
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     for (const GlowCell& gc : cells) {
@@ -208,13 +214,14 @@ void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette
         const float ch = static_cast<float>(gc.r.bottom - gc.r.top);
         const float cx = (gc.r.left + gc.r.right) * 0.5f;
         const float cy = (gc.r.top + gc.r.bottom) * 0.5f;
-        auto ell = [&](float rx, float ry, COLORREF c, BYTE a) {
-            Gdiplus::SolidBrush b(Gdiplus::Color(a, GetRValue(c), GetGValue(c), GetBValue(c)));
+        auto ell = [&](float rx, float ry, COLORREF c, float a) {
+            const BYTE aa = static_cast<BYTE>(std::clamp(a * gs, 0.0f, 255.0f));
+            Gdiplus::SolidBrush b(Gdiplus::Color(aa, GetRValue(c), GetGValue(c), GetBValue(c)));
             g.FillEllipse(&b, cx - rx, cy - ry, rx * 2.0f, ry * 2.0f);
         };
-        ell(cw * 0.72f, ch * 1.5f, gc.c, 48);                            // wide soft halo (merges the column)
-        ell(cw * 0.50f, ch * 0.85f, gc.c, 120);                          // inner glow
-        ell(cw * 0.38f, ch * 0.50f, lerpCol(gc.c, pal.peak, 0.6f), 235); // bright core
+        ell(cw * 0.72f, ch * 1.5f, gc.c, 48.0f);                            // wide soft halo (merges the column)
+        ell(cw * 0.50f, ch * 0.85f, gc.c, 120.0f);                          // inner glow
+        ell(cw * 0.38f, ch * 0.50f, lerpCol(gc.c, pal.peak, 0.6f), 235.0f); // bright core
     }
 }
 
@@ -228,11 +235,14 @@ void paintSpectrum(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowC
     const int rows = std::max(1, (B - T) / cellP);
     const int colW = std::max(2, (R - L) / bands);
     const int gap = dpx(1, dpi);
+    const float gain = st->tuning.sensitivity * 2.0f;  // sensitivity knob (0.5 = unity)
     for (int c = 0; c < bands; ++c) {
         const int x0 = L + c * colW;
         const int x1 = x0 + colW - gap;
-        const int litN = static_cast<int>(std::lround(st->level[c] * rows));
-        const int peakRow = static_cast<int>(std::lround(st->peak[c] * rows));
+        const int litN =
+            static_cast<int>(std::lround(std::clamp(st->level[c] * gain, 0.0f, 1.0f) * rows));
+        const int peakRow =
+            static_cast<int>(std::lround(std::clamp(st->peak[c] * gain, 0.0f, 1.0f) * rows));
         for (int r = 0; r < rows; ++r) {
             const int yb = B - r * cellP;
             RECT cell{x0, yb - cellP + gap, x1, yb};
@@ -256,9 +266,9 @@ void paintSignal(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
     const int colW = std::max(2, (R - L) / bars);
     const int cellP = std::max(dpx(3, dpi), 2);
     const int gap = dpx(1, dpi);
-    const int litBars = static_cast<int>(std::ceil(st->sigLevel * bars - 0.001f));
-    COLORREF base = st->sigLevel > 0.6f ? st->palette.low
-                                        : (st->sigLevel > 0.3f ? st->palette.mid : st->palette.high);
+    const float sl = std::clamp(st->sigLevel * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
+    const int litBars = static_cast<int>(std::ceil(sl * bars - 0.001f));
+    COLORREF base = sl > 0.6f ? st->palette.low : (sl > 0.3f ? st->palette.mid : st->palette.high);
     base = lerpCol(base, st->palette.high, st->sigTrouble * 0.6f);
     for (int j = 0; j < bars; ++j) {
         const int x0 = L + j * colW;
@@ -285,7 +295,8 @@ void paintBitrate(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCe
     const float denom = std::max(st->histMax, 1.0f);
     for (int k = 0; k < cols; ++k) {  // k=0 -> newest (rightmost)
         const int idx = (st->histHead - 1 - k + kHist) % kHist;
-        const float frac = std::clamp(st->hist[idx] / denom, 0.0f, 1.0f);
+        const float frac =
+            std::clamp(st->hist[idx] / denom * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
         const int litN = static_cast<int>(std::lround(frac * rows));
         const int x1 = R - k * colW;
         const int x0 = x1 - colW + gap;
@@ -309,7 +320,7 @@ void paintFrames(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
     const int colW = std::max(dpx(4, dpi), 3);
     const int gap = dpx(1, dpi);
     const int cols = std::max(1, (R - L) / colW);
-    const float frac = std::clamp(st->fps / 60.0f, 0.0f, 1.0f);
+    const float frac = std::clamp(st->fps / 60.0f * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
     const int lit = static_cast<int>(std::lround(frac * cols));
     COLORREF base = st->fps >= 24 ? st->palette.low
                                   : (st->fps >= 15 ? st->palette.mid : st->palette.high);
@@ -357,7 +368,7 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
                 case MeterKind::Bitrate: paintBitrate(mem, in, st, glowPtr); break;
                 case MeterKind::Frames: paintFrames(mem, in, st, glowPtr); break;
             }
-            if (glowPtr) drawTubeGlow(mem, glow, st->palette);
+            if (glowPtr) drawTubeGlow(mem, glow, st->palette, st->tuning.glow);
         }
     }
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
@@ -383,15 +394,20 @@ void onTick(MiniMeterState* st) {
         }
     }
     if (has) st->bands = std::min(n, kMaxBands);
-    constexpr float kSpecDecay = 0.80f, kPeakFall = 0.02f;
+    // Knob-derived easing — 0.5 knobs reproduce the classic constants (decay .80,
+    // peakFall .02, signal ease .25, flare decay .90).
+    const float decay = std::clamp(0.60f + st->tuning.smoothing * 0.40f, 0.60f, 0.97f);
+    const float peakFall = std::clamp(0.04f * (1.0f - st->tuning.peakHold), 0.002f, 0.04f);
     for (int i = 0; i < st->bands; ++i) {
         const float target = (has && i < n) ? d[i] : 0.0f;
-        st->level[i] = std::max(target, st->level[i] * kSpecDecay);
-        st->peak[i] = std::max(st->level[i], st->peak[i] - kPeakFall);
+        st->level[i] = std::max(target, st->level[i] * decay);
+        st->peak[i] = std::max(st->level[i], st->peak[i] - peakFall);
     }
     // Signal easing + frame-drop flare decay.
-    st->sigLevel += (st->sigTarget - st->sigLevel) * 0.25f;
-    st->flare *= 0.90f;
+    const float sigEase = std::clamp(0.45f - st->tuning.smoothing * 0.40f, 0.05f, 0.45f);
+    const float flareDecay = std::clamp(0.80f + st->tuning.smoothing * 0.20f, 0.80f, 0.97f);
+    st->sigLevel += (st->sigTarget - st->sigLevel) * sigEase;
+    st->flare *= flareDecay;
     if (st->flare < 0.01f) st->flare = 0.0f;
 }
 
@@ -520,7 +536,8 @@ void miniMeterPushBitrate(HWND meter, double bytesPerSec) {
     if (st->histCount < kHist) ++st->histCount;
     // Adaptive ceiling: rise instantly to a new peak, ebb slowly so the graph
     // re-scales after a spike instead of flat-lining.
-    st->histMax = std::max(v, st->histMax * 0.985f);
+    const float ebb = std::clamp(0.995f - st->tuning.breathing * 0.02f, 0.95f, 0.999f);
+    st->histMax = std::max(v, st->histMax * ebb);  // breathing knob (0.5 = classic 0.985)
     if (st->histMax < 1.0f) st->histMax = 1.0f;
 }
 
@@ -576,6 +593,18 @@ MeterStyle miniMeterStyle(HWND meter) {
 MeterPalette miniMeterPalette(HWND meter) {
     MiniMeterState* st = stateOf(meter);
     return st ? st->palette : defaultMeterPalette(MeterKind::Spectrum);
+}
+
+void miniMeterSetTuning(HWND meter, const MeterTuning& tuning) {
+    MiniMeterState* st = stateOf(meter);
+    if (!st) return;
+    st->tuning = tuning;
+    if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+}
+
+MeterTuning miniMeterTuning(HWND meter) {
+    MiniMeterState* st = stateOf(meter);
+    return st ? st->tuning : defaultMeterTuning();
 }
 
 // ---- style / palette (de)serialization for the settings K/V store ----------
@@ -640,6 +669,34 @@ MeterPalette meterPaletteFromString(const std::wstring& s, const MeterPalette& f
     p.accent = parseHexColor(tok[5], fallback.accent);
     p.peak = parseHexColor(tok[6], fallback.peak);
     return p;
+}
+
+std::wstring meterTuningToString(const MeterTuning& t) {
+    wchar_t b[96];
+    swprintf_s(b, L"%.3f,%.3f,%.3f,%.3f,%.3f", t.glow, t.smoothing, t.sensitivity, t.peakHold,
+               t.breathing);
+    return b;
+}
+
+MeterTuning meterTuningFromString(const std::wstring& s, const MeterTuning& fallback) {
+    const float fb[5] = {fallback.glow, fallback.smoothing, fallback.sensitivity, fallback.peakHold,
+                         fallback.breathing};
+    float v[5];
+    size_t start = 0;
+    for (int i = 0; i < 5; ++i) {
+        const size_t comma = s.find(L',', start);
+        const std::wstring tok =
+            (comma == std::wstring::npos) ? s.substr(start) : s.substr(start, comma - start);
+        wchar_t* end = nullptr;
+        const double d = wcstod(tok.c_str(), &end);
+        v[i] = (end && end != tok.c_str()) ? std::clamp(static_cast<float>(d), 0.0f, 1.0f) : fb[i];
+        if (comma == std::wstring::npos) {  // short string — remaining fields fall back
+            for (int k = i + 1; k < 5; ++k) v[k] = fb[k];
+            break;
+        }
+        start = comma + 1;
+    }
+    return MeterTuning{v[0], v[1], v[2], v[3], v[4]};
 }
 
 }  // namespace rabbitears

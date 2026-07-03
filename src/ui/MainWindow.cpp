@@ -60,6 +60,20 @@ constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
 
+// Shutdown safety-net: once teardown begins, guarantee the process exits within a
+// bounded time. libVLC's stop()/release() can block on a stuck stream, leaving
+// RabbitEars.exe running headless after the window is gone — and a lingering process
+// locks the exe/DLLs so the WinSparkle auto-update installer can't overwrite them (the
+// update fails). If the clean teardown finishes first, runApp returns and the process
+// exits normally long before this fires; it only wins if something hangs.
+void armExitWatchdog(DWORD ms) {
+    std::thread([ms] {
+        Sleep(ms);
+        diag::info(L"Shutdown watchdog fired — forcing process exit so the updater can proceed");
+        ExitProcess(0);
+    }).detach();
+}
+
 constexpr int ID_ADD_URL = 2001;
 constexpr int ID_OPEN_FILE = 2002;
 constexpr int ID_ABOUT = 2003;
@@ -1145,6 +1159,7 @@ void onMeters(AppState* st) {
         cfg[r].enabled = en[r];
         cfg[r].style = miniMeterStyle(m[r]);
         cfg[r].palette = miniMeterPalette(m[r]);
+        cfg[r].tuning = miniMeterTuning(m[r]);
     }
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
     if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg)) return;  // Cancel — no change
@@ -1157,11 +1172,14 @@ void onMeters(AppState* st) {
     for (int r = 0; r < 4; ++r) {
         miniMeterSetStyle(m[r], cfg[r].style);
         miniMeterSetPalette(m[r], cfg[r].palette);
+        miniMeterSetTuning(m[r], cfg[r].tuning);
         st->db.setSetting(std::wstring(L"meter_") + key[r], cfg[r].enabled ? L"1" : L"0");
         st->db.setSetting(std::wstring(L"meter_") + key[r] + L"_style",
                           meterStyleToString(cfg[r].style));
         st->db.setSetting(std::wstring(L"meter_") + key[r] + L"_colors",
                           meterPaletteToString(cfg[r].palette));
+        st->db.setSetting(std::wstring(L"meter_") + key[r] + L"_knobs",
+                          meterTuningToString(cfg[r].tuning));
     }
     syncSpectrumTap(st);   // enabling/disabling spectrum starts/stops the capture tap
     layout(st->hwnd, st);  // show/hide meters per the new enables
@@ -1455,6 +1473,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         if (auto c = st->db.getSetting(std::wstring(L"meter_") + mk[r] + L"_colors"))
                             miniMeterSetPalette(mtr[r],
                                                 meterPaletteFromString(*c, defaultMeterPalette(k)));
+                        if (auto kn = st->db.getSetting(std::wstring(L"meter_") + mk[r] + L"_knobs"))
+                            miniMeterSetTuning(mtr[r], meterTuningFromString(*kn, defaultMeterTuning()));
                     }
                 }
                 if (auto dl = st->db.getSetting(L"dock_layout"); dl && !dl->empty())
@@ -1993,8 +2013,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_DESTROY:
+            armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
             st->spectrumTap.stop();  // join the capture thread before the meter HWNDs die
-            st->player.stop();
+            st->player.shutdown();   // join worker + reaper threads + release libVLC synchronously
             if (st->uiFont) DeleteObject(st->uiFont);
             if (st->titleFont) DeleteObject(st->titleFont);
             if (st->glyphFont) DeleteObject(st->glyphFont);
@@ -2080,6 +2101,20 @@ void registerClasses(HINSTANCE hInst) {
 }  // namespace
 
 int runApp(HINSTANCE hInst, int nCmdShow) {
+    // Single-instance guard (before diag::init, so a second launch doesn't rotate the
+    // running instance's log). The mutex name matches the installer's AppMutex, so the
+    // auto-update installer can also detect/close a stray instance. Held for the process
+    // lifetime (released on exit); a second launch just focuses the existing window.
+    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"RabbitEars.SingleInstance");
+    if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (HWND existing = FindWindowW(kMainClass, nullptr)) {
+            if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+            SetForegroundWindow(existing);
+        }
+        CloseHandle(instanceMutex);
+        return 0;
+    }
+
     diag::init(RE_VERSION_DISPLAY_W);
 
     Gdiplus::GdiplusStartupInput gdipInput;
@@ -2135,7 +2170,7 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     UpdateWindow(hwnd);
     if (splash) closeSplash(splash);  // main window is up (already closed on the first-run path)
 
-    initUpdater();  // WinSparkle: start background update checks
+    initUpdater(hwnd);  // WinSparkle: start background update checks (+ shutdown coordination)
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {

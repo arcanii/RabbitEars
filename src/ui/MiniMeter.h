@@ -41,12 +41,27 @@ inline MeterPalette defaultMeterPalette(MeterKind /*kind*/) {
 }
 inline MeterStyle defaultMeterStyle(MeterKind /*kind*/) { return MeterStyle::Led; }
 
-// One meter's full configuration (enable + look + palette). Indexed by MeterKind in
-// the Settings → Meters… dialog and in persistence.
+// Per-meter "feel" knobs (Settings → Meters…), all normalized 0..1 with 0.5 as the
+// neutral default that reproduces the classic behaviour exactly. Which ones matter
+// depends on the meter/look: glow → Tube/Scope bloom; smoothing → attack/decay easing
+// (spectrum/signal/frames); sensitivity → input gain (all); peakHold → spectrum peak
+// linger; breathing → bitrate adaptive-ceiling ebb.
+struct MeterTuning {
+    float glow;         // Tube/Scope bloom intensity
+    float smoothing;    // attack/decay easing (higher = smoother)
+    float sensitivity;  // input gain (0.5 = unity)
+    float peakHold;     // spectrum peak-cap linger
+    float breathing;    // bitrate ceiling re-normalization speed
+};
+inline MeterTuning defaultMeterTuning() { return MeterTuning{0.5f, 0.5f, 0.5f, 0.5f, 0.5f}; }
+
+// One meter's full configuration (enable + look + palette + knobs). Indexed by MeterKind
+// in the Settings → Meters… dialog and in persistence.
 struct MeterConfig {
     bool         enabled = true;
     MeterStyle   style = MeterStyle::Led;
     MeterPalette palette = defaultMeterPalette(MeterKind::Spectrum);
+    MeterTuning  tuning = defaultMeterTuning();
 };
 
 void registerMiniMeterClass(HINSTANCE hInst);
@@ -75,8 +90,10 @@ void miniMeterSetDpi(HWND meter, UINT dpi);
 // ---- Look & palette (Settings → Meters…) -----------------------------------
 void miniMeterSetStyle(HWND meter, MeterStyle style);
 void miniMeterSetPalette(HWND meter, const MeterPalette& palette);
+void miniMeterSetTuning(HWND meter, const MeterTuning& tuning);
 MeterStyle   miniMeterStyle(HWND meter);
 MeterPalette miniMeterPalette(HWND meter);
+MeterTuning  miniMeterTuning(HWND meter);
 
 // Serialize a style/palette for the settings K/V store (persisted per meter). The
 // palette is 7 comma-joined tokens (bg first — "theme" for CLR_INVALID, else RRGGBB);
@@ -85,5 +102,10 @@ std::wstring meterStyleToString(MeterStyle style);
 MeterStyle   meterStyleFromString(const std::wstring& s, MeterStyle fallback);
 std::wstring meterPaletteToString(const MeterPalette& p);
 MeterPalette meterPaletteFromString(const std::wstring& s, const MeterPalette& fallback);
+
+// Tuning is 5 comma-joined 0..1 floats (glow,smoothing,sensitivity,peakHold,breathing);
+// any missing/garbled field falls back to `fallback`.
+std::wstring meterTuningToString(const MeterTuning& t);
+MeterTuning  meterTuningFromString(const std::wstring& s, const MeterTuning& fallback);
 
 }  // namespace rabbitears

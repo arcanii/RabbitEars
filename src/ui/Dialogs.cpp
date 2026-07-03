@@ -29,6 +29,22 @@ namespace {
 
 int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
+// Keep a centred W×H dialog fully on-screen: clamp its top-left to the work area of the
+// monitor the parent is on. Dialogs centre on the parent window, which pushes a tall
+// dialog off the top edge when the main window sits near the top of the screen.
+void clampToWorkArea(HWND parent, int W, int H, int& x, int& y) {
+    RECT wa;
+    MONITORINFO mi{sizeof(mi)};
+    if (GetMonitorInfoW(MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST), &mi))
+        wa = mi.rcWork;
+    else
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    if (x + W > wa.right) x = static_cast<int>(wa.right) - W;
+    if (y + H > wa.bottom) y = static_cast<int>(wa.bottom) - H;
+    if (x < wa.left) x = static_cast<int>(wa.left);  // left/top win if the dialog is
+    if (y < wa.top) y = static_cast<int>(wa.top);    // larger than the work area
+}
+
 constexpr int ID_CHECK_UPDATES = 1201;
 
 // ---- About box (renders the embedded RabbitEars.png via GDI+) --------------
@@ -873,11 +889,41 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
 // ---- Meters… setup dialog (Settings → Meters…) -----------------------------
 namespace {
 
-constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j
+constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j, slider j +10+j
 constexpr int  ID_MTR_RESET = 1596;
 constexpr UINT kMtrPreviewTimer = 7;
 constexpr UINT kMtrPreviewMs = 60;
 constexpr int  kMtrRoles = 7;
+constexpr int  kMtrKnobs = 4;   // max "feel" sliders per row
+
+// Which tuning knobs each meter row exposes (label + field index into MeterTuning:
+// 0=glow,1=smoothing,2=sensitivity,3=peakHold,4=breathing; field -1 = unused slot).
+struct KnobDesc { const wchar_t* label; int field; };
+const KnobDesc kMtrKnobDesc[4][kMtrKnobs] = {
+    {{L"Glow", 0}, {L"Smooth", 1}, {L"Sens", 2}, {L"Peak", 3}},   // Spectrum
+    {{L"Glow", 0}, {L"Smooth", 1}, {L"Sens", 2}, {nullptr, -1}},  // Signal
+    {{L"Glow", 0}, {L"Sens", 2}, {L"Breathe", 4}, {nullptr, -1}}, // Bitrate
+    {{L"Glow", 0}, {L"Smooth", 1}, {L"Sens", 2}, {nullptr, -1}},  // Frames
+};
+float knobGet(const MeterTuning& t, int f) {
+    switch (f) {
+        case 0: return t.glow;
+        case 1: return t.smoothing;
+        case 2: return t.sensitivity;
+        case 3: return t.peakHold;
+        case 4: return t.breathing;
+    }
+    return 0.5f;
+}
+void knobSet(MeterTuning& t, int f, float v) {
+    switch (f) {
+        case 0: t.glow = v; break;
+        case 1: t.smoothing = v; break;
+        case 2: t.sensitivity = v; break;
+        case 3: t.peakHold = v; break;
+        case 4: t.breathing = v; break;
+    }
+}
 
 struct MetersDlgState {
     MeterConfig cfg[4];
@@ -885,6 +931,7 @@ struct MetersDlgState {
     HWND  enable[4] = {};
     HWND  combo[4] = {};
     HWND  swatch[4][kMtrRoles] = {};
+    HWND  slider[4][kMtrKnobs] = {};
     HFONT font = nullptr, bold = nullptr;
     UINT  dpi = 96;
     UINT  feedTick = 0;
@@ -954,10 +1001,18 @@ void meterReset(MetersDlgState* st) {
     for (int r = 0; r < 4; ++r) {
         st->cfg[r].style = defaultMeterStyle(static_cast<MeterKind>(r));
         st->cfg[r].palette = defaultMeterPalette(static_cast<MeterKind>(r));
+        st->cfg[r].tuning = defaultMeterTuning();
         SendMessageW(st->combo[r], CB_SETCURSEL, static_cast<int>(st->cfg[r].style), 0);
         miniMeterSetStyle(st->preview[r], st->cfg[r].style);
         miniMeterSetPalette(st->preview[r], st->cfg[r].palette);
+        miniMeterSetTuning(st->preview[r], st->cfg[r].tuning);
         for (int j = 0; j < kMtrRoles; ++j) InvalidateRect(st->swatch[r][j], nullptr, FALSE);
+        for (int j = 0; j < kMtrKnobs; ++j) {
+            const int f = kMtrKnobDesc[r][j].field;
+            if (f >= 0 && st->slider[r][j])
+                SendMessageW(st->slider[r][j], TBM_SETPOS, TRUE,
+                             static_cast<LPARAM>(std::lround(knobGet(st->cfg[r].tuning, f) * 100.0f)));
+        }
     }
 }
 
@@ -1005,6 +1060,22 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_TIMER:
             if (st && wParam == kMtrPreviewTimer) meterFeedPreviews(st);
             return 0;
+        case WM_HSCROLL: {  // a knob trackbar moved — update the working cfg + live preview
+            if (!st) break;
+            const HWND bar = reinterpret_cast<HWND>(lParam);
+            for (int r = 0; r < 4; ++r)
+                for (int j = 0; j < kMtrKnobs; ++j)
+                    if (bar == st->slider[r][j]) {
+                        const int f = kMtrKnobDesc[r][j].field;
+                        if (f >= 0) {
+                            const int pos = static_cast<int>(SendMessageW(bar, TBM_GETPOS, 0, 0));
+                            knobSet(st->cfg[r].tuning, f, static_cast<float>(pos) / 100.0f);
+                            miniMeterSetTuning(st->preview[r], st->cfg[r].tuning);
+                        }
+                        return 0;
+                    }
+            return 0;
+        }
         case WM_COMMAND: {
             if (!st) return 0;
             const int code = HIWORD(wParam);
@@ -1081,12 +1152,13 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
     st.font = mkFont(11, FW_NORMAL);
     st.bold = mkFont(12, FW_SEMIBOLD);
 
-    const int rowH = dp(140, dpi);
-    const int W = dp(636, dpi), H = dp(50, dpi) + 4 * rowH + dp(58, dpi);
+    const int rowH = dp(148, dpi);  // taller rows: each now carries a "feel" slider band
+    const int W = dp(720, dpi), H = dp(50, dpi) + 4 * rowH + dp(96, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
-    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
-    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);  // keep the (tall) dialog fully on-screen
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsMeters", L"Meters",
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
@@ -1125,6 +1197,7 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
         MoveWindow(st.preview[r], m, y0 + dp(28, dpi), dp(150, dpi), dp(86, dpi), FALSE);
         miniMeterSetStyle(st.preview[r], st.cfg[r].style);
         miniMeterSetPalette(st.preview[r], st.cfg[r].palette);
+        miniMeterSetTuning(st.preview[r], st.cfg[r].tuning);
         ShowWindow(st.preview[r], SW_SHOW);
 
         st.combo[r] = CreateWindowExW(
@@ -1147,6 +1220,26 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
                                        sx - dp(4, dpi), sy + sw + dp(2, dpi), sw + dp(8, dpi),
                                        dp(14, dpi), dlg, nullptr, hInst, nullptr);
             SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+        }
+
+        // Inline "feel" sliders for this meter's relevant knobs (below the swatches).
+        const int kx0 = m + dp(162, dpi), ky = y0 + dp(86, dpi), kw = dp(120, dpi);
+        for (int j = 0; j < kMtrKnobs; ++j) {
+            const KnobDesc& kd = kMtrKnobDesc[r][j];
+            if (kd.field < 0) continue;
+            const int kx = kx0 + j * (kw + dp(8, dpi));
+            HWND klbl = CreateWindowExW(0, L"STATIC", kd.label, WS_CHILD | WS_VISIBLE | SS_CENTER, kx,
+                                        ky, kw, dp(14, dpi), dlg, nullptr, hInst, nullptr);
+            SendMessageW(klbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+            st.slider[r][j] = CreateWindowExW(
+                0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
+                kx, ky + dp(15, dpi), kw, dp(26, dpi), dlg,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 10 + j)), hInst,
+                nullptr);
+            SendMessageW(st.slider[r][j], TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+            SendMessageW(
+                st.slider[r][j], TBM_SETPOS, TRUE,
+                static_cast<LPARAM>(std::lround(knobGet(st.cfg[r].tuning, kd.field) * 100.0f)));
         }
     }
 

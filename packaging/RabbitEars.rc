@@ -20,8 +20,8 @@ IDR_SPLASH_PNG RCDATA "../art/RabbitEars_logo.png"
 // sync with APP_VERSION (CMakeLists.txt), packaging/app.manifest, and
 // packaging/installer.iss on each release — see docs/RELEASING.md.
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,1,5,0
- PRODUCTVERSION 0,1,5,0
+ FILEVERSION 0,1,6,0
+ PRODUCTVERSION 0,1,6,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS VOS_NT_WINDOWS32
@@ -34,12 +34,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "RabbitEars"
             VALUE "FileDescription", "RabbitEars - native IPTV player"
-            VALUE "FileVersion", "0.1.5.0"
+            VALUE "FileVersion", "0.1.6.0"
             VALUE "InternalName", "RabbitEars"
             VALUE "LegalCopyright", "Copyright (C) 2026 - GPL-3.0-or-later"
             VALUE "OriginalFilename", "RabbitEars.exe"
             VALUE "ProductName", "RabbitEars"
-            VALUE "ProductVersion", "0.1.5.0"
+            VALUE "ProductVersion", "0.1.6.0"
         END
     END
     BLOCK "VarFileInfo"

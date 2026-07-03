@@ -59,6 +59,10 @@ class VlcPlayer {
 public:
     VlcPlayer() = default;
     ~VlcPlayer();
+    // Synchronously tear down: join the worker + all reaper threads and release libVLC.
+    // Idempotent. Called from WM_DESTROY so the process is fully torn down before the
+    // message loop exits — a lingering process would block the auto-update installer.
+    void shutdown();
     VlcPlayer(const VlcPlayer&) = delete;
     VlcPlayer& operator=(const VlcPlayer&) = delete;
 
@@ -146,6 +150,7 @@ private:
     std::deque<Cmd>          queue_;
     bool                     quit_ = false;
     bool                     started_ = false;
+    bool                     shutDown_ = false;  // shutdown() ran (idempotent guard)
 
     // Async teardown of superseded players: libVLC 3.x stop()/release() block until
     // a stream tears down (seconds on a stuck feed), which would wedge the worker and

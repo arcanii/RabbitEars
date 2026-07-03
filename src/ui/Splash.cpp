@@ -2,6 +2,7 @@
 #include "ui/Splash.h"
 
 #include <algorithm>
+#include <random>
 #include <thread>
 
 #include <objbase.h>  // CreateStreamOnHGlobal (ole32)
@@ -183,17 +184,25 @@ void splashThread(SplashState* s, HANDLE created) {
     SetEvent(created);  // unblock showSplash (s->hwnd is now set)
     if (!s->hwnd) return;
     ShowWindow(s->hwnd, SW_SHOWNOACTIVATE);
-    renderFrame(*s, kMessages[0]);
 
+    // Shuffle the caption order once per launch so the sequence differs each run and
+    // every caption shows once before any repeat; re-shuffle each time it wraps.
+    constexpr int kN = static_cast<int>(ARRAYSIZE(kMessages));
+    int order[kN];
+    for (int k = 0; k < kN; ++k) order[k] = k;
+    std::mt19937 rng(std::random_device{}());
+    std::shuffle(order, order + kN, rng);
     int i = 0;
+    renderFrame(*s, kMessages[order[0]]);
     for (;;) {
         const DWORD w = MsgWaitForMultipleObjects(1, &s->stop, FALSE, 1200, QS_ALLINPUT);
         if (w == WAIT_OBJECT_0) break;  // closeSplash signalled
         MSG m;
         while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&m);  // stay responsive
         if (w == WAIT_TIMEOUT) {
-            i = (i + 1) % static_cast<int>(ARRAYSIZE(kMessages));
-            renderFrame(*s, kMessages[i]);
+            i = (i + 1) % kN;
+            if (i == 0) std::shuffle(order, order + kN, rng);  // fresh order on each wrap
+            renderFrame(*s, kMessages[order[i]]);
         }
     }
     DestroyWindow(s->hwnd);

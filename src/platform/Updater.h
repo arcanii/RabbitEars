@@ -4,9 +4,12 @@
 // the private key matching the public key set in Updater.cpp.
 #pragma once
 
+#include <windows.h>
+
 namespace rabbitears {
 
-void initUpdater();      // configure + start background checks
+// mainWnd receives WM_CLOSE when WinSparkle needs the app to quit to apply an update.
+void initUpdater(HWND mainWnd);  // configure + start background checks
 void checkForUpdates();  // user-triggered "Check for Updates…"
 void shutdownUpdater();  // on app exit
 

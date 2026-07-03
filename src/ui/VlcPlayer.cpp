@@ -38,7 +38,9 @@ void vlcLogCb(void*, int level, const libvlc_log_t*, const char* fmt, va_list ar
 
 }  // namespace
 
-VlcPlayer::~VlcPlayer() {
+void VlcPlayer::shutdown() {
+    if (shutDown_) return;  // idempotent: WM_DESTROY calls this, then ~VlcPlayer again
+    shutDown_ = true;
     if (started_) {
         {
             std::lock_guard<std::mutex> lk(mtx_);
@@ -59,6 +61,8 @@ VlcPlayer::~VlcPlayer() {
         inst_ = nullptr;
     }
 }
+
+VlcPlayer::~VlcPlayer() { shutdown(); }
 
 bool VlcPlayer::init() {
     if (inst_) return true;

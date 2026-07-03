@@ -7,7 +7,7 @@
 ; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.1.5"
+#define MyVer "0.1.6"
 
 [Setup]
 AppId={{E5C26129-79DE-4A86-8C69-0AF1B95B2130}}
@@ -26,6 +26,12 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+; Auto-update robustness: use Restart Manager to close a running instance before
+; overwriting files, then relaunch it. AppMutex matches the app's single-instance mutex
+; (src/ui/MainWindow.cpp runApp) so Inno can detect a still-running copy.
+AppMutex=RabbitEars.SingleInstance
+CloseApplications=yes
+RestartApplications=yes
 
 [Files]
 Source: "..\build\RabbitEars.exe"; DestDir: "{app}"; Flags: ignoreversion
