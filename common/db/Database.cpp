@@ -142,8 +142,8 @@ bool Database::exec(const char* sql) {
 }
 
 // Database::defaultDbPath() is platform-specific and lives in the platform layer:
-//   src/platform/win/Paths.cpp   (%LOCALAPPDATA%\RabbitEars)
-//   src/platform/mac/Paths.cpp   (~/Library/Application Support/RabbitEars)
+//   Win32/platform/Paths.cpp   (%LOCALAPPDATA%\RabbitEars)
+//   mac/platform/Paths.cpp     (~/Library/Application Support/RabbitEars)
 // so this file (the shared core) depends only on sqlite3 — no shell32/ole32.
 
 bool Database::open(const std::wstring& path, std::wstring* error) {

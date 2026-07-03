@@ -3,7 +3,7 @@
 // Windows implementation of Database::defaultDbPath() — %LOCALAPPDATA%\RabbitEars
 // (RABBITEARS_DATA_DIR override). Extracted from Database.cpp so RabbitEarsCore
 // links only sqlite3 (the shell32/ole32 dependency lives here now). The macOS
-// peer is src/platform/mac/Paths.cpp.
+// peer is mac/platform/Paths.cpp.
 #include "db/Database.h"
 
 #include <cstdlib>
