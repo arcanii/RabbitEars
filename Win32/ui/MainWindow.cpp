@@ -575,7 +575,16 @@ const DockLayout::Gutter* gutterAt(AppState* st, POINT pt) {
 }
 
 void paintGutters(AppState* st, HDC hdc) {
-    for (const auto& g : st->gutters) FillRect(hdc, &g.rc, themeBrush(currentTheme().border));
+    for (const auto& g : st->gutters) {
+#ifdef RABBITEARS_THEME_ENGINE
+        // Per-skin neon edge glow (Phase 4b-2). Skipped mid-drag: the gutter resizes every
+        // paced flush, so the plain border avoids per-frame GPU texture churn; the glow
+        // returns on release. hdc is child-clipped (WM_PAINT), so the panels show through.
+        if (st->skinStripOn && !st->draggingGutter && skin::paintSkinEdge(hdc, g.rc, st->dpi))
+            continue;
+#endif
+        FillRect(hdc, &g.rc, themeBrush(currentTheme().border));
+    }
 }
 
 void persistDock(AppState* st) { st->db.setSetting(L"dock_layout", st->dock.serialize()); }

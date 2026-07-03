@@ -53,3 +53,20 @@ float4 PSMain(VSOut i) : SV_Target
     col += uAccent.rgb * glow * 0.38;                   // gentle additive coral
     return float4(saturate(col), 1.0);
 }
+
+// Edge glow (Phase 4b-2): a per-skin neon "tube" for the dock gutters — the thin
+// dividers between the nav / video / grid panels. The bar's orientation is inferred
+// from the texture aspect (a vertical gutter is taller than wide), and the glow is a
+// smooth bloom across the SHORT axis, brightest down the centreline and fading to the
+// window background at the bar's edges so it seats into the panels. Static (no uTime):
+// the gutters render on WM_PAINT, not the animation tick, so there is nothing to move.
+float4 PSEdge(VSOut i) : SV_Target
+{
+    float across = (uResolution.x < uResolution.y) ? i.uv.x : i.uv.y;  // coord across the thin axis
+    float d      = abs(across - 0.5) * 2.0;                            // 0 centreline .. 1 edge
+    float glow   = (1.0 - smoothstep(0.0, 1.0, d)) * saturate(uIntensity);
+
+    float3 col = lerp(uBgColor.rgb, uAccent.rgb, glow);  // bg at the edges -> accent at the core
+    col += uAccent.rgb * pow(glow, 3.0) * 0.35;          // a brighter neon core down the middle
+    return float4(saturate(col), 1.0);
+}

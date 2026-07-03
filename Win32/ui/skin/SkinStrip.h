@@ -29,6 +29,13 @@ bool initSkinStrip();
 // failure (caller should GDI-fill the strip instead).
 bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi);
 
+// Phase 4b-2: render a per-skin neon "edge glow" for a dock gutter rect `r` (the thin
+// divider between panels) and BitBlt it into `dst` at (r.left, r.top). The bar's
+// orientation is inferred from the rect aspect; the glow is a bloom down the centreline
+// in the skin accent, fading to the window background at the edges. Static (rendered on
+// WM_PAINT, not the animation tick). Returns false on failure (caller GDI-fills instead).
+bool paintSkinEdge(HDC dst, const RECT& r, UINT dpi);
+
 // Release all GPU resources. Call at shutdown.
 void shutdownSkinStrip();
 
