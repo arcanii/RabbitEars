@@ -62,8 +62,8 @@ if(RABBITEARS_BUILD_MAC)
     target_include_directories(RabbitEars PRIVATE "${LIBVLC_MAC_INCLUDE_DIR}")
     target_link_libraries(RabbitEars PRIVATE "${LIBVLC_MAC_LIB}")
     # Runtime: rpath so @rpath/libvlc.dylib resolves, + point libVLC at its plugins.
-    set_target_properties(RabbitEars PROPERTIES
-      BUILD_RPATH "${LIBVLC_MAC_LIB_DIR}" INSTALL_RPATH "${LIBVLC_MAC_LIB_DIR}")
+    set_property(TARGET RabbitEars APPEND PROPERTY BUILD_RPATH "${LIBVLC_MAC_LIB_DIR}")
+    set_property(TARGET RabbitEars APPEND PROPERTY INSTALL_RPATH "${LIBVLC_MAC_LIB_DIR}")
     if(LIBVLC_MAC_PLUGIN_DIR)
       target_compile_definitions(RabbitEars PRIVATE RABBITEARS_VLC_PLUGIN_PATH="${LIBVLC_MAC_PLUGIN_DIR}")
     endif()
@@ -81,6 +81,17 @@ if(RABBITEARS_BUILD_MAC)
   endif()
   if(RABBITEARS_HAVE_SPARKLE)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_SPARKLE)
-    target_link_libraries(RabbitEars PRIVATE "-framework Sparkle" "-F${SPARKLE_FRAMEWORK_DIR}/..")
+    get_filename_component(_sparkle_slice "${SPARKLE_FRAMEWORK_DIR}" DIRECTORY)  # dir holding Sparkle.framework
+    target_compile_options(RabbitEars PRIVATE "-F${_sparkle_slice}")  # so #import <Sparkle/Sparkle.h> resolves
+    target_link_libraries(RabbitEars PRIVATE "-framework Sparkle" "-F${_sparkle_slice}")
+    # Embed Sparkle.framework in the bundle (cp -R preserves its symlinks + XPC
+    # services) + an rpath so @rpath/Sparkle.framework resolves at runtime.
+    set_property(TARGET RabbitEars APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
+    set_property(TARGET RabbitEars APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
+    add_custom_command(TARGET RabbitEars POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:RabbitEars>/Frameworks"
+      COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_BUNDLE_CONTENT_DIR:RabbitEars>/Frameworks/Sparkle.framework"
+      COMMAND cp -R "${SPARKLE_FRAMEWORK_DIR}" "$<TARGET_BUNDLE_CONTENT_DIR:RabbitEars>/Frameworks/"
+      COMMENT "Embedding Sparkle.framework into the bundle")
   endif()
 endif()

@@ -5,14 +5,15 @@
 // on Windows, Sparkle on macOS, one shared appcast/EdDSA scheme and one family
 // Ed25519 key.
 //
-// SCAFFOLD STATE: the Sparkle wiring is stubbed until Sparkle.framework is
-// provisioned (see mac/cmake/Mac.cmake). When RABBITEARS_HAVE_SPARKLE is
-// defined, the framework calls below activate; otherwise the three entry points
-// are safe no-ops so the app builds and runs without auto-update.
+// Sparkle.framework is auto-provisioned by mac/cmake/Mac.cmake (downloaded from
+// the GitHub release, embedded in the bundle) and RABBITEARS_HAVE_SPARKLE is
+// then defined. The SUFeedURL (packaging/appcast-mac.xml) + SUPublicEDKey (the
+// family Ed25519 key, same as Win32/platform/Updater.cpp) live in Info.plist.in.
+// When Sparkle isn't provisioned the three entry points are safe no-ops.
 //
-// TODO(phase-1): provision Sparkle.framework, embed the family SUPublicEDKey
-// (the same Ed25519 public key hard-coded in Win32/platform/Updater.cpp), point
-// SUFeedURL at packaging/appcast-mac.xml, and replace the stubs below.
+// NOTE: the live update flow (check -> download -> install) needs a signed +
+// notarized release and a real signed enclosure in the appcast; that is release
+// infra, not code. Sparkle initializes and checks here regardless.
 #import <Foundation/Foundation.h>
 
 #include "platform/Updater.h"
