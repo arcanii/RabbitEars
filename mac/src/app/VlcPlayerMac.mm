@@ -32,12 +32,22 @@ struct VlcPlayerMac::Impl {
 
 VlcPlayerMac::VlcPlayerMac() : impl_(new Impl) {
 #if defined(RABBITEARS_HAVE_LIBVLC)
+    // Point libVLC at its plugins unless VLC_PLUGIN_PATH is already set. Prefer the
+    // plugins bundled in the app (Contents/PlugIns — a self-contained release);
+    // fall back to the compile-time VLC.app path for non-bundled dev/CLI builds.
+    if (!getenv("VLC_PLUGIN_PATH")) {
+        NSString* bundled = NSBundle.mainBundle.builtInPlugInsPath;  // Contents/PlugIns
+        BOOL isDir = NO;
+        if (bundled.length &&
+            [NSFileManager.defaultManager fileExistsAtPath:bundled isDirectory:&isDir] && isDir) {
+            setenv("VLC_PLUGIN_PATH", bundled.fileSystemRepresentation, 1);
+        }
 #if defined(RABBITEARS_VLC_PLUGIN_PATH)
-    // Point libVLC at the provisioned plugins tree (unless the environment already
-    // set one). Needed when loading a relocated libvlc.dylib whose compiled-in
-    // plugin path doesn't match where the plugins actually live.
-    if (!getenv("VLC_PLUGIN_PATH")) setenv("VLC_PLUGIN_PATH", RABBITEARS_VLC_PLUGIN_PATH, 1);
+        else {
+            setenv("VLC_PLUGIN_PATH", RABBITEARS_VLC_PLUGIN_PATH, 1);
+        }
 #endif
+    }
     const char* args[] = {"--no-video-title-show"};
     impl_->vlc = libvlc_new(sizeof(args) / sizeof(args[0]), args);
     if (impl_->vlc) impl_->player = libvlc_media_player_new(impl_->vlc);
