@@ -53,6 +53,14 @@ skin-model boundary to the macOS team** before any engine code lands (they move 
   rebuilt per profile; `%LOCALAPPDATA%\RabbitEars\profiles\*.json` + an active-profile pointer; keep
   the ~197 MB channel cache OUT of the JSON.
 
+## macOS
+
+- **Validate the x86_64 (Intel) slice on real Intel hardware** — the shipped `v0.1.7-mac` is a
+  universal (arm64 + x86_64) notarized DMG. The **arm64 slice is confirmed on-device (2026-07-04,
+  runs + looks good)**; the **x86_64 slice has never run on a physical Intel Mac**. When an Intel
+  machine is available: launch the app + run `RabbitEarsPlayProbe` (headless play smoke test) + a
+  quick GUI/playback pass. Arranging hardware may take a while — parked, not blocking.
+
 ## Features
 
 - **Recording Phase 2 (scheduled)** — DB schedule table + dialog + a timer firing the headless
