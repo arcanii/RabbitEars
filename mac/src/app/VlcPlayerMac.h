@@ -10,6 +10,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <functional>
 #include <string>
 
 namespace rabbitears {
@@ -29,6 +30,11 @@ public:
     void play(const std::wstring& url, const std::wstring& userAgent, const std::wstring& referrer);
     void stop();
     void setVolume(int percent);  // 0..100
+
+    // Enable an audio tap: libVLC's decoded PCM is metered (peak 0..1 delivered to
+    // `cb`, on a libVLC audio thread) and re-output via AudioToolbox so it still
+    // plays. Set before play() to take effect. Pass nullptr to disable.
+    void setLevelCallback(std::function<void(float)> cb);
 
 private:
     struct Impl;

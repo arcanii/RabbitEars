@@ -8,6 +8,11 @@ enable_language(OBJCXX)  # root project() is C CXX; the .mm sources need OBJCXX
 set(CMAKE_OBJCXX_STANDARD 20)
 set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 
+# The .mm sources are written for ARC (no manual retain/release, __bridge casts,
+# __weak). Enable it for ObjC++ only (the C/C++ sources are unaffected) — this
+# also plugs the object leaks the previous manual-refcount build had.
+add_compile_options($<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+
 option(RABBITEARS_BUILD_MAC "Build the macOS .app bundle (needs libVLC + Sparkle)" OFF)
 
 # ---------------------------------------------------------------------------
@@ -42,6 +47,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/main.mm
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
+    src/app/MeterView.mm
     src/app/VlcPlayerMac.mm
     platform/Log.mm
     platform/Updater.mm)
@@ -60,7 +66,7 @@ if(RABBITEARS_BUILD_MAC)
   if(RABBITEARS_HAVE_LIBVLC)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_LIBVLC)
     target_include_directories(RabbitEars PRIVATE "${LIBVLC_MAC_INCLUDE_DIR}")
-    target_link_libraries(RabbitEars PRIVATE "${LIBVLC_MAC_LIB}")
+    target_link_libraries(RabbitEars PRIVATE "${LIBVLC_MAC_LIB}" "-framework AudioToolbox")
     # Runtime: rpath so @rpath/libvlc.dylib resolves, + point libVLC at its plugins.
     set_property(TARGET RabbitEars APPEND PROPERTY BUILD_RPATH "${LIBVLC_MAC_LIB_DIR}")
     set_property(TARGET RabbitEars APPEND PROPERTY INSTALL_RPATH "${LIBVLC_MAC_LIB_DIR}")

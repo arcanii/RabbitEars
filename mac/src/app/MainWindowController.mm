@@ -16,6 +16,7 @@
 #include "platform/Encoding.h"
 #include "platform/Log.h"
 
+#import "MeterView.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -30,6 +31,7 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
     NSPopUpButton* _filter;
     NSTableView*   _table;
     NSView*        _videoView;
+    MeterView*     _meter;
     NSTextField*   _status;
 
     std::unique_ptr<Database>     _db;
@@ -144,15 +146,25 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     scroll.documentView = _table;
     [split addSubview:scroll];
 
-    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    // Right pane: the video surface with a thin audio-level meter strip below it.
+    NSView* rightPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    const CGFloat meterH = 26;
+    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, meterH, 600, 100 - meterH)];
+    _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
-    [split addSubview:_videoView];
+    [rightPane addSubview:_videoView];
+    _meter = [[MeterView alloc] initWithFrame:NSMakeRect(0, 0, 600, meterH)];
+    _meter.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;  // pinned to the bottom
+    [rightPane addSubview:_meter];
+    [split addSubview:rightPane];
 
     [content addSubview:split];
     [split setPosition:380 ofDividerAtIndex:0];
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
+    __weak MeterView* wm = _meter;
+    _player->setLevelCallback([wm](float lv) { [wm pushLevel:lv]; });  // pushLevel is thread-safe
 
     [self restoreLastPlaylist];
 
@@ -329,7 +341,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (note.object == _search) [self refreshChannels];  // live search
 }
 
-- (void)stop:(id)__unused sender { _player->stop(); [self setStatus:@"Stopped."]; }
+- (void)stop:(id)__unused sender { _player->stop(); [_meter reset]; [self setStatus:@"Stopped."]; }
 
 - (void)playClicked:(id)__unused sender { [self playRow:_table.clickedRow]; }
 
