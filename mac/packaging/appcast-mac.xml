@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- macOS update channel — the peer of the repo-root appcast.xml (Windows).
+     Same Sparkle/EdDSA scheme and SAME family Ed25519 key; only the enclosure
+     (a signed .dmg/.zip) and channel differ. This is a TEMPLATE: the <item>
+     below is a placeholder with no real signature. The mac release flow
+     (scripts/sign-release.sh already signs on macOS with Sparkle's sign_update)
+     populates it at release time. See docs/RELEASING.md and docs/MACOS_PORT.md. -->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>RabbitEars (macOS) Updates</title>
+    <link>https://raw.githubusercontent.com/arcanii/RabbitEars/main/mac/packaging/appcast-mac.xml</link>
+    <description>Most recent updates to RabbitEars for macOS</description>
+    <language>en</language>
+    <!-- TODO(phase-1): real signed item, e.g.
+    <item>
+      <title>Version 0.2.0</title>
+      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.0-mac</sparkle:releaseNotesLink>
+      <pubDate>…</pubDate>
+      <enclosure url="…/RabbitEars-0.2.0.dmg"
+                 sparkle:version="0.2.0.NN"
+                 sparkle:edSignature="…"
+                 length="…"
+                 type="application/octet-stream"/>
+    </item>
+    -->
+  </channel>
+</rss>

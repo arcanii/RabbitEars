@@ -1,6 +1,8 @@
 # Build output
 /build/
 /out/
+/build-mac/
+/mac/build/
 
 # libVLC provisioning download (re-fetched at configure time)
 /build/libvlc_pkg/
