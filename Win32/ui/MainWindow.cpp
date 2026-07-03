@@ -1394,6 +1394,84 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
 
 // ---- window procs ----------------------------------------------------------
 
+// Transport-button style: skin-native owner-draw flag-on (painted by
+// drawTransportButton), classic OS push-button flag-off (byte-identical shipping look).
+#ifdef RABBITEARS_THEME_ENGINE
+constexpr DWORD kTransportBtnStyle = WS_CHILD | WS_VISIBLE | BS_OWNERDRAW;
+
+// The play/stop/record/fullscreen buttons paint from the active skin instead of the OS
+// DarkMode_Explorer push-button look: flat (windowBg, so they melt into the transport
+// strip band), a palette hover / pressed wash, and an accent glyph while playing /
+// recording. Flag-off this whole path compiles out and they stay classic BUTTONs.
+bool isTransportBtn(AppState* st, HWND h) {
+    return h == st->btnPlay || h == st->btnStop || h == st->btnRec || h == st->btnFull;
+}
+
+// Owner-draw buttons don't report hover in DRAWITEMSTRUCT::itemState, so each is
+// subclassed to track it in its (otherwise unused) GWLP_USERDATA; drawTransportButton
+// reads it back. TrackMouseEvent delivers the matching WM_MOUSELEAVE.
+LRESULT CALLBACK TransportBtnSubProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                     UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+        case WM_MOUSEMOVE:
+            if (!GetWindowLongPtrW(hwnd, GWLP_USERDATA)) {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 1);
+                TRACKMOUSEEVENT tme{sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0};
+                TrackMouseEvent(&tme);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+        case WM_MOUSELEAVE:
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, TransportBtnSubProc, 1);
+            break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+void drawTransportButton(AppState* st, const DRAWITEMSTRUCT* dis) {
+    const Theme& th = currentTheme();
+    const RECT rc = dis->rcItem;
+    const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    const bool hover = GetWindowLongPtrW(dis->hwndItem, GWLP_USERDATA) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    // The record button glows accent while a recording is live. Play/pause stays neutral:
+    // you are almost always "playing", so accenting it there would drain the cue's meaning.
+    const bool active = (dis->hwndItem == st->btnRec && st->player.isRecording());
+
+    const COLORREF bg = pressed ? th.selectionBg : hover ? th.hoverBg : th.windowBg;
+    FillRect(dis->hDC, &rc, themeBrush(bg));
+
+    const COLORREF fg = disabled             ? th.textMuted
+                        : active             ? th.accent
+                        : (hover || pressed) ? th.textPrimary
+                                             : th.textSecondary;
+    wchar_t glyph[8] = L"";
+    GetWindowTextW(dis->hwndItem, glyph, ARRAYSIZE(glyph));  // current MDL2 glyph (swaps with state)
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dis->hDC, st->glyphFont));
+    const int oldBk = SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, fg);
+    RECT tr = rc;
+    DrawTextW(dis->hDC, glyph, -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+    SetBkMode(dis->hDC, oldBk);
+    SelectObject(dis->hDC, oldFont);
+
+    // Keyboard focus needs an affordance the flat fill doesn't give: a thin accent frame.
+    // ODS_NOFOCUSRECT is set once the user is on the mouse (focus cues hidden), so honour
+    // it — the frame shows only for keyboard navigation, matching classic button behaviour.
+    if ((dis->itemState & ODS_FOCUS) && !(dis->itemState & ODS_NOFOCUSRECT)) {
+        RECT fr = rc;
+        InflateRect(&fr, -dpiScale(2, st->dpi), -dpiScale(2, st->dpi));
+        FrameRect(dis->hDC, &fr, themeBrush(th.accent));
+    }
+}
+#else
+constexpr DWORD kTransportBtnStyle = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
+#endif
+
 void createChildren(HWND hwnd, AppState* st) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
     st->uiFont = themeFont(FontRole::Body, st->dpi);      // skin-driven flag-on; Segoe UI 14 flag-off
@@ -1428,11 +1506,11 @@ void createChildren(HWND hwnd, AppState* st) {
                                  nullptr);
     SendMessageW(st->search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search channels…"));
 
-    st->btnPlay = CreateWindowExW(0, L"BUTTON", kGlyphPlay, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
+    st->btnPlay = CreateWindowExW(0, L"BUTTON", kGlyphPlay, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_PLAY)), hInst, nullptr);
-    st->btnStop = CreateWindowExW(0, L"BUTTON", kGlyphStop, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
+    st->btnStop = CreateWindowExW(0, L"BUTTON", kGlyphStop, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_STOP)), hInst, nullptr);
-    st->btnRec = CreateWindowExW(0, L"BUTTON", kGlyphRecord, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
+    st->btnRec = CreateWindowExW(0, L"BUTTON", kGlyphRecord, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_REC)), hInst, nullptr);
     // Speaker glyph (Segoe MDL2 "Volume") so the slider is obviously the volume.
     st->volIcon = CreateWindowExW(0, L"STATIC", L"",
@@ -1446,7 +1524,7 @@ void createChildren(HWND hwnd, AppState* st) {
     st->bufBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS, 0,
                                  0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUF)),
                                  hInst, nullptr);
-    st->btnFull = CreateWindowExW(0, L"BUTTON", kGlyphFull, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10,
+    st->btnFull = CreateWindowExW(0, L"BUTTON", kGlyphFull, kTransportBtnStyle, 0, 0, 10, 10,
                                   hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_FULL)), hInst, nullptr);
     st->status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 10,
                                  10, hwnd, nullptr, hInst, nullptr);
@@ -1504,6 +1582,12 @@ void createChildren(HWND hwnd, AppState* st) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
+#ifdef RABBITEARS_THEME_ENGINE
+    // BS_OWNERDRAW transport buttons are painted by drawTransportButton (WM_DRAWITEM in
+    // MainProc); subclass each to track hover, which owner-draw doesn't report on its own.
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+        SetWindowSubclass(h, TransportBtnSubProc, 1, 0);
+#endif
     TreeView_SetBkColor(st->nav, currentTheme().panelBg);
     TreeView_SetTextColor(st->nav, currentTheme().textPrimary);
 
@@ -1826,6 +1910,16 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORBTN:
             return dialogCtlColor(msg, wParam);
+#ifdef RABBITEARS_THEME_ENGINE
+        case WM_DRAWITEM: {
+            auto* dis = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+            if (dis && dis->CtlType == ODT_BUTTON && isTransportBtn(st, dis->hwndItem)) {
+                drawTransportButton(st, dis);
+                return TRUE;
+            }
+            break;  // not one of ours -> fall through to DefWindowProc
+        }
+#endif
         case WM_COMMAND: {
             const int id = LOWORD(wParam);
             if (id == ID_SEARCH && HIWORD(wParam) == EN_CHANGE) {
