@@ -11,6 +11,13 @@
 #include <dwmapi.h>
 #include <uxtheme.h>
 
+#ifdef RABBITEARS_THEME_ENGINE
+#include <string>
+#include <unordered_map>
+
+#include "ui/Skin.h"  // the shared skin model this file resolves into the Win32 COLORREF Theme
+#endif
+
 namespace rabbitears {
 
 struct Theme {
@@ -97,12 +104,67 @@ inline int& themeOverride() {
     return mode;
 }
 
+#ifdef RABBITEARS_THEME_ENGINE
+// ---- theme engine: currentTheme() is resolved from the active Skin ----------
+// The persisted selection: a skin id ("dark"/"light") or "system" (follow the OS
+// dark/light setting). Default "system" preserves the pre-engine follow-the-OS
+// behaviour. The Settings->Theme UI (Phase 2c) sets this + persists it under
+// skinSettingKey(); themeOverride() above is unused on this path.
+inline std::string& activeSkinSelection() {
+    static std::string sel = "system";
+    return sel;
+}
+
+inline COLORREF toColorRef(const SkinColor& c) { return RGB(c.r, c.g, c.b); }
+
+// Resolve a shared Skin into the Win32 COLORREF Theme. The 4 unused syntax-highlight
+// fields keep their classic values (RabbitEars never draws them); `dark` drives the
+// DWM immersive-dark chrome. The "dark" skin reproduces makeDarkTheme() exactly, so
+// the default (system -> dark on a dark OS) is pixel-identical to the pre-engine look.
+// NB: the skin's dangerHover role has no Theme field yet (drawCmdBar still hardcodes
+// the close-hover red) — that wires up in Phase 3 when the command bar is reskinned.
+inline Theme resolveSkinTheme(const Skin& s) {
+    Theme t = makeDarkTheme();  // seed: fills the unused syn* fields with classic values
+    t.dark          = s.dark;
+    t.windowBg      = toColorRef(s.palette.windowBg);
+    t.panelBg       = toColorRef(s.palette.panelBg);
+    t.panelElevBg   = toColorRef(s.palette.panelElevBg);
+    t.altRowBg      = toColorRef(s.palette.altRowBg);
+    t.hoverBg       = toColorRef(s.palette.hoverBg);
+    t.border        = toColorRef(s.palette.border);
+    t.textPrimary   = toColorRef(s.palette.textPrimary);
+    t.textSecondary = toColorRef(s.palette.textSecondary);
+    t.textMuted     = toColorRef(s.palette.textMuted);
+    t.accent        = toColorRef(s.palette.accent);
+    t.accentText    = toColorRef(s.palette.accentText);
+    t.selectionBg   = toColorRef(s.palette.selectionBg);
+    t.selectionText = toColorRef(s.palette.selectionText);
+    return t;
+}
+#endif
+
 inline const Theme& currentTheme() {
+#ifdef RABBITEARS_THEME_ENGINE
+    // Resolve the active selection -> a concrete skin -> a cached COLORREF Theme,
+    // rebuilt only when the selection (or, for "system", the OS mode) changes. Called
+    // only on the UI thread, so the function-local statics need no synchronisation.
+    static Theme cached;
+    static std::string cachedKey;
+    const std::string& sel = activeSkinSelection();
+    std::string skinId = (sel == "system") ? (systemUsesDarkMode() ? "dark" : "light") : sel;
+    const std::string key = (sel == "system") ? ("system:" + skinId) : skinId;
+    if (key != cachedKey) {
+        cached = resolveSkinTheme(skinById(skinId));
+        cachedKey = key;
+    }
+    return cached;
+#else
     static const Theme dark = makeDarkTheme();
     static const Theme light = makeLightTheme();
     const int o = themeOverride();
     const bool useDark = (o < 0) ? systemUsesDarkMode() : (o == 1);
     return useDark ? dark : light;
+#endif
 }
 
 // ---- shared dialog dark-mode + DPI helpers ----------------------------------
@@ -110,6 +172,28 @@ inline const Theme& currentTheme() {
 // Scale a 96-dpi design value to a window's DPI.
 inline int dpiScale(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
+#ifdef RABBITEARS_THEME_ENGINE
+// Per-skin brush set: an unbounded colour->HBRUSH cache, replacing the fragile 12-slot
+// array (which silently overflowed + leaked once a second skin's palette was in play).
+// clearThemeBrushes() frees + drops them on a skin switch (Phase 2c calls it before the
+// repaint). Correctness never depends on the clear — a colour always maps to its brush.
+inline std::unordered_map<COLORREF, HBRUSH>& themeBrushCache() {
+    static std::unordered_map<COLORREF, HBRUSH> cache;
+    return cache;
+}
+inline void clearThemeBrushes() {
+    for (auto& kv : themeBrushCache()) DeleteObject(kv.second);
+    themeBrushCache().clear();
+}
+inline HBRUSH themeBrush(COLORREF c) {
+    auto& cache = themeBrushCache();
+    const auto it = cache.find(c);
+    if (it != cache.end()) return it->second;
+    HBRUSH b = CreateSolidBrush(c);
+    cache[c] = b;
+    return b;
+}
+#else
 // Small process-lifetime brush cache so WM_CTLCOLOR* can return a stable HBRUSH.
 inline HBRUSH themeBrush(COLORREF c) {
     static COLORREF colors[12];
@@ -125,6 +209,7 @@ inline HBRUSH themeBrush(COLORREF c) {
     }
     return b;
 }
+#endif
 
 // Handle WM_CTLCOLOR{STATIC,EDIT,LISTBOX,BTN}: dark field/background, light text.
 inline LRESULT dialogCtlColor(UINT msg, WPARAM wParam) {
