@@ -54,10 +54,27 @@ All theme-engine work is on branch **`theme-engine`** (off `main` @ `c6a0cf2`), 
 OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** — so the **shipping build (flag off) is
 behaviourally identical to 0.1.7** (only the version bumped to **0.1.8** across the 4 places). Design
 doc: **`Win32/docs/THEME_ENGINE.md`** (§4 = the shared skin-model boundary for the mac team; §6 = the
-D3D11/HLSL renderer). Every phase was adversarially reviewed (0 findings) + build-verified BOTH flags;
-the sandbox can't launch the GUI, so the owner verified the Phase-1 strip live + eyeballed the Cyberpunk
-palette. Commits (newest first):
+D3D11/HLSL renderer). Every phase was adversarially reviewed + build-verified BOTH flags (flag-off stays
+byte-identical to 0.1.7); the sandbox can't launch the GUI, so the owner does the runtime/visual sign-off
+(Phase-1 strip + Cyberpunk done; the **flag-ON build for 3b–4b1 now awaits the owner's live look**).
+Commits (newest first):
 
+- **Phase 4b-1** (`49b3993`) — accent **glow** on the owner-draw transport buttons: a GDI+ bloom behind
+  the glyph when *lit* (hover, or the record button while recording), glyph brightened to a bright core.
+  Uses the meters' `drawTubeGlow` GDI+ technique, **not** a GPU surface — a swapchain `Present` would hit
+  the sibling-clipping wall behind the child-window buttons. Reviewed SHIP (Light-skin contrast ~9:1).
+- **Phase 4a** (`05a70df`) — the **Steampunk** skin (brass/copper on dark aged-iron, oxidised-rust danger).
+  FIRST skin to diverge typography — a **Georgia serif title** via the 3b seam (body stays Segoe UI for
+  grid legibility). The accent-driven Phase-1 strip underglow renders **brass under it for free** (it
+  already reads `currentTheme().accent`/`windowBg`). `common/ui/Skin.{h,cpp}`; selftest now asserts 4 skins.
+- **Phase 3c** (`1d2c3d7`) — the play/stop/record/fullscreen buttons converted from classic `BS_PUSHBUTTON`
+  to skin-native **`BS_OWNERDRAW`** (`drawTransportButton` + `WM_DRAWITEM` in MainProc; hover tracked via a
+  subclass in the button's `GWLP_USERDATA`). Flat into the strip band; clicks/tooltips/glyph-swaps
+  unchanged. Reviewed SHIP after fixing a self-referential `#else` initializer (caught by the flag-off build).
+- **Phase 3b** (`2206ac4`) — migrated the ~14 ad-hoc `CreateFontW`/`CreateTextFormat` sites onto one
+  typography seam: a 4-arg `themeFont(role,dpi,px96,weight)` + a new `themeTextFormat(role,…)` in
+  `D2DSupport.h`, so a skin swaps the *typeface* while each site keeps its own size/weight. The ★ grid
+  dingbat stays pinned to Segoe UI Symbol; Splash's 2 GDI+ fonts left. Flag-off byte-identical. Reviewed SHIP.
 - **Cyberpunk skin + registry-driven Theme menu** (`0611794`) — first *authored* skin (neon magenta on
   midnight, **colours only, no shaders yet**). Settings→Theme auto-lists `builtinSkins()`. Owner: "looks
   ok, adjust later once we see it in the app."
@@ -79,13 +96,17 @@ palette. Commits (newest first):
 settings key are shared; the positional 14-role palette codec is frozen until user-customizable skins
 ship (then add a version prefix).
 
-**Next on the theme engine:** (a) **Phase 4** — author Steampunk + wire the shaders/neon *glow* (layer
-the Phase-1 SkinDevice/HLSL onto the reskinned surfaces; Cyberpunk is flat colours until then); (b)
-**Phase 3 remainder** — migrate the Dialogs GDI fonts + the grid's DirectWrite `CreateTextFormat` onto a
-`themeTextFormat`, convert the transport `BUTTON`s to owner-draw for per-skin glow; (c) tune the
-Cyberpunk palette. **Coordination:** extract **`docs/SKIN_MODEL.md`** for the mac team (the model is
-concrete now) + **cherry-pick the doc-reorg commit (`ea03a0a`) to `main`** so mac stops editing root
-docs. **Before merging `theme-engine` → `main`: `git fetch` + rebase** (origin/main moved via the mac team).
+**Next on the theme engine:** **Phase 3 remainder is DONE** (3b fonts + 3c owner-draw buttons),
+**Steampunk is authored** (4a), and the **transport-button glow** landed (4b-1) — all committed, reviewed,
+build-verified both flags, and **awaiting the owner's live visual sign-off** (glow size/intensity, the
+brass palette + serif title, the per-skin underglow are all quick tunables). **Next: Phase 4b-2** — the
+dramatic GPU effect the owner chose: a per-skin **neon panel-rim / edge glow** — extend the Phase-1
+*windowless* SkinStrip/`BitBlt` technique (a swapchain can't sit behind child controls) onto the dock
+gutters + panel edges, then heat-haze for Steampunk. (NB: the strip underglow is *already* per-skin —
+it reads the active `accent`/`windowBg` — so 4b-2 is about NEW glowing surfaces, not re-colouring the
+strip.) Still open: tune Cyberpunk; extract **`docs/SKIN_MODEL.md`** for the mac team; **cherry-pick the
+doc-reorg commit (`ea03a0a`) to `main`** so mac stops editing root docs. **Before merging `theme-engine`
+→ `main`: `git fetch` + rebase** (origin/main moved via the mac team).
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
@@ -508,11 +529,13 @@ commit messages with the Co-Authored-By trailer.
 
 1. **The active line of work is the THEME ENGINE** on branch **`theme-engine`** — see the "🎨 Theme
    engine" section above for the commit-by-commit state. It is NOT merged and is behind the OFF-by-default
-   `RABBITEARS_THEME_ENGINE` flag. Resume there. Next candidates: **Phase 4** (Steampunk skin + the
-   shaders/neon glow — layer the Phase-1 `SkinDevice`/HLSL onto the reskinned surfaces), **Phase 3
-   remainder** (Dialogs GDI + grid DirectWrite fonts → a `themeTextFormat`; owner-draw transport buttons),
-   tune the Cyberpunk palette, extract **`docs/SKIN_MODEL.md`** for the mac team, and cherry-pick the
-   doc-reorg commit `ea03a0a` to `main`. **`git fetch`/rebase before merging `theme-engine` → `main`.**
+   `RABBITEARS_THEME_ENGINE` flag. Resume there. **Done this session:** Phase 3 remainder (3b fonts, 3c
+   owner-draw buttons), Steampunk skin (4a), transport-button glow (4b-1) — all committed + reviewed +
+   both-flag build-verified, **awaiting the owner's live visual sign-off** (the flag-ON `build\Win32\RabbitEars.exe`
+   is built). **Next: Phase 4b-2** — a per-skin **neon panel-rim / edge glow** on the dock gutters + panel
+   edges (extend the Phase-1 windowless SkinStrip/`BitBlt`), then heat-haze; tune Cyberpunk; extract
+   **`docs/SKIN_MODEL.md`** for the mac team; cherry-pick the doc-reorg commit `ea03a0a` to `main`.
+   **`git fetch`/rebase before merging `theme-engine` → `main`.**
 2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
    Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
    **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
@@ -545,9 +568,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > active skin (parity: the dark skin == `makeDarkTheme` exactly); **Phase 2c** — live **Settings→Theme**
 > switch (Follow System/Dark/Light), persisted, whole-app repaint broadcast (`applyActiveSkin`); **Phase
 > 3a** — `themeFont(role,dpi)` typography seam + `dangerHover` wiring; and a **Cyberpunk** skin (neon
-> magenta on midnight, **colours only, no shaders**) with a registry-driven Theme menu. **Next:** Phase 4
-> (Steampunk + shaders/neon glow — layer the Phase-1 `SkinDevice`/HLSL onto surfaces), Phase 3 remainder
-> (Dialogs/grid DirectWrite fonts → a `themeTextFormat`, owner-draw transport buttons), tune Cyberpunk.
+> magenta on midnight, **colours only, no shaders**) with a registry-driven Theme menu. **Since then
+> (this session):** 3b (fonts → a `themeFont`/`themeTextFormat` seam), 3c (owner-draw transport buttons),
+> 4a (**Steampunk** skin + Georgia serif title), 4b-1 (GDI+ **button glow**) — all committed + reviewed +
+> both-flag build-verified, awaiting the owner's live visual sign-off. **Next:** Phase 4b-2 — a per-skin
+> **neon panel-rim glow** on the dock gutters/panel edges (extend the Phase-1 windowless SkinStrip/`BitBlt`),
+> then heat-haze; tune Cyberpunk.
 > **Coordination:** extract `docs/SKIN_MODEL.md` for the mac team; cherry-pick the doc-reorg commit
 > `ea03a0a` to `main`; **`git fetch`/rebase before merging `theme-engine` → `main`** (origin/main moved
 > via the mac team). **JSON profiles** stay deferred.
