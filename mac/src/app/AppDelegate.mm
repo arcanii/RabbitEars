@@ -71,12 +71,36 @@ using namespace rabbitears;
     NSMenuItem* fs = [viewMenu addItemWithTitle:@"Enter Full Screen"
                                          action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    // Hide the channel list / toolbar so the video can fill the window. Kept in the
+    // menu bar (not the in-window toolbar) so they still work once the toolbar hides.
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* hideList = [viewMenu addItemWithTitle:@"Hide Channel List"
+                                               action:@selector(toggleChannelList:) keyEquivalent:@"l"];
+    hideList.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    hideList.target = self;
+    NSMenuItem* hideBar = [viewMenu addItemWithTitle:@"Hide Toolbar"
+                                              action:@selector(toggleToolbar:) keyEquivalent:@"t"];
+    hideBar.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    hideBar.target = self;
     viewItem.submenu = viewMenu;
 
     NSApp.mainMenu = menubar;
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
+
+// View-menu chrome toggles, forwarded to the window controller.
+- (void)toggleChannelList:(id)__unused sender { [_mainController toggleChannelList]; }
+- (void)toggleToolbar:(id)__unused sender { [_mainController toggleToolbar]; }
+
+// Reflect current state in the menu titles (Hide ⇄ Show).
+- (BOOL)validateMenuItem:(NSMenuItem*)item {
+    if (item.action == @selector(toggleChannelList:))
+        item.title = _mainController.channelListHidden ? @"Show Channel List" : @"Hide Channel List";
+    else if (item.action == @selector(toggleToolbar:))
+        item.title = _mainController.toolbarHidden ? @"Show Toolbar" : @"Hide Toolbar";
+    return YES;
+}
 
 // Custom About panel — the mac peer of the Win32 About box: libVLC attribution +
 // the educational-use disclaimer (name/version come from the bundle Info.plist).
