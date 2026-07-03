@@ -45,6 +45,24 @@ using namespace rabbitears;
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit RabbitEars" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
+
+    // Edit menu — REQUIRED for Cmd-X/C/V/A/Z to work in text fields: Cocoa routes
+    // the standard editing commands through these menu items' key equivalents,
+    // down the responder chain to the focused field editor. Without it, paste
+    // (and cut/copy/select-all/undo) silently do nothing.
+    NSMenuItem* editItem = [[NSMenuItem alloc] init];
+    [menubar addItem:editItem];
+    NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+    [editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+    NSMenuItem* redo = [editMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"z"];
+    redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
+    [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+    [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+    [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+    editItem.submenu = editMenu;
+
     NSApp.mainMenu = menubar;
 }
 
