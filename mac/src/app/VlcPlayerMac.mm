@@ -6,14 +6,16 @@
 //
 // Audio tap (the mac start of the Win32 SpectrumTap): when a level callback is
 // set, libVLC's decoded PCM is intercepted (libvlc_audio_set_callbacks), the peak
-// is metered, and the samples are re-output through an AudioQueue so playback is
-// unchanged. Set the callback before play() to take effect.
+// is metered, and the samples are re-output through an AudioQueue (fed from a
+// fixed, recycled buffer pool) so playback is unchanged.
 #import "VlcPlayerMac.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "platform/Log.h"
@@ -29,10 +31,16 @@ struct VlcPlayerMac::Impl {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     libvlc_instance_t* vlc = nullptr;
     libvlc_media_player_t* player = nullptr;
-    AudioQueueRef aq = nullptr;              // re-output for the tap (created on first tapped play)
 
-    // libVLC audio callback (its audio thread) + AudioQueue recycle callback.
-    // Static members so they can touch Impl's private-to-VlcPlayerMac layout.
+    // AudioQueue re-output for the tap, fed from a fixed pool of buffers recycled
+    // between the audio thread (audioPlay) and the AudioQueue thread (aqDone) — no
+    // realtime allocation, bounded memory, no leak on a failed/stalled enqueue.
+    AudioQueueRef aq = nullptr;
+    static constexpr int kNumBufs = 8;
+    static constexpr UInt32 kMaxBufBytes = 128 * 1024;  // ~680ms @ 48k/stereo/s16 (chunks are far smaller)
+    std::mutex poolMx;
+    std::vector<AudioQueueBufferRef> freeBufs;  // ready-to-fill buffers
+
     static void audioPlay(void* data, const void* samples, unsigned count, int64_t pts);
     static void aqDone(void* user, AudioQueueRef aq, AudioQueueBufferRef buf);
     void ensureQueue();
@@ -54,19 +62,31 @@ void VlcPlayerMac::Impl::audioPlay(void* data, const void* samples, unsigned cou
     }
     if (im->levelCb) im->levelCb(static_cast<float>(peak) / 32768.0f);
 
-    if (im->aq) {
-        const UInt32 bytes = count * 4;  // 2ch * 2 bytes
-        AudioQueueBufferRef buf = nullptr;
-        if (AudioQueueAllocateBuffer(im->aq, bytes, &buf) == noErr) {
-            std::memcpy(buf->mAudioData, samples, bytes);
-            buf->mAudioDataByteSize = bytes;
-            AudioQueueEnqueueBuffer(im->aq, buf, 0, nullptr);
-        }
+    if (!im->aq) return;
+    const UInt32 bytes = count * 4;  // 2ch * 2 bytes
+    AudioQueueBufferRef buf = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(im->poolMx);
+        if (!im->freeBufs.empty()) { buf = im->freeBufs.back(); im->freeBufs.pop_back(); }
+    }
+    if (!buf) return;  // pool exhausted (queue stalled) — drop this chunk; the meter already updated
+    if (bytes > buf->mAudioDataBytesCapacity) {
+        std::lock_guard<std::mutex> lk(im->poolMx);
+        im->freeBufs.push_back(buf);  // oversized (shouldn't happen) — recycle + drop
+        return;
+    }
+    std::memcpy(buf->mAudioData, samples, bytes);
+    buf->mAudioDataByteSize = bytes;
+    if (AudioQueueEnqueueBuffer(im->aq, buf, 0, nullptr) != noErr) {
+        std::lock_guard<std::mutex> lk(im->poolMx);
+        im->freeBufs.push_back(buf);  // enqueue failed (e.g. mid-reset) — recycle, don't leak
     }
 }
 
-void VlcPlayerMac::Impl::aqDone(void* /*user*/, AudioQueueRef aq, AudioQueueBufferRef buf) {
-    AudioQueueFreeBuffer(aq, buf);  // we allocate per-callback
+void VlcPlayerMac::Impl::aqDone(void* user, AudioQueueRef /*aq*/, AudioQueueBufferRef buf) {
+    auto* im = static_cast<Impl*>(user);
+    std::lock_guard<std::mutex> lk(im->poolMx);
+    im->freeBufs.push_back(buf);  // back to the pool (allocated once in ensureQueue)
 }
 
 void VlcPlayerMac::Impl::ensureQueue() {
@@ -81,6 +101,10 @@ void VlcPlayerMac::Impl::ensureQueue() {
     asbd.mBytesPerFrame = 4;
     asbd.mBytesPerPacket = 4;
     if (AudioQueueNewOutput(&asbd, aqDone, this, nullptr, nullptr, 0, &aq) == noErr && aq) {
+        for (int i = 0; i < kNumBufs; ++i) {
+            AudioQueueBufferRef b = nullptr;
+            if (AudioQueueAllocateBuffer(aq, kMaxBufBytes, &b) == noErr) freeBufs.push_back(b);
+        }
         AudioQueueStart(aq, nullptr);
     }
 }
@@ -102,12 +126,12 @@ VlcPlayerMac::VlcPlayerMac() : impl_(new Impl) {
 VlcPlayerMac::~VlcPlayerMac() {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (impl_->player) {
-        libvlc_media_player_stop(impl_->player);
+        libvlc_media_player_stop(impl_->player);   // quiesces audioPlay
         libvlc_media_player_release(impl_->player);
     }
     if (impl_->aq) {
-        AudioQueueStop(impl_->aq, true);
-        AudioQueueDispose(impl_->aq, true);
+        AudioQueueStop(impl_->aq, true);            // synchronous — quiesces aqDone
+        AudioQueueDispose(impl_->aq, true);         // frees the pool buffers
     }
     if (impl_->vlc) libvlc_release(impl_->vlc);
 #endif
@@ -133,7 +157,11 @@ void VlcPlayerMac::play(const std::wstring& url, const std::wstring& userAgent,
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->vlc || !impl_->player) return;
 
-    // Enable the metering tap before the media plays (set_callbacks must precede play).
+    // Tear down the previous stream before re-arming the tap: set_format/callbacks
+    // want a stopped player, and stop() AudioQueueResets so stale PCM from the old
+    // channel doesn't bleed through. (First play() is a no-op stop.)
+    stop();
+
     if (impl_->levelCb) {
         impl_->ensureQueue();
         libvlc_audio_set_format(impl_->player, "S16N", 48000, 2);
@@ -160,7 +188,7 @@ void VlcPlayerMac::play(const std::wstring& url, const std::wstring& userAgent,
 void VlcPlayerMac::stop() {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (impl_->player) libvlc_media_player_stop(impl_->player);
-    if (impl_->aq) AudioQueueReset(impl_->aq);
+    if (impl_->aq) AudioQueueReset(impl_->aq);  // fires aqDone for enqueued buffers (recycles them)
 #endif
 }
 

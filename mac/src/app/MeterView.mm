@@ -18,12 +18,15 @@
         _target = 0.0f;
         _level = _peak = 0.0f;
         self.wantsLayer = YES;
-        // ~30fps smoothing/decay + redraw on the main run loop.
-        _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 30.0
-                                                  target:self
-                                                selector:@selector(tick)
-                                                userInfo:nil
-                                                 repeats:YES];
+        // ~30fps smoothing/decay + redraw on the main run loop. Block-based with a
+        // WEAK self so the run-loop-retained timer doesn't keep the view alive
+        // (a target-based timer would leak the view + never stop).
+        __weak MeterView* weakSelf = self;
+        _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 30.0 repeats:YES block:^(NSTimer* t) {
+            MeterView* s = weakSelf;
+            if (s) [s tick];
+            else   [t invalidate];  // view is gone — stop firing
+        }];
         _timer.tolerance = 0.01;
     }
     return self;
