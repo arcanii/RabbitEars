@@ -2,8 +2,9 @@
 <!-- macOS update channel — the peer of the repo-root appcast.xml (Windows). Same
      Sparkle/EdDSA scheme and the SAME family Ed25519 key; only the enclosure (a
      signed .dmg) and channel differ. Populated by the mac release flow:
-     scripts/package-mac.sh builds the self-contained .app + DMG, and
-     `sign_update --account SQLTerminal <dmg>` produces the edSignature/length below. -->
+     scripts/package-mac.sh builds the self-contained, Developer-ID-signed +
+     hardened-runtime universal .app, then create-dmg + notarize + staple, and
+     `sign_update --account SQLTerminal <dmg>` produces the edSignature/length. -->
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>RabbitEars (macOS) Updates</title>
@@ -13,13 +14,13 @@
     <item>
       <title>Version 0.1.7</title>
       <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.1.7-mac</sparkle:releaseNotesLink>
-      <pubDate>Fri, 03 Jul 2026 12:40:42 +0000</pubDate>
+      <pubDate>Fri, 03 Jul 2026 22:30:00 +0000</pubDate>
       <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.1.7-mac/RabbitEars-0.1.7.dmg"
-                 sparkle:version="67"
+                 sparkle:version="68"
                  sparkle:shortVersionString="0.1.7"
-                 sparkle:edSignature="bqUM2RW4k2acW3UTwLrGgFCazxyOxwX4iIqqoAuzdpkziyMZCTlwQZHxsMf3Y6uZjRJMoy+lvLg48brNSro8Cw=="
-                 length="41179159"
+                 sparkle:edSignature="T5xIRj0F+nSYS/eQm7mBIK4zGtWfnhyBvyIFKghuhIo7wJeTutBb+sPWXjjDY3cRU9THoAw01hkgtlPZ6YaZBg=="
+                 length="75214825"
                  type="application/octet-stream"/>
     </item>
   </channel>
