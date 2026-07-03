@@ -26,14 +26,44 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.6 SHIPPED · macOS port in progress (Phase-2 PR pending)
+## Current state — v0.1.7 SHIPPED · macOS Phase-2 restructure LANDED, mac Phase-1 (playback+UI) in progress
 
-**Released:** `v0.1.6` (2026-07-03), tag `v0.1.6` @ `5d06958`, public GitHub release with a
-signed **`RabbitEars-0.1.6-setup.exe`** installer (full version `0.1.6.37`) and a **live
-WinSparkle auto-update feed** (appcast published @ `ebcbc2f`). Earlier: `v0.1.5` (`ca945d1`,
-`0.1.5.29`), `v0.1.4` (`8622e8a`, `0.1.4.26`), `v0.1.3` (`ebd71a8`, `0.1.3.22`), `v0.1.2`
-(`8c99254`, `0.1.2.19`), `v0.1.1` (auto-update baseline), `v0.1.0` (portable zip). 0.1.1–0.1.5
-users get 0.1.6 automatically.
+**Released:** `v0.1.7` (2026-07-03), tag `v0.1.7` @ `de8c571`, public GitHub release with a
+signed **`RabbitEars-0.1.7-setup.exe`** installer (full version `0.1.7.52`) and a **live
+WinSparkle auto-update feed** (appcast published @ `12be931`). Earlier: `v0.1.6` (`5d06958`,
+`0.1.6.37`), `v0.1.5` (`ca945d1`, `0.1.5.29`), `v0.1.4` (`8622e8a`, `0.1.4.26`), `v0.1.3`
+(`ebd71a8`, `0.1.3.22`), `v0.1.2` (`8c99254`, `0.1.2.19`), `v0.1.1` (auto-update baseline),
+`v0.1.0` (portable zip). 0.1.1–0.1.6 users get 0.1.7 automatically.
+
+**Repo restructured (macOS Phase-2 — LANDED):** the tree is now **`common/`** (portable core —
+M3uParser, Database, DockLayout, models, platform *contracts*), **`Win32/`** (the Windows app, incl.
+`platform/Paths.cpp` + `Http.cpp`), and **`mac/`**, under a unified root `CMakeLists.txt` (`common`
+→ `Win32`/`mac` per-OS; marketing version now in `cmake/AppVersion.cmake`, shared by both). **The
+Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `installer.iss` +
+`build-installer.cmd` were fixed to match (0.1.7). The macOS team is moving fast on `main`: Phase-1
+(playback + native channel grid + Sparkle + CI `.app` build) is in progress.
+
+### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
+The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
+rebased onto the macOS team's concurrent `main`, built, signed on macOS, released, appcast live @
+`12be931`. 0.1.1–0.1.6 users get it via WinSparkle. Contents:
+- **Update-from-About fix** — "Check for Updates" lives only in the About box, whose nested modal
+  `GetMessage` loop **swallowed the `WM_QUIT`** that WinSparkle's `shutdown_request` triggers (it
+  posts `WM_CLOSE` → `WM_DESTROY` → `PostQuitMessage`), so `runApp`'s outer loop never exited, the
+  process lingered, and the installer couldn't overwrite the locked exe → update failed. Fix: the
+  About loop **re-posts `WM_QUIT`** so the outer loop also exits (clean + fast), plus the
+  `onUpdaterShutdownRequest` callback arms a **2.5s guaranteed force-exit** safety net.
+  (`Win32/ui/Dialogs.cpp`, `Win32/platform/Updater.cpp`.) NB: the other themed dialogs share the
+  swallow-`WM_QUIT` pattern (backlog: extract a shared `runModalLoop`); the 4s `WM_DESTROY` watchdog
+  covers them and none can trigger updates.
+- **About-box easter egg** — click the bunny to swap to `BadAss_RabbitEars.png` (new embedded
+  resource `IDR_ABOUT_ALT_PNG`, lazy-loaded on first click, toggles; hit-tested against the drawn
+  image rect `AboutState::imgRect`). (`Win32/ui/Dialogs.cpp`, `Win32/resource.h`,
+  `packaging/RabbitEars.rc`, `art/BadAss_RabbitEars.png`.)
+- **Packaging fixes for the restructure** — the exe moved to `build\Win32\`, so `installer.iss`
+  `[Files]` **and** `build-installer.cmd`'s pre-flight check (both still pointed at `build\`) were
+  updated, else the installer packaged a **stale pre-restructure exe** or failed. Stale top-level
+  `build\` copies cleared. **Carry forward: build/verify the Windows exe path is `build\Win32\`.**
 
 ### 0.1.6 — SHIPPED (tag `v0.1.6` @ `5d06958`, full `0.1.6.37`; all `/W4` clean)
 Committed as `5d06958` (13 paths; version bumped in the four places), built, signed on macOS,
@@ -433,9 +463,11 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.1.6`; **v0.1.6 released @ `5d06958`** (full `0.1.6.37`; appcast @ `ebcbc2f`).
-`HEAD == origin/main` is this "mark 0.1.6 shipped" doc commit (commit count **39**; release
-`5d06958` = 37, appcast-publish `ebcbc2f` = 38). Working tree clean.
+Tags `v0.1.0`…`v0.1.7`; **v0.1.7 released @ `de8c571`** (full `0.1.7.52`; appcast @ `12be931`).
+`HEAD == origin/main` is this "mark 0.1.7 shipped" doc commit (commit count **54**; release
+`de8c571` = 52, appcast-publish `12be931` = 53). **The macOS team pushes to `main` too** (mac
+Phase-1), so **`git fetch` + rebase before a release** — 0.1.7 rebased onto their concurrent pushes
+(count jumped 39→52 mid-cut, forcing a rebuild). Working tree clean.
 Build number = git commit count, baked at CMake configure time **after** the commit — so a build
 must follow the release commit to stamp the matching `0.1.5.<count>`. Commit/push only when the
 owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`); end
@@ -443,12 +475,17 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **macOS port + repo restructure** — pending **`MACOS_PORT.md`** from the macOS team (0.1.5 is
-   shipped, so this is the active front). Premium per platform; ~70% common core + platform-specific
-   graphics. **Do NOT restructure until the doc lands**; keep the meter *model ↔ renderer* seam clean
-   — the `MeterStyle` / `MeterPalette` / `MeterConfig` model vs. the GDI/GDI+ `drawCell` / `drawScope`
-   / `drawTubeGlow` renderer is exactly that seam. (See the cross-platform note above + memory
-   `rabbitears-cross-platform`.)
+1. **Theme engine (the big 0.2.x epic) — write `docs/THEME_ENGINE.md` FIRST, then start.** Owner
+   wants a **full-app reskin** with **selectable skins** (Dark / Steampunk / Cyberpunk) and **D3D11 +
+   HLSL shaders** (mockups exist). Plan: a **Direct2D-on-D3D11 interop device** (crisp 2D + custom
+   shaders; the channel grid is already D2D so it folds in); the **skin *model* in `common/`** (theme
+   id + asset/param/animation refs — shared, like the meter model) with a **per-platform *renderer***
+   (`Win32/` D3D11/D2D+HLSL; `mac/` Metal later). Phase it: foundation spike (one surface at parity +
+   one shader) → skin abstraction + runtime switch → reskin surfaces (transport/meters → chrome → nav
+   → grid → dialogs) → author art/shaders. **Flag the shared skin-model boundary to the macOS team
+   before engine code lands** (they're mid Phase-1: native grid, playback, Sparkle, CI `.app`). Ship
+   small fixes/easter-eggs as 0.1.x point releases alongside. Keep `common/` green (the `mac-core` CI
+   is the drift alarm). (See `docs/MACOS_PORT_REVIEW.md` + memory `rabbitears-cross-platform`.)
 2. **JSON profiles** (deferred from 0.1.5 to a later version): per-profile settings + playlist
    sources, channel cache rebuilt per profile; `%LOCALAPPDATA%\RabbitEars\profiles\*.json` + an
    active-profile pointer; keep the ~197 MB channel cache OUT of the JSON.
@@ -467,18 +504,19 @@ Paste this verbatim to start a fresh session with working context restored:
 > 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `HANDOVER.md` and
 > `docs/architecture.md` first.**
 >
-> **State: v0.1.6 is SHIPPED** (tag `v0.1.6` @ `5d06958`, full `0.1.6.37`, signed installer +
-> **live WinSparkle auto-update**; appcast @ `ebcbc2f`, `origin/main` == the "mark shipped" doc
-> commit, commit count 39). 0.1.6 = an **auto-update-on-quit fix** (WinSparkle `shutdown_request`
-> callback + `VlcPlayer::shutdown()` in `WM_DESTROY` + a bounded force-exit watchdog + a
-> single-instance mutex + installer Restart Manager — a lingering process was locking the exe so
-> updates failed), **per-meter "feel" knobs** (`MeterTuning` glow/smoothing/sensitivity/peak-hold/
-> breathing on `MeterConfig`, inline sliders in the Meters dialog, defaults preserve behaviour), and
-> **random splash captions**. Prior: 0.1.5 was the meters overhaul (per-meter looks + palettes).
-> **The active front is now the macOS port** — Phase-0 (additive `mac/` + guarded shared-file edits)
-> is merged; the macOS team's **Phase-2 restructure PR** is greenlit and pending (see
-> `docs/MACOS_PORT_REVIEW.md`). **JSON profiles** stay deferred. **Read the "0.1.6 — SHIPPED" section
-> of `HANDOVER.md` for full detail** (file lists, IDs, persistence keys).
+> **State: v0.1.7 is SHIPPED** (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`, signed installer +
+> **live WinSparkle auto-update**; appcast @ `12be931`, `origin/main` == the "mark shipped" doc
+> commit, commit count 54). 0.1.7 = the **update-from-About fix** (the About box's modal loop
+> swallowed WinSparkle's `WM_QUIT`, so the app lingered and the installer failed — the loop now
+> re-posts `WM_QUIT`, plus a 2.5s force-exit net) + an **About-box bunny easter egg** + **restructure
+> packaging fixes** (`build\Win32\` paths). Prior: 0.1.6 = the update-on-quit fix + meter feel knobs +
+> random splash; 0.1.5 = the meters overhaul. **The macOS Phase-2 restructure has LANDED** — the tree
+> is now `common/` + `Win32/` + `mac/` under a unified root CMake; the macOS team is mid **Phase-1**
+> (native grid + playback + Sparkle + CI `.app`), and pushes to `main`, so **`git fetch`/rebase before
+> a release**. **The next big front is the THEME ENGINE** (full reskin + selectable D3D11/shader
+> skins — write `docs/THEME_ENGINE.md` first; coordinate the shared skin-model boundary with the
+> macOS team). **JSON profiles** stay deferred. **Read the "0.1.7 — SHIPPED" + "Current state"
+> sections of `HANDOVER.md` for full detail.**
 >
 > **Cross-platform (important, see memory `rabbitears-cross-platform`):** RabbitEars is going
 > **macOS** — premium per platform, ~70% common core (engine + meter model/config) + platform-specific
