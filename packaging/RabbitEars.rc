@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <windows.h>
-#include "../src/resource.h"
+#include "../Win32/resource.h"
 
 // Application icon (window title bar, taskbar, Alt-Tab, exe in Explorer).
 IDI_APPICON ICON "app.ico"

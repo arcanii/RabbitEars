@@ -11,7 +11,7 @@
 // are safe no-ops so the app builds and runs without auto-update.
 //
 // TODO(phase-1): provision Sparkle.framework, embed the family SUPublicEDKey
-// (the same Ed25519 public key hard-coded in src/platform/win/Updater.cpp), point
+// (the same Ed25519 public key hard-coded in Win32/platform/Updater.cpp), point
 // SUFeedURL at packaging/appcast-mac.xml, and replace the stubs below.
 #import <Foundation/Foundation.h>
 

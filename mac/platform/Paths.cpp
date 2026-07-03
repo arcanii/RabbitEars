@@ -3,7 +3,7 @@
 // macOS implementation of Database::defaultDbPath() —
 // ~/Library/Application Support/RabbitEars (RABBITEARS_DATA_DIR override). Pure
 // C++ (no Foundation), so it lives in the shared core lib and the self-test
-// links it directly. The Windows peer is src/platform/win/Paths.cpp.
+// links it directly. The Windows peer is Win32/platform/Paths.cpp.
 #include "db/Database.h"
 
 #include <cstdlib>

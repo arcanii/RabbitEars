@@ -3,11 +3,11 @@
 # macOS shared-core CI — the "drift alarm" requested in docs/MACOS_PORT.md (§6).
 #
 # Builds the genuinely-portable shared core (M3uParser + Database + DockLayout,
-# compiled in place from src/) on Apple clang/libc++ and runs the core
-# self-test. Any Windows-side change that breaks the shared core turns this red
-# immediately, instead of surfacing later on the macOS branch.
+# in common/) on Apple clang/libc++ and runs the core self-test. Any Windows-side
+# change that breaks the shared core turns this red immediately, instead of
+# surfacing later on the macOS branch.
 #
-# It drives mac/CMakeLists.txt via scripts/build-mac.sh — the dependency-free
+# It drives the unified root CMake via scripts/build-mac.sh — the dependency-free
 # path (no libVLC / Sparkle / Cocoa), so it needs nothing beyond the CMake +
 # Xcode clang already on the macos-latest image. The .app is Phase-1 work and is
 # intentionally NOT built here.
@@ -16,16 +16,20 @@ name: macOS core
 on:
   push:
     paths:
-      - 'src/**'
-      - 'third_party/**'
+      - 'common/**'
       - 'mac/**'
+      - 'third_party/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
       - 'scripts/build-mac.sh'
       - '.github/workflows/mac-core.yml'
   pull_request:
     paths:
-      - 'src/**'
-      - 'third_party/**'
+      - 'common/**'
       - 'mac/**'
+      - 'third_party/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
       - 'scripts/build-mac.sh'
       - '.github/workflows/mac-core.yml'
   workflow_dispatch:
