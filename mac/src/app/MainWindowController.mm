@@ -18,16 +18,22 @@
 
 using namespace rabbitears;
 
+// Filter popup tags.
+enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2 };
+
 @implementation MainWindowController {
-    NSWindow*    _window;
-    NSTextField* _urlField;
-    NSTableView* _table;
-    NSView*      _videoView;
-    NSTextField* _status;
+    NSWindow*      _window;
+    NSTextField*   _urlField;
+    NSSearchField* _search;
+    NSPopUpButton* _filter;
+    NSTableView*   _table;
+    NSView*        _videoView;
+    NSTextField*   _status;
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
     std::vector<Channel>          _channels;
+    long long                     _currentPid;             // loaded playlist (0 = none/all)
     BOOL                          _suppressSelectionPlay;  // ignore programmatic selection changes
     uint64_t                      _loadToken;              // only the newest URL load's result applies
 }
@@ -40,8 +46,13 @@ using namespace rabbitears;
     return self;
 }
 
+static NSString* ns(const std::wstring& w) {
+    return [NSString stringWithUTF8String:utf8FromWide(w).c_str()] ?: @"";
+}
+static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
+
 - (void)showWindow {
-    const NSRect frame = NSMakeRect(0, 0, 960, 600);
+    const NSRect frame = NSMakeRect(0, 0, 980, 640);
     _window = [[NSWindow alloc]
         initWithContentRect:frame
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
@@ -59,31 +70,43 @@ using namespace rabbitears;
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
 
-    // ---- top bar: URL field + Load + Open File + Stop ----
-    const CGFloat barH = 44;
+    // ---- top bar: two rows (load controls; search/filter/stop) ----
+    const CGFloat barH = 80;
     NSView* bar = [[NSView alloc]
         initWithFrame:NSMakeRect(0, frame.size.height - barH, frame.size.width, barH)];
     bar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
 
-    _urlField = [[NSTextField alloc] initWithFrame:NSMakeRect(12, 9, frame.size.width - 320, 26)];
+    // row 1: URL field + Load + Open File
+    _urlField = [[NSTextField alloc] initWithFrame:NSMakeRect(12, 45, frame.size.width - 330, 26)];
     _urlField.placeholderString = @"M3U / M3U8 playlist URL…";
     _urlField.autoresizingMask = NSViewWidthSizable;
     _urlField.target = self;
-    _urlField.action = @selector(loadURL:);  // Enter in the field loads
+    _urlField.action = @selector(loadURL:);
     [bar addSubview:_urlField];
 
     NSButton* loadBtn = [NSButton buttonWithTitle:@"Load URL" target:self action:@selector(loadURL:)];
-    loadBtn.frame = NSMakeRect(frame.size.width - 298, 8, 92, 28);
+    loadBtn.frame = NSMakeRect(frame.size.width - 310, 44, 92, 28);
     loadBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:loadBtn];
 
     NSButton* openBtn = [NSButton buttonWithTitle:@"Open File…" target:self action:@selector(openFile:)];
-    openBtn.frame = NSMakeRect(frame.size.width - 202, 8, 104, 28);
+    openBtn.frame = NSMakeRect(frame.size.width - 214, 44, 104, 28);
     openBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:openBtn];
 
+    // row 2: search field + filter popup + Stop
+    _search = [[NSSearchField alloc] initWithFrame:NSMakeRect(12, 10, 260, 26)];
+    _search.placeholderString = @"Search channels…";
+    _search.delegate = self;  // controlTextDidChange: -> live filter
+    [bar addSubview:_search];
+
+    _filter = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(280, 10, 190, 26) pullsDown:NO];
+    _filter.target = self;
+    _filter.action = @selector(filterChanged:);
+    [bar addSubview:_filter];
+
     NSButton* stopBtn = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stop:)];
-    stopBtn.frame = NSMakeRect(frame.size.width - 92, 8, 80, 28);
+    stopBtn.frame = NSMakeRect(frame.size.width - 92, 9, 80, 28);
     stopBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:stopBtn];
     [content addSubview:bar];
@@ -96,34 +119,36 @@ using namespace rabbitears;
     _status.textColor = NSColor.secondaryLabelColor;
     [content addSubview:_status];
 
-    // ---- split: channel list | video ----
+    // ---- split: channel grid | video ----
     NSSplitView* split = [[NSSplitView alloc]
         initWithFrame:NSMakeRect(0, statusH, frame.size.width, frame.size.height - barH - statusH)];
     split.vertical = YES;
     split.dividerStyle = NSSplitViewDividerStyleThin;
     split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-    NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 300, 100)];
+    NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 380, 100)];
     scroll.hasVerticalScroller = YES;
     _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
-    NSTableColumn* col = [[NSTableColumn alloc] initWithIdentifier:@"name"];
-    col.title = @"Channels";
-    col.width = 280;
-    [_table addTableColumn:col];
+    [self addColumn:@"fav" title:@"★" width:26];
+    [self addColumn:@"num" title:@"#" width:46];
+    [self addColumn:@"name" title:@"Channel" width:200];
+    [self addColumn:@"group" title:@"Group" width:120];
     _table.headerView = [[NSTableHeaderView alloc] init];
     _table.dataSource = self;
     _table.delegate = self;
     _table.usesAlternatingRowBackgroundColors = YES;
+    _table.allowsColumnResizing = YES;
+    _table.menu = [self makeRowMenu];  // right-click: Play / Toggle Favourite
     scroll.documentView = _table;
     [split addSubview:scroll];
 
-    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 660, 100)];
+    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [split addSubview:_videoView];
 
     [content addSubview:split];
-    [split setPosition:300 ofDividerAtIndex:0];
+    [split setPosition:380 ofDividerAtIndex:0];
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
 
@@ -133,34 +158,85 @@ using namespace rabbitears;
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+- (void)addColumn:(NSString*)ident title:(NSString*)title width:(CGFloat)w {
+    NSTableColumn* c = [[NSTableColumn alloc] initWithIdentifier:ident];
+    c.title = title;
+    c.width = w;
+    c.minWidth = 20;
+    [_table addTableColumn:c];
+}
+
+- (NSMenu*)makeRowMenu {
+    NSMenu* m = [[NSMenu alloc] init];
+    [[m addItemWithTitle:@"Play" action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Toggle Favourite" action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
+    return m;
+}
+
 - (void)setStatus:(NSString*)s { _status.stringValue = s; }
 
-static NSString* ns(const std::wstring& w) {
-    return [NSString stringWithUTF8String:utf8FromWide(w).c_str()] ?: @"";
-}
+// ---- playlist load / filter model ----
 
 - (void)restoreLastPlaylist {
     if (!_db) { [self setStatus:@"Database unavailable — check disk permissions and restart."]; return; }
     const auto playlists = _db->listPlaylists();
     if (playlists.empty()) {
         [self setStatus:@"Ready — load an M3U URL or open a file to begin."];
+        [self rebuildFilterMenu];
         return;
     }
-    [self loadChannelsForPlaylist:playlists.back().id];
+    [self showPlaylist:playlists.back().id];
 }
 
-- (void)loadChannelsForPlaylist:(long long)pid {
-    if (!_db) return;
-    _channels = _db->channelsByPlaylist(pid);
-    // Clear any stale selection BEFORE reloading, and suppress the resulting
-    // selection-change notification so swapping playlists never auto-plays a
-    // channel the user didn't pick.
-    _suppressSelectionPlay = YES;
+// Make `pid` the active playlist: reset search/filter, rebuild groups, reload.
+- (void)showPlaylist:(long long)pid {
+    _currentPid = pid;
+    _search.stringValue = @"";
+    [self rebuildFilterMenu];       // selects "All channels"
+    [self refreshChannels];
+}
+
+- (void)rebuildFilterMenu {
+    NSString* prev = _filter.titleOfSelectedItem;
+    [_filter removeAllItems];
+    [_filter addItemWithTitle:@"All channels"];
+    _filter.lastItem.tag = kFilterAll;
+    [_filter addItemWithTitle:@"★ Favourites"];
+    _filter.lastItem.tag = kFilterFavourites;
+    if (_db) {
+        const auto groups = _db->listGroups();
+        if (!groups.empty()) [_filter.menu addItem:[NSMenuItem separatorItem]];
+        for (const auto& g : groups) {
+            if (g.empty()) continue;
+            [_filter addItemWithTitle:ns(g)];
+            _filter.lastItem.tag = kFilterGroup;
+        }
+    }
+    if (prev && [_filter itemWithTitle:prev]) [_filter selectItemWithTitle:prev];
+    else [_filter selectItemAtIndex:0];
+}
+
+// Apply the current search text + filter selection and reload the table.
+- (void)refreshChannels {
+    if (!_db) { _channels.clear(); [_table reloadData]; return; }
+    const std::wstring q = ws(_search.stringValue);
+    if (!q.empty()) {
+        _channels = _db->searchChannels(q);
+    } else {
+        NSMenuItem* sel = _filter.selectedItem;
+        switch (sel.tag) {
+            case kFilterFavourites: _channels = _db->favourites(); break;
+            case kFilterGroup:      _channels = _db->channelsByGroup(ws(sel.title)); break;
+            default:                _channels = _currentPid ? _db->channelsByPlaylist(_currentPid)
+                                                            : _db->allChannels(); break;
+        }
+    }
+    _suppressSelectionPlay = YES;      // programmatic reload must not auto-play
     [_table deselectAll:nil];
     [_table reloadData];
     _suppressSelectionPlay = NO;
-    [self setStatus:[NSString stringWithFormat:@"%lu channels — select one to play.",
-                     (unsigned long)_channels.size()]];
+    [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
+                     q.empty() ? @"" : @" (search)"]];
 }
 
 // ---- actions ----
@@ -168,7 +244,7 @@ static NSString* ns(const std::wstring& w) {
 - (void)loadURL:(id)__unused sender {
     NSString* u = _urlField.stringValue;
     if (!u.length) return;
-    const std::wstring url = wideFromUtf8(u.UTF8String);
+    const std::wstring url = ws(u);
     const uint64_t token = ++_loadToken;  // newest request wins; supersedes any in flight
     [self setStatus:@"Downloading playlist…"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
@@ -178,10 +254,7 @@ static NSString* ns(const std::wstring& w) {
         auto doc = std::make_shared<M3uDocument>(ok ? parseM3u(bytes) : M3uDocument{});
         dispatch_async(dispatch_get_main_queue(), ^{
             if (token != self->_loadToken) return;  // a newer load superseded this one
-            if (!ok) {
-                [self setStatus:[NSString stringWithFormat:@"Download failed: %@", ns(derr)]];
-                return;
-            }
+            if (!ok) { [self setStatus:[NSString stringWithFormat:@"Download failed: %@", ns(derr)]]; return; }
             [self importDoc:*doc name:url source:url isUrl:true];
         });
     });
@@ -193,13 +266,10 @@ static NSString* ns(const std::wstring& w) {
     panel.allowsMultipleSelection = NO;
     [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
         if (resp != NSModalResponseOK || !panel.URL) return;
-        const std::wstring path = wideFromUtf8(panel.URL.path.UTF8String);
+        const std::wstring path = ws(panel.URL.path);
         std::wstring perr;
         const M3uDocument doc = parseM3uFile(path, &perr);
-        if (!perr.empty()) {
-            [self setStatus:[NSString stringWithFormat:@"Read failed: %@", ns(perr)]];
-            return;
-        }
+        if (!perr.empty()) { [self setStatus:[NSString stringWithFormat:@"Read failed: %@", ns(perr)]]; return; }
         [self importDoc:doc name:path source:path isUrl:false];
     }];
 }
@@ -212,12 +282,24 @@ static NSString* ns(const std::wstring& w) {
     const long long now = (long long)time(nullptr);
     const long long pid = _db->addPlaylist(name, source, isUrl, now);
     _db->bulkInsertChannels(pid, doc.channels, now);
-    [self loadChannelsForPlaylist:pid];
+    [self showPlaylist:pid];
 }
 
-- (void)stop:(id)__unused sender {
-    _player->stop();
-    [self setStatus:@"Stopped."];
+- (void)filterChanged:(id)__unused sender { [self refreshChannels]; }
+
+- (void)controlTextDidChange:(NSNotification*)note {
+    if (note.object == _search) [self refreshChannels];  // live search
+}
+
+- (void)stop:(id)__unused sender { _player->stop(); [self setStatus:@"Stopped."]; }
+
+- (void)playClicked:(id)__unused sender { [self playRow:_table.clickedRow]; }
+
+- (void)toggleFavourite:(id)__unused sender {
+    const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+    if (row < 0 || row >= (NSInteger)_channels.size() || !_db) return;
+    _db->toggleFavourite(_channels[(size_t)row].id);
+    [self refreshChannels];  // re-query so the ★ column + a Favourites filter stay correct
 }
 
 - (void)playRow:(NSInteger)row {
@@ -229,15 +311,18 @@ static NSString* ns(const std::wstring& w) {
 
 // ---- NSTableView data source / delegate ----
 
-- (NSInteger)numberOfRowsInTableView:(NSTableView*)__unused t {
-    return (NSInteger)_channels.size();
-}
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)__unused t { return (NSInteger)_channels.size(); }
 
 - (id)tableView:(NSTableView*)__unused t
-    objectValueForTableColumn:(NSTableColumn*)__unused col
+    objectValueForTableColumn:(NSTableColumn*)col
                           row:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_channels.size()) return @"";
-    return ns(_channels[(size_t)row].name);
+    const Channel& c = _channels[(size_t)row];
+    NSString* id_ = col.identifier;
+    if ([id_ isEqualToString:@"fav"])   return c.favourite ? @"★" : @"";
+    if ([id_ isEqualToString:@"num"])   return c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
+    if ([id_ isEqualToString:@"group"]) return ns(c.groupTitle);
+    return ns(c.name);  // "name"
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification*)__unused n {
