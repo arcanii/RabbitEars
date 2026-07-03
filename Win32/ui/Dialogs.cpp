@@ -512,13 +512,8 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     AboutState st;
     st.dpi = dpi;
     st.img = loadPngResource(hInst, IDR_ABOUT_PNG, &st.stream);
-    auto mkFont = [&](int px, int weight) {
-        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    };
-    st.titleFont = mkFont(22, FW_SEMIBOLD);
-    st.bodyFont = mkFont(14, FW_NORMAL);
+    st.titleFont = themeFont(FontRole::Title, dpi, 22, FW_SEMIBOLD);
+    st.bodyFont = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
 
     const int W = dp(470, dpi), H = dp(470, dpi);
     RECT pr;
@@ -592,9 +587,7 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
     PromptState st;
     st.dpi = dpi;
     st.label = label;
-    st.font = CreateFontW(-dp(14, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                          VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
 
     const int W = dp(520, dpi), H = dp(180, dpi);
     RECT pr;
@@ -663,9 +656,7 @@ bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
     st.dpi = dpi;
     st.items.reserve(allGroups.size());
     for (const std::wstring& g : allGroups) st.items.emplace_back(g, checked.count(g) != 0);
-    st.font = CreateFontW(-dp(14, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                          VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
 
     const int W = dp(460, dpi), H = dp(560, dpi);
     RECT pr;
@@ -778,13 +769,8 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi) {
         registered = true;
     }
     TermsState st;
-    auto mkFont = [&](int px, int weight) {
-        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    };
-    st.font = mkFont(14, FW_NORMAL);
-    st.titleFont = mkFont(20, FW_SEMIBOLD);
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
+    st.titleFont = themeFont(FontRole::Title, dpi, 20, FW_SEMIBOLD);
 
     const int W = dp(560, dpi), H = dp(500, dpi);
     RECT pr;
@@ -861,13 +847,8 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
         registered = true;
     }
     ImportResultsState st;
-    auto mkFont = [&](int px, int weight) {
-        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    };
-    HFONT bodyFont = mkFont(11, FW_NORMAL);
-    HFONT headFont = mkFont(15, FW_SEMIBOLD);
+    HFONT bodyFont = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
+    HFONT headFont = themeFont(FontRole::Body, dpi, 15, FW_SEMIBOLD);
 
     const int W = dp(520, dpi), H = dp(340, dpi);
     RECT pr;
@@ -1180,13 +1161,8 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
     MetersDlgState st;
     st.dpi = dpi;
     for (int r = 0; r < 4; ++r) st.cfg[r] = cfg[r];
-    auto mkFont = [&](int px, int weight) {
-        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    };
-    st.font = mkFont(11, FW_NORMAL);
-    st.bold = mkFont(12, FW_SEMIBOLD);
+    st.font = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
+    st.bold = themeFont(FontRole::Body, dpi, 12, FW_SEMIBOLD);
 
     const int rowH = dp(148, dpi);  // taller rows: each now carries a "feel" slider band
     const int W = dp(720, dpi), H = dp(50, dpi) + 4 * rowH + dp(96, dpi);

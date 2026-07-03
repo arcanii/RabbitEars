@@ -242,24 +242,19 @@ void releaseFormats(GridState* st) {
 
 void recreateFormats(GridState* st) {
     releaseFormats(st);
-    IDWriteFactory* f = dwriteFactory();
-    if (!f) return;
-    const float sz = static_cast<float>(dpx(st->dpi, 14));
-    auto mk = [&](const wchar_t* family, DWRITE_TEXT_ALIGNMENT a, DWRITE_FONT_WEIGHT w, float size,
-                  IDWriteTextFormat** out) {
-        if (SUCCEEDED(f->CreateTextFormat(family, nullptr, w, DWRITE_FONT_STYLE_NORMAL,
-                                          DWRITE_FONT_STRETCH_NORMAL, size, L"", out)) &&
-            *out) {
-            (*out)->SetTextAlignment(a);
-            (*out)->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            (*out)->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        }
-    };
-    mk(L"Segoe UI", DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_FONT_WEIGHT_NORMAL, sz, &st->fmtLeft);
-    mk(L"Segoe UI", DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_FONT_WEIGHT_NORMAL, sz, &st->fmtRight);
-    mk(L"Segoe UI Symbol", DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_FONT_WEIGHT_NORMAL,
-       static_cast<float>(dpx(st->dpi, 15)), &st->fmtStar);
-    mk(L"Segoe UI", DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_FONT_WEIGHT_SEMI_BOLD, sz, &st->fmtHeader);
+    // Body-role formats: skin-driven family, the grid's fixed 14px size + normal/semibold
+    // weights. The ★/☆ favourite marker is a Unicode dingbat from "Segoe UI Symbol" — not
+    // one of the skin's typography roles (an MDL2/display face lacks it), so its family is
+    // pinned via the override. themeTextFormat() null-checks the factory and returns nullptr
+    // on failure, matching the old early-out (the paint path already guards null formats).
+    st->fmtLeft = themeTextFormat(FontRole::Body, st->dpi, 14, DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_TEXT_ALIGNMENT_LEADING);
+    st->fmtRight = themeTextFormat(FontRole::Body, st->dpi, 14, DWRITE_FONT_WEIGHT_NORMAL,
+                                   DWRITE_TEXT_ALIGNMENT_TRAILING);
+    st->fmtHeader = themeTextFormat(FontRole::Body, st->dpi, 14, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                                    DWRITE_TEXT_ALIGNMENT_LEADING);
+    st->fmtStar = themeTextFormat(FontRole::Body, st->dpi, 15, DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_TEXT_ALIGNMENT_CENTER, L"Segoe UI Symbol");
 }
 
 void releaseLogoBitmaps(GridState* st) {
@@ -457,9 +452,7 @@ void beginEdit(HWND hwnd, GridState* st, int row) {
     const int w = colWidth(st, hwnd, COL_NUM);
     const int y = st->headerH + row * st->rowH - st->scrollY;
     if (!st->editFont)
-        st->editFont = CreateFontW(-dpx(st->dpi, 14), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                   VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+        st->editFont = themeFont(FontRole::Body, st->dpi, 14, FW_NORMAL);
     const std::wstring cur = c->lcn ? std::to_wstring(*c->lcn) : std::wstring();
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
     st->editHwnd = CreateWindowExW(0, L"EDIT", cur.c_str(),

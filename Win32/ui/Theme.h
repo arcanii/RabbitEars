@@ -11,8 +11,9 @@
 #include <dwmapi.h>
 #include <uxtheme.h>
 
+#include <string>  // std::wstring — role font-family names (themeFontFamily / themeTextFormat)
+
 #ifdef RABBITEARS_THEME_ENGINE
-#include <string>
 #include <unordered_map>
 
 #include "platform/Encoding.h"  // wideFromUtf8 — resolve a skin's UTF-8 font family to a wide name
@@ -191,38 +192,65 @@ inline const Skin& currentSkin() {
 // Scale a 96-dpi design value to a window's DPI.
 inline int dpiScale(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
-// Typography roles. themeFont() builds the matching HFONT for the caller to own
-// (create-on-demand + DeleteObject, like the ad-hoc CreateFontW it replaces). Flag-on
-// the font comes from the active skin; flag-off it is the hardwired Segoe UI default —
-// so call sites stay unconditional and the shipping look is byte-for-byte unchanged.
+// Typography roles. A role fixes the *typeface* (family + symbol flag); the caller
+// chooses the pixel size + weight (that is layout, not theme). themeFont() builds an
+// HFONT the caller owns (create-on-demand + DeleteObject, like the ad-hoc CreateFontW
+// it replaces). Flag-on the family comes from the active skin; flag-off it is the
+// hardwired Segoe UI / MDL2 default — so call sites stay unconditional and the
+// shipping look is byte-for-byte unchanged.
 enum class FontRole { Body, Title, Glyph };
 
+#ifdef RABBITEARS_THEME_ENGINE
+inline const SkinFont& skinFontForRole(FontRole role) {
+    const Skin& s = currentSkin();
+    return (role == FontRole::Title) ? s.title : (role == FontRole::Glyph) ? s.glyph : s.body;
+}
+#endif
+
+// The role's typeface family, wide (skin-driven flag-on; hardwired flag-off). Shared
+// by the GDI themeFont() below and the DirectWrite themeTextFormat() (D2DSupport.h).
+inline std::wstring themeFontFamily(FontRole role) {
+#ifdef RABBITEARS_THEME_ENGINE
+    return wideFromUtf8(skinFontForRole(role).family);
+#else
+    return role == FontRole::Glyph ? std::wstring(L"Segoe MDL2 Assets") : std::wstring(L"Segoe UI");
+#endif
+}
+
+// Whether the role is a symbol/icon face (drives the GDI pitch hint below).
+inline bool themeFontIsSymbol(FontRole role) {
+#ifdef RABBITEARS_THEME_ENGINE
+    return skinFontForRole(role).symbol;
+#else
+    return role == FontRole::Glyph;
+#endif
+}
+
+// Build an HFONT in the role's typeface at an explicit 96-dpi pixel size + weight
+// (FW_*). This is the seam the migrated call sites use — each keeps the size/weight
+// it always drew, so only the *family* is now skin-swappable.
+inline HFONT themeFont(FontRole role, UINT dpi, int px96, int weight) {
+    const std::wstring fam = themeFontFamily(role);
+    const DWORD pitch =
+        themeFontIsSymbol(role) ? (DEFAULT_PITCH | FF_DONTCARE) : (VARIABLE_PITCH | FF_SWISS);
+    return CreateFontW(-dpiScale(px96, dpi), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET,
+                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, pitch, fam.c_str());
+}
+
+// Convenience: the role's *default* size + weight — skin-carried flag-on (SkinFont
+// sizePt/weight), the classic chrome sizes flag-off (Body 14, Title 16 semibold,
+// Glyph 13). Used for the shell chrome (MainWindow); other sites pass a size above.
 inline HFONT themeFont(FontRole role, UINT dpi) {
 #ifdef RABBITEARS_THEME_ENGINE
-    const Skin& s = currentSkin();
-    const SkinFont& f = (role == FontRole::Title)   ? s.title
-                        : (role == FontRole::Glyph) ? s.glyph
-                                                    : s.body;
+    const SkinFont& f = skinFontForRole(role);
     const int px96 = static_cast<int>(f.sizePt * 4.0 / 3.0 + 0.5);  // pt -> px @96dpi
-    const DWORD pitch = f.symbol ? (DEFAULT_PITCH | FF_DONTCARE) : (VARIABLE_PITCH | FF_SWISS);
-    return CreateFontW(-dpiScale(px96, dpi), 0, 0, 0, f.weight, 0, 0, 0, DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, pitch,
-                       wideFromUtf8(f.family).c_str());
+    return themeFont(role, dpi, px96, f.weight);
 #else
     switch (role) {
-        case FontRole::Title:
-            return CreateFontW(-dpiScale(16, dpi), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
-                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-        case FontRole::Glyph:
-            return CreateFontW(-dpiScale(13, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+        case FontRole::Title: return themeFont(role, dpi, 16, FW_SEMIBOLD);
+        case FontRole::Glyph: return themeFont(role, dpi, 13, FW_NORMAL);
         case FontRole::Body:
-        default:
-            return CreateFontW(-dpiScale(14, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+        default:              return themeFont(role, dpi, 14, FW_NORMAL);
     }
 #endif
 }

@@ -489,9 +489,7 @@ void ensureDib(HWND hwnd, MeterState* st, int W, int H) {
 // 1px shadow so it stays legible over lit LEDs. Font is cached (DPI-scaled).
 void drawMetrics(HDC hdc, MeterState* st, const Theme& th, int W, int H) {
     if (!st->metricsFont)
-        st->metricsFont = CreateFontW(-dpx(st->dpi, 11), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        st->metricsFont = themeFont(FontRole::Body, st->dpi, 11, FW_SEMIBOLD);
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, st->metricsFont));
     const int oldMode = SetBkMode(hdc, TRANSPARENT);
     RECT tr{0, dpx(st->dpi, 1), W - dpx(st->dpi, 4), H};
