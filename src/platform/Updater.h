@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Thin wrapper over WinSparkle (the Windows analogue of Sparkle). Auto-update
-// checks run against a Windows appcast; release packages must be EdDSA-signed with
-// the private key matching the public key set in Updater.cpp.
+// Thin wrapper over the auto-update engine — WinSparkle on Windows, Sparkle on
+// macOS. Checks run against an EdDSA-signed appcast; the public key is set in the
+// platform impl (Win32/platform/Updater.cpp, mac/platform/Updater.mm).
 #pragma once
 
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 namespace rabbitears {
 
-// mainWnd receives WM_CLOSE when WinSparkle needs the app to quit to apply an update.
+#if defined(_WIN32)
+// mainWnd receives WM_CLOSE when WinSparkle needs the app to quit to apply an
+// update (the 0.1.6 shutdown-coordination fix).
 void initUpdater(HWND mainWnd);  // configure + start background checks
+#else
+void initUpdater();              // macOS: Sparkle coordinates its own restart
+#endif
 void checkForUpdates();  // user-triggered "Check for Updates…"
 void shutdownUpdater();  // on app exit
 
