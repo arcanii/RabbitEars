@@ -18,9 +18,27 @@
 #include "platform/Log.h"
 #include "platform/Updater.h"
 
+#import "AppDelegate.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
+
+// NSTableView that plays the selected row on Return/Enter (the keyboard peer of the
+// double-click action), so the grid is fully keyboard-navigable.
+@interface RETableView : NSTableView
+@end
+@implementation RETableView
+- (void)keyDown:(NSEvent*)e {
+    const unichar ch = e.charactersIgnoringModifiers.length
+        ? [e.charactersIgnoringModifiers characterAtIndex:0] : 0;
+    if ((ch == NSCarriageReturnCharacter || ch == NSEnterCharacter)
+        && self.selectedRow >= 0 && self.doubleAction) {
+        [NSApp sendAction:self.doubleAction to:self.target from:self];
+        return;
+    }
+    [super keyDown:e];
+}
+@end
 
 // Filter popup tags.
 enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
@@ -29,17 +47,20 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
     NSWindow*      _window;
     NSSearchField* _search;
     NSPopUpButton* _filter;
-    NSTableView*   _table;
+    RETableView*   _table;
     NSView*        _videoView;
+    NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
     NSTextField*   _status;
+    NSSlider*      _volume;      // bottom-bar volume (0..100)
+    NSButton*      _muteBtn;     // 🔊 / 🔇 toggle
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
-    BOOL                          _suppressSelectionPlay;  // ignore programmatic selection changes
     uint64_t                      _loadToken;              // only the newest URL load's result applies
     CGFloat                       _gridWidth;              // channel-grid width; the video pane fills the rest
+    int                           _preMuteVolume;          // volume to restore when un-muting
 }
 
 - (instancetype)init {
@@ -67,6 +88,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [_window center];
     _window.releasedWhenClosed = NO;  // we own it via the ivar
     _window.contentMinSize = NSMakeSize(560, 360);  // keep both split panes usable
+    _window.collectionBehavior |= NSWindowCollectionBehaviorFullScreenPrimary;  // ⌃⌘F / green button
+    _window.frameAutosaveName = @"RabbitEarsMainWindow";  // remember size + position across launches
     NSView* content = _window.contentView;
 
     std::wstring err;
@@ -116,13 +139,34 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
     [content addSubview:bar];
 
-    // ---- status line (bottom) ----
+    // ---- bottom bar: status line (left) + volume (right) ----
     const CGFloat statusH = 22;
     _status = [NSTextField labelWithString:@"Ready."];
-    _status.frame = NSMakeRect(12, 3, frame.size.width - 24, statusH - 5);
+    _status.frame = NSMakeRect(12, 3, frame.size.width - 24 - 150, statusH - 5);
     _status.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
     _status.textColor = NSColor.secondaryLabelColor;
     [content addSubview:_status];
+
+    int vol0 = 100;
+    if (_db) {
+        const auto v = _db->getSetting(L"volume");
+        if (v && !v->empty()) vol0 = (int)std::wcstol(v->c_str(), nullptr, 10);
+    }
+    _preMuteVolume = vol0 > 0 ? vol0 : 100;
+    _muteBtn = [NSButton buttonWithTitle:(vol0 == 0 ? @"🔇" : @"🔊")
+                                  target:self action:@selector(toggleMute:)];
+    _muteBtn.bordered = NO;
+    _muteBtn.frame = NSMakeRect(frame.size.width - 132, 1, 24, 20);
+    _muteBtn.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    [content addSubview:_muteBtn];
+
+    _volume = [NSSlider sliderWithValue:vol0 minValue:0 maxValue:100
+                                 target:self action:@selector(volumeChanged:)];
+    _volume.frame = NSMakeRect(frame.size.width - 104, 3, 92, 16);
+    _volume.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    _volume.continuous = YES;
+    [content addSubview:_volume];
+    _player->setVolume(vol0);
 
     // ---- split: channel grid | video ----
     NSSplitView* split = [[NSSplitView alloc]
@@ -133,7 +177,9 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
     NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 380, 100)];
     scroll.hasVerticalScroller = YES;
-    _table = [[NSTableView alloc] initWithFrame:scroll.bounds];
+    _table = [[RETableView alloc] initWithFrame:scroll.bounds];
+    _table.target = self;
+    _table.doubleAction = @selector(playSelectedRow:);  // double-click / Return plays
     [self addColumn:@"fav" title:@"★" width:26];
     [self addColumn:@"num" title:@"#" width:46];
     [self addColumn:@"name" title:@"Channel" width:200];
@@ -151,6 +197,17 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [split addSubview:_videoView];
+
+    // Empty-state hint, centered over the (black) video pane until channels exist.
+    _emptyHint = [NSTextField labelWithString:@"No channels yet — click “＋ Add Playlist” to begin."];
+    _emptyHint.textColor = NSColor.secondaryLabelColor;
+    _emptyHint.font = [NSFont systemFontOfSize:15];
+    _emptyHint.translatesAutoresizingMaskIntoConstraints = NO;
+    [_videoView addSubview:_emptyHint];
+    [NSLayoutConstraint activateConstraints:@[
+        [_emptyHint.centerXAnchor constraintEqualToAnchor:_videoView.centerXAnchor],
+        [_emptyHint.centerYAnchor constraintEqualToAnchor:_videoView.centerYAnchor],
+    ]];
 
     split.delegate = self;  // keep the grid a fixed width; the video pane fills the rest
     [content addSubview:split];
@@ -236,11 +293,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     const long long cid = std::wcstoll(s->c_str(), nullptr, 10);
     for (size_t i = 0; i < _channels.size(); ++i) {
         if (_channels[i].id != cid) continue;
-        _suppressSelectionPlay = YES;
         [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
         [_table scrollRowToVisible:(NSInteger)i];
-        _suppressSelectionPlay = NO;
-        [self setStatus:[NSString stringWithFormat:@"Last played: %@ — click to resume.",
+        [self setStatus:[NSString stringWithFormat:
+                         @"Last played: %@ — double-click or press Return to resume.",
                          ns(_channels[i].name)]];
         return;
     }
@@ -305,12 +361,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
                                                             : _db->allChannels(); break;
         }
     }
-    _suppressSelectionPlay = YES;      // programmatic reload must not auto-play
     [_table deselectAll:nil];
     [_table reloadData];
-    _suppressSelectionPlay = NO;
     [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
                      q.empty() ? @"" : @" (search)"]];
+    _emptyHint.hidden = !_channels.empty();
 }
 
 // ---- actions ----
@@ -416,7 +471,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (note.object == _search) [self refreshChannels];  // live search
 }
 
-- (void)stop:(id)__unused sender { _player->stop(); [self setStatus:@"Stopped."]; }
+- (void)stop:(id)__unused sender {
+    _player->stop();
+    _window.title = @"RabbitEars";
+    [self setStatus:@"Stopped."];
+}
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
 // now — file import + updates/about; real preferences will hang off here.
@@ -432,9 +491,29 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
-- (void)showAbout:(id)__unused sender { [NSApp orderFrontStandardAboutPanel:nil]; }
+- (void)showAbout:(id)sender { [(AppDelegate*)NSApp.delegate showAboutPanel:sender]; }
 
 - (void)playClicked:(id)__unused sender { [self playRow:_table.clickedRow]; }
+
+// Double-click a row (or Return) plays it; a single click just selects.
+- (void)playSelectedRow:(id)__unused sender {
+    [self playRow:_table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow];
+}
+
+// ---- volume (bottom bar) ----
+
+- (void)volumeChanged:(id)__unused sender {
+    const int v = (int)_volume.doubleValue;
+    _player->setVolume(v);
+    if (v > 0) _preMuteVolume = v;
+    _muteBtn.title = (v == 0) ? @"🔇" : @"🔊";
+    if (_db) _db->setSetting(L"volume", std::to_wstring(v));
+}
+
+- (void)toggleMute:(id)__unused sender {
+    _volume.doubleValue = (_volume.doubleValue == 0) ? _preMuteVolume : 0;
+    [self volumeChanged:nil];
+}
 
 - (void)toggleFavourite:(id)__unused sender {
     const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
@@ -472,7 +551,9 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (row < 0 || row >= (NSInteger)_channels.size()) return;
     const Channel& c = _channels[(size_t)row];
     _player->play(c.streamUrl, c.userAgent, c.referrer);
+    _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
+    _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
 }
 
@@ -490,11 +571,6 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if ([id_ isEqualToString:@"num"])   return c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
     if ([id_ isEqualToString:@"group"]) return ns(c.groupTitle);
     return ns(c.name);  // "name"
-}
-
-- (void)tableViewSelectionDidChange:(NSNotification*)__unused n {
-    if (_suppressSelectionPlay) return;  // programmatic (deselect/reload) change, not a user pick
-    [self playRow:_table.selectedRow];
 }
 
 @end
