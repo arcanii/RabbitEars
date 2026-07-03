@@ -263,11 +263,33 @@ void applyDarkChrome(HWND hwnd) {
 }
 
 #ifdef RABBITEARS_THEME_ENGINE
+// Recreate the three chrome fonts for the active skin and re-apply them to the controls
+// that carry them. A skin may change the font family/size (Phase 4); dark<->light share
+// Segoe UI so this is a no-op look today, but the plumbing is skin-correct. (titleFont is
+// used at paint in drawCmdBar; no control carries it, so it just needs recreating.)
+void remakeUiFonts(AppState* st) {
+    // Keep the old handles until every control has been switched to the new font, so no
+    // control ever references a freed HFONT.
+    HFONT oldUi = st->uiFont, oldTitle = st->titleFont, oldGlyph = st->glyphFont;
+    st->uiFont = themeFont(FontRole::Body, st->dpi);
+    st->titleFont = themeFont(FontRole::Title, st->dpi);
+    st->glyphFont = themeFont(FontRole::Glyph, st->dpi);
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
+    SendMessageW(st->volIcon, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
+    if (oldUi) DeleteObject(oldUi);
+    if (oldTitle) DeleteObject(oldTitle);
+    if (oldGlyph) DeleteObject(oldGlyph);
+}
+
 // Re-apply the active skin to the window chrome + OS-drawn common controls. Owner-drawn
 // surfaces (command bar, strip, grid, meters) read currentTheme() each paint, so they
-// only need the repaint; the DWM caption/border and the common-controls dark/light theme
-// have to be pushed explicitly. Called once at startup and on every Settings→Theme switch.
+// only need the repaint; the fonts, DWM caption/border, and common-controls dark/light
+// theme have to be pushed explicitly. Called at startup and on every Settings→Theme switch.
 void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
+    remakeUiFonts(st);            // skin-driven chrome fonts (parity today; matters for Phase 4)
     clearThemeBrushes();          // free the previous skin's cached HBRUSHes
     applyDarkChrome(hwnd);        // DWM caption/border/text from the (new) currentTheme()
     const Theme& th = currentTheme();
@@ -386,7 +408,11 @@ void drawCmdBar(HWND hwnd, AppState* st, HDC target) {
     for (int i = 0; i < 3; ++i) {
         RECT cb = captionRect(hwnd, st, i);
         if (st->capHover == i) {
-            COLORREF hb = (i == 2) ? RGB(196, 43, 28) : th.hoverBg;
+#ifdef RABBITEARS_THEME_ENGINE
+            const COLORREF hb = (i == 2) ? th.dangerHover : th.hoverBg;
+#else
+            const COLORREF hb = (i == 2) ? RGB(196, 43, 28) : th.hoverBg;
+#endif
             FillRect(dc, &cb, themeBrush(hb));
         }
         COLORREF glyph = (st->capHover == 2 && i == 2) ? RGB(255, 255, 255) : th.textSecondary;
@@ -1370,15 +1396,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
 
 void createChildren(HWND hwnd, AppState* st) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-    st->uiFont = CreateFontW(-dp(14, st->dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    st->titleFont = CreateFontW(-dp(16, st->dpi), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
-                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    st->glyphFont = CreateFontW(-dp(13, st->dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+    st->uiFont = themeFont(FontRole::Body, st->dpi);      // skin-driven flag-on; Segoe UI 14 flag-off
+    st->titleFont = themeFont(FontRole::Title, st->dpi);  // Segoe UI 16 semibold
+    st->glyphFont = themeFont(FontRole::Glyph, st->dpi);  // Segoe MDL2 Assets 13
 
     st->video = CreateWindowExW(0, kVideoClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 10,
                                 10, hwnd, nullptr, hInst, nullptr);

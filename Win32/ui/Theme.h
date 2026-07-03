@@ -15,6 +15,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "platform/Encoding.h"  // wideFromUtf8 — resolve a skin's UTF-8 font family to a wide name
 #include "ui/Skin.h"  // the shared skin model this file resolves into the Win32 COLORREF Theme
 #endif
 
@@ -35,6 +36,9 @@ struct Theme {
     COLORREF accentText;     // text drawn on top of `accent`
     COLORREF selectionBg;    // selected grid row background
     COLORREF selectionText;
+#ifdef RABBITEARS_THEME_ENGINE
+    COLORREF dangerHover;    // destructive-action hover (close button); skin-driven (Phase 3)
+#endif
     COLORREF synKeyword;     // (carried from the shared theme; unused by RabbitEars)
     COLORREF synNumber;
     COLORREF synString;
@@ -57,6 +61,9 @@ inline Theme makeDarkTheme() {
     t.accentText = RGB(40, 18, 10);
     t.selectionBg = RGB(92, 52, 38);     // muted coral
     t.selectionText = RGB(247, 238, 233);
+#ifdef RABBITEARS_THEME_ENGINE
+    t.dangerHover = RGB(196, 43, 28);
+#endif
     t.synKeyword = RGB(201, 143, 214);
     t.synNumber = RGB(159, 209, 154);
     t.synString = RGB(224, 150, 107);
@@ -80,6 +87,9 @@ inline Theme makeLightTheme() {
     t.accentText = RGB(255, 255, 255);
     t.selectionBg = RGB(250, 232, 224);
     t.selectionText = RGB(74, 27, 12);
+#ifdef RABBITEARS_THEME_ENGINE
+    t.dangerHover = RGB(196, 43, 28);
+#endif
     t.synKeyword = RGB(199, 37, 108);
     t.synNumber = RGB(128, 0, 128);
     t.synString = RGB(196, 26, 22);
@@ -121,8 +131,6 @@ inline COLORREF toColorRef(const SkinColor& c) { return RGB(c.r, c.g, c.b); }
 // fields keep their classic values (RabbitEars never draws them); `dark` drives the
 // DWM immersive-dark chrome. The "dark" skin reproduces makeDarkTheme() exactly, so
 // the default (system -> dark on a dark OS) is pixel-identical to the pre-engine look.
-// NB: the skin's dangerHover role has no Theme field yet (drawCmdBar still hardcodes
-// the close-hover red) — that wires up in Phase 3 when the command bar is reskinned.
 inline Theme resolveSkinTheme(const Skin& s) {
     Theme t = makeDarkTheme();  // seed: fills the unused syn* fields with classic values
     t.dark          = s.dark;
@@ -139,6 +147,7 @@ inline Theme resolveSkinTheme(const Skin& s) {
     t.accentText    = toColorRef(s.palette.accentText);
     t.selectionBg   = toColorRef(s.palette.selectionBg);
     t.selectionText = toColorRef(s.palette.selectionText);
+    t.dangerHover   = toColorRef(s.palette.dangerHover);
     return t;
 }
 #endif
@@ -167,10 +176,56 @@ inline const Theme& currentTheme() {
 #endif
 }
 
+#ifdef RABBITEARS_THEME_ENGINE
+// The active Skin (same resolution as currentTheme(): the selection, with "system"
+// mapped to dark/light by the OS mode). Used by themeFont() for typography.
+inline const Skin& currentSkin() {
+    const std::string& sel = activeSkinSelection();
+    const std::string skinId = (sel == "system") ? (systemUsesDarkMode() ? "dark" : "light") : sel;
+    return skinById(skinId);
+}
+#endif
+
 // ---- shared dialog dark-mode + DPI helpers ----------------------------------
 
 // Scale a 96-dpi design value to a window's DPI.
 inline int dpiScale(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
+
+// Typography roles. themeFont() builds the matching HFONT for the caller to own
+// (create-on-demand + DeleteObject, like the ad-hoc CreateFontW it replaces). Flag-on
+// the font comes from the active skin; flag-off it is the hardwired Segoe UI default —
+// so call sites stay unconditional and the shipping look is byte-for-byte unchanged.
+enum class FontRole { Body, Title, Glyph };
+
+inline HFONT themeFont(FontRole role, UINT dpi) {
+#ifdef RABBITEARS_THEME_ENGINE
+    const Skin& s = currentSkin();
+    const SkinFont& f = (role == FontRole::Title)   ? s.title
+                        : (role == FontRole::Glyph) ? s.glyph
+                                                    : s.body;
+    const int px96 = static_cast<int>(f.sizePt * 4.0 / 3.0 + 0.5);  // pt -> px @96dpi
+    const DWORD pitch = f.symbol ? (DEFAULT_PITCH | FF_DONTCARE) : (VARIABLE_PITCH | FF_SWISS);
+    return CreateFontW(-dpiScale(px96, dpi), 0, 0, 0, f.weight, 0, 0, 0, DEFAULT_CHARSET,
+                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, pitch,
+                       wideFromUtf8(f.family).c_str());
+#else
+    switch (role) {
+        case FontRole::Title:
+            return CreateFontW(-dpiScale(16, dpi), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                               VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+        case FontRole::Glyph:
+            return CreateFontW(-dpiScale(13, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                               DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+        case FontRole::Body:
+        default:
+            return CreateFontW(-dpiScale(14, dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                               VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    }
+#endif
+}
 
 #ifdef RABBITEARS_THEME_ENGINE
 // Per-skin brush set: an unbounded colour->HBRUSH cache, replacing the fragile 12-slot
