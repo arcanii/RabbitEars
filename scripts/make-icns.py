@@ -17,8 +17,10 @@ from PIL import Image, ImageDraw
 
 SIZES = [16, 32, 128, 256, 512]  # each also emits an @2x (double-resolution) variant
 SENTINEL = (255, 0, 255)         # magenta marker for the flood-filled exterior
-FLOOD_THRESH = 150               # sum-of-channel tolerance: covers the light bg +
-                                 # its soft shadow, stays well clear of the squircle
+FLOOD_THRESH = 190               # sum-of-channel tolerance: covers the light bg + its
+                                 # soft shadow, stays well clear of the dark squircle
+FILL_FRAC = float(os.environ.get("RE_ICON_FILL", "0.97"))  # squircle's share of the
+                                 # tile — crop the transparent margin + scale to the edge
 
 
 def make_transparent(im: Image.Image) -> Image.Image:
@@ -40,6 +42,22 @@ def make_transparent(im: Image.Image) -> Image.Image:
     return im
 
 
+def fit_squircle(im: Image.Image) -> Image.Image:
+    """Crop the transparent margin and scale the squircle to FILL_FRAC of a square tile."""
+    box = im.getbbox()
+    if not box:
+        return im
+    shape = im.crop(box)
+    sw, sh = shape.size
+    tile = 1024
+    scale = (tile * FILL_FRAC) / max(sw, sh)
+    shape = shape.resize((max(1, round(sw * scale)), max(1, round(sh * scale))), Image.LANCZOS)
+    canvas = Image.new("RGBA", (tile, tile), (0, 0, 0, 0))
+    px, py = shape.size
+    canvas.paste(shape, ((tile - px) // 2, (tile - py) // 2))
+    return canvas
+
+
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     src = os.path.join(root, "art", "macos_icon.png")
@@ -54,6 +72,7 @@ def main() -> int:
         im = square
 
     im = make_transparent(im)
+    im = fit_squircle(im)  # crop the transparent margin + scale the squircle to fill the tile
 
     preview = os.environ.get("RE_ICON_PREVIEW")
     if preview:  # composite over orange so transparency is obvious in a viewer
