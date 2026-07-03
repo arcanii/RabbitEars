@@ -41,24 +41,27 @@ unified root build also works directly: `cmake -S . -B build-mac -DRABBITEARS_BU
 Unsigned dev builds trip Gatekeeper — right‑click → Open, or
 `xattr -dr com.apple.quarantine build-mac/mac/RabbitEars.app`.
 
-## Pending — audio meters (branch `mac-meters`, PR #9, NOT merged)
+## Audio meters — tried on‑device, reverted, deferred (branch `mac-meters`, PR #9 — do NOT merge)
 
-A native LED **audio meter** (`MeterView`) under the video, driven by a **libVLC audio tap**
-in `VlcPlayerMac` (`libvlc_audio_set_callbacks` → peak metering + AudioQueue re‑output via a
-recycled buffer pool — the mac start of the Win32 SpectrumTap). Adversarial‑review‑hardened
-(stop() before re‑arming the tap on channel switch; block‑based weak‑self `NSTimer`; pooled
-AudioQueue buffers, no leak). **Held back because it changes the audio OUTPUT path**, which
-can't be verified in CI.
+A native LED **audio meter** (`MeterView`) under the video, driven by a **libVLC audio tap** in
+`VlcPlayerMac` (`libvlc_audio_set_callbacks` → peak metering + AudioQueue re‑output). It was
+integrated onto `mac-ui` and **tested on‑device (2026‑07‑03): audio came out jerky and out of
+A/V sync (audio led the video), so it was reverted.**
 
-**To land it:** on a real Mac, `git checkout mac-meters && scripts/build-mac.sh --app`, play a
-channel, and confirm audio is clean (no glitches/dropouts), the meter tracks levels,
-channel‑switching is smooth, and Stop zeroes it. If good → merge PR #9. If audio regresses →
-revert the tap commit and keep `MeterView`; consider **ScreenCaptureKit** app‑audio capture as
-a non‑invasive source instead of hijacking libVLC's output.
+Root cause: taking over libVLC's audio output means pacing each PCM chunk to its `pts` **and**
+reporting AudioQueue's output latency back into libVLC's master clock — but **libVLC 3.x (what
+VLC.app ships) has no API to report that latency** (libVLC 4.x's timed audio callback fixes
+exactly this). A fixed `audio-desync` offset is per‑stream and drifts, so there's no clean knob.
+
+**Status:** the first release ships **without** meters (clean, in‑sync audio). The `MeterView`
+LED code is good and preserved on `mac-meters`; only its level *source* (the tap) is the
+problem. Redo post‑release by moving playback to **libVLC 4.x** (timed audio callbacks) or by
+driving the meter from a **non‑invasive OS tap** (Core Audio process tap on macOS 14.4+, or
+ScreenCaptureKit on 13+). **Don't re‑attempt the tap on libVLC 3.x.**
 
 ## Toward the first Mac release
 
-1. Land the meters (after the on‑device test above).
+1. ~~Land the meters~~ — tried on‑device and reverted (see above); the first release ships without them.
 2. Cut a **signed + notarized** build (Developer ID) — required for Sparkle's live update
    flow. Sign the enclosure with the family Ed25519 key (Sparkle `sign_update`) and populate
    `mac/packaging/appcast-mac.xml`, then publish.
