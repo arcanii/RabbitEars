@@ -313,7 +313,7 @@ dropped). This is the first thing to ask a tester for.
 ## Release / auto-update (LIVE — see `docs/RELEASING.md`)
 
 - Shares the **family Ed25519 key** with the siblings: the WinSparkle public key in
-  `src/platform/win/Updater.cpp` (`sKPprIa95Hw+…`) equals the macOS `SUPublicEDKey`, so
+  `Win32/platform/Updater.cpp` (`sKPprIa95Hw+…`) equals the macOS `SUPublicEDKey`, so
   installers are **signed on macOS** with the same private key.
 - **Per release:** bump version in 4 places (`APP_VERSION` in `cmake/AppVersion.cmake`
   — now the single source shared with the macOS build, `MyVer` in
@@ -333,17 +333,24 @@ dropped). This is the first thing to ask a tester for.
 ## Architecture (bottom-up)
 
 ```
-sqlite3         third_party/sqlite/   vendored public-domain amalgamation. Static lib.
-RabbitEarsCore  src/core/, src/db/    engine: M3uParser, Http (WinHTTP), Database.
-                src/models/           No UI/libVLC — CLI-testable with zero downloads.
-RabbitEarsCli   src/cli/              headless core tool (--selftest/--fetch/--import).
-RabbitEars      src/ui/, src/WinMain  Win32 GUI (gated: RABBITEARS_BUILD_GUI).
- (GUI)          src/platform/         MainWindow (chrome+layout+wiring), ChannelGrid-
-                                      Control (D2D grid), BufferMeter (LED), VlcPlayer
-                                      (worker libVLC + recorder), Dialogs (About/prompt),
-                                      Splash (layered), Log (diagnostics), Updater
-                                      (WinSparkle).
+sqlite3               third_party/sqlite/  vendored public-domain amalgamation. Static lib.
+RabbitEarsCore        common/core, db,     platform-neutral engine: M3uParser, Database,
+                      models, ui/DockLayout DockLayout. Links only sqlite3 (no UI/HTTP/OS
+                                           paths). Built on BOTH Windows and macOS.
+RabbitEarsPlatformWin Win32/platform/      Windows platform layer: Http (WinHTTP) + Paths
+                                           (%LOCALAPPDATA% db path). Linked by CLI + GUI.
+RabbitEarsCli         Win32/cli/           headless core tool (--selftest/--fetch/--import).
+RabbitEars            Win32/ (ui, WinMain, Win32 GUI (gated: RABBITEARS_BUILD_GUI).
+ (GUI)                audio, platform/)    MainWindow (chrome+layout+wiring), ChannelGrid-
+                                           Control (D2D grid), BufferMeter (LED), VlcPlayer
+                                           (worker libVLC + recorder), Dialogs (About/prompt),
+                                           Splash (layered), Log (diagnostics), Updater
+                                           (WinSparkle).
 ```
+
+> Layout note: the tree is split into `common/` (shared engine, both OSes), `Win32/` (the
+> Windows app), and `mac/` (the macOS app), built by one unified root `CMakeLists.txt`. Some
+> inline `src/...` paths elsewhere in this doc predate that split.
 
 ## Toolchain (non-obvious)
 

@@ -1,6 +1,8 @@
 # RabbitEars — macOS Port Plan
 
-**Status:** Phase‑0 spike **merged to `main`**; Phase‑2 core carve‑out **in PR** (branch `phase-2-core-carve-out`).
+**Status:** Phase‑0 merged; Phase‑2 core carve‑out in PR (`phase-2-core-carve-out`); repo **restructured into
+`common/` + `Win32/` + `mac/`** peer directories under a unified root CMake dispatcher (branch
+`restructure-common-win32`, stacked on Phase‑2).
 **Audience:** the Windows team and the product owner.
 **TL;DR:** Add macOS **in this repo** (monorepo). Phase 0 was additive‑only; **Phase 2** (below) makes the
 shared core genuinely platform‑neutral — `RabbitEarsCore` links only `sqlite3`, the Win32 bits move to
