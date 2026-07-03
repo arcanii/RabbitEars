@@ -441,24 +441,11 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 
 ## Backlog
 
-- ~~**Categories / countries include-filter**~~ — **DONE** (in the 0.1.2 batch; see
-  above). Possible follow-ups: remember the *last* view when toggling it, or a
-  per-view (not global) category filter.
-- **Recording Phase 2 (scheduled)**: DB schedule table + dialog + a timer firing the
-  headless recorder at set times (app must be running). Phase 3: Windows Task
-  Scheduler wake-to-record + EPG-driven scheduling.
-- **Recording formats**: MP4 (record `.ts`, remux on stop — MP4 isn't crash-safe if
-  written live) and **transcoding** (format/quality/size presets; CPU-heavy).
-- **Resume last channel** on launch (`last_channel_id` is already persisted).
-- **DPI-change relayout** (`WM_DPICHANGED`): recreate fonts, relayout, push DPI to
-  grid/meter (`channelGridUpdateDpi`, `bufferMeterSetDpi`).
-- **Clamp the remaining themed dialogs to the work area** — About / prompt / Categories /
-  Terms / info centre on the parent (`Dialogs.cpp`) and can clip off-screen near a screen
-  edge, like the Meters dialog did. Reuse `clampToWorkArea()` after each dialog's centred
-  x/y (the Meters dialog already does, as of 0.1.6).
-- **Authenticode** code-signing (SmartScreen). **Portable-zip** artifact on releases.
-- **EPG** (XMLTV now/next; `tvg-id` already stored) and a **background dead-link
-  checker** (so "Hide unavailable" isn't purely passive). Import/export favourites.
+Moved to **[`BACKLOG.md`](BACKLOG.md)** — the parked work, headlined by the **theme engine** (0.2.x
+epic: full reskin + selectable D3D11/shader skins). Also there: JSON profiles, scheduled recording,
+recording formats, EPG + dead-link checker, resume-last-channel, named saved layouts, group-title
+country fallback, the dialog work-area clamp + shared-`runModalLoop` cleanup, DPI-change relayout,
+Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 
 ## Git state
 
@@ -475,23 +462,17 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **Theme engine (the big 0.2.x epic) — write `docs/THEME_ENGINE.md` FIRST, then start.** Owner
-   wants a **full-app reskin** with **selectable skins** (Dark / Steampunk / Cyberpunk) and **D3D11 +
-   HLSL shaders** (mockups exist). Plan: a **Direct2D-on-D3D11 interop device** (crisp 2D + custom
-   shaders; the channel grid is already D2D so it folds in); the **skin *model* in `common/`** (theme
-   id + asset/param/animation refs — shared, like the meter model) with a **per-platform *renderer***
-   (`Win32/` D3D11/D2D+HLSL; `mac/` Metal later). Phase it: foundation spike (one surface at parity +
-   one shader) → skin abstraction + runtime switch → reskin surfaces (transport/meters → chrome → nav
-   → grid → dialogs) → author art/shaders. **Flag the shared skin-model boundary to the macOS team
-   before engine code lands** (they're mid Phase-1: native grid, playback, Sparkle, CI `.app`). Ship
-   small fixes/easter-eggs as 0.1.x point releases alongside. Keep `common/` green (the `mac-core` CI
-   is the drift alarm). (See `docs/MACOS_PORT_REVIEW.md` + memory `rabbitears-cross-platform`.)
-2. **JSON profiles** (deferred from 0.1.5 to a later version): per-profile settings + playlist
-   sources, channel cache rebuilt per profile; `%LOCALAPPDATA%\RabbitEars\profiles\*.json` + an
-   active-profile pointer; keep the ~197 MB channel cache OUT of the JSON.
-3. Backlog: **named saved layouts** (`DockLayout` already serializes any tree), scheduled recording,
-   resume-last-channel, DPI-change relayout (`WM_DPICHANGED`), Authenticode signing (SmartScreen),
-   group-title country fallback for Xtream, EPG (XMLTV).
+1. **Nothing is blocking** — 0.1.7 is shipped and live. Pick the next item from
+   **[`BACKLOG.md`](BACKLOG.md)** when ready; the headline is the **theme engine** (0.2.x epic —
+   full reskin + selectable D3D11/shader skins). Before starting it: write `docs/THEME_ENGINE.md` and
+   **flag the shared skin-model boundary to the macOS team** (skin *model* in `common/`, *renderer*
+   per-platform — see `BACKLOG.md` + memory `rabbitears-cross-platform`).
+2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
+   Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
+   **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
+   39→52 mid-cut because of concurrent mac pushes).
+3. **Easy point-release candidates** from the backlog: the dialog work-area clamp + shared
+   `runModalLoop`, resume-last-channel, DPI-change relayout — small, ship as 0.1.x.
 
 ## Seed prompt for a new session
 
@@ -513,9 +494,9 @@ Paste this verbatim to start a fresh session with working context restored:
 > random splash; 0.1.5 = the meters overhaul. **The macOS Phase-2 restructure has LANDED** — the tree
 > is now `common/` + `Win32/` + `mac/` under a unified root CMake; the macOS team is mid **Phase-1**
 > (native grid + playback + Sparkle + CI `.app`), and pushes to `main`, so **`git fetch`/rebase before
-> a release**. **The next big front is the THEME ENGINE** (full reskin + selectable D3D11/shader
-> skins — write `docs/THEME_ENGINE.md` first; coordinate the shared skin-model boundary with the
-> macOS team). **JSON profiles** stay deferred. **Read the "0.1.7 — SHIPPED" + "Current state"
+> a release**. **The theme engine** (full reskin + selectable D3D11/shader skins) is the headline
+> **backlog** item — see `BACKLOG.md` (write `docs/THEME_ENGINE.md` + flag the shared skin-model
+> boundary to the macOS team before starting). **JSON profiles** stay deferred. **Read the "0.1.7 — SHIPPED" + "Current state"
 > sections of `HANDOVER.md` for full detail.**
 >
 > **Cross-platform (important, see memory `rabbitears-cross-platform`):** RabbitEars is going
