@@ -14,7 +14,10 @@
   <key>CFBundleShortVersionString</key><string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
   <key>CFBundleVersion</key>           <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
-  <key>LSMinimumSystemVersion</key>    <string>11.0</string>
+  <!-- Owner decision: require macOS 26. The audio-level meter uses a Core Audio
+       process tap (needs 14.2+), comfortably within this floor. Runtime gate only —
+       the compile-time deployment target stays unpinned so CI (older SDK) still builds. -->
+  <key>LSMinimumSystemVersion</key>    <string>26.0</string>
   <key>NSHighResolutionCapable</key>   <true/>
   <key>NSPrincipalClass</key>          <string>NSApplication</string>
   <!-- Sparkle auto-update: the macOS appcast + the shared family Ed25519 public
@@ -23,5 +26,9 @@
   <key>SUFeedURL</key>              <string>https://raw.githubusercontent.com/arcanii/RabbitEars/main/mac/packaging/appcast-mac.xml</string>
   <key>SUPublicEDKey</key>          <string>sKPprIa95Hw+DX3bMoxWMsyC0w9vc4MzEpgx7TBDP1I=</string>
   <key>SUEnableAutomaticChecks</key><true/>
+  <!-- The audio-level meter observes THIS app's own output via a Core Audio process
+       tap (macOS 14.2+). Declared defensively in case the OS gates the tap behind an
+       audio-capture consent prompt. -->
+  <key>NSAudioCaptureUsageDescription</key><string>RabbitEars reads its own audio output to animate the on-screen level meter.</string>
 </dict>
 </plist>

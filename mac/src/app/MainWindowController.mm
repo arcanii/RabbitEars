@@ -19,6 +19,8 @@
 #include "platform/Updater.h"
 
 #import "AppDelegate.h"
+#import "AudioLevelTap.h"
+#import "MeterView.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -49,6 +51,7 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
     NSPopUpButton* _filter;
     RETableView*   _table;
     NSView*        _videoView;
+    MeterView*     _meter;       // LED audio-level strip below the video
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
@@ -56,6 +59,8 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
+    AudioLevelTap*                _levelTap;       // non-invasive Core Audio output tap → _meter
+    BOOL                          _levelTapTried;  // start the tap once, on first play
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
@@ -194,10 +199,21 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     scroll.documentView = _table;
     [split addSubview:scroll];
 
-    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    // Right split pane: the video surface with a thin audio-level meter strip
+    // pinned below it. The meter is a SIBLING under the video, never overlaid on
+    // it, so it never fights libVLC's rendering surface for z-order.
+    NSView* videoPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    const CGFloat meterH = 26;
+    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, meterH, 600, 100 - meterH)];
+    _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
-    [split addSubview:_videoView];
+    [videoPane addSubview:_videoView];
+
+    _meter = [[MeterView alloc] initWithFrame:NSMakeRect(0, 0, 600, meterH)];
+    _meter.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;  // fixed height, pinned to the bottom
+    [videoPane addSubview:_meter];
+    [split addSubview:videoPane];
 
     // Empty-state hint, centered over the (black) video pane until channels exist.
     _emptyHint = [NSTextField labelWithString:@"No channels yet — click “＋ Add Playlist” to begin."];
@@ -474,6 +490,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
 - (void)stop:(id)__unused sender {
     _player->stop();
+    [_meter reset];
     _window.title = @"RabbitEars";
     [self setStatus:@"Stopped."];
 }
@@ -548,11 +565,26 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     }];
 }
 
+// Lazily start the non-invasive audio-level tap on first playback, so any one-time
+// system consent prompt happens on a user action (not at launch), then keep it for
+// the app's lifetime. No-op (meter stays dark) on macOS < 14.2 or if the tap fails.
+- (void)ensureLevelTap {
+    if (_levelTapTried) return;
+    _levelTapTried = YES;
+    MeterView* meter = _meter;  // capture the view, NOT self, for the RT-thread handler
+    [meter pushLevel:0.0f];     // warm the -pushLevel: method cache on the main thread, so the
+                                // tap's first real-time-thread call can't hit the runtime's slow path
+    _levelTap = [[AudioLevelTap alloc] initWithLevelHandler:^(float lv) {
+        [meter pushLevel:lv];   // thread-safe (atomic store)
+    }];
+}
+
 - (void)playRow:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_channels.size()) return;
     const Channel& c = _channels[(size_t)row];
     _player->play(c.streamUrl, c.userAgent, c.referrer);
     _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
+    [self ensureLevelTap];  // begin metering our own output (once)
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
