@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
@@ -240,7 +241,10 @@ M3uDocument parseM3u(const std::string& utf8Bytes) {
 }
 
 M3uDocument parseM3uFile(const std::wstring& path, std::wstring* error) {
-    std::ifstream f(path, std::ios::binary);
+    // std::ifstream(const wchar_t*) is an MSVC extension; wrapping in a
+    // filesystem::path opens the same file on Windows (native wide) and stays
+    // portable to clang/libc++. Behavior-identical on Windows.
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
         if (error) *error = L"Could not open file: " + path;
         return {};
