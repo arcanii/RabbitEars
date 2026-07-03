@@ -417,6 +417,40 @@ LRESULT CALLBACK TermsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+constexpr int ID_IMPORT_OK = 1501;
+
+struct ImportResultsState {
+    bool done = false;
+};
+
+LRESULT CALLBACK ImportResultsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* st = reinterpret_cast<ImportResultsState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, wParam);
+        case WM_COMMAND:
+            if (LOWORD(wParam) == ID_IMPORT_OK || LOWORD(wParam) == IDOK ||
+                LOWORD(wParam) == IDCANCEL) {
+                if (st) st->done = true;
+                DestroyWindow(hwnd);
+            }
+            return 0;
+        case WM_CLOSE:
+            if (st) st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
 }  // namespace
 
 void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
@@ -753,6 +787,84 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi) {
     DeleteObject(st.font);
     DeleteObject(st.titleFont);
     return st.accepted;
+}
+
+// Generic themed modal (title + bold summary + scrollable details). Backed by the
+// ImportResults* class/proc above, kept as-is since the widget itself is generic.
+void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                    const std::wstring& summary, const std::wstring& details) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ImportResultsProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsImportResults";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    ImportResultsState st;
+    auto mkFont = [&](int px, int weight) {
+        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    };
+    HFONT bodyFont = mkFont(11, FW_NORMAL);
+    HFONT headFont = mkFont(15, FW_SEMIBOLD);
+
+    const int W = dp(520, dpi), H = dp(340, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsImportResults", title.c_str(),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(bodyFont);
+        DeleteObject(headFont);
+        return;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(20, dpi), bw = dp(110, dpi), bh = dp(30, dpi);
+    const int btnY = cr.bottom - bh - dp(16, dpi);
+
+    HWND head = CreateWindowExW(0, L"STATIC", summary.c_str(),
+                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(16, dpi),
+                                cr.right - 2 * m, dp(24, dpi), dlg, nullptr, hInst, nullptr);
+    HWND body = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", details.c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE |
+                                    ES_READONLY | ES_AUTOVSCROLL,
+                                m, dp(48, dpi), cr.right - 2 * m, btnY - dp(60, dpi), dlg, nullptr,
+                                hInst, nullptr);
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                              cr.right - bw - m, btnY, bw, bh, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_IMPORT_OK)), hInst,
+                              nullptr);
+    SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
+    for (HWND h : {body, ok})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(ok);
+    MSG msg;
+    while (!st.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(bodyFont);
+    DeleteObject(headFont);
 }
 
 }  // namespace rabbitears

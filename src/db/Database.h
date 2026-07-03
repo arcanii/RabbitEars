@@ -42,6 +42,8 @@ public:
                           long long nowEpoch);
     std::vector<Playlist> listPlaylists();
     void deletePlaylist(long long playlistId);
+    // Change a playlist's friendly display name (its channels/source are untouched).
+    void renamePlaylist(long long playlistId, const std::wstring& name);
 
     // ---- Channels ----------------------------------------------------------
     // Insert/refresh a freshly-parsed batch under `playlistId` in one transaction.

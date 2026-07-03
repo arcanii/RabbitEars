@@ -281,6 +281,14 @@ void Database::deletePlaylist(long long playlistId) {
     q.stepDone();
 }
 
+void Database::renamePlaylist(long long playlistId, const std::wstring& name) {
+    Stmt q(db_, "UPDATE playlists SET name=? WHERE id=?");
+    if (!q) return;
+    q.bindText(1, name);
+    q.bindInt(2, playlistId);
+    q.stepDone();
+}
+
 // ---- Channels --------------------------------------------------------------
 
 int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedChannel>& channels,

@@ -128,6 +128,9 @@ struct PlaylistResult {
     std::wstring source;
     bool         isUrl = true;
     M3uDocument  doc;
+    int          parsed = 0;    // channels the parser produced
+    int          imported = 0;  // rows inserted/updated in the DB
+    int          groups = 0;    // distinct non-empty group titles in this import
 };
 
 struct AppState {
@@ -183,6 +186,7 @@ struct AppState {
     std::vector<DockLayout::Gutter> gutters;  // splitter gutters from the last layout()
     bool        draggingGutter = false;
     DockLayout::Gutter dragGutter{};
+    ULONGLONG   gutterFlushTick = 0;  // last paced sync-repaint flush during a gutter drag
     // Drag-to-redock: a small grip per region, a translucent drop-zone overlay, and
     // the in-flight drag target.
     HWND        gripNav = nullptr, gripVideo = nullptr, gripGrid = nullptr;
@@ -349,19 +353,31 @@ void layout(HWND hwnd, AppState* st) {
     // splitter drag repaints the panes together instead of child-by-child. The
     // child-by-child churn is what left splitter drag artifacts + stale transport-
     // button pixels when a panel moved (this is how ManorLords-SGE avoids the same).
-    // SWP_NOCOPYBITS: don't copy old client bits to the new position — repaint fresh,
-    // else a shifted control (the transport buttons) shows stale pixels.
+    // Two flag sets:
+    //  - kSwp (the three panels): SWP_NOCOPYBITS — nav/grid/video RESIZE during a
+    //    drag, so repaint fresh rather than bit-copying a stale interior.
+    //  - kSwpMove (strip controls / meters / search): fixed-size children that only
+    //    MOVE — let the window manager bit-copy their pixels to the new spot. No
+    //    repaint means no erase, which is what made the classic-BUTTON transport
+    //    controls flicker during gutter drags. (The parent's WM_PAINT strip fill
+    //    covers the pixels they vacate.)
     constexpr UINT kSwp = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS;
+    constexpr UINT kSwpMove = SWP_NOZORDER | SWP_NOACTIVATE;
     HDWP dwp = BeginDeferWindowPos(24);
     auto place = [&](HWND h, int px, int py, int pw, int ph) {
         if (h && dwp)
             dwp = DeferWindowPos(dwp, h, nullptr, px, py, std::max(0, pw), std::max(0, ph), kSwp);
     };
+    auto placeMove = [&](HWND h, int px, int py, int pw, int ph) {
+        if (h && dwp)
+            dwp = DeferWindowPos(dwp, h, nullptr, px, py, std::max(0, pw), std::max(0, ph),
+                                 kSwpMove);
+    };
 
     // search box in the command bar (before caption buttons)
     const int sw = dp(220, st->dpi), sh = dp(28, st->dpi);
     const int sx = W - 3 * capW(st->dpi) - sw - dp(12, st->dpi);
-    place(st->search, sx, (cmdH - sh) / 2, sw, sh);
+    placeMove(st->search, sx, (cmdH - sh) / 2, sw, sh);
 
     if (st->fullscreen) {
         for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
@@ -421,25 +437,25 @@ void layout(HWND hwnd, AppState* st) {
     const int bw = dp(34, st->dpi), ig = dp(4, st->dpi);  // square icon buttons, tight cluster
     const int cx = vidR.left;
     int x = cx + pad;
-    place(st->btnPlay, x, by, bw, btnH); x += bw + ig;
-    place(st->btnStop, x, by, bw, btnH); x += bw + ig;
-    place(st->btnRec, x, by, bw, btnH); x += bw + pad;
+    placeMove(st->btnPlay, x, by, bw, btnH); x += bw + ig;
+    placeMove(st->btnStop, x, by, bw, btnH); x += bw + ig;
+    placeMove(st->btnRec, x, by, bw, btnH); x += bw + pad;
     const int iconW = dp(20, st->dpi);
-    place(st->volIcon, x, by, iconW, btnH); x += iconW + dp(2, st->dpi);
+    placeMove(st->volIcon, x, by, iconW, btnH); x += iconW + dp(2, st->dpi);
     const int volW = dp(126, st->dpi);
-    place(st->volBar, x, by, volW, btnH); x += volW + pad;
+    placeMove(st->volBar, x, by, volW, btnH); x += volW + pad;
     const int fullW = dp(34, st->dpi);  // fullscreen icon
-    place(st->btnFull, x, by, fullW, btnH); x += fullW + pad * 2;
+    placeMove(st->btnFull, x, by, fullW, btnH); x += fullW + pad * 2;
     // Buffer-size control: "Buffer 1.5 s" label + slider (the receive->show delay).
     const int bufLabelW = dp(84, st->dpi), bufBarW = dp(110, st->dpi);
-    place(st->bufLabel, x, by, bufLabelW, btnH); x += bufLabelW + dp(2, st->dpi);
-    place(st->bufBar, x, by, bufBarW, btnH); x += bufBarW + pad * 2;
+    placeMove(st->bufLabel, x, by, bufLabelW, btnH); x += bufLabelW + dp(2, st->dpi);
+    placeMove(st->bufBar, x, by, bufBarW, btnH); x += bufBarW + pad * 2;
     // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
     // meters are hidden (also via the deferred pass, so show/move stay atomic).
     const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
     const int bufMeterW = dp(230, st->dpi);
     int rightX = vidR.right - pad;
-    place(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
+    placeMove(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
     rightX -= bufMeterW + pad;
     struct MtrSlot { HWND h; bool on; int w; };
     const MtrSlot slots[] = {  // rightmost first
@@ -452,14 +468,14 @@ void layout(HWND hwnd, AppState* st) {
         if (s.on && rightX - s.w >= x + pad) {
             if (s.h && dwp)
                 dwp = DeferWindowPos(dwp, s.h, nullptr, rightX - s.w, meterY, s.w, meterH,
-                                     kSwp | SWP_SHOWWINDOW);
+                                     kSwpMove | SWP_SHOWWINDOW);
             rightX -= s.w + dp(6, st->dpi);
         } else if (s.h && dwp) {
             dwp = DeferWindowPos(dwp, s.h, nullptr, 0, 0, 0, 0,
-                                 kSwp | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
+                                 kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
         }
     }
-    place(st->status, x, by, std::max(0, rightX - pad - x), btnH);
+    placeMove(st->status, x, by, std::max(0, rightX - pad - x), btnH);
 
     if (dwp) EndDeferWindowPos(dwp);
     InvalidateRect(hwnd, nullptr, FALSE);  // repaint the parent-drawn divider gutters
@@ -871,6 +887,11 @@ void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl,
             else
                 diag::error(L"file load failed: " + err);
         }
+        res->parsed = static_cast<int>(res->doc.channels.size());
+        std::set<std::wstring> grp;
+        for (const auto& c : res->doc.channels)
+            if (!c.groupTitle.empty()) grp.insert(c.groupTitle);
+        res->groups = static_cast<int>(grp.size());
         PostMessageW(hwnd, WM_APP_PLAYLIST_DONE, 0, reinterpret_cast<LPARAM>(res));
     }).detach();
 }
@@ -909,21 +930,45 @@ void onOpenFile(AppState* st) {
 
 void onPlaylistDone(AppState* st, PlaylistResult* res) {
     st->busy = false;
+    std::wstring summary, details;
+    const std::wstring src = L"Source:  " + res->source + L"\r\n\r\n";
     if (res->ok && !res->doc.channels.empty()) {
         const long long now = static_cast<long long>(time(nullptr));
         const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now);
-        const int n = st->db.bulkInsertChannels(pid, res->doc.channels, now);
-        refreshNav(st);
-        st->filter = {ViewKind::Playlist, L"", pid};
-        loadForFilter(st);
-        setStatus(st, L"Added " + std::to_wstring(n) + L" channels from " + res->name);
-        diag::info(L"playlist added: \"" + res->name + L"\" (" + std::to_wstring(n) +
-                   L" channels) from " + res->source);
+        if (pid == 0) {
+            setStatus(st, L"Add playlist failed: could not save to the database");
+            diag::error(L"playlist add failed: addPlaylist returned 0 for " + res->source);
+            summary = L"Could not import the playlist";
+            details = src + L"Problem:  the playlist could not be saved to the database.\r\n";
+        } else {
+            const int n = st->db.bulkInsertChannels(pid, res->doc.channels, now);
+            res->imported = n;
+            refreshNav(st);
+            st->filter = {ViewKind::Playlist, L"", pid};
+            loadForFilter(st);
+            setStatus(st, L"Added " + std::to_wstring(n) + L" channels from " + res->name);
+            diag::info(L"playlist added: \"" + res->name + L"\" (" + std::to_wstring(n) +
+                       L" channels) from " + res->source);
+            const int skipped = res->parsed - res->imported;
+            summary = L"Imported " + std::to_wstring(res->imported) + L" channels from " + res->name;
+            details = src + L"Channels parsed:  " + std::to_wstring(res->parsed) + L"\r\n" +
+                      L"Channels imported:  " + std::to_wstring(res->imported) + L"\r\n";
+            if (skipped > 0)
+                details += L"Skipped (blank or duplicate URLs):  " + std::to_wstring(skipped) + L"\r\n";
+            details += L"Groups:  " + std::to_wstring(res->groups) + L"\r\n";
+        }
     } else {
-        std::wstring msg = res->error.empty() ? L"No channels found." : res->error;
+        std::wstring msg = res->error;
+        if (msg.empty())
+            msg = res->ok ? L"The playlist contained no channels." : L"No channels found.";
         setStatus(st, L"Add playlist failed: " + msg);
         diag::error(L"playlist add failed from " + res->source + L": " + msg);
+        summary = L"Could not import the playlist";
+        details = src + L"Problem:  " + msg + L"\r\n";
     }
+    showInfoDialog(st->hwnd,
+                   reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
+                   st->dpi, L"Import results", summary, details);
     delete res;
 }
 
@@ -1033,7 +1078,14 @@ std::set<std::wstring> splitCategories(const std::wstring& s) {
 void onCategories(AppState* st) {
     std::vector<std::wstring> groups = st->db.listGroups();
     if (groups.empty()) {
-        setStatus(st, L"No categories yet — add a playlist first.");
+        setStatus(st, L"No categories to filter — this library has no group titles.");
+        showInfoDialog(st->hwnd,
+                       reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
+                       st->dpi, L"Categories", L"No categories to filter",
+                       L"The channels in your library have no group titles, so there are no "
+                       L"categories to include or exclude.\r\n\r\n"
+                       L"Add a playlist whose #EXTINF lines carry group-title tags to use this "
+                       L"filter.\r\n");
         return;
     }
     std::set<std::wstring> checked;
@@ -1092,7 +1144,6 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
 
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, ID_OPEN_FILE, L"Open File…");
-    AppendMenuW(m, MF_STRING, ID_ABOUT, L"About RabbitEars");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(fmt), L"Recording format");
     AppendMenuW(m, MF_STRING | (st->hideDead ? MF_CHECKED : 0u), ID_HIDE_DEAD,
@@ -1124,6 +1175,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), pn.name);
     }
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"Layout");
+
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, ID_ABOUT, L"About…");  // last item, ellipsis to match siblings
 
     POINT pt{anchor.left, anchor.bottom};
     ClientToScreen(hwnd, &pt);
@@ -1209,6 +1263,10 @@ void createChildren(HWND hwnd, AppState* st) {
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
                               0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_NAV)),
                               hInst, nullptr);
+    // Double-buffer the nav TreeView so it doesn't flicker when the parent force-repaints
+    // every child during a splitter/gutter drag (RDW_ALLCHILDREN). The D2D channel grid is
+    // already flicker-free; this brings the standard-control sidebar to parity.
+    TreeView_SetExtendedStyle(st->nav, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
     // (The old single nav splitter is replaced by the dock tree's divider gutters,
     // painted + dragged by the parent — see layout()/WM_PAINT/WM_LBUTTONDOWN.)
     registerChannelGridClass(hInst);
@@ -1405,6 +1463,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HDC hdc = BeginPaint(hwnd, &ps);
             if (!st->fullscreen) {
                 drawCmdBar(hwnd, st, hdc);
+                // Paint the transport-strip background here (like the command bar) rather
+                // than relying on WM_ERASEBKGND: relayouts invalidate NOERASE, so if the
+                // strip isn't filled on every paint, meters that move/hide leave stale
+                // "blank grid" footprints and the strip's top edge shows vertical seams.
+                // WS_CLIPCHILDREN keeps this fill behind the meter/button children on top.
+                const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
+                RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
+                FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
                 paintGutters(st, hdc);  // dock dividers live in the gaps between panels
             }
             EndPaint(hwnd, &ps);
@@ -1429,14 +1495,24 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 st->dock.setRatio(st->dragGutter.node, ratio);
                 layout(hwnd, st);  // relayout + gutter repaint (layout() invalidates)
-                // Force a synchronous parent+children repaint on each drag step. layout()
-                // only queues an async WM_PAINT (InvalidateRect), so during a fast drag the
-                // moved panels and the parent-drawn divider gutters lag and the old gutter
-                // positions smear as vertical streaks. RDW_UPDATENOW paints now,
-                // RDW_ALLCHILDREN pulls the moved panels with it, RDW_NOERASE avoids a
-                // flash (the background is drawn in WM_PAINT). Mirrors ManorLords-SGE.
-                RedrawWindow(hwnd, nullptr, nullptr,
-                             RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
+                // Pace the synchronous repaint at ~60Hz rather than per mouse-move.
+                // WM_PAINT is lower priority than input, so with NO sync flush the
+                // queued paints starve during a fast drag (the old vertical-streak
+                // bug) — but flushing on EVERY move floods sync paints (drag lag) and
+                // erasing the video child to black mid-frame made it flash. Every
+                // ~15ms: repaint the parent (gutters/strip/cmd bar, all drawn in
+                // WM_PAINT) and the two flicker-safe resizing panels (double-buffered
+                // TreeView + D2D grid). The video child is never forced — libVLC
+                // repaints it at frame rate on its own. The strip controls move by
+                // bit-copy now (kSwpMove in layout()), so they need no repaint at all.
+                const ULONGLONG nowTick = GetTickCount64();
+                if (nowTick - st->gutterFlushTick >= 15) {
+                    st->gutterFlushTick = nowTick;
+                    RedrawWindow(hwnd, nullptr, nullptr,
+                                 RDW_UPDATENOW | RDW_NOCHILDREN | RDW_NOERASE);
+                    if (st->nav) UpdateWindow(st->nav);
+                    if (st->grid) UpdateWindow(st->grid);
+                }
                 return 0;
             }
             int cmdHover = -1, capHover = -1;
@@ -1520,6 +1596,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 st->draggingGutter = false;
                 ReleaseCapture();
                 persistDock(st);  // save the new split ratios
+                // One settling flush so every child (incl. the bit-copied strip
+                // controls and the video panel) lands crisp at the final geometry.
+                RedrawWindow(hwnd, nullptr, nullptr,
+                             RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);
                 return 0;
             }
             break;
@@ -1530,6 +1610,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (st->draggingGutter) {
                 st->draggingGutter = false;
                 persistDock(st);
+                RedrawWindow(hwnd, nullptr, nullptr,
+                             RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_NOERASE);  // settle
             }
             return 0;
         case WM_SETCURSOR: {
@@ -1687,16 +1769,31 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         st->navFilters[fi].kind == ViewKind::Playlist) {
                         TreeView_SelectItem(st->nav, item);
                         HMENU menu = CreatePopupMenu();
+                        AppendMenuW(menu, MF_STRING, 2, L"Rename…");
+                        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                         AppendMenuW(menu, MF_STRING, 1, L"Delete Playlist");
                         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
                                                        scr.y, 0, hwnd, nullptr);
                         DestroyMenu(menu);
-                        if (cmd == 1) {
+                        const long long pid = st->navFilters[fi].playlistId;
+                        if (cmd == 2) {  // Rename… — changes the friendly display name only
+                            std::wstring name = label;  // seed the box with the current name
+                            if (promptText(hwnd,
+                                           reinterpret_cast<HINSTANCE>(
+                                               GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
+                                           st->dpi, L"Rename Playlist", L"Playlist name:", name) &&
+                                !name.empty()) {
+                                st->db.renamePlaylist(pid, name);
+                                diag::info(L"renamed playlist id=" + std::to_wstring(pid) + L" to \"" +
+                                           name + L"\"");
+                                refreshNav(st);
+                                setStatus(st, L"Playlist renamed to \"" + name + L"\"");
+                            }
+                        } else if (cmd == 1) {  // Delete Playlist
                             const std::wstring m = L"Delete playlist \"" + std::wstring(label) +
                                                    L"\"?\n\nThis removes its channels from RabbitEars.";
                             if (MessageBoxW(hwnd, m.c_str(), L"Delete Playlist",
                                             MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
-                                const long long pid = st->navFilters[fi].playlistId;
                                 st->db.deletePlaylist(pid);
                                 diag::info(L"deleted playlist id=" + std::to_wstring(pid) + L" (" +
                                            label + L")");

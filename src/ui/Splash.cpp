@@ -13,6 +13,7 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #include "resource.h"
 #include "ui/Theme.h"
+#include "version.h"  // RE_VERSION_DISPLAY_W
 
 namespace rabbitears {
 namespace {
@@ -33,6 +34,7 @@ constexpr const wchar_t* kMessages[] = {
     L"Untangling the coaxial cable…",
     L"Polishing the rabbit ears…",
     L"Shooing off the static gremlins…",
+    L"Finding where Arch keeps his cookies…",
     L"Locking onto the nearest tower…",
     L"Tuning the horizontal hold…",
     L"Nudging the aerial a smidge…",
@@ -146,6 +148,18 @@ void renderFrame(const SplashState& s, const wchar_t* message) {
         Gdiplus::RectF tr(0.0f, static_cast<Gdiplus::REAL>(s.H - s.margin - s.textH),
                           static_cast<Gdiplus::REAL>(s.W), static_cast<Gdiplus::REAL>(s.textH));
         g.DrawString(message, -1, &font, tr, &sf, &tb);
+
+        // App version, small + muted, tucked into the bottom-right corner of the card.
+        Gdiplus::Font vfont(&ff, static_cast<Gdiplus::REAL>(sdpx(s.dpi, 9)),
+                            Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+        Gdiplus::SolidBrush vb(gc(th.textMuted, 255));
+        Gdiplus::StringFormat vsf;
+        vsf.SetAlignment(Gdiplus::StringAlignmentFar);      // right
+        vsf.SetLineAlignment(Gdiplus::StringAlignmentFar);  // bottom
+        const int vpad = sdpx(s.dpi, 8);
+        Gdiplus::RectF vr(0.0f, 0.0f, static_cast<Gdiplus::REAL>(s.W - vpad),
+                          static_cast<Gdiplus::REAL>(s.H - vpad));
+        g.DrawString(L"v" RE_VERSION_DISPLAY_W, -1, &vfont, vr, &vsf, &vb);
     }
 
     HDC memDC = CreateCompatibleDC(screen);

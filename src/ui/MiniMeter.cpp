@@ -231,6 +231,17 @@ void onTick(MiniMeterState* st) {
     if (st->flare < 0.01f) st->flare = 0.0f;
 }
 
+// Run the ~30fps animation timer only while the meter is actually shown.
+void syncTimer(HWND hwnd, MiniMeterState* st, bool run) {
+    if (run && !st->timerOn) {
+        SetTimer(hwnd, kTimerId, kTimerMs, nullptr);
+        st->timerOn = true;
+    } else if (!run && st->timerOn) {
+        KillTimer(hwnd, kTimerId);
+        st->timerOn = false;
+    }
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MiniMeterState* st = stateOf(hwnd);
     switch (msg) {
@@ -239,7 +250,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT:
-            if (st) onPaint(hwnd, st);
+            if (st) {
+                // Also sync here: on a fresh launch every layout() runs BEFORE the
+                // top-level window is shown, so the SWP_SHOWWINDOW WM_WINDOWPOSCHANGED
+                // below sees IsWindowVisible()==FALSE (hidden parent) and the parent's
+                // later ShowWindow sends its children nothing. A WM_PAINT only arrives
+                // once the meter is genuinely on screen — the cheap check is a no-op
+                // on every subsequent paint.
+                syncTimer(hwnd, st, IsWindowVisible(hwnd) != FALSE);
+                onPaint(hwnd, st);
+            }
             return 0;
         case WM_TIMER:
             if (st && wParam == kTimerId) {
@@ -247,16 +267,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
+        case WM_WINDOWPOSCHANGED:
+            // layout() shows/hides the meters via DeferWindowPos(SWP_SHOWWINDOW /
+            // SWP_HIDEWINDOW), which does NOT send WM_SHOWWINDOW (documented SetWindowPos
+            // behavior) — so gating the timer on WM_SHOWWINDOW alone left the meters
+            // frozen (empty spectrum/bitrate, signal stuck at 0, fps 0) until something
+            // like a minimize/restore finally delivered one. Sync to real visibility on
+            // every positional change; WM_SHOWWINDOW below still covers parent-minimize.
+            if (st) syncTimer(hwnd, st, IsWindowVisible(hwnd) != FALSE);
+            break;  // let DefWindowProc do its WM_SIZE/WM_MOVE bookkeeping
         case WM_SHOWWINDOW:
-            if (st) {
-                if (wParam && !st->timerOn) {
-                    SetTimer(hwnd, kTimerId, kTimerMs, nullptr);
-                    st->timerOn = true;
-                } else if (!wParam && st->timerOn) {
-                    KillTimer(hwnd, kTimerId);
-                    st->timerOn = false;
-                }
-            }
+            if (st) syncTimer(hwnd, st, wParam != FALSE);
             return 0;
         case WM_DESTROY:
             if (st && st->timerOn) {

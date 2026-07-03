@@ -23,6 +23,11 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
 // they declined (the caller should then exit the app). Blocks until answered.
 bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi);
 
+// Modal themed info popup: a bold one-line `summary` headline over a scrollable,
+// read-only `details` body. Used for post-import results and other notices.
+void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                    const std::wstring& summary, const std::wstring& details);
+
 // Modal categories checklist (Settings → Categories…). `allGroups` is every
 // distinct group title; `checked` is in/out — the initially-checked groups on
 // entry, the user's final selection on exit. A live filter box, Select All /
