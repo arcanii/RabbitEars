@@ -12,15 +12,16 @@ Windows app), **`mac/`** (this — the Cocoa app), under a unified root `CMakeLi
 (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**. `main` is on
 **0.1.7** (the Windows team ships from `main` — don't destabilize their build).
 
-## Current state — first release SHIPPED (branch `mac-ui`, PR #11 → `main`, NOT yet merged)
+## Current state — first release SHIPPED + MERGED to `main` (PR #11, 2026-07-03)
 
 The mac app is **feature-complete for a first release** and **published**: **`v0.1.7-mac`** on
 GitHub — a **universal (Intel + Apple Silicon), notarized, self-contained** DMG that opens with a
-normal double-click. All of it lives on branch **`mac-ui`** as **PR #11**; merging that PR lands
-the code **and** `mac/packaging/appcast-mac.xml` on `main` (the Sparkle feed URL serves from
-`main`, so the merge switches on in-app auto-updates). `main` is still at the pre-mac-UI commit —
-the Windows team ships from `main`, and the mac work is **Windows-safe** (`mac/` + docs/scripts
-only; no `common/`/`Win32/` changes).
+normal double-click. **PR #11 was rebase-merged to `main` on 2026-07-03** (`main` @ `5f57118`), landing the code **and**
+`mac/packaging/appcast-mac.xml`; the `mac-ui` branch is now deleted. The Sparkle feed URL serves
+from `main`, so in-app auto-updates are **live** — the feed advertises `sparkle:version=68` (= the
+shipped build), so existing users aren't re-prompted; the channel is simply armed for the next
+release. The mac work was **Windows-safe** (`mac/` + docs/scripts only; no `common/`/`Win32/`
+changes), so the Windows team's build from `main` was unaffected.
 
 The app **plays IPTV** via libVLC in a native window:
 - **rich channel grid** — ★ / # / name / group columns, live **search**, filter popup
@@ -37,7 +38,7 @@ The app **plays IPTV** via libVLC in a native window:
 - an **app icon** (`RabbitEars.icns`), a menu bar (Cmd-C/V/X/A/Z), CI on both platforms.
 
 The mac `.mm` are ObjC++ written **ARC-style** (no manual retain/release); note `-fobjc-arc` is
-**not** currently enabled in the mac build (it was only on the reverted `mac-meters` branch). The
+**not** currently enabled in the mac build (it was only on the reverted, since-deleted `mac-meters` branch). The
 shared core is portable C++ whose headers carry `#if defined(_WIN32)` branches.
 
 ## Build & run
@@ -53,7 +54,7 @@ unified root build also works directly: `cmake -S . -B build-mac -DRABBITEARS_BU
 Unsigned dev builds trip Gatekeeper — right‑click → Open, or
 `xattr -dr com.apple.quarantine build-mac/mac/RabbitEars.app`.
 
-## Audio meters — tried on‑device, reverted, deferred (branch `mac-meters`, PR #9 — do NOT merge)
+## Audio meters — tried on‑device, reverted, deferred (branch `mac-meters` / PR #9 now DELETED)
 
 A native LED **audio meter** (`MeterView`) under the video, driven by a **libVLC audio tap** in
 `VlcPlayerMac` (`libvlc_audio_set_callbacks` → peak metering + AudioQueue re‑output). It was
@@ -66,8 +67,10 @@ VLC.app ships) has no API to report that latency** (libVLC 4.x's timed audio cal
 exactly this). A fixed `audio-desync` offset is per‑stream and drifts, so there's no clean knob.
 
 **Status:** the first release ships **without** meters (clean, in‑sync audio). The `MeterView`
-LED code is good and preserved on `mac-meters`; only its level *source* (the tap) is the
-problem. Redo post‑release by moving playback to **libVLC 4.x** (timed audio callbacks) or by
+LED code is good; only its level *source* (the tap) was the problem. **The `mac-meters` branch was
+deleted on 2026‑07‑04 (PR #9 auto‑closed); its tip was `eb730ea`** — restore it via GitHub's
+"Restore branch" on the closed PR #9 (or check out that SHA) to get the `MeterView` code back,
+else re‑create it. Redo post‑release by moving playback to **libVLC 4.x** (timed audio callbacks) or by
 driving the meter from a **non‑invasive OS tap** (Core Audio process tap on macOS 14.4+, or
 ScreenCaptureKit on 13+). **Don't re‑attempt the tap on libVLC 3.x.**
 
@@ -109,7 +112,7 @@ mac/platform/{Http,Log,Updater}.mm  mac/platform/Paths.cpp   # macOS platform la
 mac/src/tools/{selftest.cpp,playprobe.mm}
 mac/packaging/{Info.plist.in, appcast-mac.xml, RabbitEars.icns, RabbitEars.entitlements}
 scripts/{build-mac.sh, package-mac.sh, make-icns.py, xcode.sh}  # build / bundle+sign+notarize / icon / Xcode-gen
-mac/src/app/MeterView.{h,mm} + the VlcPlayerMac audio tap       # ONLY on branch mac-meters (deferred; don't merge)
+mac/src/app/MeterView.{h,mm} + the VlcPlayerMac audio tap       # deferred; branch mac-meters DELETED — restore from closed PR #9 / eb730ea
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 
@@ -127,14 +130,15 @@ mac/src/app/MeterView.{h,mm} + the VlcPlayerMac audio tap       # ONLY on branch
 ```
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in one repo (common/ + Win32/ + mac/, unified root CMake). The macOS app is
-feature-complete and SHIPPED: v0.1.7-mac on GitHub (universal, notarized, self-contained) — all on
-branch mac-ui as PR #11 (mac-ui -> main), NOT yet merged. Merging PR #11 lands the code +
-mac/packaging/appcast-mac.xml on main (the Sparkle feed serves from main -> in-app updates go live).
+feature-complete, SHIPPED, and MERGED: v0.1.7-mac on GitHub (universal, notarized, self-contained);
+PR #11 is merged to main (main @ 5f57118), so the code + mac/packaging/appcast-mac.xml are on main and
+the Sparkle feed (served from main) is LIVE. mac-ui is deleted.
 Build: scripts/build-mac.sh [--app] (needs VLC.app). Release recipe: scripts/package-mac.sh + the
 mac-release-deployment memory (Developer ID 386M76FV3K, notary profile SQLTerminal-notarize,
 sign_update --account SQLTerminal; universal needs vlc-*-universal.dmg). GUI/audio can't be verified
-headlessly — real Mac testing required. Open items: (1) merge PR #11; (2) audio meters are deferred
-— the libVLC 3.x tap caused A/V desync, do NOT retry (use a non-invasive OS tap or libVLC 4.x);
-(3) the x86_64 slice of the universal build is untested on real Intel hardware. Branch off main;
+headlessly — real Mac testing required. Open items: (1) audio meters are deferred — the libVLC 3.x
+tap caused A/V desync, do NOT retry (use a non-invasive OS tap or libVLC 4.x); the mac-meters branch
+was DELETED (restore from closed PR #9 / SHA eb730ea if you revisit it); (2) the x86_64 slice of the
+universal build is untested on real Intel hardware. Branch off main;
 keep common/ edits Windows-safe (windows-core CI validates).
 ```
