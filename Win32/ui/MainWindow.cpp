@@ -47,6 +47,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "audio/SpectrumTap.h"
 
 #ifdef RABBITEARS_THEME_ENGINE
+#include "platform/Encoding.h"   // wideFromUtf8 / utf8FromWide for the skin settings key + value
 #include "ui/skin/SkinStrip.h"  // Phase-1 GPU skin spike: the transport-strip underglow surface
 #endif
 
@@ -105,6 +106,11 @@ constexpr int ID_MTR_SIGNAL = 2041;
 constexpr int ID_MTR_BITRATE = 2042;
 constexpr int ID_MTR_FRAMES = 2043;
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters → Setup… (the full dialog)
+#ifdef RABBITEARS_THEME_ENGINE
+constexpr int ID_THEME_SYSTEM = 2045;  // Settings → Theme (follow OS / dark / light)
+constexpr int ID_THEME_DARK = 2046;
+constexpr int ID_THEME_LIGHT = 2047;
+#endif
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
 #ifdef RABBITEARS_THEME_ENGINE
@@ -255,6 +261,35 @@ void applyDarkChrome(HWND hwnd) {
     DWORD corner = 2;
     DwmSetWindowAttribute(hwnd, 33, &corner, sizeof(corner));
 }
+
+#ifdef RABBITEARS_THEME_ENGINE
+// Re-apply the active skin to the window chrome + OS-drawn common controls. Owner-drawn
+// surfaces (command bar, strip, grid, meters) read currentTheme() each paint, so they
+// only need the repaint; the DWM caption/border and the common-controls dark/light theme
+// have to be pushed explicitly. Called once at startup and on every Settings→Theme switch.
+void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
+    clearThemeBrushes();          // free the previous skin's cached HBRUSHes
+    applyDarkChrome(hwnd);        // DWM caption/border/text from the (new) currentTheme()
+    const Theme& th = currentTheme();
+    const wchar_t* sub = th.dark ? L"DarkMode_Explorer" : L"Explorer";
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav,
+                   st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+        SetWindowTheme(h, sub, nullptr);
+    TreeView_SetBkColor(st->nav, th.panelBg);
+    TreeView_SetTextColor(st->nav, th.textPrimary);
+    if (repaint)
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+// Settings→Theme: switch skins live. Sets + persists the selection, then rebrushes,
+// re-chromes, and repaints the whole UI. `sel` is a skin id or "system" (follow OS).
+void setSkinSelection(HWND hwnd, AppState* st, const char* sel) {
+    activeSkinSelection() = sel;
+    st->db.setSetting(wideFromUtf8(skinSettingKey()), wideFromUtf8(sel));
+    applyActiveSkin(hwnd, st, /*repaint=*/true);
+}
+#endif
 
 // ---- command bar geometry --------------------------------------------------
 
@@ -1239,6 +1274,18 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     }
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"Layout");
 
+#ifdef RABBITEARS_THEME_ENGINE
+    HMENU themeMenu = CreatePopupMenu();
+    const std::string& skinSel = activeSkinSelection();
+    AppendMenuW(themeMenu, MF_STRING | (skinSel == "system" ? MF_CHECKED : 0u), ID_THEME_SYSTEM,
+                L"Follow System");
+    AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(themeMenu, MF_STRING | (skinSel == "dark" ? MF_CHECKED : 0u), ID_THEME_DARK, L"Dark");
+    AppendMenuW(themeMenu, MF_STRING | (skinSel == "light" ? MF_CHECKED : 0u), ID_THEME_LIGHT,
+                L"Light");
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Theme");
+#endif
+
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_ABOUT, L"About…");  // last item, ellipsis to match siblings
 
@@ -1305,6 +1352,17 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_METERS_SETUP:
             onMeters(st);
             break;
+#ifdef RABBITEARS_THEME_ENGINE
+        case ID_THEME_SYSTEM:
+            setSkinSelection(hwnd, st, "system");
+            break;
+        case ID_THEME_DARK:
+            setSkinSelection(hwnd, st, "dark");
+            break;
+        case ID_THEME_LIGHT:
+            setSkinSelection(hwnd, st, "light");
+            break;
+#endif
     }
 }
 
@@ -1496,6 +1554,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 if (auto dl = st->db.getSetting(L"dock_layout"); dl && !dl->empty())
                     st->dock = DockLayout::parse(*dl);
+#ifdef RABBITEARS_THEME_ENGINE
+                if (auto sk = st->db.getSetting(wideFromUtf8(skinSettingKey())); sk && !sk->empty())
+                    activeSkinSelection() = utf8FromWide(*sk);
+                applyActiveSkin(hwnd, st, /*repaint=*/false);  // window not shown yet; first paint uses it
+#endif
                 syncSpectrumTap(st);
                 refreshNav(st);
                 st->filter = {ViewKind::All};
