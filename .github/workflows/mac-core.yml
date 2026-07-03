@@ -39,7 +39,7 @@ jobs:
   core-selftest:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # full history so version.h's BUILD_NUMBER (git commit count) is real
       - name: Build shared core + run self-test (Apple clang/libc++)
