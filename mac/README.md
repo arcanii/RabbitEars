@@ -37,7 +37,7 @@ shared core off the same unified root build.
 | `RabbitEarsCore` (`common/`) | sqlite3 | ✅ shared `M3uParser` + `Database` + `DockLayout` |
 | `RabbitEarsPlatformMac` | Foundation | ✅ `Http.mm` (NSURLSession) + `Paths.cpp` (Application Support db path) |
 | `RabbitEarsSelfTest` | PlatformMac | ✅ **verified ALL PASS on Apple clang** |
-| `RabbitEars.app` | libVLC, Cocoa (Sparkle) | ✅ **plays** — native channel list (`Database`) + libVLC video + load-by-URL/file. Sparkle auto-update still a stub |
+| `RabbitEars.app` | libVLC, Sparkle, Cocoa | ✅ **plays** — rich channel grid (★/#/name/group, search, filter, favourites) + libVLC video + load-by-URL/file; menu bar with Check-for-Updates; **Sparkle auto-update wired** (auto-provisioned + embedded) |
 | `RabbitEarsPlayProbe` | libVLC | ✅ headless play smoke test — reached `Playing` on a live HLS stream |
 
 ## Running the mac app (playback)
