@@ -6,6 +6,7 @@
 #include <ctime>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "models/Channel.h"
 #include "platform/Encoding.h"
 #include "platform/Log.h"
+#include "platform/Updater.h"
 
 #import "VlcPlayerMac.h"
 
@@ -25,7 +27,6 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
 
 @implementation MainWindowController {
     NSWindow*      _window;
-    NSTextField*   _urlField;
     NSSearchField* _search;
     NSPopUpButton* _filter;
     NSTableView*   _table;
@@ -38,6 +39,7 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     BOOL                          _suppressSelectionPlay;  // ignore programmatic selection changes
     uint64_t                      _loadToken;              // only the newest URL load's result applies
+    CGFloat                       _gridWidth;              // channel-grid width; the video pane fills the rest
 }
 
 - (instancetype)init {
@@ -64,6 +66,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _window.title = @"RabbitEars";
     [_window center];
     _window.releasedWhenClosed = NO;  // we own it via the ivar
+    _window.contentMinSize = NSMakeSize(560, 360);  // keep both split panes usable
     NSView* content = _window.contentView;
 
     std::wstring err;
@@ -72,45 +75,45 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
 
-    // ---- top bar: two rows (load controls; search/filter/stop) ----
-    const CGFloat barH = 80;
+    // ---- top bar (one row): [+ Add Playlist] [Settings ▾] … [search] [filter] [Stop]
+    //      — the mac peer of the Win32 command bar (kCmdBtns = + Add Playlist, Settings).
+    const CGFloat barH = 46;
     NSView* bar = [[NSView alloc]
         initWithFrame:NSMakeRect(0, frame.size.height - barH, frame.size.width, barH)];
     bar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
 
-    // row 1: URL field + Load + Open File
-    _urlField = [[NSTextField alloc] initWithFrame:NSMakeRect(12, 45, frame.size.width - 330, 26)];
-    _urlField.placeholderString = @"M3U / M3U8 playlist URL…";
-    _urlField.autoresizingMask = NSViewWidthSizable;
-    _urlField.target = self;
-    _urlField.action = @selector(loadURL:);
-    [bar addSubview:_urlField];
+    // Left: the accent "+ Add Playlist" (prompts for a URL) and the Settings menu.
+    NSButton* addBtn = [NSButton buttonWithTitle:@"+  Add Playlist"
+                                          target:self action:@selector(addPlaylist:)];
+    addBtn.frame = NSMakeRect(12, 9, 138, 28);
+    addBtn.bezelColor = NSColor.controlAccentColor;  // accent, like the Win32 button
+    [bar addSubview:addBtn];
 
-    NSButton* loadBtn = [NSButton buttonWithTitle:@"Load URL" target:self action:@selector(loadURL:)];
-    loadBtn.frame = NSMakeRect(frame.size.width - 310, 44, 92, 28);
-    loadBtn.autoresizingMask = NSViewMinXMargin;
-    [bar addSubview:loadBtn];
+    NSButton* setBtn = [NSButton buttonWithTitle:@"Settings  ▾"
+                                          target:self action:@selector(showSettings:)];
+    setBtn.frame = NSMakeRect(158, 9, 116, 28);
+    [bar addSubview:setBtn];
 
-    NSButton* openBtn = [NSButton buttonWithTitle:@"Open File…" target:self action:@selector(openFile:)];
-    openBtn.frame = NSMakeRect(frame.size.width - 214, 44, 104, 28);
-    openBtn.autoresizingMask = NSViewMinXMargin;
-    [bar addSubview:openBtn];
-
-    // row 2: search field + filter popup + Stop
-    _search = [[NSSearchField alloc] initWithFrame:NSMakeRect(12, 10, 260, 26)];
-    _search.placeholderString = @"Search channels…";
-    _search.delegate = self;  // controlTextDidChange: -> live filter
-    [bar addSubview:_search];
-
-    _filter = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(280, 10, 190, 26) pullsDown:NO];
-    _filter.target = self;
-    _filter.action = @selector(filterChanged:);
-    [bar addSubview:_filter];
-
+    // Right (pinned): Stop, the filter popup, and the stretchy search field between.
     NSButton* stopBtn = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stop:)];
     stopBtn.frame = NSMakeRect(frame.size.width - 92, 9, 80, 28);
     stopBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:stopBtn];
+
+    _filter = [[NSPopUpButton alloc]
+        initWithFrame:NSMakeRect(frame.size.width - 270, 9, 170, 28) pullsDown:NO];
+    _filter.target = self;
+    _filter.action = @selector(filterChanged:);
+    _filter.autoresizingMask = NSViewMinXMargin;
+    [bar addSubview:_filter];
+
+    _search = [[NSSearchField alloc]
+        initWithFrame:NSMakeRect(284, 10, frame.size.width - 562, 26)];
+    _search.placeholderString = @"Search channels…";
+    _search.autoresizingMask = NSViewWidthSizable;
+    _search.delegate = self;  // controlTextDidChange: -> live filter
+    [bar addSubview:_search];
+
     [content addSubview:bar];
 
     // ---- status line (bottom) ----
@@ -149,8 +152,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [split addSubview:_videoView];
 
+    split.delegate = self;  // keep the grid a fixed width; the video pane fills the rest
     [content addSubview:split];
-    [split setPosition:380 ofDividerAtIndex:0];
+    _gridWidth = 380;
+    [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
 
@@ -166,6 +171,37 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     c.width = w;
     c.minWidth = 20;
     [_table addTableColumn:c];
+}
+
+// ---- split layout (channel grid | video) ----
+
+// The channel grid keeps _gridWidth; the video pane fills the rest. Called on every
+// split resize and once at setup, so the video always fills — no blank strip before
+// the first resize.
+- (void)layoutSplitPanes:(NSSplitView*)sv {
+    if (sv.subviews.count < 2) return;
+    const CGFloat W = NSWidth(sv.bounds), H = NSHeight(sv.bounds), d = sv.dividerThickness;
+    const CGFloat left = MAX(160, MIN(_gridWidth, W - d - 200));  // keep both panes usable
+    sv.subviews[0].frame = NSMakeRect(0, 0, left, H);
+    sv.subviews[1].frame = NSMakeRect(left + d, 0, W - left - d, H);
+}
+
+- (void)splitView:(NSSplitView*)sv resizeSubviewsWithOldSize:(NSSize)__unused oldSize {
+    [self layoutSplitPanes:sv];  // window resize grows the video, not the grid
+}
+
+// Remember a divider the user dragged, so later window resizes preserve it.
+- (void)splitViewDidResizeSubviews:(NSNotification*)note {
+    NSSplitView* sv = note.object;
+    if (sv.subviews.count >= 1) _gridWidth = NSWidth(sv.subviews[0].frame);
+}
+
+- (CGFloat)splitView:(NSSplitView*)__unused sv
+    constrainMinCoordinate:(CGFloat)__unused m ofSubviewAt:(NSInteger)__unused i { return 160; }
+
+- (CGFloat)splitView:(NSSplitView*)sv
+    constrainMaxCoordinate:(CGFloat)__unused m ofSubviewAt:(NSInteger)__unused i {
+    return NSWidth(sv.bounds) - 200;
 }
 
 - (NSMenu*)makeRowMenu {
@@ -279,11 +315,29 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
 // ---- actions ----
 
-- (void)loadURL:(id)__unused sender {
-    NSString* u = _urlField.stringValue;
-    if (!u.length) return;
+// "+ Add Playlist": prompt for a URL, then load it (peer of the Win32 onAddUrl).
+- (void)addPlaylist:(id)__unused sender {
+    NSAlert* a = [[NSAlert alloc] init];
+    a.messageText = @"Add Playlist";
+    a.informativeText = @"Playlist URL (.m3u / .m3u8):";
+    [a addButtonWithTitle:@"OK"];
+    [a addButtonWithTitle:@"Cancel"];
+    NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 320, 24)];
+    input.placeholderString = @"https://…";
+    a.accessoryView = input;
+    [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        if (resp != NSAlertFirstButtonReturn) return;  // OK is the first button
+        NSString* u = [input.stringValue
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (u.length) [self loadPlaylistFromURL:u];
+    }];
+}
+
+// Download + parse + import a playlist URL off the main queue; newest request wins
+// (an in-flight load is superseded, never interleaved).
+- (void)loadPlaylistFromURL:(NSString*)u {
     const std::wstring url = ws(u);
-    const uint64_t token = ++_loadToken;  // newest request wins; supersedes any in flight
+    const uint64_t token = ++_loadToken;
     [self setStatus:@"Downloading playlist…"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         std::string bytes;
@@ -319,8 +373,41 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (!_db) { [self setStatus:@"Database unavailable — cannot save playlist."]; return; }
     const long long now = (long long)time(nullptr);
     const long long pid = _db->addPlaylist(name, source, isUrl, now);
-    _db->bulkInsertChannels(pid, doc.channels, now);
-    [self showPlaylist:pid];
+    if (pid == 0) {
+        [self setStatus:@"Add playlist failed: could not save to the database."];
+        [self showResults:@"Could not import the playlist"
+                     info:[NSString stringWithFormat:
+                           @"Source: %@\n\nThe playlist could not be saved to the database.", ns(source)]];
+        return;
+    }
+    const int imported = _db->bulkInsertChannels(pid, doc.channels, now);
+    const int parsed = (int)doc.channels.size();
+    std::set<std::wstring> groups;
+    for (const auto& c : doc.channels)
+        if (!c.groupTitle.empty()) groups.insert(c.groupTitle);
+    [self showPlaylist:pid];  // make it the active view (updates the grid + status)
+
+    // Import results — the mac peer of the Win32 onPlaylistDone dialog.
+    if (parsed == 0) {
+        [self showResults:@"No channels found"
+                     info:[NSString stringWithFormat:
+                           @"Source: %@\n\nThe playlist contained no channels.", ns(source)]];
+        return;
+    }
+    NSMutableString* info = [NSMutableString stringWithFormat:
+        @"Source: %@\n\nChannels parsed: %d\nChannels imported: %d\n", ns(source), parsed, imported];
+    if (parsed - imported > 0)
+        [info appendFormat:@"Skipped (blank or duplicate URLs): %d\n", parsed - imported];
+    [info appendFormat:@"Groups: %lu", (unsigned long)groups.size()];
+    [self showResults:[NSString stringWithFormat:@"Imported %d channels", imported] info:info];
+}
+
+- (void)showResults:(NSString*)title info:(NSString*)info {
+    NSAlert* a = [[NSAlert alloc] init];
+    a.messageText = title;
+    a.informativeText = info;
+    [a addButtonWithTitle:@"OK"];
+    [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse __unused r) {}];
 }
 
 - (void)filterChanged:(id)__unused sender { [self refreshChannels]; }
@@ -330,6 +417,22 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 }
 
 - (void)stop:(id)__unused sender { _player->stop(); [self setStatus:@"Stopped."]; }
+
+// Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
+// now — file import + updates/about; real preferences will hang off here.
+- (void)showSettings:(NSButton*)sender {
+    NSMenu* m = [[NSMenu alloc] init];
+    [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
+    [m addItem:[NSMenuItem separatorItem]];
+    [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"About RabbitEars" action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
+    [m popUpMenuPositioningItem:nil
+                     atLocation:NSMakePoint(0, NSHeight(sender.bounds) + 4)
+                         inView:sender];
+}
+
+- (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
+- (void)showAbout:(id)__unused sender { [NSApp orderFrontStandardAboutPanel:nil]; }
 
 - (void)playClicked:(id)__unused sender { [self playRow:_table.clickedRow]; }
 
