@@ -16,6 +16,11 @@
   <key>LSMinimumSystemVersion</key>    <string>11.0</string>
   <key>NSHighResolutionCapable</key>   <true/>
   <key>NSPrincipalClass</key>          <string>NSApplication</string>
-  <!-- TODO(phase-1): SUFeedURL -> the macOS appcast; SUPublicEDKey -> the shared family Ed25519 key. -->
+  <!-- Sparkle auto-update: the macOS appcast + the shared family Ed25519 public
+       key (same string as the Windows WinSparkle build). Ignored when Sparkle
+       isn't linked. Live end-to-end update needs a signed/notarized release. -->
+  <key>SUFeedURL</key>              <string>https://raw.githubusercontent.com/arcanii/RabbitEars/main/mac/packaging/appcast-mac.xml</string>
+  <key>SUPublicEDKey</key>          <string>sKPprIa95Hw+DX3bMoxWMsyC0w9vc4MzEpgx7TBDP1I=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
 </dict>
 </plist>
