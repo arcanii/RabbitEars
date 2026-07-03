@@ -10,6 +10,6 @@
 
 #import <Cocoa/Cocoa.h>
 
-@interface MainWindowController : NSObject <NSTableViewDataSource, NSTableViewDelegate>
+@interface MainWindowController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
 - (void)showWindow;
 @end
