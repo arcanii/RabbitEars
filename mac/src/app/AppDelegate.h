@@ -4,4 +4,5 @@
 #import <Cocoa/Cocoa.h>
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
+- (void)showAboutPanel:(id)sender;   // custom About (libVLC attribution + disclaimer)
 @end

@@ -38,8 +38,8 @@ using namespace rabbitears;
     NSMenuItem* appItem = [[NSMenuItem alloc] init];
     [menubar addItem:appItem];
     NSMenu* appMenu = [[NSMenu alloc] init];
-    [appMenu addItemWithTitle:@"About RabbitEars"
-                       action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    [[appMenu addItemWithTitle:@"About RabbitEars"
+                        action:@selector(showAboutPanel:) keyEquivalent:@""] setTarget:self];
     [[appMenu addItemWithTitle:@"Check for Updates…"
                         action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
     [appMenu addItem:[NSMenuItem separatorItem]];
@@ -63,10 +63,39 @@ using namespace rabbitears;
     [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
     editItem.submenu = editMenu;
 
+    // View menu — native full-screen (⌃⌘F). toggleFullScreen: routes down the
+    // responder chain to the key window.
+    NSMenuItem* viewItem = [[NSMenuItem alloc] init];
+    [menubar addItem:viewItem];
+    NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+    NSMenuItem* fs = [viewMenu addItemWithTitle:@"Enter Full Screen"
+                                         action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+    fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+    viewItem.submenu = viewMenu;
+
     NSApp.mainMenu = menubar;
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
+
+// Custom About panel — the mac peer of the Win32 About box: libVLC attribution +
+// the educational-use disclaimer (name/version come from the bundle Info.plist).
+- (void)showAboutPanel:(id)__unused sender {
+    NSMutableParagraphStyle* ps = [[NSMutableParagraphStyle alloc] init];
+    ps.alignment = NSTextAlignmentCenter;
+    NSString* credits =
+        @"A simple IPTV viewer for macOS.\n\n"
+        @"Plays media with libVLC (LGPL-2.1)\n"
+        @"© VideoLAN and the VLC contributors.\n\n"
+        @"RabbitEars is provided only for educational purposes, and does not "
+        @"represent supporting any illegal activity that you do with it. "
+        @"We don't know, we don't care.";
+    NSAttributedString* attr = [[NSAttributedString alloc] initWithString:credits attributes:@{
+        NSFontAttributeName: [NSFont systemFontOfSize:11],
+        NSParagraphStyleAttributeName: ps,
+    }];
+    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionCredits: attr}];
+}
 
 - (void)applicationWillTerminate:(NSNotification*)__unused note {
     shutdownUpdater();
