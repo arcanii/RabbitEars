@@ -1,15 +1,16 @@
 # RabbitEars — macOS
 
-This directory is the macOS **app + build entry** (`mac/CMakeLists.txt`, run via
-`cmake -S mac -B build-mac`). It reaches up into the shared `../src` and
-`../third_party` sources and compiles them **in place** — including the macOS
-platform layer at `../src/platform/mac/`, the peer of `../src/platform/win/`.
-Full plan and rationale: [`docs/MACOS_PORT.md`](../docs/MACOS_PORT.md).
+This directory is the macOS **app** (`mac/src/app`), its **self-test**
+(`mac/src/tools`), and the macOS **platform layer** (`mac/platform/*` — the peer
+of `Win32/platform/*`). It is a **subdirectory of the unified root build**: run
+`cmake -S . -B build-mac` (or `scripts/build-mac.sh`) and the root dispatches to
+`common/` + `mac/` on macOS. Full plan and rationale:
+[`docs/MACOS_PORT.md`](../docs/MACOS_PORT.md).
 
-After the Phase-2 core carve-out, the shared core (`RabbitEarsCore` /
-`RabbitEarsCoreMac`) is genuinely platform-neutral — it builds from **either**
-build system on both OSes and links only `sqlite3`. The old `mac/src/shim/`
-headers are gone: the shared headers now carry their own non-Windows branch.
+The shared core (`RabbitEarsCore`, in `common/`) is platform-neutral — one
+library built for both OSes, linking only `sqlite3`. The old `mac/src/shim/`
+headers are gone: the shared headers (`common/platform/Encoding.h`,
+`common/ui/DockLayout.h`) carry their own non-Windows branch.
 
 ## Build & test
 
@@ -22,19 +23,20 @@ scripts/build-mac.sh
 scripts/build-mac.sh --app
 ```
 
-Or directly: `cmake -S mac -B build-mac && cmake --build build-mac && ctest --test-dir build-mac --output-on-failure`.
+Or directly: `cmake -S . -B build-mac && cmake --build build-mac && ctest --test-dir build-mac --output-on-failure`.
 
 Both platforms are covered in CI: `.github/workflows/mac-core.yml` (macOS) and
-`windows-core.yml` (Windows) each build the carved-out core + run the self-test.
+`windows-core.yml` (Windows — core self-test + full GUI build) each exercise the
+shared core off the same unified root build.
 
 ## What builds today
 
 | Target | Deps | Status |
 |---|---|---|
 | `sqlite3` | none | ✅ shared vendored amalgamation |
-| `RabbitEarsCoreMac` | sqlite3 | ✅ shared `M3uParser` + `Database` + `DockLayout` + `platform/mac/Paths.cpp`, compiled in place |
-| `RabbitEarsPlatformMac` | Foundation | ✅ `Http.mm` (NSURLSession), `Log.mm` (os_log) |
-| `RabbitEarsSelfTest` | CoreMac | ✅ **verified ALL PASS on Apple clang** |
+| `RabbitEarsCore` (`common/`) | sqlite3 | ✅ shared `M3uParser` + `Database` + `DockLayout` |
+| `RabbitEarsPlatformMac` | Foundation | ✅ `Http.mm` (NSURLSession) + `Paths.cpp` (Application Support db path) |
+| `RabbitEarsSelfTest` | PlatformMac | ✅ **verified ALL PASS on Apple clang** |
 | `RabbitEars.app` | libVLC, Sparkle, Cocoa | 🚧 window opens + opens the DB; playback/update/UI are Phase-1 |
 
 ## How the shared code stays cross-platform
@@ -42,14 +44,14 @@ Both platforms are covered in CI: `.github/workflows/mac-core.yml` (macOS) and
 The platform split lives **inside the shared headers**, so Windows keeps its
 exact types/impls and macOS gets a portable branch — no shadow headers:
 
-- `../src/platform/Encoding.h` — `#if defined(_WIN32)` uses `WideCharToMultiByte`
+- `common/platform/Encoding.h` — `#if defined(_WIN32)` uses `WideCharToMultiByte`
   (unchanged); `#else` a portable UTF-8↔UTF-32 impl for clang.
-- `../src/ui/DockLayout.h` — `#if defined(_WIN32)` includes `<windows.h>` for
+- `common/ui/DockLayout.h` — `#if defined(_WIN32)` includes `<windows.h>` for
   `RECT`; `#else` defines a layout-compatible POD `RECT`. `DockLayout.cpp` uses
   portable `std::swprintf`/`std::wcstod`.
 - `Database::defaultDbPath()` is implemented per-platform in
-  `../src/platform/win/Paths.cpp` and `../src/platform/mac/Paths.cpp`, so the core
-  links only `sqlite3`.
+  `Win32/platform/Paths.cpp` and `mac/platform/Paths.cpp`, so the core links only
+  `sqlite3`.
 
 ## Provisioning the app's external deps (Phase-1)
 
@@ -63,16 +65,16 @@ exact types/impls and macOS gets a portable branch — no shadow headers:
 ## Layout
 
 ```
-mac/
-  CMakeLists.txt            # mac build entry (cmake -S mac -B build-mac)
+mac/                        # the macOS app (subdir of the unified root build)
+  CMakeLists.txt            # cmake -S . -B build-mac dispatches here on APPLE
   cmake/Mac.cmake           # libVLC + Sparkle provisioning (best-effort, non-fatal)
-  src/
-    app/{main,AppDelegate,VlcPlayerMac}.{h,mm}   # Cocoa shell + libVLC wrapper
-    tools/selftest.cpp        # shared-core self-test (portable harness)
+  platform/{Http,Log,Updater}.mm  platform/Paths.cpp   # macOS platform layer
+  src/app/{main,AppDelegate,VlcPlayerMac}.{h,mm}        # Cocoa shell + libVLC wrapper
+  src/tools/selftest.cpp    # shared-core self-test (portable harness)
   packaging/{Info.plist.in, appcast-mac.xml}
 
-../src/platform/             # shared platform layer (peers)
-  Encoding.h  Log.h  Updater.h   # shared seam headers (dual-platform)
-  win/{Http,Log,Updater,Paths}.cpp
-  mac/{Http,Log,Updater}.mm  mac/Paths.cpp
+../common/                  # shared engine, both OSes (RabbitEarsCore)
+  core/  db/  models/  ui/DockLayout  platform/{Encoding,Log,Updater}.h  version.h.in
+../Win32/                   # the Windows app (peer)
+  WinMain  ui/  audio/  cli/  platform/{Http,Log,Updater,Paths}.cpp  resource.h
 ```
