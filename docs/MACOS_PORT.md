@@ -1,16 +1,22 @@
 # RabbitEars — macOS Port Plan
 
-**Status:** proposal + Phase‑0 spike scaffold (branch `mac-spike`).
-**Audience:** the Windows team (currently on `main`, shipping 0.1.5) and the product owner.
-**TL;DR:** Add macOS **in this repo** (monorepo). The spike is **additive‑only** — one new top‑level `mac/`
-tree plus **two tiny, guarded, Windows‑behavior‑preserving edits to shared files** (`src/db/Database.cpp`
-and `src/core/M3uParser.cpp`), so it cannot change the Windows build. Structural changes to `main` are
-**gated on 0.1.5 shipping** and land later as one small, pre‑reviewed PR.
+**Status:** Phase‑0 spike **merged to `main`**; Phase‑2 core carve‑out **in PR** (branch `phase-2-core-carve-out`).
+**Audience:** the Windows team and the product owner.
+**TL;DR:** Add macOS **in this repo** (monorepo). Phase 0 was additive‑only; **Phase 2** (below) makes the
+shared core genuinely platform‑neutral — `RabbitEarsCore` links only `sqlite3`, the Win32 bits move to
+`src/platform/win/` with macOS peers in `src/platform/mac/`, and the shared headers carry their own
+non‑Windows branch so the mac shims retire. 0.1.5 has shipped and the Windows team green‑lit the merge.
 
-> The spike has been **built and the core self‑test run green on macOS** (stock Xcode `clang`/libc++), and the
-> `.app` bundle links. Building it is what surfaced the *second* edit below — `parseM3uFile` used an
-> MSVC‑only `std::ifstream(const wchar_t*)` extension that the paper analysis missed. Proving the port
-> empirically instead of on paper is exactly the point of Phase 0.
+> **Phase‑2 verification.** The macOS half is built + self‑tested green locally (stock Xcode `clang`/libc++:
+> core, `.app`, and root‑CMake‑on‑mac). The Windows half is validated on the PR by a new
+> `.github/workflows/windows-core.yml` job (MSVC builds the carved‑out core + CLI and runs `--selftest`),
+> the peer of the existing `mac-core.yml`. Merge on both‑green + Windows‑team sign‑off, per §5.
+
+> **Windows‑team review** ([`docs/MACOS_PORT_REVIEW.md`](MACOS_PORT_REVIEW.md)) resolutions: the two flagged
+> self‑test traps were avoided — `serialize()` uses `std::swprintf("%.3f")` (not `to_wstring`) and `parse()`
+> uses `std::wcstod` (not `stod`); `Encoding.h` keeps `WideCharToMultiByte` on Windows (surrogate‑correct);
+> `RECT` stays a real Win32 `RECT` on Windows (zero UI call‑site churn); RC/OBJCXX languages made
+> conditional; and `APP_VERSION` unified into `cmake/AppVersion.cmake` (was stale at 0.1.4 on mac).
 
 ---
 
@@ -133,7 +139,7 @@ Windows behavior change, and Windows‑team sign‑off.
 
 ---
 
-*This document reflects the scaffold on branch `mac-spike`. Verified on macOS with stock Xcode `clang`/libc++:
-the shared core self‑test builds and passes (`ctest`), the ObjC++ platform seams compile, and the
-`RabbitEars.app` bundle links — using the two guarded shared‑file edits above plus the `mac/src/shim`
-headers. See `mac/README.md`.*
+*Verified on macOS with stock Xcode `clang`/libc++: the shared core self‑test builds and passes (`ctest`),
+the ObjC++ platform seams compile, and the `RabbitEars.app` bundle links. After the Phase‑2 carve‑out the
+core is platform‑neutral (builds from the root CMake on macOS too) and the mac shims are retired — the
+shared headers carry their own non‑Windows branch. See `mac/README.md`.*
