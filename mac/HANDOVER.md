@@ -12,21 +12,33 @@ Windows app), **`mac/`** (this — the Cocoa app), under a unified root `CMakeLi
 (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**. `main` is on
 **0.1.7** (the Windows team ships from `main` — don't destabilize their build).
 
-## Current state (all merged to `main`)
+## Current state — first release SHIPPED (branch `mac-ui`, PR #11 → `main`, NOT yet merged)
 
-The mac app **plays IPTV** via libVLC in a native window, with:
-- a **rich channel grid** — columns (★ / # / name / group), live **search**, filter popup
-  (All / ★ Favourites / groups / **countries**), **favourite toggle** + **LCN edit** (row
-  context menu), **resume‑last‑played** on launch;
-- **Sparkle auto‑update** wired — framework auto‑provisioned from the GitHub release by
-  `mac/cmake/Mac.cmake` and embedded in the bundle; `SUFeedURL`/`SUPublicEDKey` in the
-  Info.plist; menu‑bar *Check for Updates…*;
-- a proper **menu bar** (App / Edit / …) so Cmd‑C/V/X/A/Z work in text fields;
-- both platforms built in **CI** (`.github/workflows/{mac,windows}-core.yml`; the mac job
-  builds the `.app`).
+The mac app is **feature-complete for a first release** and **published**: **`v0.1.7-mac`** on
+GitHub — a **universal (Intel + Apple Silicon), notarized, self-contained** DMG that opens with a
+normal double-click. All of it lives on branch **`mac-ui`** as **PR #11**; merging that PR lands
+the code **and** `mac/packaging/appcast-mac.xml` on `main` (the Sparkle feed URL serves from
+`main`, so the merge switches on in-app auto-updates). `main` is still at the pre-mac-UI commit —
+the Windows team ships from `main`, and the mac work is **Windows-safe** (`mac/` + docs/scripts
+only; no `common/`/`Win32/` changes).
 
-The mac `.mm` are compiled with **ARC** (`-fobjc-arc`); the shared core is portable C++
-whose headers carry `#if defined(_WIN32)` branches (so Windows keeps its exact types/impls).
+The app **plays IPTV** via libVLC in a native window:
+- **rich channel grid** — ★ / # / name / group columns, live **search**, filter popup
+  (All / ★ Favourites / groups / **countries**), **favourite** toggle + **LCN edit** (row menu),
+  **resume-last-played**; a single click selects, **double-click / Return plays**;
+- **top bar** — accent **`+ Add Playlist`** (URL prompt → import-results dialog) + a **`Settings`**
+  menu (Open File / Check for Updates / About) + search + filter — the Win32 command-bar peer;
+- **split view** (grid | video) that fills correctly and **remembers window size/position**;
+- **volume + mute** (bottom bar), native **fullscreen** (⌃⌘F), a **custom About** (libVLC
+  attribution + educational-use disclaimer, matching Win32);
+- **Sparkle auto-update** (framework embedded; `SUFeedURL`/`SUPublicEDKey` in Info.plist);
+- **self-contained** — `scripts/package-mac.sh` bundles libvlc + libvlccore + ~343 plugins into the
+  app, so it runs with **no VLC.app installed**;
+- an **app icon** (`RabbitEars.icns`), a menu bar (Cmd-C/V/X/A/Z), CI on both platforms.
+
+The mac `.mm` are ObjC++ written **ARC-style** (no manual retain/release); note `-fobjc-arc` is
+**not** currently enabled in the mac build (it was only on the reverted `mac-meters` branch). The
+shared core is portable C++ whose headers carry `#if defined(_WIN32)` branches.
 
 ## Build & run
 
@@ -59,26 +71,45 @@ problem. Redo post‑release by moving playback to **libVLC 4.x** (timed audio c
 driving the meter from a **non‑invasive OS tap** (Core Audio process tap on macOS 14.4+, or
 ScreenCaptureKit on 13+). **Don't re‑attempt the tap on libVLC 3.x.**
 
-## Toward the first Mac release
+## Releasing (v0.1.7-mac shipped this way — full recipe in the `mac-release-deployment` memory)
 
-1. ~~Land the meters~~ — tried on‑device and reverted (see above); the first release ships without them.
-2. Cut a **signed + notarized** build (Developer ID) — required for Sparkle's live update
-   flow. Sign the enclosure with the family Ed25519 key (Sparkle `sign_update`) and populate
-   `mac/packaging/appcast-mac.xml`, then publish.
+Deployed like the sibling **SQLTerminal** (`~/Desktop/github_repos/SQLTerminal/scripts/build.sh`),
+**reusing the family credentials — no new setup**: Developer ID **`386M76FV3K`** signs, notarize
+via the **`SQLTerminal-notarize`** keychain profile, and the Sparkle EdDSA key is in the login
+keychain under account **`SQLTerminal`**. (Bryan's other team `28BMLNV6CR` is Apple-Development
+only — it can't notarize.)
+
+```sh
+# 1. universal build — a stock VLC.app is single-arch, so point at vlc-3.0.23-universal.dmg's app
+scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+    -DLIBVLC_MAC_PREFIX="<universal VLC.app>/Contents/MacOS"
+# 2. bundle libVLC + sign inside-out (app, plugins, AND Sparkle's Updater.app/Autoupdate/XPC —
+#    which ship without a secure timestamp and otherwise FAIL notarization)
+scripts/package-mac.sh <app> --vlc "<VLC.app>" \
+    --sign "Developer ID Application: Matthew Mark (386M76FV3K)" \
+    --entitlements mac/packaging/RabbitEars.entitlements
+# 3. dmg → notarize → staple → Sparkle-sign
+create-dmg … <dmg> <app>
+xcrun notarytool submit <dmg> --keychain-profile SQLTerminal-notarize --wait
+xcrun stapler staple <dmg>
+build-mac*/sparkle/bin/sign_update --account SQLTerminal <dmg>   # prints edSignature + length
+# 4. paste the enclosure into mac/packaging/appcast-mac.xml (sparkle:version = CFBundleVersion),
+#    gh release create v<ver>-mac <dmg>, then MERGE the appcast to main (feed serves from main).
+```
 
 ## Key files
 
 ```
-mac/CMakeLists.txt                     # mac targets (app / self-test / play-probe); ARC; rpath; Sparkle embed
-mac/cmake/Mac.cmake                    # libVLC + Sparkle provisioning
-mac/src/app/main.mm                    # NSApplication entry
-mac/src/app/AppDelegate.mm             # lifecycle + menu bar + Check-for-Updates
-mac/src/app/MainWindowController.mm    # the UI: grid, search/filter, playback, meter wiring
-mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper + audio tap (mac-meters)
-mac/src/app/MeterView.{h,mm}           # LED level meter (mac-meters)
+mac/CMakeLists.txt                     # mac targets (app / self-test / play-probe); rpath; Sparkle embed; icon
+mac/cmake/Mac.cmake                    # libVLC + Sparkle provisioning (-DLIBVLC_MAC_PREFIX overrides VLC.app)
+mac/src/app/AppDelegate.mm             # lifecycle + menu bar (App/Edit/View) + custom About + Check-for-Updates
+mac/src/app/MainWindowController.mm    # the UI: top bar, grid, search/filter, split, volume, fullscreen, playback
+mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper (prefers bundled Contents/PlugIns); NO audio tap on mac-ui
 mac/platform/{Http,Log,Updater}.mm  mac/platform/Paths.cpp   # macOS platform layer
 mac/src/tools/{selftest.cpp,playprobe.mm}
-mac/packaging/{Info.plist.in, appcast-mac.xml}
+mac/packaging/{Info.plist.in, appcast-mac.xml, RabbitEars.icns, RabbitEars.entitlements}
+scripts/{build-mac.sh, package-mac.sh, make-icns.py, xcode.sh}  # build / bundle+sign+notarize / icon / Xcode-gen
+mac/src/app/MeterView.{h,mm} + the VlcPlayerMac audio tap       # ONLY on branch mac-meters (deferred; don't merge)
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 
@@ -94,14 +125,16 @@ mac/packaging/{Info.plist.in, appcast-mac.xml}
 ## Seed prompt for a fresh session
 
 ```
-Read mac/HANDOVER.md. RabbitEars is a cross-platform native IPTV player (Windows + macOS) in
-one repo (common/ + Win32/ + mac/, unified root CMake); main is on 0.1.7. The macOS app plays
-IPTV with a rich channel grid + Sparkle, built in CI. GOAL: first Mac release.
-Next: (1) validate the audio meters on-device — `git checkout mac-meters && scripts/build-mac.sh
---app && open build-mac/mac/RabbitEars.app`, play a channel, confirm clean audio + meter tracks
-+ smooth channel-switch; if good merge PR #9, if audio regresses revert the tap (keep MeterView,
-consider ScreenCaptureKit). (2) Cut a signed+notarized build for Sparkle's update flow and
-populate mac/packaging/appcast-mac.xml. Build mac: scripts/build-mac.sh [--app] (needs VLC.app);
-headless libVLC check: build-mac/mac/RabbitEarsPlayProbe. GUI/audio need on-device testing.
-Branch off main; keep common/ edits Windows-safe (windows-core CI validates).
+Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
+(Windows + macOS) in one repo (common/ + Win32/ + mac/, unified root CMake). The macOS app is
+feature-complete and SHIPPED: v0.1.7-mac on GitHub (universal, notarized, self-contained) — all on
+branch mac-ui as PR #11 (mac-ui -> main), NOT yet merged. Merging PR #11 lands the code +
+mac/packaging/appcast-mac.xml on main (the Sparkle feed serves from main -> in-app updates go live).
+Build: scripts/build-mac.sh [--app] (needs VLC.app). Release recipe: scripts/package-mac.sh + the
+mac-release-deployment memory (Developer ID 386M76FV3K, notary profile SQLTerminal-notarize,
+sign_update --account SQLTerminal; universal needs vlc-*-universal.dmg). GUI/audio can't be verified
+headlessly — real Mac testing required. Open items: (1) merge PR #11; (2) audio meters are deferred
+— the libVLC 3.x tap caused A/V desync, do NOT retry (use a non-invasive OS tap or libVLC 4.x);
+(3) the x86_64 slice of the universal build is untested on real Intel hardware. Branch off main;
+keep common/ edits Windows-safe (windows-core CI validates).
 ```
