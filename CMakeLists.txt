@@ -46,7 +46,7 @@ endif()
 # Version header — APP_VERSION + git commit count -> build/generated/version.h
 # (BUILD_NUMBER is monotonic per commit, for WinSparkle update comparison).
 # ---------------------------------------------------------------------------
-set(APP_VERSION "0.1.4")
+set(APP_VERSION "0.1.5")
 find_package(Git QUIET)
 set(BUILD_NUMBER 0)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")

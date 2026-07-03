@@ -9,6 +9,8 @@
 
 #include <windows.h>
 
+#include "ui/MiniMeter.h"  // MeterConfig for chooseMeters
+
 namespace rabbitears {
 
 // Modal About box: artwork + name/version + libVLC attribution + Check-for-Updates.
@@ -36,5 +38,11 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
 bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
                       const std::vector<std::wstring>& allGroups,
                       std::set<std::wstring>& checked);
+
+// Modal meter-setup dialog (Settings → Meters…): four rows, each with a live preview
+// meter, a Look selector, and per-role colour swatches. `cfg[4]` (indexed by MeterKind)
+// is in/out — seeded on entry, overwritten with the user's choices on OK. Returns true
+// if OK was pressed (Cancel leaves `cfg` untouched).
+bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]);
 
 }  // namespace rabbitears

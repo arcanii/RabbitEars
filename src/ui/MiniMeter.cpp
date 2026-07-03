@@ -3,8 +3,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <mutex>
+#include <string>
+#include <vector>
+
+#include <objidl.h>  // IStream — required by gdiplus.h below
+// gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the std
+// versions into the Gdiplus namespace before including it (used for the AA scope trace).
+namespace Gdiplus {
+using std::max;
+using std::min;
+}  // namespace Gdiplus
+#include <gdiplus.h>
 
 #include "ui/Theme.h"
 
@@ -17,15 +31,10 @@ constexpr int kHist = 64;      // bitrate history ring length
 constexpr UINT kTimerId = 1;
 constexpr UINT kTimerMs = 33;  // ~30fps animation
 
-// LED palette (fixed — drawn with the DC brush, never themeBrush, whose 12-slot
-// cache would leak if we pushed this many distinct colors through it).
-constexpr COLORREF kOff = RGB(38, 40, 44);
-constexpr COLORREF kGreen = RGB(96, 205, 128);
-constexpr COLORREF kAmber = RGB(232, 188, 86);
-constexpr COLORREF kRed = RGB(232, 96, 86);
-constexpr COLORREF kCoral = RGB(217, 119, 87);
-constexpr COLORREF kPeak = RGB(236, 236, 240);
-
+// Meter colours come from each meter's MeterPalette (customizable via Settings →
+// Meters…); the defaults reproduce the classic look. Cells are drawn with the stock
+// DC brush (SetDCBrushColor), never themeBrush — its 12-slot cache would leak once
+// the per-cell ramp pushes this many distinct colours through it.
 int dpx(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
 COLORREF lerpCol(COLORREF a, COLORREF b, float t) {
@@ -35,8 +44,23 @@ COLORREF lerpCol(COLORREF a, COLORREF b, float t) {
               mix(GetBValue(a), GetBValue(b)));
 }
 
+// The lit-ramp colour for a 0..1 fraction (same thresholds as the classic look).
+COLORREF rampColor(const MeterPalette& p, float frac) {
+    return frac < 0.60f ? p.low : frac < 0.85f ? p.mid : p.high;
+}
+
+// One lit cell captured during the base paint pass so the Tube look can add a soft
+// GDI+ phosphor halo over it in a second pass (see drawTubeGlow). `c` is the cell's
+// lit ramp colour.
+struct GlowCell {
+    RECT     r;
+    COLORREF c;
+};
+
 struct MiniMeterState {
-    MeterKind kind = MeterKind::Spectrum;
+    MeterKind    kind = MeterKind::Spectrum;
+    MeterStyle   style = MeterStyle::Led;
+    MeterPalette palette = defaultMeterPalette(MeterKind::Spectrum);
     UINT      dpi = 96;
     bool      timerOn = false;
 
@@ -71,7 +95,130 @@ void fillCell(HDC dc, const RECT& r, COLORREF c) {
     FillRect(dc, &r, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 }
 
-void paintSpectrum(HDC dc, const RECT& in, MiniMeterState* st) {
+// Draw one meter cell in the chosen look. `lit` is the cell's colour when on; the
+// styler decides the off/dim appearance and any decoration. (Scope is a trace, not
+// cells — handled by drawScope, so it falls back to LED cells here.)
+void drawCell(HDC dc, const RECT& r, COLORREF lit, bool on, const MeterPalette& pal,
+              MeterStyle style, std::vector<GlowCell>* glow) {
+    switch (style) {
+        case MeterStyle::Lcd:
+            // Backlit LCD: off segments are a faint ghost of the lit colour, not black.
+            fillCell(dc, r, on ? lit : lerpCol(pal.off, lit, 0.16f));
+            break;
+        case MeterStyle::Tube:
+            // Warm vacuum tube: lay down a muted base cell now; the soft phosphor halo
+            // is added in a second GDI+ pass (lit cells collected in `glow`) so the
+            // bloom can bleed across cell borders into a continuous column of light —
+            // something a hard GDI square core can't. See drawTubeGlow.
+            fillCell(dc, r, on ? lerpCol(pal.off, lit, 0.55f) : pal.off);
+            if (on && glow) glow->push_back({r, lit});
+            break;
+        case MeterStyle::Led:
+        case MeterStyle::Scope:
+        default:
+            fillCell(dc, r, on ? lit : pal.off);
+            break;
+    }
+}
+
+// Oscilloscope look: draw the kind's data as a continuous trace on a faint graticule
+// instead of cells. Spectrum → band curve; Bitrate → its scroll history; Signal /
+// Frames → a level line (they keep no history).
+void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
+    const int L = static_cast<int>(in.left), R = static_cast<int>(in.right);
+    const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
+    if (R <= L || B <= T) return;
+
+    float vals[kHist];
+    int n = 0;
+    switch (st->kind) {
+        case MeterKind::Spectrum:
+            n = std::clamp(st->bands, 1, kMaxBands);
+            for (int i = 0; i < n; ++i) vals[i] = std::clamp(st->level[i], 0.0f, 1.0f);
+            break;
+        case MeterKind::Bitrate: {
+            const float denom = std::max(st->histMax, 1.0f);
+            n = std::min(kHist, st->histCount);
+            for (int k = 0; k < n; ++k) {  // oldest → newest, left → right
+                const int idx = (st->histHead - n + k + kHist) % kHist;
+                vals[k] = std::clamp(st->hist[idx] / denom, 0.0f, 1.0f);
+            }
+            break;
+        }
+        case MeterKind::Signal:
+            n = 12;
+            for (int i = 0; i < n; ++i) vals[i] = std::clamp(st->sigLevel, 0.0f, 1.0f);
+            break;
+        case MeterKind::Frames:
+            n = 12;
+            for (int i = 0; i < n; ++i) vals[i] = std::clamp(st->fps / 60.0f, 0.0f, 1.0f);
+            break;
+    }
+    if (n < 2) {
+        vals[1] = (n == 1) ? vals[0] : 0.0f;
+        if (n == 0) vals[0] = 0.0f;
+        n = 2;
+    }
+
+    auto gcol = [](COLORREF c, BYTE a) {
+        return Gdiplus::Color(a, GetRValue(c), GetGValue(c), GetBValue(c));
+    };
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+
+    // Faint graticule.
+    const Gdiplus::REAL Lf = static_cast<Gdiplus::REAL>(L), Rf = static_cast<Gdiplus::REAL>(R);
+    const Gdiplus::REAL Tf = static_cast<Gdiplus::REAL>(T), Bf = static_cast<Gdiplus::REAL>(B);
+    Gdiplus::Pen gridPen(gcol(st->palette.off, 150), 1.0f);
+    for (int gi = 1; gi < 4; ++gi) {
+        const Gdiplus::REAL gy = Tf + (Bf - Tf) * gi / 4.0f;
+        g.DrawLine(&gridPen, Lf, gy, Rf, gy);
+    }
+
+    // The trace, antialiased, with a phosphor bloom: wide low-alpha accent underlays
+    // then a crisp bright core.
+    Gdiplus::PointF pts[kHist];
+    for (int i = 0; i < n; ++i) {
+        pts[i].X = Lf + (Rf - Lf) * i / static_cast<Gdiplus::REAL>(n - 1);
+        pts[i].Y = Bf - vals[i] * (Bf - Tf - 1.0f);
+    }
+    const Gdiplus::REAL pw = static_cast<Gdiplus::REAL>(std::max(1, dpx(2, st->dpi)));
+    auto stroke = [&](COLORREF c, BYTE a, Gdiplus::REAL w) {
+        Gdiplus::Pen p(gcol(c, a), w);
+        p.SetLineJoin(Gdiplus::LineJoinRound);
+        p.SetStartCap(Gdiplus::LineCapRound);
+        p.SetEndCap(Gdiplus::LineCapRound);
+        g.DrawLines(&p, pts, n);
+    };
+    stroke(st->palette.accent, 45, pw * 3.2f);
+    stroke(st->palette.accent, 95, pw * 1.8f);
+    stroke(st->palette.peak, 255, pw);
+}
+
+// Second pass for the Tube look: soft phosphor halos over the lit cells (collected in
+// the base pass), drawn with GDI+ so they're antialiased and additively bleed across
+// cell borders. Layered like the scope bloom — a wide dim halo, an inner glow, then a
+// bright core toward the peak colour. (Alphas/radii are aesthetic — tune to taste.)
+void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette& pal) {
+    if (cells.empty()) return;
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    for (const GlowCell& gc : cells) {
+        const float cw = static_cast<float>(gc.r.right - gc.r.left);
+        const float ch = static_cast<float>(gc.r.bottom - gc.r.top);
+        const float cx = (gc.r.left + gc.r.right) * 0.5f;
+        const float cy = (gc.r.top + gc.r.bottom) * 0.5f;
+        auto ell = [&](float rx, float ry, COLORREF c, BYTE a) {
+            Gdiplus::SolidBrush b(Gdiplus::Color(a, GetRValue(c), GetGValue(c), GetBValue(c)));
+            g.FillEllipse(&b, cx - rx, cy - ry, rx * 2.0f, ry * 2.0f);
+        };
+        ell(cw * 0.72f, ch * 1.5f, gc.c, 48);                            // wide soft halo (merges the column)
+        ell(cw * 0.50f, ch * 0.85f, gc.c, 120);                          // inner glow
+        ell(cw * 0.38f, ch * 0.50f, lerpCol(gc.c, pal.peak, 0.6f), 235); // bright core
+    }
+}
+
+void paintSpectrum(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCell>* glow) {
     const UINT dpi = st->dpi;
     const int L = static_cast<int>(in.left), R = static_cast<int>(in.right);
     const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
@@ -90,14 +237,18 @@ void paintSpectrum(HDC dc, const RECT& in, MiniMeterState* st) {
             const int yb = B - r * cellP;
             RECT cell{x0, yb - cellP + gap, x1, yb};
             const float frac = static_cast<float>(r) / rows;
-            COLORREF col = (r < litN) ? (frac < 0.60f ? kGreen : frac < 0.85f ? kAmber : kRed) : kOff;
-            if (peakRow > 0 && r == peakRow) col = kPeak;
-            fillCell(dc, cell, col);
+            bool on = (r < litN);
+            COLORREF lit = rampColor(st->palette, frac);
+            if (peakRow > 0 && r == peakRow) {
+                on = true;
+                lit = st->palette.peak;
+            }
+            drawCell(dc, cell, lit, on, st->palette, st->style, glow);
         }
     }
 }
 
-void paintSignal(HDC dc, const RECT& in, MiniMeterState* st) {
+void paintSignal(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCell>* glow) {
     const UINT dpi = st->dpi;
     const int L = static_cast<int>(in.left), R = static_cast<int>(in.right);
     const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
@@ -106,21 +257,22 @@ void paintSignal(HDC dc, const RECT& in, MiniMeterState* st) {
     const int cellP = std::max(dpx(3, dpi), 2);
     const int gap = dpx(1, dpi);
     const int litBars = static_cast<int>(std::ceil(st->sigLevel * bars - 0.001f));
-    COLORREF base = st->sigLevel > 0.6f ? kGreen : (st->sigLevel > 0.3f ? kAmber : kRed);
-    base = lerpCol(base, kRed, st->sigTrouble * 0.6f);
+    COLORREF base = st->sigLevel > 0.6f ? st->palette.low
+                                        : (st->sigLevel > 0.3f ? st->palette.mid : st->palette.high);
+    base = lerpCol(base, st->palette.high, st->sigTrouble * 0.6f);
     for (int j = 0; j < bars; ++j) {
         const int x0 = L + j * colW;
         const int x1 = x0 + colW - gap;
         const int barTop = B - static_cast<int>(std::lround((B - T) * (j + 1) / float(bars)));
-        const COLORREF col = (j < litBars) ? base : kOff;
+        const bool on = (j < litBars);
         for (int y = B; y > barTop; y -= cellP) {
             RECT cell{x0, y - cellP + gap, x1, y};
-            fillCell(dc, cell, col);
+            drawCell(dc, cell, base, on, st->palette, st->style, glow);
         }
     }
 }
 
-void paintBitrate(HDC dc, const RECT& in, MiniMeterState* st) {
+void paintBitrate(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCell>* glow) {
     const UINT dpi = st->dpi;
     const int L = static_cast<int>(in.left), R = static_cast<int>(in.right);
     const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
@@ -140,14 +292,15 @@ void paintBitrate(HDC dc, const RECT& in, MiniMeterState* st) {
         for (int r = 0; r < rows; ++r) {
             const int yb = B - r * cellP;
             RECT cell{x0, yb - cellP + gap, x1, yb};
-            const COLORREF col = (r < litN) ? lerpCol(kCoral, kPeak, static_cast<float>(r) / rows * 0.5f)
-                                            : kOff;
-            fillCell(dc, cell, col);
+            const bool on = (r < litN);
+            const COLORREF lit = lerpCol(st->palette.accent, st->palette.peak,
+                                         static_cast<float>(r) / rows * 0.5f);
+            drawCell(dc, cell, lit, on, st->palette, st->style, glow);
         }
     }
 }
 
-void paintFrames(HDC dc, const RECT& in, MiniMeterState* st) {
+void paintFrames(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCell>* glow) {
     const UINT dpi = st->dpi;
     const int L = static_cast<int>(in.left), R = static_cast<int>(in.right);
     const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
@@ -158,16 +311,17 @@ void paintFrames(HDC dc, const RECT& in, MiniMeterState* st) {
     const int cols = std::max(1, (R - L) / colW);
     const float frac = std::clamp(st->fps / 60.0f, 0.0f, 1.0f);
     const int lit = static_cast<int>(std::lround(frac * cols));
-    COLORREF base = st->fps >= 24 ? kGreen : (st->fps >= 15 ? kAmber : kRed);
-    base = lerpCol(base, kRed, st->flare);  // flash red on dropped frames
+    COLORREF base = st->fps >= 24 ? st->palette.low
+                                  : (st->fps >= 15 ? st->palette.mid : st->palette.high);
+    base = lerpCol(base, st->palette.high, st->flare);  // flash toward the alert (high) colour
     for (int c = 0; c < cols; ++c) {
         const int x0 = L + c * colW;
         const int x1 = x0 + colW - gap;
-        const COLORREF col = (c < lit) ? base : kOff;
+        const bool on = (c < lit);
         for (int r = 0; r < rows; ++r) {
             const int yb = B - r * cellP;
             RECT cell{x0, yb - cellP + gap, x1, yb};
-            fillCell(dc, cell, col);
+            drawCell(dc, cell, base, on, st->palette, st->style, glow);
         }
     }
 }
@@ -182,18 +336,28 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
     HGDIOBJ oldBmp = SelectObject(mem, bmp);
 
     const Theme& th = currentTheme();
-    fillCell(mem, rc, th.windowBg);
+    const COLORREF bg = (st->palette.bg == CLR_INVALID) ? th.windowBg : st->palette.bg;
+    fillCell(mem, rc, bg);
     SetDCBrushColor(mem, th.border);
     FrameRect(mem, &rc, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 
     const int inset = dpx(2, st->dpi);
     RECT in{rc.left + inset, rc.top + inset, rc.right - inset, rc.bottom - inset};
     if (in.right > in.left && in.bottom > in.top) {
-        switch (st->kind) {
-            case MeterKind::Spectrum: paintSpectrum(mem, in, st); break;
-            case MeterKind::Signal: paintSignal(mem, in, st); break;
-            case MeterKind::Bitrate: paintBitrate(mem, in, st); break;
-            case MeterKind::Frames: paintFrames(mem, in, st); break;
+        if (st->style == MeterStyle::Scope) {
+            drawScope(mem, in, st);
+        } else {
+            // Tube collects its lit cells for a soft GDI+ halo pass afterwards; the
+            // other looks pass nullptr, so there's no collection and no overhead.
+            std::vector<GlowCell> glow;
+            std::vector<GlowCell>* glowPtr = (st->style == MeterStyle::Tube) ? &glow : nullptr;
+            switch (st->kind) {
+                case MeterKind::Spectrum: paintSpectrum(mem, in, st, glowPtr); break;
+                case MeterKind::Signal: paintSignal(mem, in, st, glowPtr); break;
+                case MeterKind::Bitrate: paintBitrate(mem, in, st, glowPtr); break;
+                case MeterKind::Frames: paintFrames(mem, in, st, glowPtr); break;
+            }
+            if (glowPtr) drawTubeGlow(mem, glow, st->palette);
         }
     }
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
@@ -312,6 +476,8 @@ void registerMiniMeterClass(HINSTANCE hInst) {
 HWND createMiniMeter(HWND parent, HINSTANCE hInst, int id, UINT dpi, MeterKind kind) {
     auto* st = new MiniMeterState();
     st->kind = kind;
+    st->style = defaultMeterStyle(kind);
+    st->palette = defaultMeterPalette(kind);
     st->dpi = dpi;
     HWND h = CreateWindowExW(0, kClass, L"", WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 10, 10, parent,
                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), hInst, nullptr);
@@ -386,6 +552,94 @@ void miniMeterReset(HWND meter) {
 void miniMeterSetDpi(HWND meter, UINT dpi) {
     MiniMeterState* st = stateOf(meter);
     if (st) st->dpi = dpi;
+}
+
+void miniMeterSetStyle(HWND meter, MeterStyle style) {
+    MiniMeterState* st = stateOf(meter);
+    if (!st) return;
+    st->style = style;
+    if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+}
+
+void miniMeterSetPalette(HWND meter, const MeterPalette& palette) {
+    MiniMeterState* st = stateOf(meter);
+    if (!st) return;
+    st->palette = palette;
+    if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+}
+
+MeterStyle miniMeterStyle(HWND meter) {
+    MiniMeterState* st = stateOf(meter);
+    return st ? st->style : MeterStyle::Led;
+}
+
+MeterPalette miniMeterPalette(HWND meter) {
+    MiniMeterState* st = stateOf(meter);
+    return st ? st->palette : defaultMeterPalette(MeterKind::Spectrum);
+}
+
+// ---- style / palette (de)serialization for the settings K/V store ----------
+namespace {
+std::wstring hexColor(COLORREF c) {
+    wchar_t b[8];
+    swprintf_s(b, L"%02X%02X%02X", GetRValue(c), GetGValue(c), GetBValue(c));
+    return b;
+}
+COLORREF parseHexColor(const std::wstring& s, COLORREF fallback) {
+    if (s.size() != 6) return fallback;
+    wchar_t* end = nullptr;
+    const unsigned long v = wcstoul(s.c_str(), &end, 16);
+    if (!end || *end != L'\0') return fallback;
+    return RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+}
+}  // namespace
+
+std::wstring meterStyleToString(MeterStyle style) {
+    switch (style) {
+        case MeterStyle::Tube:  return L"tube";
+        case MeterStyle::Lcd:   return L"lcd";
+        case MeterStyle::Scope: return L"scope";
+        case MeterStyle::Led:
+        default:                return L"led";
+    }
+}
+
+MeterStyle meterStyleFromString(const std::wstring& s, MeterStyle fallback) {
+    if (s == L"led") return MeterStyle::Led;
+    if (s == L"tube") return MeterStyle::Tube;
+    if (s == L"lcd") return MeterStyle::Lcd;
+    if (s == L"scope") return MeterStyle::Scope;
+    return fallback;
+}
+
+std::wstring meterPaletteToString(const MeterPalette& p) {
+    const std::wstring bg = (p.bg == CLR_INVALID) ? std::wstring(L"theme") : hexColor(p.bg);
+    return bg + L"," + hexColor(p.off) + L"," + hexColor(p.low) + L"," + hexColor(p.mid) + L"," +
+           hexColor(p.high) + L"," + hexColor(p.accent) + L"," + hexColor(p.peak);
+}
+
+MeterPalette meterPaletteFromString(const std::wstring& s, const MeterPalette& fallback) {
+    std::vector<std::wstring> tok;
+    size_t start = 0;
+    for (;;) {
+        const size_t comma = s.find(L',', start);
+        if (comma == std::wstring::npos) {
+            tok.push_back(s.substr(start));
+            break;
+        }
+        tok.push_back(s.substr(start, comma - start));
+        start = comma + 1;
+    }
+    if (tok.size() != 7) return fallback;
+    MeterPalette p = fallback;
+    p.bg = (tok[0] == L"theme") ? CLR_INVALID : parseHexColor(tok[0], fallback.bg);
+    p.off = parseHexColor(tok[1], fallback.off);
+    p.low = parseHexColor(tok[2], fallback.low);
+    p.mid = parseHexColor(tok[3], fallback.mid);
+    p.high = parseHexColor(tok[4], fallback.high);
+    p.accent = parseHexColor(tok[5], fallback.accent);
+    p.peak = parseHexColor(tok[6], fallback.peak);
+    return p;
 }
 
 }  // namespace rabbitears

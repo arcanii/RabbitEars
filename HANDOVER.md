@@ -26,13 +26,57 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.4 SHIPPED
+## Current state — v0.1.4 SHIPPED · 0.1.5 (meters overhaul) IN PROGRESS
 
 **Released:** `v0.1.4` (2026-07-03), tag `v0.1.4` @ `8622e8a`, public GitHub release with a
 signed **`RabbitEars-0.1.4-setup.exe`** installer (full version `0.1.4.26`) and a **live
 WinSparkle auto-update feed** (appcast published @ `6cee2ed`; `origin/main` == `6cee2ed`).
 Earlier: `v0.1.3` (tag @ `ebd71a8`, full `0.1.3.22`), `v0.1.2` (`8c99254`, `0.1.2.19`),
 `v0.1.1` (auto-update baseline), `v0.1.0` (portable zip). 0.1.1–0.1.3 users get 0.1.4 automatically.
+
+### 0.1.5 — IN PROGRESS (uncommitted working tree; version bumped, `/W4`-clean, GUI-unverified)
+Version bumped to **0.1.5** in the four places (CMakeLists.txt / installer.iss / RabbitEars.rc /
+app.manifest). **0.1.5 is a METERS OVERHAUL** — the owner pivoted 0.1.5 here; **JSON profiles are
+DEFERRED** to a later version. Uncommitted; each piece builds `/W4`-clean, GUI-unverified (owner
+does the visual pass). Changes:
+- **Per-meter look + palette engine** (`MiniMeter.{h,cpp}`) — every meter carries a
+  `MeterStyle {Led,Tube,Lcd,Scope}` + a fully custom `MeterPalette` (`bg/off/low/mid/high/accent/
+  peak`; `bg == CLR_INVALID` follows the theme's windowBg). Defaults reproduce the classic LED look
+  exactly (behavior-preserving). Rendering is palette-driven via `rampColor` + a style-aware
+  `drawCell`; `drawScope` is a separate trace path. API: `miniMeterSetStyle/SetPalette` setters,
+  `miniMeterStyle/Palette` getters, `meter{Style,Palette}{To,From}String` (de)serialization, and a
+  `MeterConfig {enabled,style,palette}` POD.
+- **The four looks** — **LED** (flat GDI, unchanged), **LCD** (GDI; off-cells ghost the lit colour),
+  **Vacuum tube** (muted GDI base cells + a **GDI+ soft phosphor halo** — `drawTubeGlow` blooms each
+  lit cell with layered antialiased ellipses [wide dim halo → inner glow → peak-bright core] that
+  bleed across cell borders into a glowing column; replaced the old hard bright-core), **Oscilloscope**
+  (**GDI+** antialiased trace with a phosphor bloom — two wide low-alpha accent underlays beneath a
+  peak-bright core, on a faint graticule). An unimplemented look falls back to LED. GDI+ is already started
+  globally by `runApp` (`MainWindow.cpp` GdiplusStartup/Shutdown) so MiniMeter just uses it — it
+  needs `<objidl.h>` before `<gdiplus.h>` (the min/max-in-Gdiplus trick).
+- **Meters… setup dialog** (`Dialogs.cpp` `chooseMeters` + `MetersProc`, declared in `Dialogs.h`;
+  opened from **Settings → Meters → Setup…**, `ID_METERS_SETUP` → `onMeters` in `MainWindow.cpp`) —
+  4 rows (one per meter), each a **live preview** MiniMeter fed synthetic data via a dialog timer, a
+  **Look** combobox, and **7 owner-draw colour swatches** (Bg/Dim/Low/Mid/High/Accent/Peak) that open
+  Win32 `ChooseColor`. Enable checkboxes + OK/Cancel/**Reset to defaults**. On OK it applies live +
+  persists per meter (`meter_<kind>_style`, `meter_<kind>_colors`, and the existing `meter_<kind>`
+  enable); loaded at startup after the meters are created. Reviewed clean by a background agent
+  (no lifetime/teardown/leak/modal-loop bug).
+- **Owner design decisions (locked):** per-meter looks (all 4 available on each), full per-meter
+  palette, and **keep the bitrate adaptive "breathing" scale** (the "changing shape as it scrolls"
+  is expected — the ceiling re-normalizes each sample — not a bug).
+- **Remaining before shipping 0.1.5:** owner visual sign-off on the four looks — including the new
+  **GDI+ tube soft-halo** (`drawTubeGlow` in `MiniMeter.cpp`, replacing the old hard bright-core;
+  builds `/W4`-clean, GUI-unverified). Then commit + cut 0.1.5 — OR hold the release for the macOS
+  restructure (owner's call).
+
+**Cross-platform direction (2026-07-03) — see memory `rabbitears-cross-platform`:** RabbitEars is
+going **macOS**. **Premium experience per platform** (Windows: GDI/GDI+/Direct2D; macOS: Core
+Graphics/Metal). **~70% common code** (engine — M3uParser, Database, Http, DockLayout tree — plus the
+meter *model/config/palette/style*); **~30% platform-specific** (rendering, windowing, chrome). The
+macOS team is writing **`MACOS_PORT.md`**; the repo will be **restructured** (common vs. platform
+dirs) once it lands — **do NOT preemptively restructure**; keep the meter *model ↔ renderer* seam
+clean so the split is a move, not a rewrite.
 
 ### 0.1.4 — SHIPPED (tag `v0.1.4` @ `8622e8a`, full `0.1.4.26`; all `/W4` clean)
 Two commits: `47dc0fe` (agile audio-loopback handler + meters reset on switch) + `8622e8a`
@@ -350,29 +394,35 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.1.4` — **v0.1.4 released @ `8622e8a`** (full `0.1.4.26`; appcast published
-@ `6cee2ed`, `origin/main` == `6cee2ed`). The 0.1.4 batch is committed + pushed, so the
-working tree is **clean**. Build number = git commit count (the released 0.1.4 build was
-stamped at count **26**; the appcast + this doc commit are post-release bookkeeping and were
-not rebuilt). 0.1.4 landed as two feature commits (`47dc0fe`, `8622e8a`) + the appcast commit.
-Commit/push only when the owner asks; stage **specific paths** (the owner keeps adding
-`art/*.png` — never `git add -A`); end commit messages with the Co-Authored-By trailer.
+Tags `v0.1.0`…`v0.1.4`; **v0.1.4 released @ `8622e8a`** (full `0.1.4.26`; appcast @ `6cee2ed`).
+`HEAD == origin/main == dfcdc72` (the 0.1.4 "mark shipped" doc commit; commit count **28**).
+A **0.1.5 meters-overhaul batch is UNCOMMITTED** in the working tree (~810 insertions): modified
+`CMakeLists.txt` + `packaging/{RabbitEars.rc,app.manifest,installer.iss}` (version → 0.1.5), and
+`src/ui/{MiniMeter.{h,cpp},Dialogs.{h,cpp},MainWindow.cpp}`. Builds `/W4`-clean; GUI-unverified.
+Build number = git commit count (a committed 0.1.5 build stamps `0.1.5.<count>`; currently **28**,
+so the first 0.1.5 commit is **29**). Commit/push only when the owner asks; stage **specific paths**
+(the owner keeps adding `art/*.png` — never `git add -A`); end commit messages with the
+Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **0.1.5 — JSON profiles** (owner-approved scope, **next up**): each profile carries its
-   **own settings + which playlist sources are active**, with the **channel cache rebuilt
-   per profile** from its playlists. Today settings live in the SQLite K/V `settings` table
-   (`Database`), playlists in the `playlists` table. Design: a profile store (e.g.
-   `%LOCALAPPDATA%\RabbitEars\profiles\*.json` + an active-profile pointer), a profile
-   picker (Settings), and per-profile playlists (scope the `playlists` table by profile, or
-   a per-profile DB). Keep the ~197 MB channel cache OUT of the JSON. NB the owner's own
-   library is FAST/LG channels with **no group titles** (0 categories — Categories… now
-   shows a notice, which is correct, not a bug).
-2. **Named saved layouts** (deferred Phase-2): the `DockLayout` engine already serializes any
-   tree — a name → tree store in settings + a Settings → Layout save/apply/delete submenu.
-3. Backlog: scheduled recording, resume-last-channel, DPI-change relayout (`WM_DPICHANGED`),
-   Authenticode signing (SmartScreen), group-title country fallback for Xtream, EPG (XMLTV).
+1. **Finish 0.1.5 — the meters overhaul** (uncommitted in the working tree; the main 0.1.5 item).
+   The per-meter look + palette engine, the **Meters → Setup…** dialog (live previews + colour
+   swatches), and the four looks (LED/LCD/tube/scope) are built + `/W4`-clean. **Remaining:** owner
+   visual sign-off on the looks (the **GDI+ tube soft-halo** is now implemented — `drawTubeGlow`);
+   then **commit + cut 0.1.5** (build → `build-installer.cmd` → sign on the Mac → `make-appcast.ps1` → `gh release`;
+   see `docs/RELEASING.md`) — OR hold the release for the macOS restructure (owner's call). Full
+   detail in the "0.1.5 — IN PROGRESS" section above.
+2. **macOS port + repo restructure** — pending **`MACOS_PORT.md`** from the macOS team. Premium per
+   platform; ~70% common core + platform-specific graphics. **Do NOT restructure until the doc lands**;
+   keep the meter *model ↔ renderer* seam clean. (See the cross-platform note above + memory
+   `rabbitears-cross-platform`.)
+3. **JSON profiles** (deferred from 0.1.5 to a later version): per-profile settings + playlist
+   sources, channel cache rebuilt per profile; `%LOCALAPPDATA%\RabbitEars\profiles\*.json` + an
+   active-profile pointer; keep the ~197 MB channel cache OUT of the JSON.
+4. Backlog: **named saved layouts** (`DockLayout` already serializes any tree), scheduled recording,
+   resume-last-channel, DPI-change relayout (`WM_DPICHANGED`), Authenticode signing (SmartScreen),
+   group-title country fallback for Xtream, EPG (XMLTV).
 
 ## Seed prompt for a new session
 
@@ -385,21 +435,26 @@ Paste this verbatim to start a fresh session with working context restored:
 > 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `HANDOVER.md` and
 > `docs/architecture.md` first.**
 >
-> **State: v0.1.4 is SHIPPED** (tag `v0.1.4` @ `8622e8a`, full `0.1.4.26`, signed
-> installer + **live WinSparkle auto-update**; appcast @ `6cee2ed`, `origin/main` ==
-> `6cee2ed`). Everything through 0.1.4 is committed, released, and its update feed is live;
-> every piece is `/W4`-clean and adversarially reviewed (the owner does visual/runtime checks
-> — the sandbox can't launch the exe). **Next: 0.1.5 = JSON profiles** (owner-scoped:
-> per-profile settings + playlist sources, channel cache rebuilt per profile). 0.1.4 shipped a
-> fix-and-polish batch: the **audio spectrum meter** now works (the loopback completion handler
-> is now agile/`IAgileObject` — it was failing with `E_ILLEGAL_METHOD_CALL` on the MTA thread);
-> **mini-meters animate reliably** (timer synced to real visibility via `WM_WINDOWPOSCHANGED`,
-> reset on channel switch); the **transport strip repaints itself** (no stale meter
-> footprints/seams); **smooth splitter drag** (bit-copy movers + paced flush + settle); an
-> **Import results** dialog (`showInfoDialog`); **rename playlists** (right-click → Rename…);
-> a **Categories…** "no categories" notice; the **splash version string**; **About…** moved
-> last. See the "0.1.4 — SHIPPED" section for detail. (0.1.3 added the dockable layout,
-> by-country filter, channel-switch hang fix, Xtream query fix, and icon transport buttons.)
+> **State: v0.1.4 is SHIPPED** (tag `v0.1.4` @ `8622e8a`, full `0.1.4.26`, signed installer +
+> **live WinSparkle auto-update**; `origin/main` == `dfcdc72`, commit count 28). A **0.1.5 METERS
+> OVERHAUL is IN PROGRESS, UNCOMMITTED** in the working tree (version already bumped to 0.1.5;
+> builds `/W4`-clean, GUI-unverified — the owner does the visual checks, the sandbox can't launch the
+> exe). 0.1.5 so far: a **per-meter look + palette engine** (`MiniMeter.{h,cpp}` — `MeterStyle`
+> {Led,Tube,Lcd,Scope} + a full custom `MeterPalette`, palette-driven rendering, (de)serialization,
+> `MeterConfig`); a **Meters → Setup… dialog** (`Dialogs.cpp` `chooseMeters` — 4 rows with **live
+> preview meters**, a Look combo, and 7 `ChooseColor` swatches; `onMeters` in `MainWindow.cpp`,
+> persisted per meter as `meter_<kind>_style/_colors`); and the **four looks** — LED/LCD/tube in GDI,
+> **oscilloscope in GDI+** (AA phosphor trace). **Remaining:** owner sign-off on the looks + an
+> optional **GDI+ tube soft-halo**, then commit + cut 0.1.5. **Read the "0.1.5 — IN PROGRESS" section
+> of `HANDOVER.md` for full detail** (file lists, IDs, persistence keys).
+>
+> **Cross-platform (important, see memory `rabbitears-cross-platform`):** RabbitEars is going
+> **macOS** — premium per platform, ~70% common core (engine + meter model/config) + platform-specific
+> graphics. The macOS team is writing **`MACOS_PORT.md`**; the repo gets **restructured** once it
+> lands — **do NOT preemptively restructure**; keep the meter *model ↔ renderer* seam clean. **JSON
+> profiles** are deferred to a later version. (Prior: 0.1.4 fixed the audio meter [agile
+> `IAgileObject`], meter animation, and splitter drag, and added the import-results dialog, rename
+> playlists, and the splash version; 0.1.3 added the dockable layout + by-country filter.)
 >
 > The GUI: owner-draw command bar + Settings menu; three **dockable regions** (nav
 > TreeView / video+transport strip / Direct2D `ChannelGridControl`) rearranged by dragging

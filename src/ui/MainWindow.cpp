@@ -86,6 +86,7 @@ constexpr int ID_MTR_SPECTRUM = 2040;  // Settings → Meters toggle commands
 constexpr int ID_MTR_SIGNAL = 2041;
 constexpr int ID_MTR_BITRATE = 2042;
 constexpr int ID_MTR_FRAMES = 2043;
+constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters → Setup… (the full dialog)
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
 
@@ -1134,6 +1135,38 @@ void resetStatMeters(AppState* st) {
     miniMeterReset(st->meterFrames);
 }
 
+// Settings → Meters → Setup…: the per-meter look + palette dialog. Seeds it from the
+// live meters, then on OK applies + persists (style, colours, enable) for each.
+void onMeters(AppState* st) {
+    HWND m[4] = {st->meterSpectrum, st->meterSignal, st->meterBitrate, st->meterFrames};
+    const bool en[4] = {st->showSpectrum, st->showSignal, st->showBitrate, st->showFrames};
+    MeterConfig cfg[4];
+    for (int r = 0; r < 4; ++r) {
+        cfg[r].enabled = en[r];
+        cfg[r].style = miniMeterStyle(m[r]);
+        cfg[r].palette = miniMeterPalette(m[r]);
+    }
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg)) return;  // Cancel — no change
+
+    static const wchar_t* key[4] = {L"spectrum", L"signal", L"bitrate", L"frames"};
+    st->showSpectrum = cfg[0].enabled;
+    st->showSignal = cfg[1].enabled;
+    st->showBitrate = cfg[2].enabled;
+    st->showFrames = cfg[3].enabled;
+    for (int r = 0; r < 4; ++r) {
+        miniMeterSetStyle(m[r], cfg[r].style);
+        miniMeterSetPalette(m[r], cfg[r].palette);
+        st->db.setSetting(std::wstring(L"meter_") + key[r], cfg[r].enabled ? L"1" : L"0");
+        st->db.setSetting(std::wstring(L"meter_") + key[r] + L"_style",
+                          meterStyleToString(cfg[r].style));
+        st->db.setSetting(std::wstring(L"meter_") + key[r] + L"_colors",
+                          meterPaletteToString(cfg[r].palette));
+    }
+    syncSpectrumTap(st);   // enabling/disabling spectrum starts/stops the capture tap
+    layout(st->hwnd, st);  // show/hide meters per the new enables
+}
+
 // Command-bar Settings menu: Open File, About, recording format, and view toggles.
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     HMENU fmt = CreatePopupMenu();
@@ -1160,6 +1193,8 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 L"Signal strength");
     AppendMenuW(meters, MF_STRING | (st->showBitrate ? MF_CHECKED : 0u), ID_MTR_BITRATE, L"Bitrate");
     AppendMenuW(meters, MF_STRING | (st->showFrames ? MF_CHECKED : 0u), ID_MTR_FRAMES, L"Frame rate");
+    AppendMenuW(meters, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(meters, MF_STRING, ID_METERS_SETUP, L"Setup…");
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(meters), L"Meters");
 
     HMENU layoutMenu = CreatePopupMenu();
@@ -1238,6 +1273,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             st->showFrames = !st->showFrames;
             st->db.setSetting(L"meter_frames", st->showFrames ? L"1" : L"0");
             layout(hwnd, st);
+            break;
+        case ID_METERS_SETUP:
+            onMeters(st);
             break;
     }
 }
@@ -1406,6 +1444,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto v = st->db.getSetting(L"meter_signal")) st->showSignal = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_bitrate")) st->showBitrate = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_frames")) st->showFrames = (*v == L"1");
+                {  // per-meter look + palette (Settings → Meters…)
+                    HWND mtr[4] = {st->meterSpectrum, st->meterSignal, st->meterBitrate,
+                                   st->meterFrames};
+                    static const wchar_t* mk[4] = {L"spectrum", L"signal", L"bitrate", L"frames"};
+                    for (int r = 0; r < 4; ++r) {
+                        const MeterKind k = static_cast<MeterKind>(r);
+                        if (auto s = st->db.getSetting(std::wstring(L"meter_") + mk[r] + L"_style"))
+                            miniMeterSetStyle(mtr[r], meterStyleFromString(*s, defaultMeterStyle(k)));
+                        if (auto c = st->db.getSetting(std::wstring(L"meter_") + mk[r] + L"_colors"))
+                            miniMeterSetPalette(mtr[r],
+                                                meterPaletteFromString(*c, defaultMeterPalette(k)));
+                    }
+                }
                 if (auto dl = st->db.getSetting(L"dock_layout"); dl && !dl->empty())
                     st->dock = DockLayout::parse(*dl);
                 syncSpectrumTap(st);

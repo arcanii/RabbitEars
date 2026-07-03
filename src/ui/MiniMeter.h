@@ -10,11 +10,44 @@
 // Each is drawn as small square LEDs (lit/dim cells) to match the family look.
 #pragma once
 
+#include <string>
+
 #include <windows.h>
 
 namespace rabbitears {
 
 enum class MeterKind { Spectrum, Signal, Bitrate, Frames };
+
+// The visual "look" of a meter (Settings → Meters…). LED is the classic dot-matrix;
+// the others are added incrementally — an unimplemented look renders as LED.
+enum class MeterStyle { Led, Tube, Lcd, Scope };
+
+// Fully customizable per-meter colour palette. The roles map onto the "how much is
+// lit" math so every look can honour them. `bg == CLR_INVALID` means "follow the theme's
+// window background". Defaults reproduce the classic look exactly.
+struct MeterPalette {
+    COLORREF bg;      // panel background (CLR_INVALID = theme windowBg)
+    COLORREF off;     // unlit / dim cell
+    COLORREF low;     // low band of the lit ramp        (default green)
+    COLORREF mid;     // mid band                         (default amber)
+    COLORREF high;    // high band + alert/trouble tint   (default red)
+    COLORREF accent;  // bitrate history fill / scope trace (default coral)
+    COLORREF peak;    // peak-hold cap / trace head        (default near-white)
+};
+
+inline MeterPalette defaultMeterPalette(MeterKind /*kind*/) {
+    return MeterPalette{CLR_INVALID, RGB(38, 40, 44), RGB(96, 205, 128), RGB(232, 188, 86),
+                        RGB(232, 96, 86), RGB(217, 119, 87), RGB(236, 236, 240)};
+}
+inline MeterStyle defaultMeterStyle(MeterKind /*kind*/) { return MeterStyle::Led; }
+
+// One meter's full configuration (enable + look + palette). Indexed by MeterKind in
+// the Settings → Meters… dialog and in persistence.
+struct MeterConfig {
+    bool         enabled = true;
+    MeterStyle   style = MeterStyle::Led;
+    MeterPalette palette = defaultMeterPalette(MeterKind::Spectrum);
+};
 
 void registerMiniMeterClass(HINSTANCE hInst);
 HWND createMiniMeter(HWND parent, HINSTANCE hInst, int id, UINT dpi, MeterKind kind);
@@ -38,5 +71,19 @@ void miniMeterSetFrames(HWND meter, int fps, int dropsDelta);
 void miniMeterReset(HWND meter);
 
 void miniMeterSetDpi(HWND meter, UINT dpi);
+
+// ---- Look & palette (Settings → Meters…) -----------------------------------
+void miniMeterSetStyle(HWND meter, MeterStyle style);
+void miniMeterSetPalette(HWND meter, const MeterPalette& palette);
+MeterStyle   miniMeterStyle(HWND meter);
+MeterPalette miniMeterPalette(HWND meter);
+
+// Serialize a style/palette for the settings K/V store (persisted per meter). The
+// palette is 7 comma-joined tokens (bg first — "theme" for CLR_INVALID, else RRGGBB);
+// parsing falls back to `fallback` for any missing/garbled field.
+std::wstring meterStyleToString(MeterStyle style);
+MeterStyle   meterStyleFromString(const std::wstring& s, MeterStyle fallback);
+std::wstring meterPaletteToString(const MeterPalette& p);
+MeterPalette meterPaletteFromString(const std::wstring& s, const MeterPalette& fallback);
 
 }  // namespace rabbitears

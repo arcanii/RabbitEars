@@ -2,10 +2,12 @@
 #include "ui/Dialogs.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <cwctype>
 
 #include <commctrl.h>  // ListView (the categories checklist)
+#include <commdlg.h>   // ChooseColor (the swatch colour picker)
 #include <objbase.h>  // CreateStreamOnHGlobal (ole32)
 #include <objidl.h>   // IStream — required by gdiplus.h below
 // gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the
@@ -15,6 +17,7 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #include "platform/Updater.h"
 #include "resource.h"
+#include "ui/MiniMeter.h"
 #include "ui/Theme.h"
 #include "version.h"
 
@@ -865,6 +868,323 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
     SetForegroundWindow(parent);
     DeleteObject(bodyFont);
     DeleteObject(headFont);
+}
+
+// ---- Meters… setup dialog (Settings → Meters…) -----------------------------
+namespace {
+
+constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j
+constexpr int  ID_MTR_RESET = 1596;
+constexpr UINT kMtrPreviewTimer = 7;
+constexpr UINT kMtrPreviewMs = 60;
+constexpr int  kMtrRoles = 7;
+
+struct MetersDlgState {
+    MeterConfig cfg[4];
+    HWND  preview[4] = {};
+    HWND  enable[4] = {};
+    HWND  combo[4] = {};
+    HWND  swatch[4][kMtrRoles] = {};
+    HFONT font = nullptr, bold = nullptr;
+    UINT  dpi = 96;
+    UINT  feedTick = 0;
+    bool  ok = false, done = false;
+};
+
+// Resolve a palette role index (0..6) to a displayable colour (bg follows the theme).
+COLORREF meterRoleColor(const MeterPalette& p, int j) {
+    switch (j) {
+        case 0: return (p.bg == CLR_INVALID) ? currentTheme().windowBg : p.bg;
+        case 1: return p.off;
+        case 2: return p.low;
+        case 3: return p.mid;
+        case 4: return p.high;
+        case 5: return p.accent;
+        case 6: return p.peak;
+    }
+    return p.off;
+}
+void meterSetRole(MeterPalette& p, int j, COLORREF c) {
+    switch (j) {
+        case 0: p.bg = c; break;
+        case 1: p.off = c; break;
+        case 2: p.low = c; break;
+        case 3: p.mid = c; break;
+        case 4: p.high = c; break;
+        case 5: p.accent = c; break;
+        case 6: p.peak = c; break;
+    }
+}
+
+// Drive the four preview meters with synthetic data (never touches the SpectrumTap).
+void meterFeedPreviews(MetersDlgState* st) {
+    const float t = static_cast<float>(st->feedTick++) * 0.06f;
+    float bands[24];
+    for (int i = 0; i < 24; ++i) {
+        const float v = 0.5f + 0.42f * std::sin(t + i * 0.5f) + 0.14f * std::sin(t * 2.3f + i);
+        bands[i] = std::clamp(v, 0.0f, 1.0f);
+    }
+    miniMeterPushSpectrum(st->preview[0], bands, 24);
+    miniMeterSetSignal(st->preview[1], std::clamp(0.6f + 0.4f * std::sin(t * 0.7f), 0.0f, 1.0f),
+                       (std::sin(t * 0.31f) > 0.8f) ? 0.7f : 0.0f);
+    miniMeterPushBitrate(st->preview[2],
+                         3.0e6 * (0.5 + 0.5 * std::sin(t * 1.3) + 0.15 * std::sin(t * 11.0)));
+    const int fps = 28 + static_cast<int>(std::lround(6.0 * std::sin(t * 0.9f)));
+    miniMeterSetFrames(st->preview[3], fps, (st->feedTick % 40 == 0) ? 3 : 0);
+}
+
+void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
+    static COLORREF custom[16] = {};  // persists custom colours across opens
+    CHOOSECOLORW cc{};
+    cc.lStructSize = sizeof(cc);
+    cc.hwndOwner = dlg;  // disables the meters dialog (not the main window) while open
+    cc.rgbResult = meterRoleColor(st->cfg[r].palette, j);
+    cc.lpCustColors = custom;
+    cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+    if (ChooseColorW(&cc)) {
+        meterSetRole(st->cfg[r].palette, j, cc.rgbResult);
+        miniMeterSetPalette(st->preview[r], st->cfg[r].palette);
+        InvalidateRect(st->swatch[r][j], nullptr, FALSE);
+    }
+}
+
+// Reset the WORKING copy (looks + palettes) to defaults; enables are left alone and
+// nothing is committed until OK, so Cancel still fully reverts.
+void meterReset(MetersDlgState* st) {
+    for (int r = 0; r < 4; ++r) {
+        st->cfg[r].style = defaultMeterStyle(static_cast<MeterKind>(r));
+        st->cfg[r].palette = defaultMeterPalette(static_cast<MeterKind>(r));
+        SendMessageW(st->combo[r], CB_SETCURSEL, static_cast<int>(st->cfg[r].style), 0);
+        miniMeterSetStyle(st->preview[r], st->cfg[r].style);
+        miniMeterSetPalette(st->preview[r], st->cfg[r].palette);
+        for (int j = 0; j < kMtrRoles; ++j) InvalidateRect(st->swatch[r][j], nullptr, FALSE);
+    }
+}
+
+// Stop feeding + destroy the preview meters before the dialog dies, so no stray
+// WM_TIMER lands in a freed MiniMeterState.
+void meterTeardown(HWND dlg, MetersDlgState* st) {
+    KillTimer(dlg, kMtrPreviewTimer);
+    for (int r = 0; r < 4; ++r)
+        if (st->preview[r]) {
+            DestroyWindow(st->preview[r]);
+            st->preview[r] = nullptr;
+        }
+}
+
+LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* st = reinterpret_cast<MetersDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, wParam);
+        case WM_DRAWITEM: {
+            if (!st) break;
+            auto* di = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+            for (int r = 0; r < 4; ++r)
+                for (int j = 0; j < kMtrRoles; ++j)
+                    if (di->hwndItem == st->swatch[r][j]) {
+                        SetDCBrushColor(di->hDC, meterRoleColor(st->cfg[r].palette, j));
+                        FillRect(di->hDC, &di->rcItem, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                        const bool hot = (di->itemState & (ODS_FOCUS | ODS_SELECTED)) != 0;
+                        SetDCBrushColor(di->hDC,
+                                        hot ? currentTheme().accent : currentTheme().border);
+                        FrameRect(di->hDC, &di->rcItem, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                        return TRUE;
+                    }
+            return TRUE;
+        }
+        case WM_TIMER:
+            if (st && wParam == kMtrPreviewTimer) meterFeedPreviews(st);
+            return 0;
+        case WM_COMMAND: {
+            if (!st) return 0;
+            const int code = HIWORD(wParam);
+            const HWND ctl = reinterpret_cast<HWND>(lParam);
+            for (int r = 0; r < 4; ++r) {
+                if (ctl == st->combo[r] && code == CBN_SELCHANGE) {
+                    const int sel = static_cast<int>(SendMessageW(st->combo[r], CB_GETCURSEL, 0, 0));
+                    if (sel >= 0) {
+                        st->cfg[r].style = static_cast<MeterStyle>(sel);
+                        miniMeterSetStyle(st->preview[r], st->cfg[r].style);
+                    }
+                    return 0;
+                }
+                if (ctl == st->enable[r] && code == BN_CLICKED) {
+                    st->cfg[r].enabled =
+                        SendMessageW(st->enable[r], BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    return 0;
+                }
+                for (int j = 0; j < kMtrRoles; ++j)
+                    if (ctl == st->swatch[r][j] && code == BN_CLICKED) {
+                        meterEditSwatch(hwnd, st, r, j);
+                        return 0;
+                    }
+            }
+            const int id = LOWORD(wParam);
+            if (id == IDOK) {
+                st->ok = true;
+                st->done = true;
+            } else if (id == IDCANCEL) {
+                st->done = true;
+            } else if (id == ID_MTR_RESET) {
+                meterReset(st);
+            }
+            if (st->done) {
+                meterTeardown(hwnd, st);
+                DestroyWindow(hwnd);
+            }
+            return 0;
+        }
+        case WM_CLOSE:
+            if (st) {
+                st->done = true;
+                meterTeardown(hwnd, st);
+            }
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+}  // namespace
+
+bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = MetersProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsMeters";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    MetersDlgState st;
+    st.dpi = dpi;
+    for (int r = 0; r < 4; ++r) st.cfg[r] = cfg[r];
+    auto mkFont = [&](int px, int weight) {
+        return CreateFontW(-dp(px, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                           VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
+    };
+    st.font = mkFont(11, FW_NORMAL);
+    st.bold = mkFont(12, FW_SEMIBOLD);
+
+    const int rowH = dp(140, dpi);
+    const int W = dp(636, dpi), H = dp(50, dpi) + 4 * rowH + dp(58, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsMeters", L"Meters",
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        DeleteObject(st.bold);
+        return false;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(18, dpi);
+
+    HWND head = CreateWindowExW(0, L"STATIC", L"Enable each meter, pick its look, and set its colours.",
+                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(14, dpi),
+                                cr.right - 2 * m, dp(22, dpi), dlg, nullptr, hInst, nullptr);
+    SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(st.bold), TRUE);
+
+    const wchar_t* kNames[4] = {L"Audio spectrum", L"Signal strength", L"Bitrate", L"Frame rate"};
+    const wchar_t* kLooks[4] = {L"LED", L"Vacuum tube", L"LCD", L"Oscilloscope"};
+    const wchar_t* kRoles[kMtrRoles] = {L"Bg", L"Dim", L"Low", L"Mid", L"High", L"Accent", L"Peak"};
+    const int top0 = dp(44, dpi);
+    const int sw = dp(30, dpi), sgap = dp(6, dpi);
+
+    for (int r = 0; r < 4; ++r) {
+        const int y0 = top0 + r * rowH;
+        st.enable[r] = CreateWindowExW(
+            0, L"BUTTON", kNames[r], WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, y0,
+            dp(150, dpi), dp(22, dpi), dlg,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16)), hInst, nullptr);
+        SendMessageW(st.enable[r], BM_SETCHECK, st.cfg[r].enabled ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(st.enable[r], WM_SETFONT, reinterpret_cast<WPARAM>(st.bold), TRUE);
+
+        st.preview[r] =
+            createMiniMeter(dlg, hInst, ID_MTR_ROW + r * 16 + 2, dpi, static_cast<MeterKind>(r));
+        MoveWindow(st.preview[r], m, y0 + dp(28, dpi), dp(150, dpi), dp(86, dpi), FALSE);
+        miniMeterSetStyle(st.preview[r], st.cfg[r].style);
+        miniMeterSetPalette(st.preview[r], st.cfg[r].palette);
+        ShowWindow(st.preview[r], SW_SHOW);
+
+        st.combo[r] = CreateWindowExW(
+            0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+            m + dp(162, dpi), y0 + dp(28, dpi), dp(140, dpi), dp(180, dpi), dlg,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 1)), hInst, nullptr);
+        for (int s = 0; s < 4; ++s)
+            SendMessageW(st.combo[r], CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kLooks[s]));
+        SendMessageW(st.combo[r], CB_SETCURSEL, static_cast<int>(st.cfg[r].style), 0);
+        SendMessageW(st.combo[r], WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+
+        const int sx0 = m + dp(316, dpi), sy = y0 + dp(28, dpi);
+        for (int j = 0; j < kMtrRoles; ++j) {
+            const int sx = sx0 + j * (sw + sgap);
+            st.swatch[r][j] = CreateWindowExW(
+                0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, sx, sy, sw, sw,
+                dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 3 + j)),
+                hInst, nullptr);
+            HWND lbl = CreateWindowExW(0, L"STATIC", kRoles[j], WS_CHILD | WS_VISIBLE | SS_CENTER,
+                                       sx - dp(4, dpi), sy + sw + dp(2, dpi), sw + dp(8, dpi),
+                                       dp(14, dpi), dlg, nullptr, hInst, nullptr);
+            SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+        }
+    }
+
+    const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
+    HWND reset = CreateWindowExW(0, L"BUTTON", L"Reset to defaults",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, dp(150, dpi), bh, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_RESET)), hInst,
+                                 nullptr);
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                              cr.right - 2 * bw - dp(26, dpi), btnY, bw, bh, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  cr.right - bw - dp(16, dpi), btnY, bw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
+                                  nullptr);
+    for (HWND h : {reset, ok, cancel})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+
+    applyDialogDarkMode(dlg);
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetTimer(dlg, kMtrPreviewTimer, kMtrPreviewMs, nullptr);
+    SetFocus(ok);
+    MSG msg;
+    while (!st.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    if (st.ok)
+        for (int r = 0; r < 4; ++r) cfg[r] = st.cfg[r];
+    DeleteObject(st.font);
+    DeleteObject(st.bold);
+    return st.ok;
 }
 
 }  // namespace rabbitears
