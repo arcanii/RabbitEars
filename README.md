@@ -7,6 +7,10 @@
 <p align="center"><i>A simple, fast, native IPTV viewer for Windows and macOS.</i></p>
 
 <p align="center">
+  <a href="https://github.com/arcanii/RabbitEars/releases"><img src="art/macos_icon.png" alt="RabbitEars for macOS" width="132"></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Windows-11-0078D6?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows 11">
   <img src="https://img.shields.io/badge/macOS-11%2B-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 11+">
