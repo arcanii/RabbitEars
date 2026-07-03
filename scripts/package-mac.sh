@@ -11,13 +11,14 @@
 #       --sign "Developer ID Application: Name (TEAMID)" [--vlc /Applications/VLC.app]
 set -euo pipefail
 
-app=""; ID=""; vlc="/Applications/VLC.app"
+app=""; ID=""; ENT=""; vlc="/Applications/VLC.app"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --sign) ID="${2:-}"; shift 2;;
-    --vlc)  vlc="${2:-}"; shift 2;;
-    -*)     echo "unknown option: $1" >&2; exit 1;;
-    *)      app="$1"; shift;;
+    --sign)         ID="${2:-}"; shift 2;;
+    --entitlements) ENT="${2:-}"; shift 2;;
+    --vlc)          vlc="${2:-}"; shift 2;;
+    -*)             echo "unknown option: $1" >&2; exit 1;;
+    *)              app="$1"; shift;;
   esac
 done
 [[ -d "$app" ]] || { echo "usage: package-mac.sh <RabbitEars.app> [--sign <id>] [--vlc <VLC.app>]" >&2; exit 1; }
@@ -43,10 +44,26 @@ echo "   PlugIns:    $(ls "$pl"/*.dylib 2>/dev/null | wc -l | tr -d ' ') plugins
 echo "   rpaths:     $(otool -l "$exe" | awk '/LC_RPATH/{f=1} f&&/ path /{print $2; f=0}' | tr '\n' ' ')"
 
 signid="${ID:--}"
-echo "== codesign (${ID:-ad-hoc}) =="
-# Inside-out: the bundled VLC dylibs + plugins first, then the app bundle. (Sparkle
-# keeps its own valid signature.) No hardened runtime — this build is not notarized.
-find "$fw" "$pl" -name "*.dylib" -type f -print0 | xargs -0 codesign --force --sign "$signid"
-codesign --force --sign "$signid" "$app"
-codesign --verify --strict "$app" && echo "   verify: OK"
+# Developer ID → hardened runtime + secure timestamp (both required for
+# notarization); ad-hoc → neither (ad-hoc signatures can't be timestamped).
+opts=(--force --sign "$signid")
+[[ -n "$ID" ]] && opts+=(--options runtime --timestamp)
+echo "== codesign (${ID:-ad-hoc}${ID:+ + hardened runtime}) =="
+# Sparkle ships signed WITHOUT a secure timestamp (which notarization rejects), so
+# re-sign its nested helpers inside-out with our identity — preserving the XPC /
+# updater entitlements (e.g. the Downloader's network.client) — then the framework.
+SP="$fw/Sparkle.framework"
+if [[ -d "$SP" ]]; then
+  SPV="$SP/Versions/B"; [[ -d "$SPV" ]] || SPV="$SP/Versions/Current"
+  for x in "$SPV/XPCServices/"*.xpc "$SPV/Updater.app"; do
+    [[ -e "$x" ]] && codesign "${opts[@]}" --preserve-metadata=entitlements "$x"
+  done
+  [[ -e "$SPV/Autoupdate" ]] && codesign "${opts[@]}" "$SPV/Autoupdate"
+  codesign "${opts[@]}" "$SP"
+fi
+# Bundled VLC dylibs + plugins, then the app bundle last (which carries the
+# entitlements). All same-identity so hardened-runtime library validation passes.
+find "$fw" "$pl" -name "*.dylib" -type f -print0 | xargs -0 codesign "${opts[@]}"
+codesign "${opts[@]}" ${ENT:+--entitlements "$ENT"} "$app"
+codesign --verify --deep --strict "$app" && echo "   verify: OK"
 echo "== packaged: $app =="
