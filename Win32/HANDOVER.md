@@ -51,14 +51,32 @@ Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `insta
 ### 🎨 Theme engine (0.2.x epic) — IN PROGRESS on branch `theme-engine` (NOT merged; behind a build flag)
 
 All theme-engine work is on branch **`theme-engine`** (off `main` @ `c6a0cf2`), gated behind the
-OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** — so the **shipping build (flag off) is
-behaviourally identical to 0.1.7** (only the version bumped to **0.1.8** across the 4 places). Design
+OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** — so the **theme *chrome* is off in the shipping
+build** (version bumped to **0.1.8**). ⚠️ The branch now ALSO carries **ungated UI features** (the meters
+Data-flow row + menu cleanup, and the windowed Video-only mode), so **flag-off is no longer byte-identical
+to 0.1.7** — but every *theme-engine* addition is still `#ifdef`-gated. Design
 doc: **`Win32/docs/THEME_ENGINE.md`** (§4 = the shared skin-model boundary for the mac team; §6 = the
-D3D11/HLSL renderer). Every phase was adversarially reviewed + build-verified BOTH flags (flag-off stays
-byte-identical to 0.1.7); the sandbox can't launch the GUI, so the owner does the runtime/visual sign-off
-(Phase-1 strip + Cyberpunk done; the **flag-ON build for 3b–4b1 now awaits the owner's live look**).
-Commits (newest first):
+D3D11/HLSL renderer). Every part was adversarially reviewed + build-verified BOTH flags; the sandbox can't
+launch the GUI, so the owner does the runtime/visual sign-off. **Owner-verified live:** Phase-1 strip,
+Cyberpunk, transport-button glow (4b-1), gutter glow (4b-2), and Video-only + drag. **Pending a live look:**
+the Steampunk palette/serif, the meters refinements, and the "input reaches the video while a stream plays"
+fix. Commits (newest first):
 
+- **UI iteration — meters Data-flow row + windowed Video-only mode** (`e6b83d7`) — **NOT theme-gated**
+  (ships in both flag states). **Meters:** Settings→Meters is now a single "Meters…" item (inline
+  quick-toggles removed); the setup dialog gains a 5th **Data flow** row for the buffer/fluid meter
+  (enable + live preview; no Look/palette); the buffer meter is half-width in the strip with `LED_PITCH
+  5→3` to match the mini-meters. **Video only** (Settings→Video only / **Ctrl+Shift+V**): collapse the
+  window to just the video (hide nav/grid/title/strip) *without* leaving the window — reuses the
+  fullscreen layout/paint path minus the window-style change; exit via double-click / Esc (also handled
+  in MainProc, survives a resize) / a right-click view menu; drag the window by the video
+  (SM_CXDRAG-thresholded); `libvlc_video_set_mouse_input`/`set_key_input` off so input reaches VideoProc
+  while a stream plays. Each part reviewed SHIP.
+- **Phase 4b-2** (`1ddba13`) — per-skin **neon glow on the dock gutters**: a new `PSEdge` HLSL pixel
+  shader (reusing the fullscreen-triangle VS) renders an accent "neon tube" down each gutter via the
+  Phase-1 windowless offscreen-texture + `BitBlt` technique (an `EdgeState` surface in `SkinStrip`, no
+  D2D pass, static — rendered on WM_PAINT). Device-loss fix: the strip's loss path also drops the edge's
+  resources. Owner-verified on Steampunk + Cyberpunk. Reviewed SHIP after the device-loss fix.
 - **Phase 4b-1** (`49b3993`) — accent **glow** on the owner-draw transport buttons: a GDI+ bloom behind
   the glyph when *lit* (hover, or the record button while recording), glyph brightened to a bright core.
   Uses the meters' `drawTubeGlow` GDI+ technique, **not** a GPU surface — a swapchain `Present` would hit
@@ -96,17 +114,15 @@ Commits (newest first):
 settings key are shared; the positional 14-role palette codec is frozen until user-customizable skins
 ship (then add a version prefix).
 
-**Next on the theme engine:** **Phase 3 remainder is DONE** (3b fonts + 3c owner-draw buttons),
-**Steampunk is authored** (4a), and the **transport-button glow** landed (4b-1) — all committed, reviewed,
-build-verified both flags, and **awaiting the owner's live visual sign-off** (glow size/intensity, the
-brass palette + serif title, the per-skin underglow are all quick tunables). **Next: Phase 4b-2** — the
-dramatic GPU effect the owner chose: a per-skin **neon panel-rim / edge glow** — extend the Phase-1
-*windowless* SkinStrip/`BitBlt` technique (a swapchain can't sit behind child controls) onto the dock
-gutters + panel edges, then heat-haze for Steampunk. (NB: the strip underglow is *already* per-skin —
-it reads the active `accent`/`windowBg` — so 4b-2 is about NEW glowing surfaces, not re-colouring the
-strip.) Still open: tune Cyberpunk; extract **`docs/SKIN_MODEL.md`** for the mac team; **cherry-pick the
-doc-reorg commit (`ea03a0a`) to `main`** so mac stops editing root docs. **Before merging `theme-engine`
-→ `main`: `git fetch` + rebase** (origin/main moved via the mac team).
+**Next on the theme engine:** **Phases 3–4b are DONE** — 3b fonts, 3c owner-draw buttons, 4a Steampunk,
+4b-1 button glow, **4b-2 gutter neon glow** — all committed, reviewed, build-verified both flags. The owner
+has signed off on the glows + Video-only live; **still pending a live look:** the Steampunk palette/serif
+and the meters refinements. **Next candidates:** **heat-haze for Steampunk** (the last authored GPU
+effect); **tune Cyberpunk** + per-skin glow intensity (the gutter/strip use a hardcoded strength — a good
+place for the deferred §4.2 per-skin GPU manifest); extract **`docs/SKIN_MODEL.md`** for the mac team;
+**cherry-pick the doc-reorg commit (`ea03a0a`) to `main`** so mac stops editing root docs. **Before merging
+`theme-engine` → `main`: `git fetch` + rebase** (origin/main moved via the mac team) — and note the branch
+now carries the ungated meters/Video-only UI work too, so review that in the merge.
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
@@ -528,13 +544,14 @@ commit messages with the Co-Authored-By trailer.
 ## Immediate next steps (pick up here)
 
 1. **The active line of work is the THEME ENGINE** on branch **`theme-engine`** — see the "🎨 Theme
-   engine" section above for the commit-by-commit state. It is NOT merged and is behind the OFF-by-default
-   `RABBITEARS_THEME_ENGINE` flag. Resume there. **Done this session:** Phase 3 remainder (3b fonts, 3c
-   owner-draw buttons), Steampunk skin (4a), transport-button glow (4b-1) — all committed + reviewed +
-   both-flag build-verified, **awaiting the owner's live visual sign-off** (the flag-ON `build\Win32\RabbitEars.exe`
-   is built). **Next: Phase 4b-2** — a per-skin **neon panel-rim / edge glow** on the dock gutters + panel
-   edges (extend the Phase-1 windowless SkinStrip/`BitBlt`), then heat-haze; tune Cyberpunk; extract
-   **`docs/SKIN_MODEL.md`** for the mac team; cherry-pick the doc-reorg commit `ea03a0a` to `main`.
+   engine" section above for the commit-by-commit state. It is NOT merged; the theme *chrome* is behind the
+   OFF-by-default `RABBITEARS_THEME_ENGINE` flag (but the branch also carries ungated meters/Video-only UI —
+   flag-off is no longer 0.1.7-identical). Resume there. **Done (theme):** Phases 3b/3c/4a/4b-1/**4b-2**
+   (fonts, owner-draw buttons, Steampunk, button glow, gutter neon glow) — all committed + reviewed +
+   both-flag build-verified; owner signed off on the glows + Video-only live. **Next candidates:**
+   **heat-haze for Steampunk**; tune Cyberpunk + a per-skin glow-intensity manifest; extract
+   **`docs/SKIN_MODEL.md`** for the mac team; cherry-pick the doc-reorg commit `ea03a0a` to `main`. Still
+   pending the owner's live look: the Steampunk palette/serif + the meters refinements.
    **`git fetch`/rebase before merging `theme-engine` → `main`.**
 2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
    Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
@@ -557,8 +574,9 @@ Paste this verbatim to start a fresh session with working context restored:
 >
 > **State:** last SHIPPED release is **v0.1.7** (`de8c571`, `0.1.7.52`, live WinSparkle auto-update).
 > The **active work is the 0.2.x THEME ENGINE on branch `theme-engine`** (off `main` @ `c6a0cf2`, **NOT
-> merged**), all behind the OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** so the shipping build
-> (flag off) is behaviourally identical to 0.1.7 (version bumped to **0.1.8**). Done + committed +
+> merged**), the theme *chrome* behind the OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** (version
+> bumped to **0.1.8**). NB: the branch also carries ungated meters/Video-only UI, so flag-off is no longer
+> byte-identical to 0.1.7 — but each *theme* addition stays `#ifdef`-gated. Done + committed +
 > reviewed (0 findings) + build-verified both flags: **Phase 1** — the D3D11⇄D2D1.1 interop device
 > `Win32/ui/skin/SkinDevice` + a **windowless** transport-strip HLSL **underglow** (offscreen
 > GDI-compatible texture → child-clipped `BitBlt`; a swapchain `Present` bypasses GDI sibling-clipping so
@@ -568,15 +586,19 @@ Paste this verbatim to start a fresh session with working context restored:
 > active skin (parity: the dark skin == `makeDarkTheme` exactly); **Phase 2c** — live **Settings→Theme**
 > switch (Follow System/Dark/Light), persisted, whole-app repaint broadcast (`applyActiveSkin`); **Phase
 > 3a** — `themeFont(role,dpi)` typography seam + `dangerHover` wiring; and a **Cyberpunk** skin (neon
-> magenta on midnight, **colours only, no shaders**) with a registry-driven Theme menu. **Since then
-> (this session):** 3b (fonts → a `themeFont`/`themeTextFormat` seam), 3c (owner-draw transport buttons),
-> 4a (**Steampunk** skin + Georgia serif title), 4b-1 (GDI+ **button glow**) — all committed + reviewed +
-> both-flag build-verified, awaiting the owner's live visual sign-off. **Next:** Phase 4b-2 — a per-skin
-> **neon panel-rim glow** on the dock gutters/panel edges (extend the Phase-1 windowless SkinStrip/`BitBlt`),
-> then heat-haze; tune Cyberpunk.
+> magenta on midnight, **colours only, no shaders**) with a registry-driven Theme menu. **Done since then:**
+> 3b (fonts → a `themeFont`/`themeTextFormat` seam), 3c (owner-draw transport buttons), 4a (**Steampunk**
+> skin + Georgia serif title), 4b-1 (GDI+ **button glow**), 4b-2 (per-skin **neon glow on the dock gutters**
+> — a new `PSEdge` shader via the windowless SkinStrip/`BitBlt`). Plus **ungated UI** (`e6b83d7`, ships both
+> flags): a meters **Data-flow row** + "Meters…" menu cleanup + buffer-meter half-width/`LED_PITCH 5→3`, and
+> a windowed **Video-only** mode (Settings→Video only / **Ctrl+Shift+V**; hide all chrome; drag the video to
+> move; double-click/Esc/right-click to exit; libVLC input passthrough so it works while playing). All
+> committed + reviewed SHIP + both-flag build-verified; owner signed off on the glows + Video-only. **Next:**
+> **heat-haze for Steampunk**; tune Cyberpunk + a per-skin glow-intensity manifest; still pending the owner's
+> look: Steampunk palette/serif + meters refinements.
 > **Coordination:** extract `docs/SKIN_MODEL.md` for the mac team; cherry-pick the doc-reorg commit
 > `ea03a0a` to `main`; **`git fetch`/rebase before merging `theme-engine` → `main`** (origin/main moved
-> via the mac team). **JSON profiles** stay deferred.
+> via the mac team; the branch now also carries the ungated meters/Video-only UI). **JSON profiles** stay deferred.
 >
 > **Cross-platform (memory `rabbitears-cross-platform`):** premium per platform, ~70% common core; the
 > **skin MODEL is shared in `common/`, the RENDERER is per-platform** (Win32 D3D11/D2D+HLSL; mac Metal
