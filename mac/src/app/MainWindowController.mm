@@ -2,8 +2,10 @@
 // See MainWindowController.h.
 #import "MainWindowController.h"
 
+#include <cwchar>
 #include <ctime>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,7 +21,7 @@
 using namespace rabbitears;
 
 // Filter popup tags.
-enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2 };
+enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
 
 @implementation MainWindowController {
     NSWindow*      _window;
@@ -170,6 +172,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Play" action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Toggle Favourite" action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Set Channel Number…" action:@selector(editChannelNumber:) keyEquivalent:@""] setTarget:self];
     return m;
 }
 
@@ -186,6 +189,25 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         return;
     }
     [self showPlaylist:playlists.back().id];
+    [self selectLastPlayed];
+}
+
+// Highlight (don't auto-play) the channel that was playing when the app last quit.
+- (void)selectLastPlayed {
+    if (!_db) return;
+    const auto s = _db->getSetting(L"last_channel_id");
+    if (!s || s->empty()) return;
+    const long long cid = std::wcstoll(s->c_str(), nullptr, 10);
+    for (size_t i = 0; i < _channels.size(); ++i) {
+        if (_channels[i].id != cid) continue;
+        _suppressSelectionPlay = YES;
+        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
+        [_table scrollRowToVisible:(NSInteger)i];
+        _suppressSelectionPlay = NO;
+        [self setStatus:[NSString stringWithFormat:@"Last played: %@ — click to resume.",
+                         ns(_channels[i].name)]];
+        return;
+    }
 }
 
 // Make `pid` the active playlist: reset search/filter, rebuild groups, reload.
@@ -218,6 +240,13 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
             if (g.empty()) continue;
             [self addFilterItem:ns(g) tag:kFilterGroup group:ns(g)];
         }
+        const auto countries = _db->listCountries();
+        if (!countries.empty()) [_filter.menu addItem:[NSMenuItem separatorItem]];
+        for (const auto& cc : countries) {
+            if (cc.empty()) continue;
+            [self addFilterItem:[@"Country: " stringByAppendingString:ns(cc).uppercaseString]
+                            tag:kFilterCountry group:ns(cc)];
+        }
     }
     // Rebuild happens only on playlist load — always reset to "All channels" so a
     // switch/import shows the new playlist in full, never a stale group filter.
@@ -235,6 +264,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         switch (sel.tag) {
             case kFilterFavourites: _channels = _db->favourites(); break;
             case kFilterGroup:      _channels = _db->channelsByGroup(ws(sel.representedObject)); break;
+            case kFilterCountry:    _channels = _db->channelsByCountry(ws(sel.representedObject)); break;
             default:                _channels = _currentPid ? _db->channelsByPlaylist(_currentPid)
                                                             : _db->allChannels(); break;
         }
@@ -310,10 +340,36 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [self refreshChannels];  // re-query so the ★ column + a Favourites filter stay correct
 }
 
+// Set/clear a channel's LCN (the # column) via a small prompt.
+- (void)editChannelNumber:(id)__unused sender {
+    const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+    if (row < 0 || row >= (NSInteger)_channels.size() || !_db) return;
+    const Channel& c = _channels[(size_t)row];
+    const long long cid = c.id;  // capture by value; _channels can change before the sheet returns
+    NSAlert* a = [[NSAlert alloc] init];
+    a.messageText = [NSString stringWithFormat:@"Channel number for “%@”", ns(c.name)];
+    a.informativeText = @"Enter a number, or leave blank to clear it.";
+    [a addButtonWithTitle:@"Set"];
+    [a addButtonWithTitle:@"Cancel"];
+    NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 220, 24)];
+    input.stringValue = c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
+    a.accessoryView = input;
+    [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        if (resp != NSAlertFirstButtonReturn) return;
+        NSString* t = [input.stringValue
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        std::optional<int> lcn;
+        if (t.length) lcn = (int)t.integerValue;
+        self->_db->setChannelNumber(cid, lcn);
+        [self refreshChannels];
+    }];
+}
+
 - (void)playRow:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_channels.size()) return;
     const Channel& c = _channels[(size_t)row];
     _player->play(c.streamUrl, c.userAgent, c.referrer);
+    if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
 }
 
