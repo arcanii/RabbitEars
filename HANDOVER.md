@@ -313,10 +313,11 @@ dropped). This is the first thing to ask a tester for.
 ## Release / auto-update (LIVE — see `docs/RELEASING.md`)
 
 - Shares the **family Ed25519 key** with the siblings: the WinSparkle public key in
-  `src/platform/Updater.cpp` (`sKPprIa95Hw+…`) equals the macOS `SUPublicEDKey`, so
+  `src/platform/win/Updater.cpp` (`sKPprIa95Hw+…`) equals the macOS `SUPublicEDKey`, so
   installers are **signed on macOS** with the same private key.
-- **Per release:** bump version in 4 places (`APP_VERSION` in `CMakeLists.txt`,
-  `MyVer` in `packaging/installer.iss`, VERSIONINFO in `packaging/RabbitEars.rc`,
+- **Per release:** bump version in 4 places (`APP_VERSION` in `cmake/AppVersion.cmake`
+  — now the single source shared with the macOS build, `MyVer` in
+  `packaging/installer.iss`, VERSIONINFO in `packaging/RabbitEars.rc`,
   `assemblyIdentity` in `packaging/app.manifest`) → commit → `scripts\build.cmd
   -DRABBITEARS_BUILD_GUI=ON` → `scripts\build-installer.cmd` (Inno at
   `%LOCALAPPDATA%\Programs\Inno Setup 6`) → **sign on the Mac** (`./bin/sign_update

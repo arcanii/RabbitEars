@@ -3,7 +3,7 @@
 Auto-update uses **WinSparkle** reading an **EdDSA-signed appcast hosted on
 GitHub**, mirroring the sibling apps (SQLTerminal-Win32 / ManorLords-SGE) and the
 macOS Sparkle setup. RabbitEars **shares the family Ed25519 key pair**: the public
-key in `src/platform/Updater.cpp` (`win_sparkle_set_eddsa_public_key`) is the same
+key in `src/platform/win/Updater.cpp` (`win_sparkle_set_eddsa_public_key`) is the same
 string as the macOS `SUPublicEDKey`, so **the same private key signs Windows
 packages** and signing is done **on macOS** with Sparkle's `sign_update`.
 (To isolate RabbitEars, generate a dedicated key pair and paste its public key
