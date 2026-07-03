@@ -38,13 +38,19 @@ if(RABBITEARS_BUILD_MAC)
   include(Mac)
   rabbitears_provision_mac_deps()
 
+  # App icon: the .icns (built from art/macos_icon.png by scripts/make-icns.py) is
+  # copied into Contents/Resources and named in Info.plist via CFBundleIconFile.
+  set(RE_MAC_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/RabbitEars.icns")
+  set_source_files_properties("${RE_MAC_ICNS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+
   add_executable(RabbitEars MACOSX_BUNDLE
     src/app/main.mm
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
     platform/Log.mm
-    platform/Updater.mm)
+    platform/Updater.mm
+    "${RE_MAC_ICNS}")
   target_include_directories(RabbitEars PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app"   # AppDelegate.h, VlcPlayerMac.h
     "${CMAKE_BINARY_DIR}")                  # "generated/version.h"
@@ -55,7 +61,8 @@ if(RABBITEARS_BUILD_MAC)
     MACOSX_BUNDLE_BUNDLE_NAME "RabbitEars"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.rabbitears.RabbitEars"
     MACOSX_BUNDLE_BUNDLE_VERSION "${BUILD_NUMBER}"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${APP_VERSION}")
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${APP_VERSION}"
+    MACOSX_BUNDLE_ICON_FILE "RabbitEars.icns")
 
   if(RABBITEARS_HAVE_LIBVLC)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_LIBVLC)
