@@ -91,6 +91,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _window.collectionBehavior |= NSWindowCollectionBehaviorFullScreenPrimary;  // ⌃⌘F / green button
     _window.frameAutosaveName = @"RabbitEarsMainWindow";  // remember size + position across launches
     NSView* content = _window.contentView;
+    const NSSize cs = content.bounds.size;  // real content size — frameAutosave may restore a larger frame
 
     std::wstring err;
     if (!_db->open(Database::defaultDbPath(), &err)) {
@@ -102,7 +103,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     //      — the mac peer of the Win32 command bar (kCmdBtns = + Add Playlist, Settings).
     const CGFloat barH = 46;
     NSView* bar = [[NSView alloc]
-        initWithFrame:NSMakeRect(0, frame.size.height - barH, frame.size.width, barH)];
+        initWithFrame:NSMakeRect(0, cs.height - barH, cs.width, barH)];
     bar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
 
     // Left: the accent "+ Add Playlist" (prompts for a URL) and the Settings menu.
@@ -119,19 +120,19 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
     // Right (pinned): Stop, the filter popup, and the stretchy search field between.
     NSButton* stopBtn = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stop:)];
-    stopBtn.frame = NSMakeRect(frame.size.width - 92, 9, 80, 28);
+    stopBtn.frame = NSMakeRect(cs.width - 92, 9, 80, 28);
     stopBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:stopBtn];
 
     _filter = [[NSPopUpButton alloc]
-        initWithFrame:NSMakeRect(frame.size.width - 270, 9, 170, 28) pullsDown:NO];
+        initWithFrame:NSMakeRect(cs.width - 270, 9, 170, 28) pullsDown:NO];
     _filter.target = self;
     _filter.action = @selector(filterChanged:);
     _filter.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:_filter];
 
     _search = [[NSSearchField alloc]
-        initWithFrame:NSMakeRect(284, 10, frame.size.width - 562, 26)];
+        initWithFrame:NSMakeRect(284, 10, cs.width - 562, 26)];
     _search.placeholderString = @"Search channels…";
     _search.autoresizingMask = NSViewWidthSizable;
     _search.delegate = self;  // controlTextDidChange: -> live filter
@@ -142,7 +143,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     // ---- bottom bar: status line (left) + volume (right) ----
     const CGFloat statusH = 22;
     _status = [NSTextField labelWithString:@"Ready."];
-    _status.frame = NSMakeRect(12, 3, frame.size.width - 24 - 150, statusH - 5);
+    _status.frame = NSMakeRect(12, 3, cs.width - 24 - 150, statusH - 5);
     _status.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
     _status.textColor = NSColor.secondaryLabelColor;
     [content addSubview:_status];
@@ -156,13 +157,13 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _muteBtn = [NSButton buttonWithTitle:(vol0 == 0 ? @"🔇" : @"🔊")
                                   target:self action:@selector(toggleMute:)];
     _muteBtn.bordered = NO;
-    _muteBtn.frame = NSMakeRect(frame.size.width - 132, 1, 24, 20);
+    _muteBtn.frame = NSMakeRect(cs.width - 132, 1, 24, 20);
     _muteBtn.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
     [content addSubview:_muteBtn];
 
     _volume = [NSSlider sliderWithValue:vol0 minValue:0 maxValue:100
                                  target:self action:@selector(volumeChanged:)];
-    _volume.frame = NSMakeRect(frame.size.width - 104, 3, 92, 16);
+    _volume.frame = NSMakeRect(cs.width - 104, 3, 92, 16);
     _volume.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
     _volume.continuous = YES;
     [content addSubview:_volume];
@@ -170,7 +171,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
     // ---- split: channel grid | video ----
     NSSplitView* split = [[NSSplitView alloc]
-        initWithFrame:NSMakeRect(0, statusH, frame.size.width, frame.size.height - barH - statusH)];
+        initWithFrame:NSMakeRect(0, statusH, cs.width, cs.height - barH - statusH)];
     split.vertical = YES;
     split.dividerStyle = NSSplitViewDividerStyleThin;
     split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
