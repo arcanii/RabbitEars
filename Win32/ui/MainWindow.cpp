@@ -1432,23 +1432,49 @@ LRESULT CALLBACK TransportBtnSubProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+// A soft accent bloom for a "lit" transport button — the skin's neon/glow layer on the
+// owner-draw buttons (Phase 4b). Reuses the meters' GDI+ phosphor technique (MiniMeter
+// drawTubeGlow): concentric low-alpha accent ellipses, wide dim halo -> bright inner
+// core, sized to the button. GDI+ is the right tool here — a GPU surface behind these
+// child-window buttons would hit the sibling-clipping wall the strip underglow already
+// documents; GDI+ is started globally by runApp. `strength` 0..1 scales the whole bloom.
+void drawTransportGlow(HDC hdc, const RECT& rc, COLORREF accent, float strength) {
+    Gdiplus::Graphics g(hdc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    const float cx = (rc.left + rc.right) / 2.0f;
+    const float cy = (rc.top + rc.bottom) / 2.0f;
+    const float minDim = static_cast<float>(std::min(rc.right - rc.left, rc.bottom - rc.top));
+    const BYTE cr = GetRValue(accent), cg = GetGValue(accent), cb = GetBValue(accent);
+    const struct { float frac; BYTE alpha; } layers[] = {{0.60f, 44}, {0.44f, 66}, {0.28f, 96}};
+    for (const auto& L : layers) {
+        const float rad = minDim * L.frac;
+        const auto a = static_cast<BYTE>(L.alpha * strength);
+        Gdiplus::SolidBrush br(Gdiplus::Color(a, cr, cg, cb));
+        g.FillEllipse(&br, cx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
+    }
+}
+
 void drawTransportButton(AppState* st, const DRAWITEMSTRUCT* dis) {
     const Theme& th = currentTheme();
     const RECT rc = dis->rcItem;
     const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
     const bool hover = GetWindowLongPtrW(dis->hwndItem, GWLP_USERDATA) != 0;
     const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
-    // The record button glows accent while a recording is live. Play/pause stays neutral:
-    // you are almost always "playing", so accenting it there would drain the cue's meaning.
+    // The record button stays lit while a recording is live; any button lights on hover.
+    // Play/pause isn't treated as "active" while playing — you almost always are, so the
+    // live cue would never rest — it is reserved for recording.
     const bool active = (dis->hwndItem == st->btnRec && st->player.isRecording());
+    const bool lit = (hover || active) && !disabled;
 
-    const COLORREF bg = pressed ? th.selectionBg : hover ? th.hoverBg : th.windowBg;
+    // Flat into the strip band at rest; a muted-accent wash on press. Hover feedback is
+    // the accent bloom (below), not a bg lift, so the glow reads on the flat band.
+    const COLORREF bg = pressed ? th.selectionBg : th.windowBg;
     FillRect(dis->hDC, &rc, themeBrush(bg));
+    if (lit) drawTransportGlow(dis->hDC, rc, th.accent, active ? 1.0f : 0.55f);
 
-    const COLORREF fg = disabled             ? th.textMuted
-                        : active             ? th.accent
-                        : (hover || pressed) ? th.textPrimary
-                                             : th.textSecondary;
+    const COLORREF fg = disabled           ? th.textMuted
+                        : (lit || pressed) ? th.textPrimary  // bright core inside the bloom
+                                           : th.textSecondary;
     wchar_t glyph[8] = L"";
     GetWindowTextW(dis->hwndItem, glyph, ARRAYSIZE(glyph));  // current MDL2 glyph (swaps with state)
     HFONT oldFont = static_cast<HFONT>(SelectObject(dis->hDC, st->glyphFont));
