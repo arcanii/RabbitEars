@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.7 SHIPPED · macOS Phase-2 restructure LANDED, mac Phase-1 (playback+UI) in progress
+## Current state — v0.1.7 SHIPPED · 0.2.x THEME ENGINE in progress on branch `theme-engine` · macOS Phase-1 in progress
 
 **Released:** `v0.1.7` (2026-07-03), tag `v0.1.7` @ `de8c571`, public GitHub release with a
 signed **`RabbitEars-0.1.7-setup.exe`** installer (full version `0.1.7.52`) and a **live
@@ -47,6 +47,45 @@ M3uParser, Database, DockLayout, models, platform *contracts*), **`Win32/`** (th
 Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `installer.iss` +
 `build-installer.cmd` were fixed to match (0.1.7). The macOS team is moving fast on `main`: Phase-1
 (playback + native channel grid + Sparkle + CI `.app` build) is in progress.
+
+### 🎨 Theme engine (0.2.x epic) — IN PROGRESS on branch `theme-engine` (NOT merged; behind a build flag)
+
+All theme-engine work is on branch **`theme-engine`** (off `main` @ `c6a0cf2`), gated behind the
+OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** — so the **shipping build (flag off) is
+behaviourally identical to 0.1.7** (only the version bumped to **0.1.8** across the 4 places). Design
+doc: **`Win32/docs/THEME_ENGINE.md`** (§4 = the shared skin-model boundary for the mac team; §6 = the
+D3D11/HLSL renderer). Every phase was adversarially reviewed (0 findings) + build-verified BOTH flags;
+the sandbox can't launch the GUI, so the owner verified the Phase-1 strip live + eyeballed the Cyberpunk
+palette. Commits (newest first):
+
+- **Cyberpunk skin + registry-driven Theme menu** (`0611794`) — first *authored* skin (neon magenta on
+  midnight, **colours only, no shaders yet**). Settings→Theme auto-lists `builtinSkins()`. Owner: "looks
+  ok, adjust later once we see it in the app."
+- **Phase 3a** (`2176bb1`) — `themeFont(role,dpi)` typography seam (skin-driven flag-on, hardwired Segoe
+  UI flag-off) + `dangerHover` (the last hardcoded colour) wired into the skin. Parity-preserving.
+- **Phase 2c** (`4c5df33`) — live **Settings→Theme** switch (Follow System / Dark / Light), persisted
+  under `skinSettingKey()`, whole-app repaint broadcast (`applyActiveSkin`, MainWindow.cpp).
+- **Phase 2b** (`3320334`) — `currentTheme()`/`themeBrush()` in `Theme.h` re-backed by the active skin
+  (cached COLORREF Theme; per-skin brush cache). Parity: the dark skin == `makeDarkTheme` exactly.
+- **Phase 2a** (`5ac563c`) — the shared model **`common/ui/Skin.{h,cpp}`** (SkinColor/SkinPalette/
+  SkinFont/Skin + registry + UTF-8 codecs), 14 CLI selftests. **First model physically in `common/`.**
+- **Phase 1 spike** (`ae02206`) — the D3D11⇄D2D1.1 interop device (`Win32/ui/skin/SkinDevice`) + a
+  transport-strip **underglow** (HLSL shader → offscreen GDI-compatible texture → `BitBlt` in the
+  parent's child-clipped paint DC — a swapchain `Present` bypasses GDI sibling-clipping and hid the
+  transport controls, so it's windowless). Shaders: `fxc` → `.cso` → embedded C header via `bin2h.cmake`.
+
+**Ratified contract decisions** (THEME_ENGINE.md §4): skins define their OWN colours (no OS
+`GetSysColor` inherit); active-selection + OS dark/light detection are renderer-side, only the id +
+settings key are shared; the positional 14-role palette codec is frozen until user-customizable skins
+ship (then add a version prefix).
+
+**Next on the theme engine:** (a) **Phase 4** — author Steampunk + wire the shaders/neon *glow* (layer
+the Phase-1 SkinDevice/HLSL onto the reskinned surfaces; Cyberpunk is flat colours until then); (b)
+**Phase 3 remainder** — migrate the Dialogs GDI fonts + the grid's DirectWrite `CreateTextFormat` onto a
+`themeTextFormat`, convert the transport `BUTTON`s to owner-draw for per-skin glow; (c) tune the
+Cyberpunk palette. **Coordination:** extract **`docs/SKIN_MODEL.md`** for the mac team (the model is
+concrete now) + **cherry-pick the doc-reorg commit (`ea03a0a`) to `main`** so mac stops editing root
+docs. **Before merging `theme-engine` → `main`: `git fetch` + rebase** (origin/main moved via the mac team).
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
@@ -467,11 +506,13 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **Nothing is blocking** — 0.1.7 is shipped and live. Pick the next item from
-   **[`BACKLOG.md`](BACKLOG.md)** when ready; the headline is the **theme engine** (0.2.x epic —
-   full reskin + selectable D3D11/shader skins). Before starting it: write `Win32/docs/THEME_ENGINE.md`
-   and **flag the shared skin-model boundary to the macOS team** (skin *model* in `common/`, *renderer*
-   per-platform — see `Win32/BACKLOG.md` + memory `rabbitears-cross-platform`).
+1. **The active line of work is the THEME ENGINE** on branch **`theme-engine`** — see the "🎨 Theme
+   engine" section above for the commit-by-commit state. It is NOT merged and is behind the OFF-by-default
+   `RABBITEARS_THEME_ENGINE` flag. Resume there. Next candidates: **Phase 4** (Steampunk skin + the
+   shaders/neon glow — layer the Phase-1 `SkinDevice`/HLSL onto the reskinned surfaces), **Phase 3
+   remainder** (Dialogs GDI + grid DirectWrite fonts → a `themeTextFormat`; owner-draw transport buttons),
+   tune the Cyberpunk palette, extract **`docs/SKIN_MODEL.md`** for the mac team, and cherry-pick the
+   doc-reorg commit `ea03a0a` to `main`. **`git fetch`/rebase before merging `theme-engine` → `main`.**
 2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
    Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
    **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
@@ -483,61 +524,62 @@ commit messages with the Co-Authored-By trailer.
 
 Paste this verbatim to start a fresh session with working context restored:
 
-> You are continuing work on **RabbitEars** (`G:\RabbitEars`), a native **Windows
-> Win32 / C++20** IPTV player on **libVLC 3.0.23**, themed to match its sibling apps
-> `G:\SQLTerminal-Win32` and `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral
-> `#D97757`, custom `WM_NCCALCSIZE` title-bar chrome, CMake + Ninja + MSVC via **VS
-> 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `Win32/HANDOVER.md` and
-> `docs/architecture.md` first.**
+> You are continuing work on **RabbitEars** (`G:\RabbitEars`), a native **Windows Win32 / C++20** IPTV
+> player on **libVLC 3.0.23**, themed to match its sibling apps `G:\SQLTerminal-Win32` and
+> `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral `#D97757`, custom `WM_NCCALCSIZE` title-bar
+> chrome, CMake + Ninja + MSVC via **VS 2026 Community**, deps vendored/NuGet, **no VS project**).
+> **Read `Win32/HANDOVER.md` first — especially the "🎨 Theme engine" section — plus
+> `Win32/docs/THEME_ENGINE.md`.** (Team docs live under `Win32/` now, not the repo root, so they don't
+> collide with the mac team; the mac team owns `mac/` + shares `common/` and root `docs/`.)
 >
-> **State: v0.1.7 is SHIPPED** (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`, signed installer +
-> **live WinSparkle auto-update**; appcast @ `12be931`, `origin/main` == the "mark shipped" doc
-> commit, commit count 54). 0.1.7 = the **update-from-About fix** (the About box's modal loop
-> swallowed WinSparkle's `WM_QUIT`, so the app lingered and the installer failed — the loop now
-> re-posts `WM_QUIT`, plus a 2.5s force-exit net) + an **About-box bunny easter egg** + **restructure
-> packaging fixes** (`build\Win32\` paths). Prior: 0.1.6 = the update-on-quit fix + meter feel knobs +
-> random splash; 0.1.5 = the meters overhaul. **The macOS Phase-2 restructure has LANDED** — the tree
-> is now `common/` + `Win32/` + `mac/` under a unified root CMake; the macOS team is mid **Phase-1**
-> (native grid + playback + Sparkle + CI `.app`), and pushes to `main`, so **`git fetch`/rebase before
-> a release**. **The theme engine** (full reskin + selectable D3D11/shader skins) is the headline
-> **backlog** item — see `Win32/BACKLOG.md` (write `Win32/docs/THEME_ENGINE.md` + flag the shared
-> skin-model boundary to the macOS team before starting). **JSON profiles** stay deferred. **Read the
-> "0.1.7 — SHIPPED" + "Current state" sections of `Win32/HANDOVER.md` for full detail.**
+> **State:** last SHIPPED release is **v0.1.7** (`de8c571`, `0.1.7.52`, live WinSparkle auto-update).
+> The **active work is the 0.2.x THEME ENGINE on branch `theme-engine`** (off `main` @ `c6a0cf2`, **NOT
+> merged**), all behind the OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** so the shipping build
+> (flag off) is behaviourally identical to 0.1.7 (version bumped to **0.1.8**). Done + committed +
+> reviewed (0 findings) + build-verified both flags: **Phase 1** — the D3D11⇄D2D1.1 interop device
+> `Win32/ui/skin/SkinDevice` + a **windowless** transport-strip HLSL **underglow** (offscreen
+> GDI-compatible texture → child-clipped `BitBlt`; a swapchain `Present` bypasses GDI sibling-clipping so
+> it CAN'T be used over the controls); **Phase 2a** — shared model **`common/ui/Skin.{h,cpp}`**
+> (SkinColor/SkinPalette/SkinFont/Skin + registry + UTF-8 codecs, 14 CLI selftests — the FIRST model
+> physically in `common/`); **Phase 2b** — `currentTheme()`/`themeBrush()` in `Theme.h` re-backed by the
+> active skin (parity: the dark skin == `makeDarkTheme` exactly); **Phase 2c** — live **Settings→Theme**
+> switch (Follow System/Dark/Light), persisted, whole-app repaint broadcast (`applyActiveSkin`); **Phase
+> 3a** — `themeFont(role,dpi)` typography seam + `dangerHover` wiring; and a **Cyberpunk** skin (neon
+> magenta on midnight, **colours only, no shaders**) with a registry-driven Theme menu. **Next:** Phase 4
+> (Steampunk + shaders/neon glow — layer the Phase-1 `SkinDevice`/HLSL onto surfaces), Phase 3 remainder
+> (Dialogs/grid DirectWrite fonts → a `themeTextFormat`, owner-draw transport buttons), tune Cyberpunk.
+> **Coordination:** extract `docs/SKIN_MODEL.md` for the mac team; cherry-pick the doc-reorg commit
+> `ea03a0a` to `main`; **`git fetch`/rebase before merging `theme-engine` → `main`** (origin/main moved
+> via the mac team). **JSON profiles** stay deferred.
 >
-> **Cross-platform (important, see memory `rabbitears-cross-platform`):** RabbitEars is going
-> **macOS** — premium per platform, ~70% common core (engine + meter model/config) + platform-specific
-> graphics. The macOS team is writing **`MACOS_PORT.md`**; the repo gets **restructured** once it
-> lands — **do NOT preemptively restructure**; keep the meter *model ↔ renderer* seam clean. **JSON
-> profiles** are deferred to a later version. (Prior: 0.1.4 fixed the audio meter [agile
-> `IAgileObject`], meter animation, and splitter drag, and added the import-results dialog, rename
-> playlists, and the splash version; 0.1.3 added the dockable layout + by-country filter.)
+> **Cross-platform (memory `rabbitears-cross-platform`):** premium per platform, ~70% common core; the
+> **skin MODEL is shared in `common/`, the RENDERER is per-platform** (Win32 D3D11/D2D+HLSL; mac Metal
+> later). Ratified: skins define their OWN colours (no OS `GetSysColor`); active-selection + OS dark/light
+> detection are renderer-side, only the id + `skinSettingKey()` are shared; the positional palette codec
+> is frozen until user skins ship. Keep `common/` graphics-free (the `mac-core` CI compiles it on clang).
 >
-> The GUI: owner-draw command bar + Settings menu; three **dockable regions** (nav
-> TreeView / video+transport strip / Direct2D `ChannelGridControl`) rearranged by dragging
-> corner grips or the divider gutters (persisted `dock_layout`); a `VlcPlayer` (all libVLC
-> lifecycle + a headless recorder on a worker thread); a blocky-LED buffer meter + modular
-> mini-meters (spectrum/signal/bitrate/frames — `ui/MiniMeter` + WASAPI process-loopback
-> `audio/SpectrumTap`); the log at `%LOCALAPPDATA%\RabbitEars\rabbitears.log`; themed dialogs.
+> The GUI: owner-draw command bar + Settings menu; three **dockable regions** (nav TreeView /
+> video+transport strip / Direct2D `ChannelGridControl`, persisted `dock_layout`); a `VlcPlayer` (libVLC
+> lifecycle + headless recorder on a worker thread); a blocky-LED buffer meter + modular mini-meters
+> (`ui/MiniMeter` + WASAPI process-loopback `audio/SpectrumTap`); log at `%LOCALAPPDATA%\RabbitEars\rabbitears.log`.
 >
-> Build/verify:
+> **Build/verify** (from PowerShell):
 > ```
-> scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON      # from PowerShell: & "G:\RabbitEars\scripts\build.cmd" ...
-> build\RabbitEarsCli.exe --selftest               # core + dock-layout + country assertions (headless)
+> & "G:\RabbitEars\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON   # theme-engine dev
+> & "G:\RabbitEars\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=OFF  # verify shipping path
+> build\Win32\RabbitEarsCli.exe --selftest    # core + dock + country + 14 skin-model assertions (headless)
 > ```
-> Gotchas: `cmake`/`cl` aren't on PATH — use `scripts\build.cmd`. `LINK1168` = an instance
-> is running → `Stop-Process -Name RabbitEars -Force`, rebuild. Static CRT (`/MT`). **libVLC
-> `stop()`/`release()` block** (now offloaded to reaper threads); event callbacks run on a
-> libVLC thread → only `PostMessage`. **RECT fields are `LONG`** → cast to `int` for
-> `std::max`/`MoveWindow` (or you hit ambiguous-overload errors). `themeBrush()` caches only
-> 12 colors — LED/grip drawing uses the GDI **DC brush** instead. **`Grep` renders `/` as
-> `\`** in this sandbox — trust `Read`, not `Grep`, for slash-containing lines. Channel grid
-> D2D target pinned to 96 DPI. libVLC `i_read_bytes` is 0 for HLS. VLC sout single-quoted
-> paths need `'` doubled. Modal dialogs must read controls before `DestroyWindow`.
->
-> **This sandbox can't launch the GUI** (`Start-Process` hangs even with
-> `dangerouslyDisableSandbox`); build-verify + reason, run `RabbitEarsCli` for headless
-> checks (dock-tree + country logic live in `RabbitEarsCore` so they ARE selftested), and
-> hand visual/runtime verification to the owner (who reads `rabbitears.log`). Commit only
-> when asked; stage specific paths (never `git add -A` — the owner adds `art/*.png`); end
-> commits with the Co-Authored-By trailer. Releases are signed on macOS with the shared
-> family Ed25519 key — see `docs/RELEASING.md`.
+> Every theme-engine change: adversarially reviewed via a background **Workflow** (independent lenses) +
+> build-verified **BOTH flags** before committing. **flag-off must stay byte-identical to shipping** —
+> every engine addition is `#ifdef RABBITEARS_THEME_ENGINE`-gated. Gotchas: `cmake`/`cl` aren't on PATH —
+> use `scripts\build.cmd`; Windows outputs are in `build\Win32\`. `LINK1168` = an instance running →
+> `Stop-Process -Name RabbitEars -Force`, rebuild. Static CRT (`/MT`, **no redist** — shaders are
+> precompiled `.cso` embedded as C headers via `bin2h.cmake`, never a runtime DLL). `themeBrush()` is a
+> per-skin `unordered_map` flag-on (the 12-slot array flag-off). **This sandbox CANNOT launch the GUI** —
+> build-verify + reason + run `RabbitEarsCli` headless; hand visual verification to the owner. Commit only
+> when asked; stage specific paths (never `git add -A` — owner adds `art/*.png`); end commits with the
+> Co-Authored-By trailer. Also: libVLC `stop()`/`release()` block (offloaded to reaper threads); event
+> callbacks → only `PostMessage`; RECT fields are `LONG` (cast to int); channel grid D2D pinned to 96 DPI;
+> libVLC `i_read_bytes` is 0 for HLS; VLC sout single-quoted paths need `'` doubled; modal dialogs read
+> controls before `DestroyWindow`. Releases signed on macOS with the shared family Ed25519 key —
+> `docs/RELEASING.md`.
