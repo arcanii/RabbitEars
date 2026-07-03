@@ -26,14 +26,41 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.5 SHIPPED (meters overhaul) · macOS port next
+## Current state — v0.1.6 SHIPPED · macOS port in progress (Phase-2 PR pending)
 
-**Released:** `v0.1.5` (2026-07-03), tag `v0.1.5` @ `ca945d1`, public GitHub release with a
-signed **`RabbitEars-0.1.5-setup.exe`** installer (full version `0.1.5.29`) and a **live
-WinSparkle auto-update feed** (appcast published @ `873c73a`; `origin/main` == `873c73a` + the
-"mark shipped" doc commit). Earlier: `v0.1.4` (`8622e8a`, `0.1.4.26`), `v0.1.3` (`ebd71a8`,
-`0.1.3.22`), `v0.1.2` (`8c99254`, `0.1.2.19`), `v0.1.1` (auto-update baseline), `v0.1.0` (portable
-zip). 0.1.1–0.1.4 users get 0.1.5 automatically.
+**Released:** `v0.1.6` (2026-07-03), tag `v0.1.6` @ `5d06958`, public GitHub release with a
+signed **`RabbitEars-0.1.6-setup.exe`** installer (full version `0.1.6.37`) and a **live
+WinSparkle auto-update feed** (appcast published @ `ebcbc2f`). Earlier: `v0.1.5` (`ca945d1`,
+`0.1.5.29`), `v0.1.4` (`8622e8a`, `0.1.4.26`), `v0.1.3` (`ebd71a8`, `0.1.3.22`), `v0.1.2`
+(`8c99254`, `0.1.2.19`), `v0.1.1` (auto-update baseline), `v0.1.0` (portable zip). 0.1.1–0.1.5
+users get 0.1.6 automatically.
+
+### 0.1.6 — SHIPPED (tag `v0.1.6` @ `5d06958`, full `0.1.6.37`; all `/W4` clean)
+Committed as `5d06958` (13 paths; version bumped in the four places), built, signed on macOS,
+released, appcast live @ `ebcbc2f`. 0.1.1–0.1.5 users get it via WinSparkle. Three items:
+- **Auto-update-on-quit fix** (the important one) — updates failed intermittently because a lingering
+  RabbitEars process locked the exe/DLLs so the installer couldn't overwrite them (a shutdown-
+  coordination race — reproduced even with nothing playing). Full bundle: a WinSparkle
+  `shutdown_request` callback → `PostMessage(WM_CLOSE)` so WinSparkle closes + waits for the process
+  to exit before installing (`Updater.{h,cpp}`, `initUpdater(HWND)`); `VlcPlayer::shutdown()` joins the
+  worker + reaper threads + releases libVLC synchronously in `WM_DESTROY` (was a fire-and-forget
+  `stop()`); a bounded **force-exit watchdog** (`armExitWatchdog(4000)` in `WM_DESTROY`) that
+  `ExitProcess`es if teardown hangs; a **single-instance mutex** (`RabbitEars.SingleInstance`, focuses
+  the existing window); and installer **Restart Manager** (`AppMutex` + `CloseApplications` +
+  `RestartApplications` in `installer.iss`, mutex name matched). Owner verifies via a live upgrade.
+- **Per-meter "feel" knobs** — a `MeterTuning` struct (glow / smoothing / sensitivity / peak-hold /
+  breathing) on `MeterConfig`, all normalized 0..1 with **0.5 = the classic behaviour exactly**
+  (behavior-preserving, verified by the mapping math). Threaded into `drawTubeGlow` (glow), `drawScope`
+  (glow + gain), `onTick` (smoothing → decay/ease/flare, peakHold → peakFall), the `paint*` sensitivity
+  gain, and `miniMeterPushBitrate` (breathing). Setters/getters + `meterTuning{To,From}String`. The
+  Meters → Setup… dialog gains **inline trackbar sliders per row** (relevant knobs per meter — spectrum
+  also gets Peak, bitrate gets Breathe) with live preview via `WM_HSCROLL`, persisted per meter
+  (`meter_<kind>_knobs`). Dialog widened to 720×~738 and **clamped to the monitor work area**
+  (`clampToWorkArea`) so it can't clip off-screen. (`MiniMeter.{h,cpp}`, `Dialogs.cpp`, `MainWindow.cpp`)
+- **Random splash captions** — the splash shuffles its caption order per launch (Fisher-Yates,
+  re-shuffle on wrap) so the sequence differs each run. (`Splash.cpp`)
+- **Backlog noted:** the other themed dialogs (About / prompt / Categories / Terms / info) share the
+  same centre-on-parent positioning and could clip near a screen edge — reuse `clampToWorkArea`.
 
 ### 0.1.5 — SHIPPED (tag `v0.1.5` @ `ca945d1`, full `0.1.5.29`; all `/W4` clean)
 Committed as `ca945d1` (10 paths; version bumped in the four places), built, signed on macOS,
@@ -387,6 +414,10 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 - **Resume last channel** on launch (`last_channel_id` is already persisted).
 - **DPI-change relayout** (`WM_DPICHANGED`): recreate fonts, relayout, push DPI to
   grid/meter (`channelGridUpdateDpi`, `bufferMeterSetDpi`).
+- **Clamp the remaining themed dialogs to the work area** — About / prompt / Categories /
+  Terms / info centre on the parent (`Dialogs.cpp`) and can clip off-screen near a screen
+  edge, like the Meters dialog did. Reuse `clampToWorkArea()` after each dialog's centred
+  x/y (the Meters dialog already does, as of 0.1.6).
 - **Authenticode** code-signing (SmartScreen). **Portable-zip** artifact on releases.
 - **EPG** (XMLTV now/next; `tvg-id` already stored) and a **background dead-link
   checker** (so "Hide unavailable" isn't purely passive). Import/export favourites.
@@ -394,9 +425,9 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.1.5`; **v0.1.5 released @ `ca945d1`** (full `0.1.5.29`; appcast @ `873c73a`).
-`HEAD == origin/main` is this "mark 0.1.5 shipped" doc commit (commit count **31**; release
-`ca945d1` = 29, appcast-publish `873c73a` = 30). Working tree clean.
+Tags `v0.1.0`…`v0.1.6`; **v0.1.6 released @ `5d06958`** (full `0.1.6.37`; appcast @ `ebcbc2f`).
+`HEAD == origin/main` is this "mark 0.1.6 shipped" doc commit (commit count **39**; release
+`5d06958` = 37, appcast-publish `ebcbc2f` = 38). Working tree clean.
 Build number = git commit count, baked at CMake configure time **after** the commit — so a build
 must follow the release commit to stamp the matching `0.1.5.<count>`. Commit/push only when the
 owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`); end
@@ -428,17 +459,18 @@ Paste this verbatim to start a fresh session with working context restored:
 > 2026 Community**, deps vendored/NuGet, **no VS project**). **Read `HANDOVER.md` and
 > `docs/architecture.md` first.**
 >
-> **State: v0.1.5 is SHIPPED** (tag `v0.1.5` @ `ca945d1`, full `0.1.5.29`, signed installer +
-> **live WinSparkle auto-update**; appcast @ `873c73a`, `origin/main` == the "mark shipped" doc
-> commit, commit count 31). 0.1.5 was a **METERS OVERHAUL**: a **per-meter look + palette engine**
-> (`MiniMeter.{h,cpp}` — `MeterStyle` {Led,Tube,Lcd,Scope} + a full custom `MeterPalette`,
-> palette-driven rendering, (de)serialization, `MeterConfig`); a **Meters → Setup… dialog**
-> (`Dialogs.cpp` `chooseMeters` — 4 live-preview rows, a Look combo, 7 `ChooseColor` swatches;
-> `onMeters` in `MainWindow.cpp`, persisted per meter as `meter_<kind>_style/_colors`); and the
-> **four looks** — LED/LCD in GDI, **vacuum tube** (GDI base + a GDI+ soft-halo `drawTubeGlow`), and
-> **oscilloscope** in GDI+ (AA phosphor trace). **The active front is now the macOS port** (see
-> below); **JSON profiles** stay deferred. **Read the "0.1.5 — SHIPPED" section of `HANDOVER.md` for
-> full detail** (file lists, IDs, persistence keys).
+> **State: v0.1.6 is SHIPPED** (tag `v0.1.6` @ `5d06958`, full `0.1.6.37`, signed installer +
+> **live WinSparkle auto-update**; appcast @ `ebcbc2f`, `origin/main` == the "mark shipped" doc
+> commit, commit count 39). 0.1.6 = an **auto-update-on-quit fix** (WinSparkle `shutdown_request`
+> callback + `VlcPlayer::shutdown()` in `WM_DESTROY` + a bounded force-exit watchdog + a
+> single-instance mutex + installer Restart Manager — a lingering process was locking the exe so
+> updates failed), **per-meter "feel" knobs** (`MeterTuning` glow/smoothing/sensitivity/peak-hold/
+> breathing on `MeterConfig`, inline sliders in the Meters dialog, defaults preserve behaviour), and
+> **random splash captions**. Prior: 0.1.5 was the meters overhaul (per-meter looks + palettes).
+> **The active front is now the macOS port** — Phase-0 (additive `mac/` + guarded shared-file edits)
+> is merged; the macOS team's **Phase-2 restructure PR** is greenlit and pending (see
+> `docs/MACOS_PORT_REVIEW.md`). **JSON profiles** stay deferred. **Read the "0.1.6 — SHIPPED" section
+> of `HANDOVER.md` for full detail** (file lists, IDs, persistence keys).
 >
 > **Cross-platform (important, see memory `rabbitears-cross-platform`):** RabbitEars is going
 > **macOS** — premium per platform, ~70% common core (engine + meter model/config) + platform-specific
