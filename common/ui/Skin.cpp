@@ -76,8 +76,33 @@ Skin makeCyberpunkSkin() {
     return s;
 }
 
+// Steampunk (Phase 4): brass + copper on dark aged iron. Warm parchment text, a
+// polished-brass accent, oxidised-rust danger hover. This is the FIRST skin to diverge
+// its typography — a Georgia serif title (resolved through the Phase-3 font seam) gives
+// the chrome title + dialog headings a Victorian flourish, while the body stays Segoe UI
+// so the dense channel grid keeps its legibility. Colours + type only; the neon /
+// heat-haze shaders that complete the look layer on next (SkinDevice/HLSL, THEME_ENGINE §6).
+Skin makeSteampunkSkin() {
+    Skin s;
+    s.id = "steampunk";
+    s.name = "Steampunk";
+    s.dark = true;
+    s.palette = SkinPalette{
+        .windowBg = {26, 21, 16},   .panelBg = {32, 26, 19},   .panelElevBg = {43, 35, 25},
+        .altRowBg = {29, 23, 17},   .hoverBg = {56, 45, 31},   .border = {82, 64, 42},
+        .textPrimary = {234, 222, 200}, .textSecondary = {186, 162, 126}, .textMuted = {132, 112, 84},
+        .accent = {201, 148, 66},   .accentText = {28, 20, 8}, .selectionBg = {74, 56, 30},
+        .selectionText = {245, 234, 212}, .dangerHover = {170, 60, 34},
+    };
+    s.body = {"Segoe UI", 10.5f, 400};
+    s.title = {"Georgia", 12.0f, 700};  // serif title — exercises the Phase-3 typography seam
+    s.glyph = {"Segoe MDL2 Assets", 9.75f, 400, /*symbol=*/true};
+    return s;
+}
+
 const std::vector<Skin>& builtinSkins() {
-    static const std::vector<Skin> skins = {makeDarkSkin(), makeLightSkin(), makeCyberpunkSkin()};
+    static const std::vector<Skin> skins = {makeDarkSkin(), makeLightSkin(), makeCyberpunkSkin(),
+                                            makeSteampunkSkin()};
     return skins;
 }
 

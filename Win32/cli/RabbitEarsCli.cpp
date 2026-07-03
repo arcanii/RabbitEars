@@ -235,9 +235,13 @@ int selftest() {
         expect(skinById("cyberpunk").id == "cyberpunk" &&
                    skinById("cyberpunk").palette.accent == SkinColor{244, 55, 148},
                "cyberpunk skin registered with a neon-magenta accent");
+        expect(skinById("steampunk").id == "steampunk" &&
+                   skinById("steampunk").palette.accent == SkinColor{201, 148, 66} &&
+                   skinById("steampunk").title.family == "Georgia",
+               "steampunk skin registered (brass accent + serif title)");
         expect(skinById("bogus").id == "dark", "skinById unknown -> dark fallback");
-        expect(builtinSkins().size() >= 3 && std::string(defaultSkinId()) == "dark",
-               "three built-in skins; default is dark");
+        expect(builtinSkins().size() >= 4 && std::string(defaultSkinId()) == "dark",
+               "four built-in skins; default is dark");
         expect(skinById("dark").glyph.symbol && !skinById("dark").body.symbol,
                "glyph is a symbol font; body is not");
         expect(std::string(skinSettingKey()) == "skin", "shared skin settings key");
