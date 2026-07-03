@@ -185,44 +185,61 @@ struct SkinColor {                 // common/ui/Skin.h — no windows.h
 // Win32 renderer: COLORREF toColorRef(SkinColor);   mac renderer: NSColor* toNSColor(SkinColor);
 ```
 
-**4.2 The `Skin` struct** — the palette (named roles, superset of today's 17, minus the 4 dead
-`syn*` fields carried from SQLTerminal), typography roles, and identity:
+**4.2 The `Skin` struct (as built, `common/ui/Skin.h`)** — a string `id` (not an enum, so Phase-4
+skins add without touching a shared enum), a `SkinPalette` of the 14 *used* roles (today's 17 Theme
+fields minus the 4 dead `syn*`, plus `dangerHover` — was the hardcoded close-hover red), and typography:
 
 ```cpp
-enum class SkinId { Dark, Steampunk, Cyberpunk };   // to/from a stable string token; unknown → Dark
+struct SkinFont {                       // resolved to HFONT / NSFont by the renderer
+    std::string family = "Segoe UI";
+    float       sizePt = 10.5f;
+    int         weight = 400;           // CSS-ish 100..900
+    bool        symbol = false;         // platform icon font (glyph role == "Segoe MDL2 Assets"): a
+};                                      //   renderer that can't load `family` substitutes its own
 
-struct SkinFont { std::string family; float sizePt; int weight; };   // resolved to HFONT / NSFont
-
-struct Skin {
-    SkinId      id;
-    std::string name;
-    // palette roles (mirrors struct Theme's live fields):
+struct SkinPalette {
     SkinColor windowBg, panelBg, panelElevBg, altRowBg, hoverBg, border,
               textPrimary, textSecondary, textMuted,
-              accent, accentText, selectionBg, selectionText, dangerHover /* was hardcoded */;
-    // typography roles (net-new; renderer resolves to platform fonts):
-    SkinFont  body, title, glyph;
-    // optional GPU-skin manifest (Phase 4): shader ids + params, resolved per-platform:
-    // std::vector<SkinEffectRef> effects;
+              accent, accentText, selectionBg, selectionText, dangerHover;
+};
+
+struct Skin {
+    std::string id;        // stable token ("dark") — the persisted selection
+    std::string name;      // display name ("Dark")
+    bool        dark;      // hint for OS dark-mode chrome (DWM immersive / NSAppearance)
+    SkinPalette palette;
+    SkinFont    body, title, glyph;
+    // Phase 4: an optional GPU-skin manifest (shader ids + params), resolved per-platform.
 };
 ```
 
-**4.3 The registry + active selection** — replaces the 2-instance `currentTheme()` + 3-state
-`themeOverride()`. Owned by `common/` so mac reuses it:
+**Skins define their own colours (ratified).** Skins do **not** inherit OS window/text colours — the
+pre-engine light theme's three `GetSysColor` lookups are dropped for literals. `SkinColor.inherit`
+means "resolve against the base *surface* colour" (the old meter `CLR_INVALID`), **not** an OS system
+colour — there is intentionally no OS-derived vocabulary. The mac renderer mirrors these literals.
+
+**4.3 The registry + active selection (as built).** The registry is shared; the *active-state holder*
+is renderer-side (platform event models + OS dark/light detection differ), but both platforms persist
+the selection under the same shared key:
 
 ```cpp
-const Skin& skinById(SkinId);            // the built-in skins (Dark/Steampunk/Cyberpunk)
-SkinId      activeSkin();                // persisted selection
-void        setActiveSkin(SkinId);       // + a change-notification hook the renderer subscribes to
+const std::vector<Skin>& builtinSkins();     // immortal; index 0 == dark. Phase 2: [dark, light]
+const Skin&              skinById(const std::string& id);   // unknown -> dark
+std::vector<std::string> builtinSkinIds();
+const char*              defaultSkinId();     // "dark"
+const char*              skinSettingKey();    // "skin" — shared settings K/V key for the active id
 ```
-"Follow system light/dark" stays a **meta-option orthogonal to skin choice** (a Dark skin can still
-have a light variant) — keep it renderer-side, don't fold it into `SkinId`.
+"Follow system light/dark" stays a renderer-side meta-option: it picks the dark-vs-light *skin* by the
+OS mode; it never sources colours from the OS.
 
-**4.4 String codecs** — same discipline as `meter*To/FromString`, but **UTF-8 `std::string`** (not
-`wstring`) for mac-friendliness; the Win32 settings store transcodes at the boundary via the existing
-[`common/platform/Encoding.h`](../../common/platform/Encoding.h). Stable tokens, fixed-arity CSV, hex
-`RRGGBB` colors, `"theme"`/`inherit` escape, exact-count-or-whole-fallback with per-field graceful
-fallback. Persisted under a `skin` settings key (active id) + per-skin overrides if user-customizable.
+**4.4 String codecs (as built, UTF-8).** Same discipline as `meter*To/FromString`: `skinColorTo/FromString`
+(`"inherit"` / `RRGGBB` / `RRGGBBAA`) and `skinPaletteTo/FromString` (the 14 roles, positional CSV,
+exact-arity-or-whole-fallback with per-field graceful fallback). Only the skin **id** persists today, so
+the positional palette form is safe to freeze — but **before user-customizable skins persist a palette
+(Phase 4), add a version/arity prefix** so a future 15th role doesn't discard every saved skin. Do not
+reorder roles: position is identity.
+
+*Status: implemented in [`common/ui/Skin.{h,cpp}`](../../common/ui/Skin.h), covered by 14 CLI selftests (all pass).*
 
 **4.5 Boundary rules (the actual agreement):**
 - `common/` skin code stays **graphics-free** — it compiles into `RabbitEarsCore` and the mac self-test

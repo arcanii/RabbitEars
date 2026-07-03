@@ -10,6 +10,7 @@
 add_library(RabbitEarsCore STATIC
   core/M3uParser.cpp
   db/Database.cpp
-  ui/DockLayout.cpp)  # pure layout-tree logic (no HWNDs) — unit-tested headlessly
+  ui/DockLayout.cpp   # pure layout-tree logic (no HWNDs) — unit-tested headlessly
+  ui/Skin.cpp)        # shared skin model + codecs (theme engine) — unit-tested headlessly
 target_include_directories(RabbitEarsCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(RabbitEarsCore PUBLIC sqlite3)

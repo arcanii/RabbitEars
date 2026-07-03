@@ -16,6 +16,7 @@
 #include "db/Database.h"
 #include "platform/Encoding.h"
 #include "ui/DockLayout.h"
+#include "ui/Skin.h"
 
 using namespace rabbitears;
 
@@ -198,6 +199,45 @@ int selftest() {
         for (int k = 0; k < kPanelCount; ++k)
             allPresent &= (r2[k].right > r2[k].left && r2[k].bottom > r2[k].top);
         expect(allPresent, "re-dock keeps all three panels laid out");
+    }
+
+    out("\n== Skin model ==\n");
+    {
+        // Color codec: RRGGBB round-trip, inherit sentinel, alpha, bad-input fallback.
+        expect(skinColorToString(SkinColor{200, 30, 20}) == "C81E14", "color -> RRGGBB hex");
+        expect(skinColorFromString("C81E14", {}) == SkinColor{200, 30, 20}, "RRGGBB -> color round-trip");
+        SkinColor inh{};
+        inh.inherit = true;
+        expect(skinColorToString(inh) == "inherit", "inherit color -> 'inherit'");
+        expect(skinColorFromString("inherit", {}).inherit, "'inherit' -> inherit color");
+        expect(skinColorFromString("nothex", SkinColor{1, 2, 3}) == SkinColor{1, 2, 3},
+               "bad hex -> fallback");
+        const SkinColor alpha{10, 20, 30, 128};
+        expect(skinColorFromString(skinColorToString(alpha), {}) == alpha, "RRGGBBAA alpha round-trips");
+
+        // Palette codec: full round-trip (first/mid/last roles), exact-arity + per-field fallback.
+        const Skin& dark = skinById("dark");
+        const SkinPalette& lp = skinById("light").palette;
+        const std::string ps = skinPaletteToString(dark.palette);
+        const SkinPalette rt = skinPaletteFromString(ps, lp);
+        expect(rt.windowBg == dark.palette.windowBg && rt.accent == dark.palette.accent &&
+                   rt.dangerHover == dark.palette.dangerHover,
+               "palette round-trip preserves windowBg/accent/dangerHover (order intact)");
+        expect(skinPaletteFromString("a,b,c", lp).accent == lp.accent,
+               "wrong token count -> whole fallback");
+        const SkinPalette pf = skinPaletteFromString("ZZZZZZ" + ps.substr(6), lp);
+        expect(pf.windowBg == lp.windowBg && pf.accent == dark.palette.accent,
+               "per-field fallback: bad field 0 falls back, good fields still parse");
+
+        // Registry: lookup, unknown-id fallback, count.
+        expect(skinById("dark").id == "dark" && skinById("light").id == "light",
+               "skinById resolves dark + light");
+        expect(skinById("bogus").id == "dark", "skinById unknown -> dark fallback");
+        expect(builtinSkins().size() >= 2 && std::string(defaultSkinId()) == "dark",
+               "at least two built-in skins; default is dark");
+        expect(skinById("dark").glyph.symbol && !skinById("dark").body.symbol,
+               "glyph is a symbol font; body is not");
+        expect(std::string(skinSettingKey()) == "skin", "shared skin settings key");
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");
