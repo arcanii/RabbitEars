@@ -42,21 +42,11 @@ M3uParser, Database, DockLayout, models, platform *contracts*), **`Win32/`** (th
 Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `installer.iss` +
 `build-installer.cmd` were fixed to match (0.1.7).
 
-**macOS (all on `main`):** the app **plays IPTV** via libVLC in a native window with a rich channel
-grid — search, group **and country** filter, favourites (★ toggle), **LCN edit**, and
-**resume‑last‑played** on launch. **Sparkle auto‑update** is wired (framework auto‑provisioned from
-the GitHub release by `mac/cmake/Mac.cmake` + embedded in the bundle; `SUFeedURL`/`SUPublicEDKey` in
-`Info.plist`; menu‑bar *Check for Updates…*). Both platforms build in CI
-(`.github/workflows/{mac,windows}-core.yml`, incl. the mac `.app`). Build/run the mac app:
-`scripts/build-mac.sh --app` → `build-mac/mac/RabbitEars.app` (needs VLC.app for libVLC, auto‑detected).
-Full detail: [`docs/MACOS_PORT.md`](docs/MACOS_PORT.md).
-
-**macOS pending — branch `mac-meters` (NOT merged):** a native LED **audio meter** + a libVLC audio
-tap (`libvlc_audio_set_callbacks` → peak metering + AudioQueue re‑output; mac start of the Win32
-SpectrumTap). Also **enabled ARC** for the mac `.mm` (they were compiled MRC and leaking every
-window/view). Held back because it changes the audio **output path** — needs an on‑device audio test
-+ an adversarial‑review pass before merge. After that, the first Mac release needs a **signed +
-notarized** build to light up the live Sparkle update flow (populate `mac/packaging/appcast-mac.xml`).
+**macOS** (all on `main`): the app plays IPTV via libVLC in a native window with a rich channel grid
++ Sparkle auto‑update, and builds in CI (`mac-core.yml`). Audio meters are pending on branch
+`mac-meters` (PR #9). The macOS team keeps its own handover to avoid colliding with this doc —
+**see [`mac/HANDOVER.md`](mac/HANDOVER.md)** (build/run, status, next steps) and
+[`docs/MACOS_PORT.md`](docs/MACOS_PORT.md) (plan + history).
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
