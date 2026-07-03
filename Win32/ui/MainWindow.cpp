@@ -46,6 +46,10 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #include "audio/SpectrumTap.h"
 
+#ifdef RABBITEARS_THEME_ENGINE
+#include "ui/skin/SkinStrip.h"  // Phase-1 GPU skin spike: the transport-strip underglow surface
+#endif
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -103,6 +107,9 @@ constexpr int ID_MTR_FRAMES = 2043;
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters → Setup… (the full dialog)
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
+#ifdef RABBITEARS_THEME_ENGINE
+constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
+#endif
 
 // Segoe MDL2 Assets transport glyphs — rendered with the MDL2 glyph font on the
 // square transport buttons. Play/Pause and Record/Stop-rec swap with state.
@@ -168,6 +175,9 @@ struct AppState {
     HWND       tip = nullptr;       // shared tooltip (volume slider, buffer slider, meter)
     HWND       status = nullptr;
     HWND       bufferMeter = nullptr;
+#ifdef RABBITEARS_THEME_ENGINE
+    bool       skinStripOn = false;  // GPU transport-strip underglow available (theme-engine spike)
+#endif
     HWND       meterSpectrum = nullptr;  // modular LED mini-meters (Settings → Meters)
     HWND       meterSignal = nullptr;
     HWND       meterBitrate = nullptr;
@@ -1314,6 +1324,13 @@ void createChildren(HWND hwnd, AppState* st) {
 
     st->video = CreateWindowExW(0, kVideoClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 10,
                                 10, hwnd, nullptr, hInst, nullptr);
+#ifdef RABBITEARS_THEME_ENGINE
+    // GPU transport-strip underglow: windowless. The parent's WM_PAINT (+ a timer tick)
+    // BitBlt it into the strip band behind the transport controls — WS_CLIPCHILDREN keeps
+    // it behind them, exactly like the plain strip fill it replaces. Off → GDI fill.
+    st->skinStripOn = skin::initSkinStrip();
+    if (st->skinStripOn) SetTimer(hwnd, kSkinAnimTimer, 16, nullptr);  // ~60 fps
+#endif
     st->nav = CreateWindowExW(0, WC_TREEVIEWW, L"",
                               WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TVS_HASBUTTONS |
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
@@ -1541,12 +1558,36 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // WS_CLIPCHILDREN keeps this fill behind the meter/button children on top.
                 const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
                 RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
-                FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
+                bool gdiStrip = true;
+#ifdef RABBITEARS_THEME_ENGINE
+                // hdc is BeginPaint's DC — child-clipped by WS_CLIPCHILDREN, so the underglow
+                // lands behind the transport controls, exactly like the plain fill would.
+                if (st->skinStripOn && skin::paintSkinStrip(hdc, strip, st->dpi)) gdiStrip = false;
+#endif
+                if (gdiStrip) FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
                 paintGutters(st, hdc);  // dock dividers live in the gaps between panels
             }
             EndPaint(hwnd, &ps);
             return 0;
         }
+#ifdef RABBITEARS_THEME_ENGINE
+        case WM_TIMER:
+            if (st && wParam == kSkinAnimTimer) {
+                // Animate the GPU strip via a child-clipped DC (DCX_CLIPCHILDREN) so the
+                // transport controls are excluded and the command bar isn't redrawn each
+                // frame. Idle while fullscreen (strip hidden), minimized, or not visible.
+                if (st->skinStripOn && !st->fullscreen && !IsIconic(hwnd) && IsWindowVisible(hwnd)) {
+                    const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
+                    RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
+                    if (HDC dc = GetDCEx(hwnd, nullptr, DCX_CACHE | DCX_CLIPCHILDREN)) {
+                        skin::paintSkinStrip(dc, strip, st->dpi);
+                        ReleaseDC(hwnd, dc);
+                    }
+                }
+                return 0;
+            }
+            break;
+#endif
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (st->panelDragActive && (wParam & MK_LBUTTON)) {
@@ -2014,6 +2055,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_DESTROY:
             armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
+#ifdef RABBITEARS_THEME_ENGINE
+            KillTimer(hwnd, kSkinAnimTimer);
+            skin::shutdownSkinStrip();
+            st->skinStripOn = false;
+#endif
             st->spectrumTap.stop();  // join the capture thread before the meter HWNDs die
             st->player.shutdown();   // join worker + reaper threads + release libVLC synchronously
             if (st->uiFont) DeleteObject(st->uiFont);
