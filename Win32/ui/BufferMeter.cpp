@@ -35,7 +35,7 @@ inline int IX(int i, int j) { return i + GW * j; }
 
 // LED dot-matrix render: each cell is a small lit square with a dark gap around
 // it. Sizes are 96-dpi design values (DPI-scaled at draw time).
-constexpr int LED_PITCH = 5;  // cell + gap
+constexpr int LED_PITCH = 3;  // cell + gap — matches the mini-meters' cell size (was 5)
 constexpr int LED_GAP   = 1;  // dark gap between cells
 // The grid shows only the bottom kVisibleFill fraction of the simulated tank, so a
 // healthy stream (rests at NORMAL_FILL) reaches near the top with a little splash

@@ -248,7 +248,15 @@ void VlcPlayer::doPlay(const Cmd& c) {
     prevCorrupted_ = prevDiscontinuity_ = prevLostPictures_ = 0;
     prevDisplayedPictures_ = 0;
 
-    if (video_) libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
+    if (video_) {
+        libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
+        // Don't let libVLC's video window swallow mouse/keyboard input. We host our own
+        // interactions over the surface (double-click fullscreen, and in video-only mode the
+        // drag-to-move + right-click menu + Esc). Without this the vout child consumes those
+        // events while a stream is playing, so they only worked when nothing was on-screen.
+        libvlc_video_set_mouse_input(mp_, 0);
+        libvlc_video_set_key_input(mp_, 0);
+    }
     if (auto* em = libvlc_media_player_event_manager(mp_)) {
         for (int ev : {libvlc_MediaPlayerOpening, libvlc_MediaPlayerBuffering,
                        libvlc_MediaPlayerPlaying, libvlc_MediaPlayerPaused,

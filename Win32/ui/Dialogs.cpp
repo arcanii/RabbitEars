@@ -17,6 +17,7 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #include "platform/Updater.h"
 #include "resource.h"
+#include "ui/BufferMeter.h"  // the Data-flow row's preview (createBufferMeter / bufferMeterSet*)
 #include "ui/MiniMeter.h"
 #include "ui/Theme.h"
 #include "version.h"
@@ -949,6 +950,9 @@ struct MetersDlgState {
     HWND  combo[4] = {};
     HWND  swatch[4][kMtrRoles] = {};
     HWND  slider[4][kMtrKnobs] = {};
+    HWND  bufPreview = nullptr;  // the "Data flow" (buffer/fluid) meter preview — no Look/palette
+    HWND  bufEnable = nullptr;
+    bool  bufOn = true;          // working copy of the data-flow meter's visible state
     HFONT font = nullptr, bold = nullptr;
     UINT  dpi = 96;
     UINT  feedTick = 0;
@@ -995,6 +999,13 @@ void meterFeedPreviews(MetersDlgState* st) {
                          3.0e6 * (0.5 + 0.5 * std::sin(t * 1.3) + 0.15 * std::sin(t * 11.0)));
     const int fps = 28 + static_cast<int>(std::lround(6.0 * std::sin(t * 0.9f)));
     miniMeterSetFrames(st->preview[3], fps, (st->feedTick % 40 == 0) ? 3 : 0);
+    if (st->bufPreview) {  // a healthy stream: ~half-full, flowing, an occasional ripple
+        bufferMeterSetHealth(st->bufPreview,
+                             50 + static_cast<int>(std::lround(34.0 * std::sin(t * 0.5f))));
+        bufferMeterSetFlow(st->bufPreview, std::clamp(0.6f + 0.35f * std::sin(t * 0.8f), 0.0f, 1.0f),
+                           (std::sin(t * 0.5f) > 0.85f) ? 0.5f : 0.0f);
+        bufferMeterSetMetrics(st->bufPreview, L"12.4 Mb/s");
+    }
 }
 
 void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
@@ -1042,6 +1053,10 @@ void meterTeardown(HWND dlg, MetersDlgState* st) {
             DestroyWindow(st->preview[r]);
             st->preview[r] = nullptr;
         }
+    if (st->bufPreview) {
+        DestroyWindow(st->bufPreview);
+        st->bufPreview = nullptr;
+    }
 }
 
 LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1117,6 +1132,10 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         return 0;
                     }
             }
+            if (ctl == st->bufEnable && code == BN_CLICKED) {  // the Data flow row's enable
+                st->bufOn = SendMessageW(st->bufEnable, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                return 0;
+            }
             const int id = LOWORD(wParam);
             if (id == IDOK) {
                 st->ok = true;
@@ -1145,7 +1164,7 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 }  // namespace
 
-bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
+bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bool& dataFlowOn) {
     static bool registered = false;
     if (!registered) {
         WNDCLASSEXW wc{};
@@ -1161,11 +1180,13 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
     MetersDlgState st;
     st.dpi = dpi;
     for (int r = 0; r < 4; ++r) st.cfg[r] = cfg[r];
+    st.bufOn = dataFlowOn;
     st.font = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
     st.bold = themeFont(FontRole::Body, dpi, 12, FW_SEMIBOLD);
 
     const int rowH = dp(148, dpi);  // taller rows: each now carries a "feel" slider band
-    const int W = dp(720, dpi), H = dp(50, dpi) + 4 * rowH + dp(96, dpi);
+    const int dfRowH = dp(116, dpi);  // the Data flow row: enable + preview only (no swatches/sliders)
+    const int W = dp(720, dpi), H = dp(50, dpi) + 4 * rowH + dfRowH + dp(96, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     int x = pr.left + ((pr.right - pr.left) - W) / 2;
@@ -1255,6 +1276,39 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
         }
     }
 
+    // Fifth row — the "Data flow" (buffer/fluid) meter: enable + live preview only. It is the
+    // buffering tank at the far right of the transport bar and has no Look or palette (its own
+    // internal fluid style), so this row omits the combo, swatches, and sliders.
+    {
+        const int y0 = top0 + 4 * rowH;
+        st.bufEnable = CreateWindowExW(
+            0, L"BUTTON", L"Data flow", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, y0,
+            dp(150, dpi), dp(22, dpi), dlg,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + 4 * 16)), hInst, nullptr);
+        SendMessageW(st.bufEnable, BM_SETCHECK, st.bufOn ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(st.bufEnable, WM_SETFONT, reinterpret_cast<WPARAM>(st.bold), TRUE);
+
+        registerBufferMeterClass(hInst);  // idempotent; the main window registered it already
+        st.bufPreview = createBufferMeter(dlg, hInst, ID_MTR_ROW + 4 * 16 + 2, dpi);
+        MoveWindow(st.bufPreview, m, y0 + dp(28, dpi), dp(170, dpi), dp(76, dpi), FALSE);
+        ShowWindow(st.bufPreview, SW_SHOW);
+        // The note advertises right-click-to-hide, and the preview honours it — so keep the
+        // "Data flow" checkbox + working state in sync when the user right-clicks the preview,
+        // else the box would disagree with the preview (and OK would silently win).
+        bufferMeterSetOnHiddenChanged(st.bufPreview, [&st](bool hidden) {
+            st.bufOn = !hidden;
+            SendMessageW(st.bufEnable, BM_SETCHECK, hidden ? BST_UNCHECKED : BST_CHECKED, 0);
+        });
+
+        HWND note = CreateWindowExW(
+            0, L"STATIC",
+            L"The buffering tank shown at the far right of the transport bar. You can also hide it "
+            L"by right-clicking the meter itself.",
+            WS_CHILD | WS_VISIBLE, m + dp(190, dpi), y0 + dp(30, dpi),
+            cr.right - dp(190, dpi) - 2 * m, dp(72, dpi), dlg, nullptr, hInst, nullptr);
+        SendMessageW(note, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+    }
+
     const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
     HWND reset = CreateWindowExW(0, L"BUTTON", L"Reset to defaults",
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, dp(150, dpi), bh, dlg,
@@ -1285,8 +1339,10 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4]) {
     }
     EnableWindow(parent, TRUE);
     SetForegroundWindow(parent);
-    if (st.ok)
+    if (st.ok) {
         for (int r = 0; r < 4; ++r) cfg[r] = st.cfg[r];
+        dataFlowOn = st.bufOn;
+    }
     DeleteObject(st.font);
     DeleteObject(st.bold);
     return st.ok;

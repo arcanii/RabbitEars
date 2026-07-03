@@ -101,11 +101,8 @@ constexpr int ID_METER_SPECTRUM = 2030;  // mini-meter control ids
 constexpr int ID_METER_SIGNAL = 2031;
 constexpr int ID_METER_BITRATE = 2032;
 constexpr int ID_METER_FRAMES = 2033;
-constexpr int ID_MTR_SPECTRUM = 2040;  // Settings → Meters toggle commands
-constexpr int ID_MTR_SIGNAL = 2041;
-constexpr int ID_MTR_BITRATE = 2042;
-constexpr int ID_MTR_FRAMES = 2043;
-constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters → Setup… (the full dialog)
+constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
+constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
@@ -195,6 +192,11 @@ struct AppState {
     int        cmdHover = -1;  // hovered toolbar button index
     int        capHover = -1;  // hovered caption button (0 min,1 max,2 close)
     bool       fullscreen = false;
+    bool       videoOnly = false;     // hide all chrome in-window (Settings→Video only; dbl-click/Esc exits)
+    bool       videoDragging = false; // dragging the window by the video (video-only has no title bar)
+    POINT      videoDragStart{};      // cursor (screen) at drag start
+    POINT      videoDragOrigin{};     // window top-left at drag start
+    bool       videoDragMoved = false;  // crossed the drag threshold? (ignore sub-threshold jitter)
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
@@ -464,7 +466,7 @@ void layout(HWND hwnd, AppState* st) {
     const int sx = W - 3 * capW(st->dpi) - sw - dp(12, st->dpi);
     placeMove(st->search, sx, (cmdH - sh) / 2, sw, sh);
 
-    if (st->fullscreen) {
+    if (st->fullscreen || st->videoOnly) {  // both collapse to just the video filling the client
         for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
                        st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
                        st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
@@ -538,7 +540,7 @@ void layout(HWND hwnd, AppState* st) {
     // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
     // meters are hidden (also via the deferred pass, so show/move stay atomic).
     const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
-    const int bufMeterW = dp(230, st->dpi);
+    const int bufMeterW = dp(115, st->dpi);  // the fluid tank: half its old width, to match the tray
     int rightX = vidR.right - pad;
     placeMove(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
     rightX -= bufMeterW + pad;
@@ -1093,6 +1095,20 @@ void toggleFullscreen(AppState* st) {
     InvalidateRect(hwnd, nullptr, TRUE);
 }
 
+// "Video only": collapse the window to just the video — hide the nav list, channel grid,
+// title/command bar, and transport strip — WITHOUT leaving the window (unlike fullscreen,
+// which covers the whole monitor). Entered from Settings → Video only; a double-click on
+// the video or Esc restores the chrome. Reuses the fullscreen layout/paint path (which
+// already hides every child + fills the client with the video), minus the window-style
+// change. A no-op while actually fullscreen — that mode already shows only the video.
+void toggleVideoOnly(AppState* st) {
+    if (st->fullscreen) return;
+    st->videoOnly = !st->videoOnly;
+    layout(st->hwnd, st);
+    InvalidateRect(st->hwnd, nullptr, TRUE);
+    if (st->videoOnly) SetFocus(st->video);  // so Esc reaches VideoProc while the chrome is hidden
+}
+
 std::wstring recordingsDir() {
     PWSTR vids = nullptr;
     std::filesystem::path dir;
@@ -1240,8 +1256,13 @@ void onMeters(AppState* st) {
         cfg[r].palette = miniMeterPalette(m[r]);
         cfg[r].tuning = miniMeterTuning(m[r]);
     }
+    // The data-flow (buffer) meter's current visible state (persisted as buffer_hidden).
+    auto bh = st->db.getSetting(L"buffer_hidden");
+    bool dataFlowOn = !(bh && *bh == L"1");
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
-    if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg)) return;  // Cancel — no change
+    if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg, dataFlowOn)) return;  // Cancel — no change
+    bufferMeterSetHidden(st->bufferMeter, !dataFlowOn);
+    st->db.setSetting(L"buffer_hidden", dataFlowOn ? L"0" : L"1");
 
     static const wchar_t* key[4] = {L"spectrum", L"signal", L"bitrate", L"frames"};
     st->showSpectrum = cfg[0].enabled;
@@ -1283,16 +1304,11 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
                 catLabel.c_str());
 
-    HMENU meters = CreatePopupMenu();
-    AppendMenuW(meters, MF_STRING | (st->showSpectrum ? MF_CHECKED : 0u), ID_MTR_SPECTRUM,
-                L"Audio spectrum");
-    AppendMenuW(meters, MF_STRING | (st->showSignal ? MF_CHECKED : 0u), ID_MTR_SIGNAL,
-                L"Signal strength");
-    AppendMenuW(meters, MF_STRING | (st->showBitrate ? MF_CHECKED : 0u), ID_MTR_BITRATE, L"Bitrate");
-    AppendMenuW(meters, MF_STRING | (st->showFrames ? MF_CHECKED : 0u), ID_MTR_FRAMES, L"Frame rate");
-    AppendMenuW(meters, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(meters, MF_STRING, ID_METERS_SETUP, L"Setup…");
-    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(meters), L"Meters");
+    // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
+    // row live there now — the old inline quick-toggle checkboxes were redundant).
+    AppendMenuW(m, MF_STRING, ID_METERS_SETUP, L"Meters…");
+    AppendMenuW(m, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), ID_VIDEO_ONLY,
+                L"Video only\tCtrl+Shift+V");
 
     HMENU layoutMenu = CreatePopupMenu();
     AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, L"Reset to default");
@@ -1374,29 +1390,11 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_CATEGORIES:
             onCategories(st);
             break;
-        case ID_MTR_SPECTRUM:
-            st->showSpectrum = !st->showSpectrum;
-            st->db.setSetting(L"meter_spectrum", st->showSpectrum ? L"1" : L"0");
-            syncSpectrumTap(st);
-            layout(hwnd, st);
-            break;
-        case ID_MTR_SIGNAL:
-            st->showSignal = !st->showSignal;
-            st->db.setSetting(L"meter_signal", st->showSignal ? L"1" : L"0");
-            layout(hwnd, st);
-            break;
-        case ID_MTR_BITRATE:
-            st->showBitrate = !st->showBitrate;
-            st->db.setSetting(L"meter_bitrate", st->showBitrate ? L"1" : L"0");
-            layout(hwnd, st);
-            break;
-        case ID_MTR_FRAMES:
-            st->showFrames = !st->showFrames;
-            st->db.setSetting(L"meter_frames", st->showFrames ? L"1" : L"0");
-            layout(hwnd, st);
-            break;
         case ID_METERS_SETUP:
             onMeters(st);
+            break;
+        case ID_VIDEO_ONLY:
+            toggleVideoOnly(st);
             break;
     }
 }
@@ -1748,10 +1746,24 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().windowBg));
             return 1;
         }
+        case WM_ACTIVATE:
+            // Keep the video focused while the chrome is hidden, so Esc reaches VideoProc even
+            // after the user Alt-Tabs away and back (video-only + fullscreen both rely on it).
+            if (LOWORD(wParam) != WA_INACTIVE && (st->videoOnly || st->fullscreen))
+                SetFocus(st->video);
+            break;
+        case WM_KEYDOWN:
+            // Esc is also handled here, not only in VideoProc: after a resize the main window
+            // holds focus, so VideoProc never sees the key. Exit the active view mode.
+            if (wParam == VK_ESCAPE) {
+                if (st->fullscreen) toggleFullscreen(st);
+                else if (st->videoOnly) toggleVideoOnly(st);
+            }
+            break;
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
-            if (!st->fullscreen) {
+            if (!st->fullscreen && !st->videoOnly) {
                 drawCmdBar(hwnd, st, hdc);
                 // Paint the transport-strip background here (like the command bar) rather
                 // than relying on WM_ERASEBKGND: relayouts invalidate NOERASE, so if the
@@ -1778,7 +1790,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // Animate the GPU strip via a child-clipped DC (DCX_CLIPCHILDREN) so the
                 // transport controls are excluded and the command bar isn't redrawn each
                 // frame. Idle while fullscreen (strip hidden), minimized, or not visible.
-                if (st->skinStripOn && !st->fullscreen && !IsIconic(hwnd) && IsWindowVisible(hwnd)) {
+                if (st->skinStripOn && !st->fullscreen && !st->videoOnly && !IsIconic(hwnd) &&
+                    IsWindowVisible(hwnd)) {
                     const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
                     RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
                     if (HDC dc = GetDCEx(hwnd, nullptr, DCX_CACHE | DCX_CLIPCHILDREN)) {
@@ -1991,6 +2004,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 case ID_BTN_REC: onToggleRecord(st); return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
+                case ID_VIDEO_ONLY: toggleVideoOnly(st); return 0;  // Ctrl+Shift+V accelerator + menu
             }
             return 0;
         }
@@ -2291,13 +2305,88 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             FillRect(reinterpret_cast<HDC>(wParam), &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             return 1;
         }
-        case WM_LBUTTONDBLCLK:
-            SendMessageW(GetParent(hwnd), WM_COMMAND, MAKEWPARAM(ID_BTN_FULL, 0), 0);
+        case WM_LBUTTONDOWN: {
+            // Video-only has no title bar, so a click-drag on the video moves the window.
+            // Manual drag (not WM_NCLBUTTONDOWN) so it coexists with the double-click exit —
+            // a plain click doesn't move; a real drag does.
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoOnly) {
+                RECT wr;
+                GetWindowRect(GetParent(hwnd), &wr);
+                GetCursorPos(&st->videoDragStart);
+                st->videoDragOrigin = {wr.left, wr.top};
+                st->videoDragging = true;
+                st->videoDragMoved = false;
+                SetCapture(hwnd);
+                return 0;
+            }
+            break;  // normal mode: let libVLC / DefWindowProc handle the click
+        }
+        case WM_MOUSEMOVE: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoDragging && (wParam & MK_LBUTTON)) {
+                POINT c;
+                GetCursorPos(&c);
+                const int dx = c.x - st->videoDragStart.x, dy = c.y - st->videoDragStart.y;
+                if (!st->videoDragMoved && (std::abs(dx) >= GetSystemMetrics(SM_CXDRAG) ||
+                                            std::abs(dy) >= GetSystemMetrics(SM_CYDRAG)))
+                    st->videoDragMoved = true;  // past the dead zone -> a real drag, not a shaky click
+                if (st->videoDragMoved)
+                    SetWindowPos(GetParent(hwnd), nullptr, st->videoDragOrigin.x + dx,
+                                 st->videoDragOrigin.y + dy, 0, 0,
+                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                return 0;
+            }
+            break;
+        }
+        case WM_LBUTTONUP: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoDragging) {
+                st->videoDragging = false;
+                ReleaseCapture();
+                return 0;
+            }
+            break;
+        }
+        case WM_CAPTURECHANGED: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st) st->videoDragging = false;  // capture lost -> end the drag cleanly
             return 0;
+        }
+        case WM_RBUTTONUP: {
+            // A focus-independent view menu: Esc can be lost to the libVLC surface after a
+            // resize or Alt-Tab, but a right-click menu always works.
+            AppState* st = stateOf(GetParent(hwnd));
+            if (!st) break;
+            HMENU pm = CreatePopupMenu();
+            AppendMenuW(pm, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), 1, L"Video only");
+            AppendMenuW(pm, MF_STRING | (st->fullscreen ? MF_CHECKED : 0u), 2, L"Fullscreen");
+            POINT pt;
+            GetCursorPos(&pt);
+            const int cmd = TrackPopupMenu(pm, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
+                                           GetParent(hwnd), nullptr);
+            DestroyMenu(pm);
+            if (cmd == 1) {
+                toggleVideoOnly(st);
+            } else if (cmd == 2) {
+                if (st->videoOnly) toggleVideoOnly(st);  // the two modes are mutually exclusive
+                toggleFullscreen(st);
+            }
+            return 0;
+        }
+        case WM_LBUTTONDBLCLK: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoOnly)
+                toggleVideoOnly(st);  // in video-only, a double-click restores the chrome
+            else
+                SendMessageW(GetParent(hwnd), WM_COMMAND, MAKEWPARAM(ID_BTN_FULL, 0), 0);
+            return 0;
+        }
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE || wParam == 'F') {
                 AppState* st = stateOf(GetParent(hwnd));
                 if (st && st->fullscreen) toggleFullscreen(st);
+                else if (st && st->videoOnly && wParam == VK_ESCAPE) toggleVideoOnly(st);
             }
             return 0;
     }
@@ -2430,11 +2519,17 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
 
     initUpdater(hwnd);  // WinSparkle: start background update checks (+ shutdown coordination)
 
+    // Ctrl+Shift+V toggles "Video only" from anywhere (an accelerator, so it fires whatever
+    // child control has focus); it routes to WM_COMMAND(ID_VIDEO_ONLY) on the main window.
+    ACCEL accels[] = {{FCONTROL | FSHIFT | FVIRTKEY, 'V', ID_VIDEO_ONLY}};
+    HACCEL hAccel = CreateAcceleratorTableW(accels, ARRAYSIZE(accels));
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (hAccel && TranslateAcceleratorW(hwnd, hAccel, &m)) continue;
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
+    if (hAccel) DestroyAcceleratorTable(hAccel);
     shutdownUpdater();
     delete st;
     Gdiplus::GdiplusShutdown(gdipToken);
