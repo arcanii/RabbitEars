@@ -12,4 +12,12 @@
 
 @interface MainWindowController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSSplitViewDelegate>
 - (void)showWindow;
+
+// View-menu chrome toggles — hide the channel list / the top toolbar so the video
+// can fill the window. Driven from the app menu bar so they still work when the
+// in-window toolbar is hidden. The getters back the menu titles (Hide ⇄ Show).
+- (void)toggleChannelList;
+- (void)toggleToolbar;
+- (BOOL)channelListHidden;
+- (BOOL)toolbarHidden;
 @end

@@ -45,6 +45,10 @@ using namespace rabbitears;
 // Filter popup tags.
 enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
 
+// Chrome metrics, shared by showWindow and the hide/show-chrome relayout.
+static const CGFloat kBarH = 46;     // top command bar height
+static const CGFloat kStatusH = 22;  // bottom status/volume bar height
+
 @implementation MainWindowController {
     NSWindow*      _window;
     NSSearchField* _search;
@@ -56,6 +60,10 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
     NSButton*      _muteBtn;     // 🔊 / 🔇 toggle
+    NSView*        _topBar;      // top command bar (add / settings / search / filter)
+    NSSplitView*   _split;       // channel grid | video
+    BOOL           _gridHidden;    // View ▸ Hide Channel List
+    BOOL           _toolbarHidden; // View ▸ Hide Toolbar
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
@@ -106,9 +114,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
     // ---- top bar (one row): [+ Add Playlist] [Settings ▾] … [search] [filter] [Stop]
     //      — the mac peer of the Win32 command bar (kCmdBtns = + Add Playlist, Settings).
-    const CGFloat barH = 46;
+    const CGFloat barH = kBarH;
     NSView* bar = [[NSView alloc]
         initWithFrame:NSMakeRect(0, cs.height - barH, cs.width, barH)];
+    _topBar = bar;
     bar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
 
     // Left: the accent "+ Add Playlist" (prompts for a URL) and the Settings menu.
@@ -146,7 +155,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [content addSubview:bar];
 
     // ---- bottom bar: status line (left) + volume (right) ----
-    const CGFloat statusH = 22;
+    const CGFloat statusH = kStatusH;
     _status = [NSTextField labelWithString:@"Ready."];
     _status.frame = NSMakeRect(12, 3, cs.width - 24 - 150, statusH - 5);
     _status.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
@@ -177,6 +186,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     // ---- split: channel grid | video ----
     NSSplitView* split = [[NSSplitView alloc]
         initWithFrame:NSMakeRect(0, statusH, cs.width, cs.height - barH - statusH)];
+    _split = split;
     split.vertical = YES;
     split.dividerStyle = NSSplitViewDividerStyleThin;
     split.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -185,6 +195,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     scroll.hasVerticalScroller = YES;
     _table = [[RETableView alloc] initWithFrame:scroll.bounds];
     _table.target = self;
+    _table.action = @selector(gridClicked:);            // single-click a ★ cell toggles favourite
     _table.doubleAction = @selector(playSelectedRow:);  // double-click / Return plays
     [self addColumn:@"fav" title:@"★" width:26];
     [self addColumn:@"num" title:@"#" width:46];
@@ -255,6 +266,12 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)layoutSplitPanes:(NSSplitView*)sv {
     if (sv.subviews.count < 2) return;
     const CGFloat W = NSWidth(sv.bounds), H = NSHeight(sv.bounds), d = sv.dividerThickness;
+    sv.subviews[0].hidden = _gridHidden;
+    if (_gridHidden) {  // channel list collapsed — video fills the pane, no divider gap
+        sv.subviews[0].frame = NSMakeRect(0, 0, 0, H);
+        sv.subviews[1].frame = NSMakeRect(0, 0, W, H);
+        return;
+    }
     const CGFloat left = MAX(160, MIN(_gridWidth, W - d - 200));  // keep both panes usable
     sv.subviews[0].frame = NSMakeRect(0, 0, left, H);
     sv.subviews[1].frame = NSMakeRect(left + d, 0, W - left - d, H);
@@ -266,6 +283,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
 // Remember a divider the user dragged, so later window resizes preserve it.
 - (void)splitViewDidResizeSubviews:(NSNotification*)note {
+    if (_gridHidden) return;  // don't remember the collapsed (0) width
     NSSplitView* sv = note.object;
     if (sv.subviews.count >= 1) _gridWidth = NSWidth(sv.subviews[0].frame);
 }
@@ -276,6 +294,28 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (CGFloat)splitView:(NSSplitView*)sv
     constrainMaxCoordinate:(CGFloat)__unused m ofSubviewAt:(NSInteger)__unused i {
     return NSWidth(sv.bounds) - 200;
+}
+
+// ---- View-menu chrome toggles (hide the channel list / top toolbar so the video
+//      fills the window). The bottom status/volume bar is left in place. ----
+
+- (BOOL)channelListHidden { return _gridHidden; }
+- (BOOL)toolbarHidden { return _toolbarHidden; }
+
+- (void)toggleChannelList {
+    _gridHidden = !_gridHidden;
+    [self layoutSplitPanes:_split];
+}
+
+- (void)toggleToolbar {
+    _toolbarHidden = !_toolbarHidden;
+    _topBar.hidden = _toolbarHidden;
+    // Grow the split up into the freed bar space (or back down when shown); the
+    // split's autoresizing then keeps that margin across later window resizes.
+    NSView* content = _window.contentView;
+    const CGFloat W = content.bounds.size.width, H = content.bounds.size.height;
+    const CGFloat topEdge = _toolbarHidden ? H : H - kBarH;
+    _split.frame = NSMakeRect(0, kStatusH, W, topEdge - kStatusH);
 }
 
 - (NSMenu*)makeRowMenu {
@@ -533,11 +573,23 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [self volumeChanged:nil];
 }
 
-- (void)toggleFavourite:(id)__unused sender {
-    const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+- (void)toggleFavouriteForRow:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_channels.size() || !_db) return;
     _db->toggleFavourite(_channels[(size_t)row].id);
     [self refreshChannels];  // re-query so the ★ column + a Favourites filter stay correct
+}
+
+- (void)toggleFavourite:(id)__unused sender {  // row context menu
+    [self toggleFavouriteForRow:(_table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow)];
+}
+
+// Single-click in the ★ column toggles that row's favourite; a click in any other
+// column just selects (double-click still plays, via doubleAction).
+- (void)gridClicked:(id)__unused sender {
+    const NSInteger row = _table.clickedRow, col = _table.clickedColumn;
+    if (row < 0 || col < 0) return;
+    if ([_table.tableColumns[(NSUInteger)col].identifier isEqualToString:@"fav"])
+        [self toggleFavouriteForRow:row];
 }
 
 // Set/clear a channel's LCN (the # column) via a small prompt.
@@ -600,7 +652,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (row < 0 || row >= (NSInteger)_channels.size()) return @"";
     const Channel& c = _channels[(size_t)row];
     NSString* id_ = col.identifier;
-    if ([id_ isEqualToString:@"fav"])   return c.favourite ? @"★" : @"";
+    if ([id_ isEqualToString:@"fav"])   return c.favourite ? @"★" : @"☆";  // both clickable to toggle
     if ([id_ isEqualToString:@"num"])   return c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
     if ([id_ isEqualToString:@"group"]) return ns(c.groupTitle);
     return ns(c.name);  // "name"
