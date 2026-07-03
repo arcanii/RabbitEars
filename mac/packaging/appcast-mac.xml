@@ -1,27 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- macOS update channel — the peer of the repo-root appcast.xml (Windows).
-     Same Sparkle/EdDSA scheme and SAME family Ed25519 key; only the enclosure
-     (a signed .dmg/.zip) and channel differ. This is a TEMPLATE: the <item>
-     below is a placeholder with no real signature. The mac release flow
-     (scripts/sign-release.sh already signs on macOS with Sparkle's sign_update)
-     populates it at release time. See docs/RELEASING.md and docs/MACOS_PORT.md. -->
+<!-- macOS update channel — the peer of the repo-root appcast.xml (Windows). Same
+     Sparkle/EdDSA scheme and the SAME family Ed25519 key; only the enclosure (a
+     signed .dmg) and channel differ. Populated by the mac release flow:
+     scripts/package-mac.sh builds the self-contained .app + DMG, and
+     `sign_update --account SQLTerminal <dmg>` produces the edSignature/length below. -->
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>RabbitEars (macOS) Updates</title>
     <link>https://raw.githubusercontent.com/arcanii/RabbitEars/main/mac/packaging/appcast-mac.xml</link>
     <description>Most recent updates to RabbitEars for macOS</description>
     <language>en</language>
-    <!-- TODO(phase-1): real signed item, e.g.
     <item>
-      <title>Version 0.2.0</title>
-      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.0-mac</sparkle:releaseNotesLink>
-      <pubDate>…</pubDate>
-      <enclosure url="…/RabbitEars-0.2.0.dmg"
-                 sparkle:version="0.2.0.NN"
-                 sparkle:edSignature="…"
-                 length="…"
+      <title>Version 0.1.7</title>
+      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.1.7-mac</sparkle:releaseNotesLink>
+      <pubDate>Fri, 03 Jul 2026 12:40:42 +0000</pubDate>
+      <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.1.7-mac/RabbitEars-0.1.7.dmg"
+                 sparkle:version="67"
+                 sparkle:shortVersionString="0.1.7"
+                 sparkle:edSignature="bqUM2RW4k2acW3UTwLrGgFCazxyOxwX4iIqqoAuzdpkziyMZCTlwQZHxsMf3Y6uZjRJMoy+lvLg48brNSro8Cw=="
+                 length="41179159"
                  type="application/octet-stream"/>
     </item>
-    -->
   </channel>
 </rss>
