@@ -3,21 +3,9 @@
 
 #include <sqlite3.h>
 
-#include <cstdlib>
-#include <filesystem>
 #include <set>
 
-#if !defined(__APPLE__)
-#include <shlobj.h>
-#include <windows.h>
-#endif
-
 #include "platform/Encoding.h"
-
-#if !defined(__APPLE__)
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "ole32.lib")
-#endif
 
 namespace rabbitears {
 namespace {
@@ -153,42 +141,10 @@ bool Database::exec(const char* sql) {
     return true;
 }
 
-std::wstring Database::defaultDbPath() {
-#if defined(__APPLE__)
-    // macOS peer of the Win32 branch below: ~/Library/Application Support/RabbitEars,
-    // with the same RABBITEARS_DATA_DIR test/CI override. The path round-trips through
-    // Encoding.h (path::string() is UTF-8 on macOS; wstring() re-widens it).
-    std::filesystem::path dir;
-    if (const char* env = std::getenv("RABBITEARS_DATA_DIR")) {
-        dir = std::filesystem::path(env);
-    } else if (const char* home = std::getenv("HOME")) {
-        dir = std::filesystem::path(home) / "Library" / "Application Support" / "RabbitEars";
-    } else {
-        dir = std::filesystem::temp_directory_path() / "RabbitEars";
-    }
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    return (dir / "rabbitears.db").wstring();
-#else
-    // Test/CI override, mirroring SQLTerminal's SQLT_DATA_DIR.
-    if (const wchar_t* env = _wgetenv(L"RABBITEARS_DATA_DIR")) {
-        std::filesystem::path dir(env);
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        return (dir / L"rabbitears.db").wstring();
-    }
-    PWSTR local = nullptr;
-    std::filesystem::path dir;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) {
-        dir = std::filesystem::path(local) / L"RabbitEars";
-    }
-    if (local) CoTaskMemFree(local);
-    if (dir.empty()) dir = std::filesystem::temp_directory_path() / L"RabbitEars";
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    return (dir / L"rabbitears.db").wstring();
-#endif
-}
+// Database::defaultDbPath() is platform-specific and lives in the platform layer:
+//   src/platform/win/Paths.cpp   (%LOCALAPPDATA%\RabbitEars)
+//   src/platform/mac/Paths.cpp   (~/Library/Application Support/RabbitEars)
+// so this file (the shared core) depends only on sqlite3 — no shell32/ole32.
 
 bool Database::open(const std::wstring& path, std::wstring* error) {
     close();

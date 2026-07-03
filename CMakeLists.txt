@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.21)
-project(RabbitEars LANGUAGES C CXX RC)
+project(RabbitEars LANGUAGES C CXX)  # RC (Win resource compiler) enabled under the GUI block below
 
-if(NOT WIN32)
-  message(FATAL_ERROR "RabbitEars is Win32-only for now (macOS/Linux targets are on the roadmap).")
+if(NOT WIN32 AND NOT APPLE)
+  message(FATAL_ERROR "RabbitEars builds on Windows (full app) and macOS (shared core; see mac/CMakeLists.txt).")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -46,7 +46,7 @@ endif()
 # Version header — APP_VERSION + git commit count -> build/generated/version.h
 # (BUILD_NUMBER is monotonic per commit, for WinSparkle update comparison).
 # ---------------------------------------------------------------------------
-set(APP_VERSION "0.1.6")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AppVersion.cmake")  # sets APP_VERSION (shared with mac/)
 find_package(Git QUIET)
 set(BUILD_NUMBER 0)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -77,29 +77,49 @@ if(MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
-# RabbitEarsCore — engine-only: M3U parsing + SQLite persistence. No UI, no
-# libVLC, so it (and the CLI) build and test without downloading anything.
+# RabbitEarsCore — platform-neutral engine: M3U parsing + SQLite persistence +
+# dock-layout logic. Links ONLY sqlite3; the Win32-specific bits (WinHTTP
+# download, the %LOCALAPPDATA% db path) live in RabbitEarsPlatformWin, with macOS
+# peers under src/platform/mac/. Builds unchanged on Windows and on macOS.
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsCore STATIC
   src/core/M3uParser.cpp
-  src/core/Http.cpp
   src/db/Database.cpp
   src/ui/DockLayout.cpp)  # pure layout-tree logic (no HWNDs) — unit-tested by the CLI
 target_include_directories(RabbitEarsCore PUBLIC src)
-target_link_libraries(RabbitEarsCore PUBLIC sqlite3 shell32 ole32 winhttp)
+target_link_libraries(RabbitEarsCore PUBLIC sqlite3)
 
-# ---------------------------------------------------------------------------
-# RabbitEarsCli — headless test/inspection tool for the core (--selftest).
-# ---------------------------------------------------------------------------
-add_executable(RabbitEarsCli src/cli/RabbitEarsCli.cpp)
-target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsCore)
+if(WIN32)
+  # -------------------------------------------------------------------------
+  # RabbitEarsPlatformWin — the Windows platform layer the core deliberately
+  # excludes: WinHTTP download (Http.cpp) + the %LOCALAPPDATA% db path
+  # (Paths.cpp, which implements Database::defaultDbPath). Linked by the CLI and
+  # the GUI. The macOS peers are src/platform/mac/*.
+  # -------------------------------------------------------------------------
+  add_library(RabbitEarsPlatformWin STATIC
+    src/platform/win/Http.cpp
+    src/platform/win/Paths.cpp)
+  target_link_libraries(RabbitEarsPlatformWin PUBLIC RabbitEarsCore shell32 ole32 winhttp)
+
+  # -------------------------------------------------------------------------
+  # RabbitEarsCli — headless test/inspection tool for the core (--selftest).
+  # -------------------------------------------------------------------------
+  add_executable(RabbitEarsCli src/cli/RabbitEarsCli.cpp)
+  target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsPlatformWin)
+
+  # Headless core self-test — the Windows peer of mac/CMakeLists.txt's test, so
+  # `ctest` proves the carved-out core + platform layer on both OSes.
+  enable_testing()
+  add_test(NAME selftest COMMAND RabbitEarsCli --selftest)
+endif()
 
 # ---------------------------------------------------------------------------
 # RabbitEars — the Win32 GUI app. Gated behind RABBITEARS_BUILD_GUI because it
 # provisions libVLC (a ~130 MB NuGet download at configure time) and links the
 # UI. Enabled once the UI sources land (next layer). See cmake/LibVlc.cmake.
 # ---------------------------------------------------------------------------
-if(RABBITEARS_BUILD_GUI)
+if(RABBITEARS_BUILD_GUI AND WIN32)
+  enable_language(RC)  # the .rc resource compiler — Windows-only, GUI-only
   list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
   include(LibVlc)
   rabbitears_provision_libvlc()
@@ -108,7 +128,7 @@ if(RABBITEARS_BUILD_GUI)
   endif()
 
   # WinSparkle (auto-update) — vendored prebuilt DLL/lib/header (copied from the
-  # sibling app). Same appcast/EdDSA scheme; see src/platform/Updater.cpp.
+  # sibling app). Same appcast/EdDSA scheme; see src/platform/win/Updater.cpp.
   set(WS_DIR "${CMAKE_SOURCE_DIR}/third_party/winsparkle")
   add_library(WinSparkle SHARED IMPORTED)
   set_target_properties(WinSparkle PROPERTIES
@@ -126,8 +146,8 @@ if(RABBITEARS_BUILD_GUI)
     src/ui/Splash.cpp
     src/ui/VlcPlayer.cpp
     src/audio/SpectrumTap.cpp
-    src/platform/Log.cpp
-    src/platform/Updater.cpp
+    src/platform/win/Log.cpp
+    src/platform/win/Updater.cpp
     packaging/RabbitEars.rc)
   # The .rc pulls in app.manifest, app.ico, and the About PNG — declare them so
   # editing any forces a .res rebuild (RC dependency scanning misses these).
@@ -137,7 +157,7 @@ if(RABBITEARS_BUILD_GUI)
     "${CMAKE_BINARY_DIR}/generated")
   target_link_directories(RabbitEars PRIVATE ${LIBVLC_LIB_DIR})
   target_link_libraries(RabbitEars PRIVATE
-    RabbitEarsCore ${LIBVLC_LIBS} WinSparkle
+    RabbitEarsCore RabbitEarsPlatformWin ${LIBVLC_LIBS} WinSparkle
     comctl32 comdlg32 dwmapi uxtheme gdi32 gdiplus shell32 user32 kernel32 ole32 version
     d2d1 dwrite windowscodecs winhttp mmdevapi)
   if(MSVC)

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Windows shared-core CI — the peer of mac-core.yml. Builds the platform-clean
+# core + the Windows platform layer (RabbitEarsPlatformWin) + the CLI on MSVC and
+# runs the core self-test. This is what validates the Phase-2 core carve-out on
+# the Windows side (the GUI is intentionally NOT built here — it needs the ~130 MB
+# libVLC NuGet download; RABBITEARS_BUILD_GUI stays OFF).
+name: Windows core
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'third_party/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - '.github/workflows/windows-core.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'third_party/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - '.github/workflows/windows-core.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-selftest:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history so version.h's BUILD_NUMBER (git commit count) is real
+      - name: Configure (core + platform + CLI; GUI off)
+        run: cmake -S . -B build -DRABBITEARS_BUILD_GUI=OFF
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo
+      - name: Core self-test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure

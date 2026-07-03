@@ -13,7 +13,13 @@
 #include <string>
 #include <vector>
 
-#include <windows.h>
+#if defined(_WIN32)
+#include <windows.h>  // RECT
+#else
+// Non-Windows: DockLayout only needs RECT's four long fields (no Win32 UI here).
+// Layout-compatible with the Win32 RECT so the same code compiles on both.
+struct RECT { long left; long top; long right; long bottom; };
+#endif
 
 namespace rabbitears {
 

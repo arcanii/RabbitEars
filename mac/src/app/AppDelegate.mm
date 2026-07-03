@@ -10,7 +10,7 @@
 #include <string>
 
 #include "db/Database.h"
-#include "platform/Encoding.h"  // resolves to the mac shim on this build
+#include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "platform/Log.h"
 #include "platform/Updater.h"
 
