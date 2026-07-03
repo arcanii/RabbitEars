@@ -1,8 +1,8 @@
 @echo off
 REM SPDX-License-Identifier: GPL-3.0-or-later
 REM Build the Windows installer with Inno Setup. Run after a normal GUI build
-REM (scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON) so build\RabbitEars.exe, its
-REM DLLs, and build\plugins\ exist.
+REM (scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON) so build\Win32\RabbitEars.exe, its
+REM DLLs, and build\Win32\plugins\ exist.
 setlocal EnableExtensions
 
 set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
@@ -13,8 +13,8 @@ if not exist "%ISCC%" (
   exit /b 1
 )
 
-if not exist "%~dp0..\build\RabbitEars.exe" (
-  echo ERROR: build\RabbitEars.exe not found. Run scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON first.
+if not exist "%~dp0..\build\Win32\RabbitEars.exe" (
+  echo ERROR: build\Win32\RabbitEars.exe not found. Run scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON first.
   exit /b 1
 )
 

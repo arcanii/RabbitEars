@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "platform/Updater.h"
 
+#include <thread>
+
 #include <winsparkle.h>
 
 #include "version.h"
@@ -17,7 +19,18 @@ HWND g_mainWnd = nullptr;
 // running the installer. Without this the installer races a still-running RabbitEars and
 // fails to overwrite the locked exe/DLLs — the reported "update fails" bug.
 void onUpdaterShutdownRequest() {
+    // Ask the UI to close cleanly (WM_DESTROY joins threads + releases libVLC)...
     if (g_mainWnd) PostMessageW(g_mainWnd, WM_CLOSE, 0, 0);
+    // ...but the clean close can be blocked by a modal dialog's own message loop — and the ONLY
+    // path to "Check for Updates" is the About box, so it's open during every user-triggered
+    // update. A nested loop that swallows the WM_QUIT leaves the process alive, locking the exe so
+    // WinSparkle's installer fails. Guarantee a fast exit so WinSparkle (waiting on our process
+    // handle) can proceed; the clean path normally exits well under this, so this only wins if a
+    // modal loop or a stuck teardown holds us.
+    std::thread([] {
+        Sleep(2500);
+        ExitProcess(0);
+    }).detach();
 }
 int onUpdaterCanShutdown() { return 1; }  // always OK to close for an update
 }  // namespace

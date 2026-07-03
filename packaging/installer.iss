@@ -7,7 +7,7 @@
 ; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.1.6"
+#define MyVer "0.1.7"
 
 [Setup]
 AppId={{E5C26129-79DE-4A86-8C69-0AF1B95B2130}}
@@ -34,11 +34,11 @@ CloseApplications=yes
 RestartApplications=yes
 
 [Files]
-Source: "..\build\RabbitEars.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\Win32\RabbitEars.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Runtime DLLs (libvlc, libvlccore, WinSparkle) copied next to the exe by the build.
-Source: "..\build\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\Win32\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; libVLC auto-discovers its plugins relative to libvlc.dll — ship the whole tree.
-Source: "..\build\plugins\*"; DestDir: "{app}\plugins"; \
+Source: "..\build\Win32\plugins\*"; DestDir: "{app}\plugins"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 

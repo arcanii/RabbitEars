@@ -52,6 +52,10 @@ constexpr int ID_CHECK_UPDATES = 1201;
 struct AboutState {
     Gdiplus::Image* img = nullptr;
     IStream*        stream = nullptr;  // must outlive img (GDI+ reads it lazily)
+    Gdiplus::Image* altImg = nullptr;    // easter-egg artwork, lazy-loaded on the first bunny click
+    IStream*        altStream = nullptr;
+    bool            showAlt = false;     // click the artwork to toggle to BadAss_RabbitEars
+    RECT            imgRect = {};         // where the artwork was last drawn (click hit-test)
     HFONT           titleFont = nullptr;
     HFONT           bodyFont = nullptr;
     UINT            dpi = 96;
@@ -108,14 +112,18 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             const int m = dp(22, st->dpi);
             int imgW = 0;
-            if (st->img && st->img->GetWidth() && st->img->GetHeight()) {
+            // Click the bunny to toggle the easter-egg artwork (BadAss_RabbitEars).
+            Gdiplus::Image* cur = (st->showAlt && st->altImg) ? st->altImg : st->img;
+            if (cur && cur->GetWidth() && cur->GetHeight()) {
                 const int boxW = dp(150, st->dpi), boxH = dp(244, st->dpi);
-                const UINT iw = st->img->GetWidth(), ih = st->img->GetHeight();
+                const UINT iw = cur->GetWidth(), ih = cur->GetHeight();
                 const double s = std::min(double(boxW) / iw, double(boxH) / ih);
                 imgW = static_cast<int>(iw * s);
+                const int imgH = static_cast<int>(ih * s);
                 Gdiplus::Graphics g(mem);
                 g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-                g.DrawImage(st->img, m, m, imgW, static_cast<int>(ih * s));
+                g.DrawImage(cur, m, m, imgW, imgH);
+                st->imgRect = {m, m, m + imgW, m + imgH};  // remember for click hit-testing
             }
             const int tx = m + (imgW > 0 ? imgW + dp(20, st->dpi) : 0);
             SetBkMode(mem, TRANSPARENT);
@@ -149,6 +157,22 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DeleteObject(bmp);
             DeleteDC(mem);
             EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_LBUTTONDOWN: {  // click the artwork to toggle the easter-egg image
+            if (!st) break;
+            const POINT pt{static_cast<LONG>(static_cast<short>(LOWORD(lParam))),
+                           static_cast<LONG>(static_cast<short>(HIWORD(lParam)))};
+            if (PtInRect(&st->imgRect, pt)) {
+                if (!st->altImg) {  // lazy-load the easter egg on first click
+                    HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+                    st->altImg = loadPngResource(hi, IDR_ABOUT_ALT_PNG, &st->altStream);
+                }
+                if (st->altImg) {  // only toggle if the alt art actually loaded
+                    st->showAlt = !st->showAlt;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
             return 0;
         }
         case WM_COMMAND:
@@ -524,7 +548,17 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
         ShowWindow(dlg, SW_SHOW);
         UpdateWindow(dlg);
         MSG m;
-        while (!st.done && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        while (!st.done) {
+            const BOOL r = GetMessageW(&m, nullptr, 0, 0);
+            if (r == 0) {  // WM_QUIT — WinSparkle asked us to close to install an update.
+                // Re-post it so runApp's OUTER loop also sees it and the process actually exits;
+                // otherwise this nested loop swallows the quit and the app lingers, locking the
+                // exe so the installer fails. (This About box is the only path to "Check for
+                // Updates", so it is always open during a user-triggered update.)
+                PostQuitMessage(static_cast<int>(m.wParam));
+                break;
+            }
+            if (r == -1) break;  // GetMessage error
             if (!IsDialogMessageW(dlg, &m)) {
                 TranslateMessage(&m);
                 DispatchMessageW(&m);
@@ -535,6 +569,8 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     }
     delete st.img;
     if (st.stream) st.stream->Release();
+    delete st.altImg;
+    if (st.altStream) st.altStream->Release();
     if (st.titleFont) DeleteObject(st.titleFont);
     if (st.bodyFont) DeleteObject(st.bodyFont);
 }
