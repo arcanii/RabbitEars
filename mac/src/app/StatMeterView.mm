@@ -61,24 +61,30 @@
     [[NSColor colorWithWhite:0.08 alpha:1.0] setFill];
     NSRectFill(b);
 
-    const CGFloat pad = 4, gap = 2, labelW = 168;
-    const int segs = 22;
-    const CGFloat barW = b.size.width - 2 * pad - labelW;
-    const CGFloat w = (barW - (segs - 1) * gap) / segs;
-    const CGFloat h = b.size.height - 2 * pad;
-    if (w > 0 && h > 0) {
-        const int lit = (int)std::lround(_level * segs);
-        const int peakSeg = (int)std::lround(_peak * segs);
-        for (int i = 0; i < segs; ++i) {
-            const CGFloat x = pad + i * (w + gap);
-            const float frac = (float)i / (segs - 1);
-            NSColor* on = frac < 0.70f ? [NSColor colorWithRed:0.25 green:0.85 blue:0.40 alpha:1.0]
-                        : frac < 0.90f ? [NSColor colorWithRed:0.95 green:0.80 blue:0.20 alpha:1.0]
-                                       : [NSColor colorWithRed:0.95 green:0.30 blue:0.25 alpha:1.0];
-            const BOOL isOn = i < lit;
-            const BOOL isPeak = (i == peakSeg && peakSeg > 0);
-            [(isOn || isPeak ? on : [on colorWithAlphaComponent:0.12]) setFill];
-            [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, pad, w, h) xRadius:1.0 yRadius:1.0] fill];
+    // Win32-MiniMeter-style LED dot-matrix: small square cells with gaps, lit as a
+    // left-to-right bar (whole columns), with a brighter peak-hold column.
+    const CGFloat pad = 2, cell = 5, gap = 2, labelW = 168;
+    NSColor* green = [NSColor colorWithRed:0.25 green:0.85 blue:0.40 alpha:1.0];
+    NSColor* amber = [NSColor colorWithRed:0.95 green:0.80 blue:0.20 alpha:1.0];
+    NSColor* red   = [NSColor colorWithRed:0.95 green:0.30 blue:0.25 alpha:1.0];
+
+    const CGFloat matrixW = b.size.width - 2 * pad - labelW;
+    const int cols = std::max(1, (int)((matrixW + gap) / (cell + gap)));
+    const int rows = std::max(1, (int)((b.size.height - 2 * pad + gap) / (cell + gap)));
+    const int litCols = (int)std::lround(_level * cols);
+    const int peakCol = (int)std::lround(_peak * cols);
+    const CGFloat gridH = rows * cell + (rows - 1) * gap;
+    const CGFloat y0 = (b.size.height - gridH) / 2.0;
+    for (int c = 0; c < cols; ++c) {
+        const float frac = cols > 1 ? (float)c / (cols - 1) : 0.0f;
+        NSColor* on = frac < 0.70f ? green : (frac < 0.90f ? amber : red);
+        const BOOL lit = c < litCols;
+        const BOOL isPeak = (c == peakCol && peakCol > 0);
+        [(lit || isPeak ? on : [on colorWithAlphaComponent:0.14]) setFill];
+        const CGFloat x = pad + c * (cell + gap);
+        for (int r = 0; r < rows; ++r) {
+            const CGFloat y = y0 + r * (cell + gap);
+            [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, y, cell, cell) xRadius:0.8 yRadius:0.8] fill];
         }
     }
     if (_readout.length) {
