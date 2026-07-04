@@ -119,10 +119,13 @@ ship (then add a version prefix).
 has signed off on the glows + Video-only live; **still pending a live look:** the Steampunk palette/serif
 and the meters refinements. **Next candidates:** **heat-haze for Steampunk** (the last authored GPU
 effect); **tune Cyberpunk** + per-skin glow intensity (the gutter/strip use a hardcoded strength — a good
-place for the deferred §4.2 per-skin GPU manifest); extract **`docs/SKIN_MODEL.md`** for the mac team;
-**cherry-pick the doc-reorg commit (`ea03a0a`) to `main`** so mac stops editing root docs. **Before merging
-`theme-engine` → `main`: `git fetch` + rebase** (origin/main moved via the mac team) — and note the branch
-now carries the ungated meters/Video-only UI work too, so review that in the merge.
+place for the per-skin GPU manifest sketched in [`docs/SKIN_MODEL.md`](../docs/SKIN_MODEL.md)). **Mac-team
+coordination:** §4 is extracted to the standalone [`docs/SKIN_MODEL.md`](../docs/SKIN_MODEL.md) (canonical;
+§4 above is now a pointer + summary); the root-docs relocation on `main` is **PR #16** (open) — a
+hand-authored relocation, deliberately NOT the `ea03a0a` cherry-pick (which conflicts on the README and
+would dangle a `Win32/docs/THEME_ENGINE.md` link on `main`). **Before merging `theme-engine` → `main`:
+`git fetch` + rebase** (origin/main moved via the mac team) — and note the branch now carries the ungated
+meters/Video-only UI work too, so review that in the merge.
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
@@ -548,11 +551,12 @@ commit messages with the Co-Authored-By trailer.
    OFF-by-default `RABBITEARS_THEME_ENGINE` flag (but the branch also carries ungated meters/Video-only UI —
    flag-off is no longer 0.1.7-identical). Resume there. **Done (theme):** Phases 3b/3c/4a/4b-1/**4b-2**
    (fonts, owner-draw buttons, Steampunk, button glow, gutter neon glow) — all committed + reviewed +
-   both-flag build-verified; owner signed off on the glows + Video-only live. **Next candidates:**
-   **heat-haze for Steampunk**; tune Cyberpunk + a per-skin glow-intensity manifest; extract
-   **`docs/SKIN_MODEL.md`** for the mac team; cherry-pick the doc-reorg commit `ea03a0a` to `main`. Still
-   pending the owner's live look: the Steampunk palette/serif + the meters refinements.
-   **`git fetch`/rebase before merging `theme-engine` → `main`.**
+   both-flag build-verified; owner signed off on the glows + Video-only live. **Mac-team coordination:**
+   `docs/SKIN_MODEL.md` extracted (the shared contract, standalone); the `main` root-docs relocation is
+   **PR #16** (open — hand-authored, not the `ea03a0a` cherry-pick, which conflicts + would dangle a
+   `Win32/docs/THEME_ENGINE.md` link on `main`). **Next candidates:** **heat-haze for Steampunk**; tune
+   Cyberpunk + a per-skin glow-intensity manifest. Still pending the owner's live look: the Steampunk
+   palette/serif + the meters refinements. **`git fetch`/rebase before merging `theme-engine` → `main`.**
 2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
    Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
    **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped

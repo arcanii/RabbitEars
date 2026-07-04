@@ -1,8 +1,9 @@
 # RabbitEars — Theme Engine (0.2.x epic)
 
 **Design doc — Windows team.** Kept under `Win32/docs/` so it doesn't collide with the macOS
-team's root-level edits. The **shared skin-model boundary** in [§4](#4-the-shared-skin-model-boundary--macos-team-read-this)
-is the one part both teams must agree on before any engine code lands.
+team's root-level edits. The **shared skin-model boundary** — extracted to the standalone
+[`docs/SKIN_MODEL.md`](../../docs/SKIN_MODEL.md), summarized in [§4](#4-the-shared-skin-model-boundary--macos-team-read-this)
+— is the one part both teams must agree on before any engine code lands.
 
 - **Status:** DESIGN — no engine code yet. Branch `theme-engine` (off `main` @ `c6a0cf2`).
 - **Scope:** a 0.2.x epic across several point releases, not one PR.
@@ -168,91 +169,36 @@ What genuinely changes on Win32:
 
 ## 4. The shared skin-model boundary — **macOS team: read this**
 
-> This is the contract to agree on **before** any engine code lands, because `common/` is shared and
-> `mac/` is under active development. Everything below goes in `common/`; nothing here may reference
-> `windows.h`, `d2d1`, `Metal`, `COLORREF`, or `NSColor`. Proposed home: **`common/ui/Skin.{h,cpp}`**
-> (or `common/skin/`). The Windows renderer ([§6](#6-windows-renderer-direct2d-on-d3d11-interop--hlsl))
-> and the eventual Metal renderer are each team's own; they are explicitly *not* part of this contract.
+> **This contract now lives canonically in [`docs/SKIN_MODEL.md`](../../docs/SKIN_MODEL.md)** — the shared
+> root-`docs/` location the mac team already uses (next to `MACOS_PORT.md`), so it is reviewable without
+> reaching into `Win32/`. That doc is the source of truth for the `common/` skin model both teams agree
+> on; this section is now a pointer + the ratified summary. **When the contract changes, update
+> `docs/SKIN_MODEL.md`, not this section.** The Windows renderer
+> ([§6](#6-windows-renderer-direct2d-on-d3d11-interop--hlsl)) and the eventual Metal renderer are each
+> team's own; they are explicitly *not* part of the contract.
 
-**4.1 Platform-neutral color.** Replaces `COLORREF` (which is `0x00BBGGRR` byte-swapped — do not reuse
-its layout). The `CLR_INVALID` "follow the theme" sentinel becomes an explicit flag:
+The essentials — full detail + as-built struct/codec definitions in
+[`docs/SKIN_MODEL.md`](../../docs/SKIN_MODEL.md):
 
-```cpp
-struct SkinColor {                 // common/ui/Skin.h — no windows.h
-    uint8_t r = 0, g = 0, b = 0, a = 255;
-    bool    inherit = false;       // true == "resolve against the base surface color" (was CLR_INVALID)
-};
-// Win32 renderer: COLORREF toColorRef(SkinColor);   mac renderer: NSColor* toNSColor(SkinColor);
-```
+- **Platform-neutral values, per-platform drawing.** [`common/ui/Skin.{h,cpp}`](../../common/ui/Skin.h)
+  holds `SkinColor` (RGBA + an `inherit` "resolve against the base surface colour" flag — the old meter
+  `CLR_INVALID`), a 14-role `SkinPalette`, three `SkinFont` roles (body/title/glyph), and the
+  `Skin`/registry/codecs. No `windows.h`/`COLORREF`/`NSColor`/`d2d1`/`Metal`. Win32 converts to
+  `COLORREF`+`HFONT`; mac to `NSColor`+`NSFont`.
+- **Skins define their own colours (ratified)** — no OS `GetSysColor` inherit; the pre-engine light
+  theme's three system lookups became literals. `SkinColor.inherit` is surface-relative, not OS-derived.
+- **Shared registry, renderer-side active state.** `builtinSkins()` / `skinById()` / `skinSettingKey()`
+  (`"skin"`) are shared; the active-skin holder + OS dark/light detection are per-platform. "Follow
+  system light/dark" is a renderer-side meta-option that picks the dark-vs-light *skin*, never a colour.
+- **The serialized string form is the cross-platform interchange** — positional 14-role CSV,
+  exact-arity-or-whole-fallback with per-field graceful fallback; hex `RRGGBB`/`RRGGBBAA` or `"inherit"`.
+  Frozen until user-customizable skins persist a palette (then add a version/arity prefix — position is
+  identity, never reorder).
+- **`common/` skin code stays graphics-free** — it compiles into `RabbitEarsCore` + the mac self-test
+  with no GPU/UI deps.
 
-**4.2 The `Skin` struct (as built, `common/ui/Skin.h`)** — a string `id` (not an enum, so Phase-4
-skins add without touching a shared enum), a `SkinPalette` of the 14 *used* roles (today's 17 Theme
-fields minus the 4 dead `syn*`, plus `dangerHover` — was the hardcoded close-hover red), and typography:
-
-```cpp
-struct SkinFont {                       // resolved to HFONT / NSFont by the renderer
-    std::string family = "Segoe UI";
-    float       sizePt = 10.5f;
-    int         weight = 400;           // CSS-ish 100..900
-    bool        symbol = false;         // platform icon font (glyph role == "Segoe MDL2 Assets"): a
-};                                      //   renderer that can't load `family` substitutes its own
-
-struct SkinPalette {
-    SkinColor windowBg, panelBg, panelElevBg, altRowBg, hoverBg, border,
-              textPrimary, textSecondary, textMuted,
-              accent, accentText, selectionBg, selectionText, dangerHover;
-};
-
-struct Skin {
-    std::string id;        // stable token ("dark") — the persisted selection
-    std::string name;      // display name ("Dark")
-    bool        dark;      // hint for OS dark-mode chrome (DWM immersive / NSAppearance)
-    SkinPalette palette;
-    SkinFont    body, title, glyph;
-    // Phase 4: an optional GPU-skin manifest (shader ids + params), resolved per-platform.
-};
-```
-
-**Skins define their own colours (ratified).** Skins do **not** inherit OS window/text colours — the
-pre-engine light theme's three `GetSysColor` lookups are dropped for literals. `SkinColor.inherit`
-means "resolve against the base *surface* colour" (the old meter `CLR_INVALID`), **not** an OS system
-colour — there is intentionally no OS-derived vocabulary. The mac renderer mirrors these literals.
-
-**4.3 The registry + active selection (as built).** The registry is shared; the *active-state holder*
-is renderer-side (platform event models + OS dark/light detection differ), but both platforms persist
-the selection under the same shared key:
-
-```cpp
-const std::vector<Skin>& builtinSkins();     // immortal; index 0 == dark. Phase 2: [dark, light]
-const Skin&              skinById(const std::string& id);   // unknown -> dark
-std::vector<std::string> builtinSkinIds();
-const char*              defaultSkinId();     // "dark"
-const char*              skinSettingKey();    // "skin" — shared settings K/V key for the active id
-```
-"Follow system light/dark" stays a renderer-side meta-option: it picks the dark-vs-light *skin* by the
-OS mode; it never sources colours from the OS.
-
-**4.4 String codecs (as built, UTF-8).** Same discipline as `meter*To/FromString`: `skinColorTo/FromString`
-(`"inherit"` / `RRGGBB` / `RRGGBBAA`) and `skinPaletteTo/FromString` (the 14 roles, positional CSV,
-exact-arity-or-whole-fallback with per-field graceful fallback). Only the skin **id** persists today, so
-the positional palette form is safe to freeze — but **before user-customizable skins persist a palette
-(Phase 4), add a version/arity prefix** so a future 15th role doesn't discard every saved skin. Do not
-reorder roles: position is identity.
-
-*Status: implemented in [`common/ui/Skin.{h,cpp}`](../../common/ui/Skin.h), covered by 14 CLI selftests (all pass).*
-
-**4.5 Boundary rules (the actual agreement):**
-- `common/` skin code stays **graphics-free** — it compiles into `RabbitEarsCore` and the mac self-test
-  with **no** GPU/UI deps.
-- Color/font **values** live in the model; **conversion + drawing** (COLORREF/D2D on Win32,
-  NSColor/Metal on mac) live in each renderer.
-- The **serialized string form is the cross-platform interchange** — both renderers read the identical
-  persisted skin. This is the meter seam's one genuinely portable contract, done right.
-- **Open items for the mac team to weigh in on** are collected in [§8](#8-open-questions).
-
-**Recommended next coordination step:** extract §4 into a standalone `docs/SKIN_MODEL.md` (the *shared*
-docs location the mac team already uses for `MACOS_PORT.md`) so the contract is reviewable without
-reaching into `Win32/`. Left as a follow-up so we don't add a root-`docs/` file without owner sign-off.
+*As built: [`common/ui/Skin.{h,cpp}`](../../common/ui/Skin.h), 14 CLI selftests (all pass). Open model
+questions for the mac team: [§9](#9-open-questions).*
 
 ---
 
