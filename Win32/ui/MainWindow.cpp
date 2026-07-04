@@ -2488,6 +2488,14 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
         Gdiplus::GdiplusShutdown(gdipToken);
         return 1;
     }
+    // The window was created at an unscaled 1180x760 — the monitor DPI isn't known until the
+    // HWND exists. WM_CREATE has now set st->dpi, so rescale to the real DPI while the window
+    // is still hidden (before the ToU gate / ShowWindow). Otherwise, on a >100% monitor it is
+    // born narrower than the DPI-scaled min-track-size (WM_GETMINMAXINFO uses dp(1060,dpi)), and
+    // the width snaps up to that minimum on the first user resize.
+    if (st->dpi != 96)
+        SetWindowPos(hwnd, nullptr, 0, 0, dp(1180, st->dpi), dp(760, st->dpi),
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     // Terms of Use gate: the user must accept before the app is usable, and must
     // RE-ACCEPT on every version change (new install OR update). `tos_accepted` stores
     // the full version (marketing.build) it was last accepted for, so any bump
