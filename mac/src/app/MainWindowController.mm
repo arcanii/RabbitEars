@@ -686,9 +686,12 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _levelTap = [[AudioLevelTap alloc] initWithLevelHandler:^(float lv) {
         [meter pushLevel:lv];   // thread-safe (atomic store)
     }];
-    if (!_levelTap) {  // consent denied / tap couldn't be created — surface it, and don't retry every play
+    if (!_levelTap) {  // consent denied / tap couldn't start — revert to OFF (no dead strip) and explain
         _meterTapFailed = YES;
-        [self setStatus:@"Audio meter unavailable — allow audio capture in System Settings ▸ Privacy & Security."];
+        _meterEnabled = NO;
+        if (_db) _db->setSetting(L"meter_enabled", L"0");
+        [self applyMeterLayout];  // hide the strip we just showed
+        [self setStatus:@"Audio meter unavailable — allow audio capture in System Settings ▸ Privacy & Security, then turn it on again."];
     }
 }
 
