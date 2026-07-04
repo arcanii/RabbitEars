@@ -1,8 +1,9 @@
 # RabbitEars — Backlog
 
-Parked / not-yet-scheduled work, split out of `HANDOVER.md` (which stays the single entry point
+Parked / not-yet-scheduled work, split out of `Win32/HANDOVER.md` (which stays the single entry point
 for **current state**; this is the parking lot for **what's next**). Ship small items as 0.1.x
-point releases; the **theme engine** is the big 0.2.x epic.
+point releases; the **theme engine** is the big 0.2.x epic. Windows-team doc — kept under `Win32/`
+so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 

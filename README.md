@@ -78,7 +78,7 @@ build\RabbitEarsCli.exe --fetch <url>          # test download + parse
 build\RabbitEarsCli.exe --import <url|file>    # import into the app's DB
 ```
 
-See [HANDOVER.md](HANDOVER.md) / [mac/HANDOVER.md](mac/HANDOVER.md) and
+See [Win32/HANDOVER.md](Win32/HANDOVER.md) / [mac/HANDOVER.md](mac/HANDOVER.md) and
 [docs/architecture.md](docs/architecture.md) for the design and current status.
 
 ## License

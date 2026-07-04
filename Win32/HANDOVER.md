@@ -7,6 +7,11 @@ CMake + Ninja + MSVC, dependencies vendored / NuGet-provisioned with **no Visual
 Studio project**). This is the single starting point for anyone (human or agent)
 continuing the work — read it before touching code.
 
+> **Location:** this is the **Windows team's** handover, kept under **`Win32/`** (with its companion
+> `Win32/BACKLOG.md`) so it doesn't collide with the macOS team's edits on shared root-level files —
+> they own **`mac/`** (`mac/HANDOVER.md`) and share `common/` + root `docs/`. Moved here from the repo
+> root to mirror the `mac/` split.
+
 ## Stack decision (important)
 
 The design doc (`IPTV Player Application Design.docx`) lists a "WinUI 3 / EF Core"
@@ -45,8 +50,8 @@ Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `insta
 **macOS** (all on `main`): the app plays IPTV via libVLC in a native window with a rich channel grid
 + Sparkle auto‑update, and builds in CI (`mac-core.yml`). Audio meters are pending on branch
 `mac-meters` (PR #9). The macOS team keeps its own handover to avoid colliding with this doc —
-**see [`mac/HANDOVER.md`](mac/HANDOVER.md)** (build/run, status, next steps) and
-[`docs/MACOS_PORT.md`](docs/MACOS_PORT.md) (plan + history).
+**see [`mac/HANDOVER.md`](../mac/HANDOVER.md)** (build/run, status, next steps) and
+[`docs/MACOS_PORT.md`](../docs/MACOS_PORT.md) (plan + history).
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
