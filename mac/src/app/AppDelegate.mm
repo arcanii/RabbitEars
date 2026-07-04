@@ -82,10 +82,6 @@ using namespace rabbitears;
                                               action:@selector(toggleToolbar:) keyEquivalent:@"t"];
     hideBar.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     hideBar.target = self;
-    NSMenuItem* meter = [viewMenu addItemWithTitle:@"Show Audio Meter"
-                                            action:@selector(toggleAudioMeter:) keyEquivalent:@"m"];
-    meter.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
-    meter.target = self;
     viewItem.submenu = viewMenu;
 
     NSApp.mainMenu = menubar;
@@ -96,7 +92,6 @@ using namespace rabbitears;
 // View-menu chrome toggles, forwarded to the window controller.
 - (void)toggleChannelList:(id)__unused sender { [_mainController toggleChannelList]; }
 - (void)toggleToolbar:(id)__unused sender { [_mainController toggleToolbar]; }
-- (void)toggleAudioMeter:(id)__unused sender { [_mainController toggleMeter]; }
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
@@ -104,8 +99,6 @@ using namespace rabbitears;
         item.title = _mainController.channelListHidden ? @"Show Channel List" : @"Hide Channel List";
     else if (item.action == @selector(toggleToolbar:))
         item.title = _mainController.toolbarHidden ? @"Show Toolbar" : @"Hide Toolbar";
-    else if (item.action == @selector(toggleAudioMeter:))
-        item.title = _mainController.meterEnabled ? @"Hide Audio Meter" : @"Show Audio Meter";
     return YES;
 }
 

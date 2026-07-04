@@ -18,8 +18,6 @@
 // in-window toolbar is hidden. The getters back the menu titles (Hide ⇄ Show).
 - (void)toggleChannelList;
 - (void)toggleToolbar;
-- (void)toggleMeter;
 - (BOOL)channelListHidden;
 - (BOOL)toolbarHidden;
-- (BOOL)meterEnabled;
 @end
