@@ -46,6 +46,11 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #include "audio/SpectrumTap.h"
 
+#ifdef RABBITEARS_THEME_ENGINE
+#include "platform/Encoding.h"   // wideFromUtf8 / utf8FromWide for the skin settings key + value
+#include "ui/skin/SkinStrip.h"  // Phase-1 GPU skin spike: the transport-strip underglow surface
+#endif
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -96,13 +101,17 @@ constexpr int ID_METER_SPECTRUM = 2030;  // mini-meter control ids
 constexpr int ID_METER_SIGNAL = 2031;
 constexpr int ID_METER_BITRATE = 2032;
 constexpr int ID_METER_FRAMES = 2033;
-constexpr int ID_MTR_SPECTRUM = 2040;  // Settings → Meters toggle commands
-constexpr int ID_MTR_SIGNAL = 2041;
-constexpr int ID_MTR_BITRATE = 2042;
-constexpr int ID_MTR_FRAMES = 2043;
-constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters → Setup… (the full dialog)
+constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
+constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
+#ifdef RABBITEARS_THEME_ENGINE
+constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
+constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
+#endif
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
+#ifdef RABBITEARS_THEME_ENGINE
+constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
+#endif
 
 // Segoe MDL2 Assets transport glyphs — rendered with the MDL2 glyph font on the
 // square transport buttons. Play/Pause and Record/Stop-rec swap with state.
@@ -168,6 +177,9 @@ struct AppState {
     HWND       tip = nullptr;       // shared tooltip (volume slider, buffer slider, meter)
     HWND       status = nullptr;
     HWND       bufferMeter = nullptr;
+#ifdef RABBITEARS_THEME_ENGINE
+    bool       skinStripOn = false;  // GPU transport-strip underglow available (theme-engine spike)
+#endif
     HWND       meterSpectrum = nullptr;  // modular LED mini-meters (Settings → Meters)
     HWND       meterSignal = nullptr;
     HWND       meterBitrate = nullptr;
@@ -180,6 +192,11 @@ struct AppState {
     int        cmdHover = -1;  // hovered toolbar button index
     int        capHover = -1;  // hovered caption button (0 min,1 max,2 close)
     bool       fullscreen = false;
+    bool       videoOnly = false;     // hide all chrome in-window (Settings→Video only; dbl-click/Esc exits)
+    bool       videoDragging = false; // dragging the window by the video (video-only has no title bar)
+    POINT      videoDragStart{};      // cursor (screen) at drag start
+    POINT      videoDragOrigin{};     // window top-left at drag start
+    bool       videoDragMoved = false;  // crossed the drag threshold? (ignore sub-threshold jitter)
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
@@ -245,6 +262,57 @@ void applyDarkChrome(HWND hwnd) {
     DWORD corner = 2;
     DwmSetWindowAttribute(hwnd, 33, &corner, sizeof(corner));
 }
+
+#ifdef RABBITEARS_THEME_ENGINE
+// Recreate the three chrome fonts for the active skin and re-apply them to the controls
+// that carry them. A skin may change the font family/size (Phase 4); dark<->light share
+// Segoe UI so this is a no-op look today, but the plumbing is skin-correct. (titleFont is
+// used at paint in drawCmdBar; no control carries it, so it just needs recreating.)
+void remakeUiFonts(AppState* st) {
+    // Keep the old handles until every control has been switched to the new font, so no
+    // control ever references a freed HFONT.
+    HFONT oldUi = st->uiFont, oldTitle = st->titleFont, oldGlyph = st->glyphFont;
+    st->uiFont = themeFont(FontRole::Body, st->dpi);
+    st->titleFont = themeFont(FontRole::Title, st->dpi);
+    st->glyphFont = themeFont(FontRole::Glyph, st->dpi);
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
+    SendMessageW(st->volIcon, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
+    if (oldUi) DeleteObject(oldUi);
+    if (oldTitle) DeleteObject(oldTitle);
+    if (oldGlyph) DeleteObject(oldGlyph);
+}
+
+// Re-apply the active skin to the window chrome + OS-drawn common controls. Owner-drawn
+// surfaces (command bar, strip, grid, meters) read currentTheme() each paint, so they
+// only need the repaint; the fonts, DWM caption/border, and common-controls dark/light
+// theme have to be pushed explicitly. Called at startup and on every Settings→Theme switch.
+void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
+    remakeUiFonts(st);            // skin-driven chrome fonts (parity today; matters for Phase 4)
+    clearThemeBrushes();          // free the previous skin's cached HBRUSHes
+    applyDarkChrome(hwnd);        // DWM caption/border/text from the (new) currentTheme()
+    const Theme& th = currentTheme();
+    const wchar_t* sub = th.dark ? L"DarkMode_Explorer" : L"Explorer";
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav,
+                   st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+        SetWindowTheme(h, sub, nullptr);
+    TreeView_SetBkColor(st->nav, th.panelBg);
+    TreeView_SetTextColor(st->nav, th.textPrimary);
+    if (repaint)
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+// Settings→Theme: switch skins live. Sets + persists the selection, then rebrushes,
+// re-chromes, and repaints the whole UI. `sel` is a skin id or "system" (follow OS).
+void setSkinSelection(HWND hwnd, AppState* st, const char* sel) {
+    activeSkinSelection() = sel;
+    st->db.setSetting(wideFromUtf8(skinSettingKey()), wideFromUtf8(sel));
+    applyActiveSkin(hwnd, st, /*repaint=*/true);
+}
+#endif
 
 // ---- command bar geometry --------------------------------------------------
 
@@ -341,7 +409,11 @@ void drawCmdBar(HWND hwnd, AppState* st, HDC target) {
     for (int i = 0; i < 3; ++i) {
         RECT cb = captionRect(hwnd, st, i);
         if (st->capHover == i) {
-            COLORREF hb = (i == 2) ? RGB(196, 43, 28) : th.hoverBg;
+#ifdef RABBITEARS_THEME_ENGINE
+            const COLORREF hb = (i == 2) ? th.dangerHover : th.hoverBg;
+#else
+            const COLORREF hb = (i == 2) ? RGB(196, 43, 28) : th.hoverBg;
+#endif
             FillRect(dc, &cb, themeBrush(hb));
         }
         COLORREF glyph = (st->capHover == 2 && i == 2) ? RGB(255, 255, 255) : th.textSecondary;
@@ -394,7 +466,7 @@ void layout(HWND hwnd, AppState* st) {
     const int sx = W - 3 * capW(st->dpi) - sw - dp(12, st->dpi);
     placeMove(st->search, sx, (cmdH - sh) / 2, sw, sh);
 
-    if (st->fullscreen) {
+    if (st->fullscreen || st->videoOnly) {  // both collapse to just the video filling the client
         for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
                        st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
                        st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
@@ -468,7 +540,7 @@ void layout(HWND hwnd, AppState* st) {
     // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
     // meters are hidden (also via the deferred pass, so show/move stay atomic).
     const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
-    const int bufMeterW = dp(230, st->dpi);
+    const int bufMeterW = dp(115, st->dpi);  // the fluid tank: half its old width, to match the tray
     int rightX = vidR.right - pad;
     placeMove(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
     rightX -= bufMeterW + pad;
@@ -505,7 +577,16 @@ const DockLayout::Gutter* gutterAt(AppState* st, POINT pt) {
 }
 
 void paintGutters(AppState* st, HDC hdc) {
-    for (const auto& g : st->gutters) FillRect(hdc, &g.rc, themeBrush(currentTheme().border));
+    for (const auto& g : st->gutters) {
+#ifdef RABBITEARS_THEME_ENGINE
+        // Per-skin neon edge glow (Phase 4b-2). Skipped mid-drag: the gutter resizes every
+        // paced flush, so the plain border avoids per-frame GPU texture churn; the glow
+        // returns on release. hdc is child-clipped (WM_PAINT), so the panels show through.
+        if (st->skinStripOn && !st->draggingGutter && skin::paintSkinEdge(hdc, g.rc, st->dpi))
+            continue;
+#endif
+        FillRect(hdc, &g.rc, themeBrush(currentTheme().border));
+    }
 }
 
 void persistDock(AppState* st) { st->db.setSetting(L"dock_layout", st->dock.serialize()); }
@@ -1014,6 +1095,20 @@ void toggleFullscreen(AppState* st) {
     InvalidateRect(hwnd, nullptr, TRUE);
 }
 
+// "Video only": collapse the window to just the video — hide the nav list, channel grid,
+// title/command bar, and transport strip — WITHOUT leaving the window (unlike fullscreen,
+// which covers the whole monitor). Entered from Settings → Video only; a double-click on
+// the video or Esc restores the chrome. Reuses the fullscreen layout/paint path (which
+// already hides every child + fills the client with the video), minus the window-style
+// change. A no-op while actually fullscreen — that mode already shows only the video.
+void toggleVideoOnly(AppState* st) {
+    if (st->fullscreen) return;
+    st->videoOnly = !st->videoOnly;
+    layout(st->hwnd, st);
+    InvalidateRect(st->hwnd, nullptr, TRUE);
+    if (st->videoOnly) SetFocus(st->video);  // so Esc reaches VideoProc while the chrome is hidden
+}
+
 std::wstring recordingsDir() {
     PWSTR vids = nullptr;
     std::filesystem::path dir;
@@ -1161,8 +1256,13 @@ void onMeters(AppState* st) {
         cfg[r].palette = miniMeterPalette(m[r]);
         cfg[r].tuning = miniMeterTuning(m[r]);
     }
+    // The data-flow (buffer) meter's current visible state (persisted as buffer_hidden).
+    auto bh = st->db.getSetting(L"buffer_hidden");
+    bool dataFlowOn = !(bh && *bh == L"1");
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
-    if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg)) return;  // Cancel — no change
+    if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg, dataFlowOn)) return;  // Cancel — no change
+    bufferMeterSetHidden(st->bufferMeter, !dataFlowOn);
+    st->db.setSetting(L"buffer_hidden", dataFlowOn ? L"0" : L"1");
 
     static const wchar_t* key[4] = {L"spectrum", L"signal", L"bitrate", L"frames"};
     st->showSpectrum = cfg[0].enabled;
@@ -1204,16 +1304,11 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
                 catLabel.c_str());
 
-    HMENU meters = CreatePopupMenu();
-    AppendMenuW(meters, MF_STRING | (st->showSpectrum ? MF_CHECKED : 0u), ID_MTR_SPECTRUM,
-                L"Audio spectrum");
-    AppendMenuW(meters, MF_STRING | (st->showSignal ? MF_CHECKED : 0u), ID_MTR_SIGNAL,
-                L"Signal strength");
-    AppendMenuW(meters, MF_STRING | (st->showBitrate ? MF_CHECKED : 0u), ID_MTR_BITRATE, L"Bitrate");
-    AppendMenuW(meters, MF_STRING | (st->showFrames ? MF_CHECKED : 0u), ID_MTR_FRAMES, L"Frame rate");
-    AppendMenuW(meters, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(meters, MF_STRING, ID_METERS_SETUP, L"Setup…");
-    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(meters), L"Meters");
+    // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
+    // row live there now — the old inline quick-toggle checkboxes were redundant).
+    AppendMenuW(m, MF_STRING, ID_METERS_SETUP, L"Meters…");
+    AppendMenuW(m, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), ID_VIDEO_ONLY,
+                L"Video only\tCtrl+Shift+V");
 
     HMENU layoutMenu = CreatePopupMenu();
     AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, L"Reset to default");
@@ -1228,6 +1323,19 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), pn.name);
     }
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"Layout");
+
+#ifdef RABBITEARS_THEME_ENGINE
+    HMENU themeMenu = CreatePopupMenu();
+    const std::string& skinSel = activeSkinSelection();
+    AppendMenuW(themeMenu, MF_STRING | (skinSel == "system" ? MF_CHECKED : 0u), ID_THEME_SYSTEM,
+                L"Follow System");
+    AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
+    const auto& skins = builtinSkins();  // one item per registered skin (auto-grows in Phase 4)
+    for (size_t i = 0; i < skins.size(); ++i)
+        AppendMenuW(themeMenu, MF_STRING | (skinSel == skins[i].id ? MF_CHECKED : 0u),
+                    ID_THEME_SKIN_BASE + static_cast<int>(i), wideFromUtf8(skins[i].name).c_str());
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Theme");
+#endif
 
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_ABOUT, L"About…");  // last item, ellipsis to match siblings
@@ -1247,6 +1355,17 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         applyDockChange(hwnd, st);
         return;
     }
+#ifdef RABBITEARS_THEME_ENGINE
+    if (cmd == ID_THEME_SYSTEM) {
+        setSkinSelection(hwnd, st, "system");
+        return;
+    }
+    if (cmd >= ID_THEME_SKIN_BASE &&
+        cmd < ID_THEME_SKIN_BASE + static_cast<int>(builtinSkins().size())) {
+        setSkinSelection(hwnd, st, builtinSkins()[cmd - ID_THEME_SKIN_BASE].id.c_str());
+        return;
+    }
+#endif
     switch (cmd) {
         case ID_OPEN_FILE:
             onOpenFile(st);
@@ -1271,49 +1390,136 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_CATEGORIES:
             onCategories(st);
             break;
-        case ID_MTR_SPECTRUM:
-            st->showSpectrum = !st->showSpectrum;
-            st->db.setSetting(L"meter_spectrum", st->showSpectrum ? L"1" : L"0");
-            syncSpectrumTap(st);
-            layout(hwnd, st);
-            break;
-        case ID_MTR_SIGNAL:
-            st->showSignal = !st->showSignal;
-            st->db.setSetting(L"meter_signal", st->showSignal ? L"1" : L"0");
-            layout(hwnd, st);
-            break;
-        case ID_MTR_BITRATE:
-            st->showBitrate = !st->showBitrate;
-            st->db.setSetting(L"meter_bitrate", st->showBitrate ? L"1" : L"0");
-            layout(hwnd, st);
-            break;
-        case ID_MTR_FRAMES:
-            st->showFrames = !st->showFrames;
-            st->db.setSetting(L"meter_frames", st->showFrames ? L"1" : L"0");
-            layout(hwnd, st);
-            break;
         case ID_METERS_SETUP:
             onMeters(st);
+            break;
+        case ID_VIDEO_ONLY:
+            toggleVideoOnly(st);
             break;
     }
 }
 
 // ---- window procs ----------------------------------------------------------
 
+// Transport-button style: skin-native owner-draw flag-on (painted by
+// drawTransportButton), classic OS push-button flag-off (byte-identical shipping look).
+#ifdef RABBITEARS_THEME_ENGINE
+constexpr DWORD kTransportBtnStyle = WS_CHILD | WS_VISIBLE | BS_OWNERDRAW;
+
+// The play/stop/record/fullscreen buttons paint from the active skin instead of the OS
+// DarkMode_Explorer push-button look: flat (windowBg, so they melt into the transport
+// strip band), a palette hover / pressed wash, and an accent glyph while playing /
+// recording. Flag-off this whole path compiles out and they stay classic BUTTONs.
+bool isTransportBtn(AppState* st, HWND h) {
+    return h == st->btnPlay || h == st->btnStop || h == st->btnRec || h == st->btnFull;
+}
+
+// Owner-draw buttons don't report hover in DRAWITEMSTRUCT::itemState, so each is
+// subclassed to track it in its (otherwise unused) GWLP_USERDATA; drawTransportButton
+// reads it back. TrackMouseEvent delivers the matching WM_MOUSELEAVE.
+LRESULT CALLBACK TransportBtnSubProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                     UINT_PTR, DWORD_PTR) {
+    switch (msg) {
+        case WM_MOUSEMOVE:
+            if (!GetWindowLongPtrW(hwnd, GWLP_USERDATA)) {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 1);
+                TRACKMOUSEEVENT tme{sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0};
+                TrackMouseEvent(&tme);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            break;
+        case WM_MOUSELEAVE:
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            break;
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, TransportBtnSubProc, 1);
+            break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+// A soft accent bloom for a "lit" transport button — the skin's neon/glow layer on the
+// owner-draw buttons (Phase 4b). Reuses the meters' GDI+ phosphor technique (MiniMeter
+// drawTubeGlow): concentric low-alpha accent ellipses, wide dim halo -> bright inner
+// core, sized to the button. GDI+ is the right tool here — a GPU surface behind these
+// child-window buttons would hit the sibling-clipping wall the strip underglow already
+// documents; GDI+ is started globally by runApp. `strength` 0..1 scales the whole bloom.
+void drawTransportGlow(HDC hdc, const RECT& rc, COLORREF accent, float strength) {
+    Gdiplus::Graphics g(hdc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    const float cx = (rc.left + rc.right) / 2.0f;
+    const float cy = (rc.top + rc.bottom) / 2.0f;
+    const float minDim = static_cast<float>(std::min(rc.right - rc.left, rc.bottom - rc.top));
+    const BYTE cr = GetRValue(accent), cg = GetGValue(accent), cb = GetBValue(accent);
+    const struct { float frac; BYTE alpha; } layers[] = {{0.60f, 44}, {0.44f, 66}, {0.28f, 96}};
+    for (const auto& L : layers) {
+        const float rad = minDim * L.frac;
+        const auto a = static_cast<BYTE>(L.alpha * strength);
+        Gdiplus::SolidBrush br(Gdiplus::Color(a, cr, cg, cb));
+        g.FillEllipse(&br, cx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
+    }
+}
+
+void drawTransportButton(AppState* st, const DRAWITEMSTRUCT* dis) {
+    const Theme& th = currentTheme();
+    const RECT rc = dis->rcItem;
+    const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    const bool hover = GetWindowLongPtrW(dis->hwndItem, GWLP_USERDATA) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    // The record button stays lit while a recording is live; any button lights on hover.
+    // Play/pause isn't treated as "active" while playing — you almost always are, so the
+    // live cue would never rest — it is reserved for recording.
+    const bool active = (dis->hwndItem == st->btnRec && st->player.isRecording());
+    const bool lit = (hover || active) && !disabled;
+
+    // Flat into the strip band at rest; a muted-accent wash on press. Hover feedback is
+    // the accent bloom (below), not a bg lift, so the glow reads on the flat band.
+    const COLORREF bg = pressed ? th.selectionBg : th.windowBg;
+    FillRect(dis->hDC, &rc, themeBrush(bg));
+    if (lit) drawTransportGlow(dis->hDC, rc, th.accent, active ? 1.0f : 0.55f);
+
+    const COLORREF fg = disabled           ? th.textMuted
+                        : (lit || pressed) ? th.textPrimary  // bright core inside the bloom
+                                           : th.textSecondary;
+    wchar_t glyph[8] = L"";
+    GetWindowTextW(dis->hwndItem, glyph, ARRAYSIZE(glyph));  // current MDL2 glyph (swaps with state)
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dis->hDC, st->glyphFont));
+    const int oldBk = SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, fg);
+    RECT tr = rc;
+    DrawTextW(dis->hDC, glyph, -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+    SetBkMode(dis->hDC, oldBk);
+    SelectObject(dis->hDC, oldFont);
+
+    // Keyboard focus needs an affordance the flat fill doesn't give: a thin accent frame.
+    // ODS_NOFOCUSRECT is set once the user is on the mouse (focus cues hidden), so honour
+    // it — the frame shows only for keyboard navigation, matching classic button behaviour.
+    if ((dis->itemState & ODS_FOCUS) && !(dis->itemState & ODS_NOFOCUSRECT)) {
+        RECT fr = rc;
+        InflateRect(&fr, -dpiScale(2, st->dpi), -dpiScale(2, st->dpi));
+        FrameRect(dis->hDC, &fr, themeBrush(th.accent));
+    }
+}
+#else
+constexpr DWORD kTransportBtnStyle = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
+#endif
+
 void createChildren(HWND hwnd, AppState* st) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-    st->uiFont = CreateFontW(-dp(14, st->dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                             VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    st->titleFont = CreateFontW(-dp(16, st->dpi), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
-                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                VARIABLE_PITCH | FF_SWISS, L"Segoe UI");
-    st->glyphFont = CreateFontW(-dp(13, st->dpi), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+    st->uiFont = themeFont(FontRole::Body, st->dpi);      // skin-driven flag-on; Segoe UI 14 flag-off
+    st->titleFont = themeFont(FontRole::Title, st->dpi);  // Segoe UI 16 semibold
+    st->glyphFont = themeFont(FontRole::Glyph, st->dpi);  // Segoe MDL2 Assets 13
 
     st->video = CreateWindowExW(0, kVideoClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 10,
                                 10, hwnd, nullptr, hInst, nullptr);
+#ifdef RABBITEARS_THEME_ENGINE
+    // GPU transport-strip underglow: windowless. The parent's WM_PAINT (+ a timer tick)
+    // BitBlt it into the strip band behind the transport controls — WS_CLIPCHILDREN keeps
+    // it behind them, exactly like the plain strip fill it replaces. Off → GDI fill.
+    st->skinStripOn = skin::initSkinStrip();
+    if (st->skinStripOn) SetTimer(hwnd, kSkinAnimTimer, 16, nullptr);  // ~60 fps
+#endif
     st->nav = CreateWindowExW(0, WC_TREEVIEWW, L"",
                               WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TVS_HASBUTTONS |
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
@@ -1333,11 +1539,11 @@ void createChildren(HWND hwnd, AppState* st) {
                                  nullptr);
     SendMessageW(st->search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search channels…"));
 
-    st->btnPlay = CreateWindowExW(0, L"BUTTON", kGlyphPlay, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
+    st->btnPlay = CreateWindowExW(0, L"BUTTON", kGlyphPlay, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_PLAY)), hInst, nullptr);
-    st->btnStop = CreateWindowExW(0, L"BUTTON", kGlyphStop, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
+    st->btnStop = CreateWindowExW(0, L"BUTTON", kGlyphStop, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_STOP)), hInst, nullptr);
-    st->btnRec = CreateWindowExW(0, L"BUTTON", kGlyphRecord, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, hwnd,
+    st->btnRec = CreateWindowExW(0, L"BUTTON", kGlyphRecord, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_REC)), hInst, nullptr);
     // Speaker glyph (Segoe MDL2 "Volume") so the slider is obviously the volume.
     st->volIcon = CreateWindowExW(0, L"STATIC", L"",
@@ -1351,7 +1557,7 @@ void createChildren(HWND hwnd, AppState* st) {
     st->bufBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS, 0,
                                  0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUF)),
                                  hInst, nullptr);
-    st->btnFull = CreateWindowExW(0, L"BUTTON", kGlyphFull, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10,
+    st->btnFull = CreateWindowExW(0, L"BUTTON", kGlyphFull, kTransportBtnStyle, 0, 0, 10, 10,
                                   hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_FULL)), hInst, nullptr);
     st->status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 10,
                                  10, hwnd, nullptr, hInst, nullptr);
@@ -1409,6 +1615,12 @@ void createChildren(HWND hwnd, AppState* st) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
+#ifdef RABBITEARS_THEME_ENGINE
+    // BS_OWNERDRAW transport buttons are painted by drawTransportButton (WM_DRAWITEM in
+    // MainProc); subclass each to track hover, which owner-draw doesn't report on its own.
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+        SetWindowSubclass(h, TransportBtnSubProc, 1, 0);
+#endif
     TreeView_SetBkColor(st->nav, currentTheme().panelBg);
     TreeView_SetTextColor(st->nav, currentTheme().textPrimary);
 
@@ -1479,6 +1691,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 if (auto dl = st->db.getSetting(L"dock_layout"); dl && !dl->empty())
                     st->dock = DockLayout::parse(*dl);
+#ifdef RABBITEARS_THEME_ENGINE
+                if (auto sk = st->db.getSetting(wideFromUtf8(skinSettingKey())); sk && !sk->empty())
+                    activeSkinSelection() = utf8FromWide(*sk);
+                applyActiveSkin(hwnd, st, /*repaint=*/false);  // window not shown yet; first paint uses it
+#endif
                 syncSpectrumTap(st);
                 refreshNav(st);
                 st->filter = {ViewKind::All};
@@ -1529,10 +1746,24 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().windowBg));
             return 1;
         }
+        case WM_ACTIVATE:
+            // Keep the video focused while the chrome is hidden, so Esc reaches VideoProc even
+            // after the user Alt-Tabs away and back (video-only + fullscreen both rely on it).
+            if (LOWORD(wParam) != WA_INACTIVE && (st->videoOnly || st->fullscreen))
+                SetFocus(st->video);
+            break;
+        case WM_KEYDOWN:
+            // Esc is also handled here, not only in VideoProc: after a resize the main window
+            // holds focus, so VideoProc never sees the key. Exit the active view mode.
+            if (wParam == VK_ESCAPE) {
+                if (st->fullscreen) toggleFullscreen(st);
+                else if (st->videoOnly) toggleVideoOnly(st);
+            }
+            break;
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
-            if (!st->fullscreen) {
+            if (!st->fullscreen && !st->videoOnly) {
                 drawCmdBar(hwnd, st, hdc);
                 // Paint the transport-strip background here (like the command bar) rather
                 // than relying on WM_ERASEBKGND: relayouts invalidate NOERASE, so if the
@@ -1541,12 +1772,37 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // WS_CLIPCHILDREN keeps this fill behind the meter/button children on top.
                 const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
                 RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
-                FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
+                bool gdiStrip = true;
+#ifdef RABBITEARS_THEME_ENGINE
+                // hdc is BeginPaint's DC — child-clipped by WS_CLIPCHILDREN, so the underglow
+                // lands behind the transport controls, exactly like the plain fill would.
+                if (st->skinStripOn && skin::paintSkinStrip(hdc, strip, st->dpi)) gdiStrip = false;
+#endif
+                if (gdiStrip) FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
                 paintGutters(st, hdc);  // dock dividers live in the gaps between panels
             }
             EndPaint(hwnd, &ps);
             return 0;
         }
+#ifdef RABBITEARS_THEME_ENGINE
+        case WM_TIMER:
+            if (st && wParam == kSkinAnimTimer) {
+                // Animate the GPU strip via a child-clipped DC (DCX_CLIPCHILDREN) so the
+                // transport controls are excluded and the command bar isn't redrawn each
+                // frame. Idle while fullscreen (strip hidden), minimized, or not visible.
+                if (st->skinStripOn && !st->fullscreen && !st->videoOnly && !IsIconic(hwnd) &&
+                    IsWindowVisible(hwnd)) {
+                    const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
+                    RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
+                    if (HDC dc = GetDCEx(hwnd, nullptr, DCX_CACHE | DCX_CLIPCHILDREN)) {
+                        skin::paintSkinStrip(dc, strip, st->dpi);
+                        ReleaseDC(hwnd, dc);
+                    }
+                }
+                return 0;
+            }
+            break;
+#endif
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (st->panelDragActive && (wParam & MK_LBUTTON)) {
@@ -1702,6 +1958,16 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORBTN:
             return dialogCtlColor(msg, wParam);
+#ifdef RABBITEARS_THEME_ENGINE
+        case WM_DRAWITEM: {
+            auto* dis = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+            if (dis && dis->CtlType == ODT_BUTTON && isTransportBtn(st, dis->hwndItem)) {
+                drawTransportButton(st, dis);
+                return TRUE;
+            }
+            break;  // not one of ours -> fall through to DefWindowProc
+        }
+#endif
         case WM_COMMAND: {
             const int id = LOWORD(wParam);
             if (id == ID_SEARCH && HIWORD(wParam) == EN_CHANGE) {
@@ -1738,6 +2004,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 case ID_BTN_REC: onToggleRecord(st); return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
+                case ID_VIDEO_ONLY: toggleVideoOnly(st); return 0;  // Ctrl+Shift+V accelerator + menu
             }
             return 0;
         }
@@ -2014,6 +2281,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_DESTROY:
             armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
+#ifdef RABBITEARS_THEME_ENGINE
+            KillTimer(hwnd, kSkinAnimTimer);
+            skin::shutdownSkinStrip();
+            st->skinStripOn = false;
+#endif
             st->spectrumTap.stop();  // join the capture thread before the meter HWNDs die
             st->player.shutdown();   // join worker + reaper threads + release libVLC synchronously
             if (st->uiFont) DeleteObject(st->uiFont);
@@ -2033,13 +2305,88 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             FillRect(reinterpret_cast<HDC>(wParam), &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             return 1;
         }
-        case WM_LBUTTONDBLCLK:
-            SendMessageW(GetParent(hwnd), WM_COMMAND, MAKEWPARAM(ID_BTN_FULL, 0), 0);
+        case WM_LBUTTONDOWN: {
+            // Video-only has no title bar, so a click-drag on the video moves the window.
+            // Manual drag (not WM_NCLBUTTONDOWN) so it coexists with the double-click exit —
+            // a plain click doesn't move; a real drag does.
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoOnly) {
+                RECT wr;
+                GetWindowRect(GetParent(hwnd), &wr);
+                GetCursorPos(&st->videoDragStart);
+                st->videoDragOrigin = {wr.left, wr.top};
+                st->videoDragging = true;
+                st->videoDragMoved = false;
+                SetCapture(hwnd);
+                return 0;
+            }
+            break;  // normal mode: let libVLC / DefWindowProc handle the click
+        }
+        case WM_MOUSEMOVE: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoDragging && (wParam & MK_LBUTTON)) {
+                POINT c;
+                GetCursorPos(&c);
+                const int dx = c.x - st->videoDragStart.x, dy = c.y - st->videoDragStart.y;
+                if (!st->videoDragMoved && (std::abs(dx) >= GetSystemMetrics(SM_CXDRAG) ||
+                                            std::abs(dy) >= GetSystemMetrics(SM_CYDRAG)))
+                    st->videoDragMoved = true;  // past the dead zone -> a real drag, not a shaky click
+                if (st->videoDragMoved)
+                    SetWindowPos(GetParent(hwnd), nullptr, st->videoDragOrigin.x + dx,
+                                 st->videoDragOrigin.y + dy, 0, 0,
+                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                return 0;
+            }
+            break;
+        }
+        case WM_LBUTTONUP: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoDragging) {
+                st->videoDragging = false;
+                ReleaseCapture();
+                return 0;
+            }
+            break;
+        }
+        case WM_CAPTURECHANGED: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st) st->videoDragging = false;  // capture lost -> end the drag cleanly
             return 0;
+        }
+        case WM_RBUTTONUP: {
+            // A focus-independent view menu: Esc can be lost to the libVLC surface after a
+            // resize or Alt-Tab, but a right-click menu always works.
+            AppState* st = stateOf(GetParent(hwnd));
+            if (!st) break;
+            HMENU pm = CreatePopupMenu();
+            AppendMenuW(pm, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), 1, L"Video only");
+            AppendMenuW(pm, MF_STRING | (st->fullscreen ? MF_CHECKED : 0u), 2, L"Fullscreen");
+            POINT pt;
+            GetCursorPos(&pt);
+            const int cmd = TrackPopupMenu(pm, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
+                                           GetParent(hwnd), nullptr);
+            DestroyMenu(pm);
+            if (cmd == 1) {
+                toggleVideoOnly(st);
+            } else if (cmd == 2) {
+                if (st->videoOnly) toggleVideoOnly(st);  // the two modes are mutually exclusive
+                toggleFullscreen(st);
+            }
+            return 0;
+        }
+        case WM_LBUTTONDBLCLK: {
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->videoOnly)
+                toggleVideoOnly(st);  // in video-only, a double-click restores the chrome
+            else
+                SendMessageW(GetParent(hwnd), WM_COMMAND, MAKEWPARAM(ID_BTN_FULL, 0), 0);
+            return 0;
+        }
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE || wParam == 'F') {
                 AppState* st = stateOf(GetParent(hwnd));
                 if (st && st->fullscreen) toggleFullscreen(st);
+                else if (st && st->videoOnly && wParam == VK_ESCAPE) toggleVideoOnly(st);
             }
             return 0;
     }
@@ -2172,11 +2519,17 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
 
     initUpdater(hwnd);  // WinSparkle: start background update checks (+ shutdown coordination)
 
+    // Ctrl+Shift+V toggles "Video only" from anywhere (an accelerator, so it fires whatever
+    // child control has focus); it routes to WM_COMMAND(ID_VIDEO_ONLY) on the main window.
+    ACCEL accels[] = {{FCONTROL | FSHIFT | FVIRTKEY, 'V', ID_VIDEO_ONLY}};
+    HACCEL hAccel = CreateAcceleratorTableW(accels, ARRAYSIZE(accels));
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (hAccel && TranslateAcceleratorW(hwnd, hAccel, &m)) continue;
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
+    if (hAccel) DestroyAcceleratorTable(hAccel);
     shutdownUpdater();
     delete st;
     Gdiplus::GdiplusShutdown(gdipToken);

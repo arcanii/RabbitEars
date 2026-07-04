@@ -1,8 +1,9 @@
 # RabbitEars — Backlog
 
-Parked / not-yet-scheduled work, split out of `HANDOVER.md` (which stays the single entry point
-for **current state**; this is the parking lot for **what's next**). Ship small items as 0.1.x
-point releases; the **theme engine** is the big 0.2.x epic.
+Parked / not-yet-scheduled work, split out of `Win32/HANDOVER.md` (which stays the single entry
+point for **current state**; this is the parking lot for **what's next**). Ship small items as 0.1.x
+point releases; the **theme engine** is the big 0.2.x epic. Windows-team doc — kept under `Win32/`
+so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
@@ -10,8 +11,9 @@ point releases; the **theme engine** is the big 0.2.x epic.
 
 **Goal (owner-directed):** a **full-app reskin** with **runtime-selectable skins**
 (Dark / Steampunk / Cyberpunk — mockups exist) powered by **Direct3D 11 + HLSL shaders** for
-animated GPU effects. Write a **`docs/THEME_ENGINE.md`** design doc first, and **flag the shared
-skin-model boundary to the macOS team** before any engine code lands (they move fast on `mac/`).
+animated GPU effects. Write a **`Win32/docs/THEME_ENGINE.md`** design doc first, and **flag the
+shared skin-model boundary to the macOS team** before any engine code lands (they move fast on
+`mac/`). → **Design doc written: [`docs/THEME_ENGINE.md`](docs/THEME_ENGINE.md).**
 
 **Architecture:**
 - **One shared GPU device — Direct2D-on-D3D11 interop.** D2D 1.1 runs on a D3D11 device, so you get

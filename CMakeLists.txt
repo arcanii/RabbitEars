@@ -31,6 +31,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(RABBITEARS_BUILD_GUI "Build the RabbitEars Windows GUI app (downloads + links libVLC)" OFF)
+# Theme-engine (0.2.x) — the Direct2D-on-D3D11 + HLSL skin renderer. OFF by default;
+# meaningful only with the GUI. Phase-1 spike: the transport-strip underglow surface.
+# See Win32/docs/THEME_ENGINE.md.
+option(RABBITEARS_THEME_ENGINE "Build the theme-engine GPU skin renderer (Win32, needs the GUI)" OFF)
 
 if(MSVC)
   # /W4 /permissive- /EHsc are CXX-only so they never hit the C sqlite amalgamation;

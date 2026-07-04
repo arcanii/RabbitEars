@@ -11,6 +11,15 @@
 #include <dwmapi.h>
 #include <uxtheme.h>
 
+#include <string>  // std::wstring — role font-family names (themeFontFamily / themeTextFormat)
+
+#ifdef RABBITEARS_THEME_ENGINE
+#include <unordered_map>
+
+#include "platform/Encoding.h"  // wideFromUtf8 — resolve a skin's UTF-8 font family to a wide name
+#include "ui/Skin.h"  // the shared skin model this file resolves into the Win32 COLORREF Theme
+#endif
+
 namespace rabbitears {
 
 struct Theme {
@@ -28,6 +37,9 @@ struct Theme {
     COLORREF accentText;     // text drawn on top of `accent`
     COLORREF selectionBg;    // selected grid row background
     COLORREF selectionText;
+#ifdef RABBITEARS_THEME_ENGINE
+    COLORREF dangerHover;    // destructive-action hover (close button); skin-driven (Phase 3)
+#endif
     COLORREF synKeyword;     // (carried from the shared theme; unused by RabbitEars)
     COLORREF synNumber;
     COLORREF synString;
@@ -50,6 +62,9 @@ inline Theme makeDarkTheme() {
     t.accentText = RGB(40, 18, 10);
     t.selectionBg = RGB(92, 52, 38);     // muted coral
     t.selectionText = RGB(247, 238, 233);
+#ifdef RABBITEARS_THEME_ENGINE
+    t.dangerHover = RGB(196, 43, 28);
+#endif
     t.synKeyword = RGB(201, 143, 214);
     t.synNumber = RGB(159, 209, 154);
     t.synString = RGB(224, 150, 107);
@@ -73,6 +88,9 @@ inline Theme makeLightTheme() {
     t.accentText = RGB(255, 255, 255);
     t.selectionBg = RGB(250, 232, 224);
     t.selectionText = RGB(74, 27, 12);
+#ifdef RABBITEARS_THEME_ENGINE
+    t.dangerHover = RGB(196, 43, 28);
+#endif
     t.synKeyword = RGB(199, 37, 108);
     t.synNumber = RGB(128, 0, 128);
     t.synString = RGB(196, 26, 22);
@@ -97,19 +115,168 @@ inline int& themeOverride() {
     return mode;
 }
 
+#ifdef RABBITEARS_THEME_ENGINE
+// ---- theme engine: currentTheme() is resolved from the active Skin ----------
+// The persisted selection: a skin id ("dark"/"light") or "system" (follow the OS
+// dark/light setting). Default "system" preserves the pre-engine follow-the-OS
+// behaviour. The Settings->Theme UI (Phase 2c) sets this + persists it under
+// skinSettingKey(); themeOverride() above is unused on this path.
+inline std::string& activeSkinSelection() {
+    static std::string sel = "system";
+    return sel;
+}
+
+inline COLORREF toColorRef(const SkinColor& c) { return RGB(c.r, c.g, c.b); }
+
+// Resolve a shared Skin into the Win32 COLORREF Theme. The 4 unused syntax-highlight
+// fields keep their classic values (RabbitEars never draws them); `dark` drives the
+// DWM immersive-dark chrome. The "dark" skin reproduces makeDarkTheme() exactly, so
+// the default (system -> dark on a dark OS) is pixel-identical to the pre-engine look.
+inline Theme resolveSkinTheme(const Skin& s) {
+    Theme t = makeDarkTheme();  // seed: fills the unused syn* fields with classic values
+    t.dark          = s.dark;
+    t.windowBg      = toColorRef(s.palette.windowBg);
+    t.panelBg       = toColorRef(s.palette.panelBg);
+    t.panelElevBg   = toColorRef(s.palette.panelElevBg);
+    t.altRowBg      = toColorRef(s.palette.altRowBg);
+    t.hoverBg       = toColorRef(s.palette.hoverBg);
+    t.border        = toColorRef(s.palette.border);
+    t.textPrimary   = toColorRef(s.palette.textPrimary);
+    t.textSecondary = toColorRef(s.palette.textSecondary);
+    t.textMuted     = toColorRef(s.palette.textMuted);
+    t.accent        = toColorRef(s.palette.accent);
+    t.accentText    = toColorRef(s.palette.accentText);
+    t.selectionBg   = toColorRef(s.palette.selectionBg);
+    t.selectionText = toColorRef(s.palette.selectionText);
+    t.dangerHover   = toColorRef(s.palette.dangerHover);
+    return t;
+}
+#endif
+
 inline const Theme& currentTheme() {
+#ifdef RABBITEARS_THEME_ENGINE
+    // Resolve the active selection -> a concrete skin -> a cached COLORREF Theme,
+    // rebuilt only when the selection (or, for "system", the OS mode) changes. Called
+    // only on the UI thread, so the function-local statics need no synchronisation.
+    static Theme cached;
+    static std::string cachedKey;
+    const std::string& sel = activeSkinSelection();
+    std::string skinId = (sel == "system") ? (systemUsesDarkMode() ? "dark" : "light") : sel;
+    const std::string key = (sel == "system") ? ("system:" + skinId) : skinId;
+    if (key != cachedKey) {
+        cached = resolveSkinTheme(skinById(skinId));
+        cachedKey = key;
+    }
+    return cached;
+#else
     static const Theme dark = makeDarkTheme();
     static const Theme light = makeLightTheme();
     const int o = themeOverride();
     const bool useDark = (o < 0) ? systemUsesDarkMode() : (o == 1);
     return useDark ? dark : light;
+#endif
 }
+
+#ifdef RABBITEARS_THEME_ENGINE
+// The active Skin (same resolution as currentTheme(): the selection, with "system"
+// mapped to dark/light by the OS mode). Used by themeFont() for typography.
+inline const Skin& currentSkin() {
+    const std::string& sel = activeSkinSelection();
+    const std::string skinId = (sel == "system") ? (systemUsesDarkMode() ? "dark" : "light") : sel;
+    return skinById(skinId);
+}
+#endif
 
 // ---- shared dialog dark-mode + DPI helpers ----------------------------------
 
 // Scale a 96-dpi design value to a window's DPI.
 inline int dpiScale(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
+// Typography roles. A role fixes the *typeface* (family + symbol flag); the caller
+// chooses the pixel size + weight (that is layout, not theme). themeFont() builds an
+// HFONT the caller owns (create-on-demand + DeleteObject, like the ad-hoc CreateFontW
+// it replaces). Flag-on the family comes from the active skin; flag-off it is the
+// hardwired Segoe UI / MDL2 default — so call sites stay unconditional and the
+// shipping look is byte-for-byte unchanged.
+enum class FontRole { Body, Title, Glyph };
+
+#ifdef RABBITEARS_THEME_ENGINE
+inline const SkinFont& skinFontForRole(FontRole role) {
+    const Skin& s = currentSkin();
+    return (role == FontRole::Title) ? s.title : (role == FontRole::Glyph) ? s.glyph : s.body;
+}
+#endif
+
+// The role's typeface family, wide (skin-driven flag-on; hardwired flag-off). Shared
+// by the GDI themeFont() below and the DirectWrite themeTextFormat() (D2DSupport.h).
+inline std::wstring themeFontFamily(FontRole role) {
+#ifdef RABBITEARS_THEME_ENGINE
+    return wideFromUtf8(skinFontForRole(role).family);
+#else
+    return role == FontRole::Glyph ? std::wstring(L"Segoe MDL2 Assets") : std::wstring(L"Segoe UI");
+#endif
+}
+
+// Whether the role is a symbol/icon face (drives the GDI pitch hint below).
+inline bool themeFontIsSymbol(FontRole role) {
+#ifdef RABBITEARS_THEME_ENGINE
+    return skinFontForRole(role).symbol;
+#else
+    return role == FontRole::Glyph;
+#endif
+}
+
+// Build an HFONT in the role's typeface at an explicit 96-dpi pixel size + weight
+// (FW_*). This is the seam the migrated call sites use — each keeps the size/weight
+// it always drew, so only the *family* is now skin-swappable.
+inline HFONT themeFont(FontRole role, UINT dpi, int px96, int weight) {
+    const std::wstring fam = themeFontFamily(role);
+    const DWORD pitch =
+        themeFontIsSymbol(role) ? (DEFAULT_PITCH | FF_DONTCARE) : (VARIABLE_PITCH | FF_SWISS);
+    return CreateFontW(-dpiScale(px96, dpi), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET,
+                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, pitch, fam.c_str());
+}
+
+// Convenience: the role's *default* size + weight — skin-carried flag-on (SkinFont
+// sizePt/weight), the classic chrome sizes flag-off (Body 14, Title 16 semibold,
+// Glyph 13). Used for the shell chrome (MainWindow); other sites pass a size above.
+inline HFONT themeFont(FontRole role, UINT dpi) {
+#ifdef RABBITEARS_THEME_ENGINE
+    const SkinFont& f = skinFontForRole(role);
+    const int px96 = static_cast<int>(f.sizePt * 4.0 / 3.0 + 0.5);  // pt -> px @96dpi
+    return themeFont(role, dpi, px96, f.weight);
+#else
+    switch (role) {
+        case FontRole::Title: return themeFont(role, dpi, 16, FW_SEMIBOLD);
+        case FontRole::Glyph: return themeFont(role, dpi, 13, FW_NORMAL);
+        case FontRole::Body:
+        default:              return themeFont(role, dpi, 14, FW_NORMAL);
+    }
+#endif
+}
+
+#ifdef RABBITEARS_THEME_ENGINE
+// Per-skin brush set: an unbounded colour->HBRUSH cache, replacing the fragile 12-slot
+// array (which silently overflowed + leaked once a second skin's palette was in play).
+// clearThemeBrushes() frees + drops them on a skin switch (Phase 2c calls it before the
+// repaint). Correctness never depends on the clear — a colour always maps to its brush.
+inline std::unordered_map<COLORREF, HBRUSH>& themeBrushCache() {
+    static std::unordered_map<COLORREF, HBRUSH> cache;
+    return cache;
+}
+inline void clearThemeBrushes() {
+    for (auto& kv : themeBrushCache()) DeleteObject(kv.second);
+    themeBrushCache().clear();
+}
+inline HBRUSH themeBrush(COLORREF c) {
+    auto& cache = themeBrushCache();
+    const auto it = cache.find(c);
+    if (it != cache.end()) return it->second;
+    HBRUSH b = CreateSolidBrush(c);
+    cache[c] = b;
+    return b;
+}
+#else
 // Small process-lifetime brush cache so WM_CTLCOLOR* can return a stable HBRUSH.
 inline HBRUSH themeBrush(COLORREF c) {
     static COLORREF colors[12];
@@ -125,6 +292,7 @@ inline HBRUSH themeBrush(COLORREF c) {
     }
     return b;
 }
+#endif
 
 // Handle WM_CTLCOLOR{STATIC,EDIT,LISTBOX,BTN}: dark field/background, light text.
 inline LRESULT dialogCtlColor(UINT msg, WPARAM wParam) {
