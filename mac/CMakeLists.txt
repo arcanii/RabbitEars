@@ -48,9 +48,13 @@ if(RABBITEARS_BUILD_MAC)
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
+    src/app/StatMeterView.mm
     platform/Log.mm
     platform/Updater.mm
     "${RE_MAC_ICNS}")
+
+  # StatMeterView uses a weak-self timer (ARC); the rest of the app is MRC-style.
+  set_source_files_properties(src/app/StatMeterView.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app"   # AppDelegate.h, VlcPlayerMac.h

@@ -2,6 +2,8 @@
 // See MainWindowController.h.
 #import "MainWindowController.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cwchar>
 #include <ctime>
 #include <memory>
@@ -19,6 +21,7 @@
 #include "platform/Updater.h"
 
 #import "AppDelegate.h"
+#import "StatMeterView.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -53,6 +56,7 @@ static const CGFloat kStatusH = 22;  // bottom status/volume bar height
     NSPopUpButton* _filter;
     RETableView*   _table;
     NSView*        _videoView;
+    StatMeterView* _statMeter;   // libVLC-stats meter strip below the video
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
@@ -64,6 +68,8 @@ static const CGFloat kStatusH = 22;  // bottom status/volume bar height
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
+    NSTimer*                      _statsTimer;   // 250ms libVLC-stats poll → _statMeter
+    double                        _bitrateMax;   // rolling throughput peak for the meter scale
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
@@ -205,10 +211,20 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     scroll.documentView = _table;
     [split addSubview:scroll];
 
-    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    // Right split pane: the video with a libVLC-stats meter strip pinned below it
+    // (a sibling, not overlaid — no z-order fight with libVLC's surface).
+    NSView* videoPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    const CGFloat meterH = 24;
+    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, meterH, 600, 100 - meterH)];
+    _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
-    [split addSubview:_videoView];
+    [videoPane addSubview:_videoView];
+
+    _statMeter = [[StatMeterView alloc] initWithFrame:NSMakeRect(0, 0, 600, meterH)];
+    _statMeter.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;  // fixed height, pinned bottom
+    [videoPane addSubview:_statMeter];
+    [split addSubview:videoPane];
 
     // Empty-state hint, centered over the (black) video pane until channels exist.
     _emptyHint = [NSTextField labelWithString:@"No channels yet — click “＋ Add Playlist” to begin."];
@@ -227,6 +243,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
+
+    // Poll libVLC stream stats every 250ms to drive the meter (no audio capture).
+    _bitrateMax = 0.0;
+    _statsTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self
+                                                 selector:@selector(tickStats) userInfo:nil repeats:YES];
 
     [self restoreLastPlaylist];
 
@@ -529,8 +550,25 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
 - (void)stop:(id)__unused sender {
     _player->stop();
+    [_statMeter reset];
     _window.title = @"RabbitEars";
     [self setStatus:@"Stopped."];
+}
+
+// 250ms libVLC-stats poll → the stream-health meter. No audio capture (no consent,
+// no A/V desync): the bar tracks throughput against a slowly-decaying rolling peak,
+// so it fills while data flows at its usual rate and drops when the stream stalls.
+- (void)tickStats {
+    const FlowStats fs = _player->sampleStats();
+    if (!fs.playing) { [_statMeter reset]; return; }
+    _bitrateMax = std::max(fs.readBytesPerSec, _bitrateMax * 0.97);  // adapt to the stream's own rate
+    const double denom = std::max(_bitrateMax, 1000.0);
+    [_statMeter setLevel:(float)std::clamp(fs.readBytesPerSec / denom, 0.0, 1.0)];
+    NSString* drops = fs.lostPicturesDelta > 0
+        ? [NSString stringWithFormat:@" · %d drop", fs.lostPicturesDelta] : @"";
+    [_statMeter setReadout:[NSString stringWithFormat:@"%.1f Mb/s · %d fps%@",
+                            fs.readBytesPerSec * 8.0 / 1.0e6,
+                            (int)std::lround(fs.displayedPerSec), drops]];
 }
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
