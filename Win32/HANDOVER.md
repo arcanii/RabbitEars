@@ -31,11 +31,12 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.1.7 SHIPPED · 0.2.x THEME ENGINE in progress on branch `theme-engine` · macOS Phase-1 in progress
+## Current state — v0.2.0 SHIPPED (the theme engine, theme-ON by default) · macOS Phase-1 in progress
 
-**Released:** `v0.1.7` (2026-07-03), tag `v0.1.7` @ `de8c571`, public GitHub release with a
-signed **`RabbitEars-0.1.7-setup.exe`** installer (full version `0.1.7.52`) and a **live
-WinSparkle auto-update feed** (appcast published @ `12be931`). Earlier: `v0.1.6` (`5d06958`,
+**Released:** **`v0.2.0`** (2026-07-04), tag `v0.2.0` @ `343aa0e`, full version `0.2.0.107`, signed
+**`RabbitEars-0.2.0-setup.exe`** (appcast @ `7b3946a`) — **the theme engine** (see the section below);
+**auto-update `0.1.7 → 0.2.0` verified in the wild.** Prior: `v0.1.7` (2026-07-03), tag `v0.1.7` @
+`de8c571`, signed **`RabbitEars-0.1.7-setup.exe`** (full `0.1.7.52`, appcast @ `12be931`). Earlier: `v0.1.6` (`5d06958`,
 `0.1.6.37`), `v0.1.5` (`ca945d1`, `0.1.5.29`), `v0.1.4` (`8622e8a`, `0.1.4.26`), `v0.1.3`
 (`ebd71a8`, `0.1.3.22`), `v0.1.2` (`8c99254`, `0.1.2.19`), `v0.1.1` (auto-update baseline),
 `v0.1.0` (portable zip). 0.1.1–0.1.6 users get 0.1.7 automatically.
@@ -48,20 +49,19 @@ Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `insta
 `build-installer.cmd` were fixed to match (0.1.7). The macOS team is moving fast on `main`: Phase-1
 (playback + native channel grid + Sparkle + CI `.app` build) is in progress.
 
-### 🎨 Theme engine (0.2.x epic) — IN PROGRESS on branch `theme-engine` (NOT merged; behind a build flag)
+### 🎨 Theme engine (0.2.x epic) — SHIPPED in v0.2.0 (merged to `main`; theme-ON by default)
 
-All theme-engine work is on branch **`theme-engine`** (off `main` @ `c6a0cf2`), gated behind the
-OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** — so the **theme *chrome* is off in the shipping
-build** (version bumped to **0.1.8**). ⚠️ The branch now ALSO carries **ungated UI features** (the meters
-Data-flow row + menu cleanup, and the windowed Video-only mode), so **flag-off is no longer byte-identical
-to 0.1.7** — but every *theme-engine* addition is still `#ifdef`-gated. Design docs:
-**`Win32/docs/THEME_ENGINE.md`** (§6 = the D3D11/HLSL renderer) + the extracted shared skin-model contract
+The theme engine **shipped in v0.2.0** — the `theme-engine` branch was **merged to `main` + deleted**
+(2026-07-04, PR #16 superseded), and the CMake flag **`RABBITEARS_THEME_ENGINE` now defaults ON**, so a
+standard build ships the theme chrome (the flag stays an option — `-DRABBITEARS_THEME_ENGINE=OFF` still
+builds the parity path). ⚠️ **Build-dir CACHE trap:** a plain rebuild reuses the *cached* flag regardless
+of the default — a stale theme-OFF cache shipped a Theme-menu-less exe during the 0.2.0 live pass. **Any
+release/verify build must pass `-DRABBITEARS_THEME_ENGINE=ON` explicitly.** Design docs:
+**`Win32/docs/THEME_ENGINE.md`** (§6 = the D3D11/HLSL renderer) + the shared skin-model contract
 **[`docs/SKIN_MODEL.md`](../docs/SKIN_MODEL.md)** (for the mac team). Every part was adversarially reviewed
-+ build-verified BOTH flags; the sandbox can't launch the GUI, so the owner does the runtime/visual
-sign-off. **Owner-verified live:** Phase-1 strip, Cyberpunk, transport-button glow (4b-1), gutter glow
-(4b-2), and Video-only + drag. **Pending a live look:** the per-skin glow strengths + the **Steampunk
-heat-haze** (the new `SkinGpu` manifest), the Steampunk palette/serif, the meters refinements, and the
-"input reaches the video while a stream plays" fix. Commits (newest first):
++ build-verified both flags. **Owner-verified live in 0.2.0:** all four skins (Dark / Light / Cyberpunk /
+Steampunk), the strip / gutter / button glow + Steampunk heat-haze, Video-only, and the DPI first-resize
+fix; **auto-update `0.1.7 → 0.2.0` confirmed in the wild.** Commits (newest first):
 
 - **Steampunk heat-haze** (`0609bb6`) — the last authored GPU effect: a procedural brass heat-shimmer on
   the transport-strip underglow, hung off the `SkinGpu` manifest (`heatHaze` param). `underglow.hlsl`
@@ -130,20 +130,20 @@ heat-haze** (the new `SkinGpu` manifest), the Steampunk palette/serif, the meter
 settings key are shared; the positional 14-role palette codec is frozen until user-customizable skins
 ship (then add a version prefix).
 
-**Next on the theme engine:** **Phases 3–4 + the authored GPU effects are DONE** — 3b fonts, 3c owner-draw
-buttons, 4a Steampunk, 4b-1 button glow, 4b-2 gutter neon glow, the per-skin **`SkinGpu` manifest**, and
-**Steampunk heat-haze** — all committed, reviewed SHIP, build-verified both flags. **The strip underglow,
-gutter neon, button glow, and heat-haze are the complete authored-effect set.** The owner has signed off on
-the glows + Video-only live; **still pending a live look:** the per-skin glow strengths + the Steampunk
-heat-haze (tune via `SkinGpu` in `common/ui/Skin.cpp` + the wobble/plume magnitudes in `underglow.hlsl`),
-the Steampunk palette/serif, and the meters refinements. **Next candidates:** owner live-pass tuning of the
-above; extend `SkinGpu` to the GDI+ button glow (still a separate hardcoded strength); or start a new
-surface reskin (nav/grid/dialogs — Appendix A). **Mac-team coordination:** the shared contract is the
-standalone [`docs/SKIN_MODEL.md`](../docs/SKIN_MODEL.md) (canonical; THEME_ENGINE.md §4 is a pointer); the
-`main`-side root-docs relocation is **PR #16** (open) — hand-authored, deliberately NOT the `ea03a0a`
-cherry-pick (which conflicts on the README + would dangle a `Win32/docs/THEME_ENGINE.md` link on `main`).
-**Before merging `theme-engine` → `main`: `git fetch` + rebase** (origin/main moved via the mac team) — and
-note the branch now carries the ungated meters/Video-only UI work too, so review that in the merge.
+**All shipped in v0.2.0** — 3b fonts, 3c owner-draw buttons, 4a Steampunk, 4b-1 button glow, 4b-2 gutter
+neon glow, the per-skin **`SkinGpu` manifest**, and **Steampunk heat-haze** — the complete authored-effect
+set (strip underglow · gutter neon · button glow · heat-haze), owner-verified live and auto-updated to
+users. The shared contract lives in [`docs/SKIN_MODEL.md`](../docs/SKIN_MODEL.md) (canonical; THEME_ENGINE.md
+§4 is a pointer); the mac Metal renderer mirrors it later.
+
+**Next (0.2.x point releases):** **0.2.1 — the macOS app icon:** `packaging/app.ico` was rebuilt from
+`art/macos_icon.png` (the cleaner mac icon, 1024² → a multi-res `.ico`: 16–64 as 32-bit BMP + 128/256 as
+PNG) — a **single-file swap**, since the window/taskbar/Alt-Tab/dialog/exe *and* the installer's
+`SetupIconFile` all reference `app.ico`. Owner-verified; on `main` as 0.2.1 dev (ships at the next 0.2.1
+cut). Optional 0.2.x follow-ups: per-skin glow/heat-haze *tuning* (`SkinGpu` in `common/ui/Skin.cpp` +
+the wobble/plume magnitudes in `underglow.hlsl`); Steampunk palette/serif polish; extend `SkinGpu` to the
+GDI+ button glow (still a separate hardcoded strength); refresh the About/Splash *logo* art to match the
+new icon; or reskin a new surface (nav / grid / dialogs — Appendix A).
 
 ### 0.1.7 — SHIPPED (tag `v0.1.7` @ `de8c571`, full `0.1.7.52`; all `/W4` clean)
 The update fix + easter egg + restructure packaging fixes (10 paths incl. `art/BadAss_RabbitEars.png`),
@@ -552,30 +552,26 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.1.7`; **v0.1.7 released @ `de8c571`** (full `0.1.7.52`; appcast @ `12be931`).
-`HEAD == origin/main` is this "mark 0.1.7 shipped" doc commit (commit count **54**; release
-`de8c571` = 52, appcast-publish `12be931` = 53). **The macOS team pushes to `main` too** (mac
-Phase-1), so **`git fetch` + rebase before a release** — 0.1.7 rebased onto their concurrent pushes
-(count jumped 39→52 mid-cut, forcing a rebuild). Working tree clean.
-Build number = git commit count, baked at CMake configure time **after** the commit — so a build
-must follow the release commit to stamp the matching `0.1.5.<count>`. Commit/push only when the
+Tags `v0.1.0`…`v0.2.0`; **v0.2.0 released @ `343aa0e`** (full `0.2.0.107`; appcast @ `7b3946a`) — the
+theme engine, theme-ON by default. The `theme-engine` branch was **merged to `main` + deleted** (only
+`main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
+**`git fetch` + rebase before a release** — the 0.2.0 push integrated a concurrent mac commit mid-flight
+(the first push was rejected until re-fetched). Working tree otherwise clean (the owner's
+`art/logo_basic*.png` stay untracked). Build number = git commit count, baked at CMake configure time
+**after** the commit — so a build must follow the release commit to stamp the matching `0.2.0.<count>`. Commit/push only when the
 owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`); end
 commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **The active line of work is the THEME ENGINE** on branch **`theme-engine`** — see the "🎨 Theme
-   engine" section above for the commit-by-commit state. It is NOT merged; the theme *chrome* is behind the
-   OFF-by-default `RABBITEARS_THEME_ENGINE` flag (but the branch also carries ungated meters/Video-only UI —
-   flag-off is no longer 0.1.7-identical). Resume there. **Done (theme):** Phases 3b/3c/4a/4b-1/4b-2 + the
-   per-skin **`SkinGpu` manifest** + **Steampunk heat-haze** — the authored GPU-effect set (strip, gutter,
-   button glow, heat-haze) is complete; all committed + reviewed SHIP + both-flag build-verified; owner
-   signed off on the glows + Video-only live. **Mac-team coordination:** `docs/SKIN_MODEL.md` extracted (the
-   standalone shared contract); the `main` root-docs relocation is **PR #16** (open — hand-authored, not the
-   `ea03a0a` cherry-pick). **Next candidates:** owner live-pass tuning of the per-skin glow strengths + the
-   Steampunk heat-haze; extend `SkinGpu` to the button glow; or reskin a new surface (nav/grid/dialogs).
-   Still pending the owner's live look: the Steampunk palette/serif + the meters refinements.
-   **`git fetch`/rebase before merging `theme-engine` → `main`.**
+1. **The THEME ENGINE SHIPPED in v0.2.0** — merged to `main`, theme-ON by default, branches consolidated
+   (only `main` remains). See the "🎨 Theme engine" section for the commit-by-commit history. ⚠️ **Always
+   build the GUI with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the flag default is ON, but build dirs
+   cache it, and a stale theme-OFF cache once shipped a Theme-menu-less exe during the 0.2.0 live pass.
+   **On `main` for 0.2.1:** the **macOS app-icon** swap (`packaging/app.ico`, owner-verified). **Next:** cut
+   **0.2.1** (bump the version + build → sign-on-mac → appcast per `docs/RELEASING.md`); optional per-skin
+   glow/heat-haze *tuning* (`SkinGpu` in `common/ui/Skin.cpp` + `underglow.hlsl`); Steampunk palette/serif
+   polish; extend `SkinGpu` to the button glow; refresh the About/Splash logo art; or reskin a new surface.
 2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
    Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
    **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
@@ -595,11 +591,13 @@ Paste this verbatim to start a fresh session with working context restored:
 > `Win32/docs/THEME_ENGINE.md`.** (Team docs live under `Win32/` now, not the repo root, so they don't
 > collide with the mac team; the mac team owns `mac/` + shares `common/` and root `docs/`.)
 >
-> **State:** last SHIPPED release is **v0.1.7** (`de8c571`, `0.1.7.52`, live WinSparkle auto-update).
-> The **active work is the 0.2.x THEME ENGINE on branch `theme-engine`** (off `main` @ `c6a0cf2`, **NOT
-> merged**), the theme *chrome* behind the OFF-by-default CMake flag **`RABBITEARS_THEME_ENGINE`** (version
-> bumped to **0.1.8**). NB: the branch also carries ungated meters/Video-only UI, so flag-off is no longer
-> byte-identical to 0.1.7 — but each *theme* addition stays `#ifdef`-gated. Done + committed +
+> **State:** last SHIPPED release is **v0.2.0** (`343aa0e`, `0.2.0.107`, appcast `7b3946a`) — **the theme
+> engine**, merged to `main` and **theme-ON by default** (the `RABBITEARS_THEME_ENGINE` flag default was
+> flipped ON; `-DRABBITEARS_THEME_ENGINE=OFF` still builds the parity path). ⚠️ **Build the GUI with
+> `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — build dirs cache the flag (a stale OFF cache once shipped a
+> Theme-menu-less exe). The `theme-engine` branch was merged + deleted (only `main` remains); auto-update
+> `0.1.7 → 0.2.0` is verified; and `packaging/app.ico` was swapped to the macOS icon on `main` for 0.2.1.
+> The theme engine, phase by phase (all shipped in 0.2.0) — committed +
 > reviewed (0 findings) + build-verified both flags: **Phase 1** — the D3D11⇄D2D1.1 interop device
 > `Win32/ui/skin/SkinDevice` + a **windowless** transport-strip HLSL **underglow** (offscreen
 > GDI-compatible texture → child-clipped `BitBlt`; a swapchain `Present` bypasses GDI sibling-clipping so
@@ -620,15 +618,14 @@ Paste this verbatim to start a fresh session with working context restored:
 > flags): a meters **Data-flow row** + "Meters…" menu cleanup + buffer-meter half-width/`LED_PITCH 5→3`, and
 > a windowed **Video-only** mode (Settings→Video only / **Ctrl+Shift+V**; hide all chrome; drag the video to
 > move; double-click/Esc/right-click to exit; libVLC input passthrough so it works while playing). All
-> committed + reviewed SHIP + both-flag build-verified; owner signed off on the glows + Video-only. The
-> **authored GPU-effect set is complete** (strip, gutter, button glow, heat-haze). **Next:** owner live-pass
-> tuning of the per-skin glow strengths + the Steampunk heat-haze (values in `common/ui/Skin.cpp` +
-> `underglow.hlsl`); extend `SkinGpu` to the button glow; or reskin a new surface. Still pending the owner's
-> look: Steampunk palette/serif + meters refinements.
-> **Coordination:** `docs/SKIN_MODEL.md` extracted (standalone shared contract for the mac team); the
-> `main`-side root-docs relocation is **PR #16** (open — hand-authored, not a raw `ea03a0a` cherry-pick);
-> **`git fetch`/rebase before merging `theme-engine` → `main`** (origin/main moved via the mac team; the
-> branch now also carries the ungated meters/Video-only UI). **JSON profiles** stay deferred.
+> committed + reviewed SHIP + both-flag build-verified; **all owner-verified live in 0.2.0**. The
+> **authored GPU-effect set is complete** (strip, gutter, button glow, heat-haze). **Next (0.2.x):** cut
+> **0.2.1** (the macOS-icon swap is already on `main`; bump the version + build → sign-on-mac → appcast per
+> `docs/RELEASING.md`); optional per-skin glow/heat-haze *tuning* (`SkinGpu` in `common/ui/Skin.cpp` +
+> `underglow.hlsl`); Steampunk palette/serif polish; extend `SkinGpu` to the button glow; refresh the
+> About/Splash logo art; or reskin a new surface. **Coordination:** the shared contract is
+> `docs/SKIN_MODEL.md` (the mac Metal renderer mirrors it); `main` is shared with the mac team, so
+> **`git fetch`/rebase before every release**. **JSON profiles** stay deferred.
 >
 > **Cross-platform (memory `rabbitears-cross-platform`):** premium per platform, ~70% common core; the
 > **skin MODEL is shared in `common/`, the RENDERER is per-platform** (Win32 D3D11/D2D+HLSL; mac Metal
