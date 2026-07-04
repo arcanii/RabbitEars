@@ -4,7 +4,10 @@
      signed .dmg) and channel differ. Populated by the mac release flow:
      scripts/package-mac.sh builds the self-contained, Developer-ID-signed +
      hardened-runtime universal .app, then create-dmg + notarize + staple, and
-     `sign_update --account SQLTerminal <dmg>` produces the edSignature/length. -->
+     the `sign_update` tool (SQLTerminal keychain account) produces the
+     edSignature and length. -->
+<!-- NOTE: XML comments must not contain a double-hyphen; do not write CLI flags
+     like the account option verbatim here or Sparkle fails to parse the feed. -->
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>RabbitEars (macOS) Updates</title>
