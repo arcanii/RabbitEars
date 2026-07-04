@@ -57,12 +57,25 @@ struct SkinPalette {
     SkinColor dangerHover;
 };
 
-// A complete skin: identity + palette + typography. `dark` hints the OS chrome
-// (DWM immersive dark on Win32 / NSAppearance on mac).
+// Per-skin GPU-effect manifest — the strengths the Win32 HLSL skin effects (the
+// transport-strip underglow + the dock-gutter neon, in Win32/ui/skin/SkinStrip.cpp)
+// feed into the shader's `uIntensity`. Graphics-free: plain 0..1 floats resolved by
+// each renderer (the shader saturate()s them, so out-of-range clamps). Defaults
+// reproduce the pre-manifest hardcoded strengths, so a skin that leaves them unset
+// keeps today's look; the macOS Metal renderer mirrors these. This is the "optional
+// GPU-skin manifest" the Skin struct reserved for Phase 4 (see docs/SKIN_MODEL.md §2).
+struct SkinGpu {
+    float stripGlow = 1.0f;   // transport-strip underglow strength (0 = off .. 1 = full)
+    float edgeGlow  = 0.9f;   // dock-gutter neon strength          (0 = off .. 1 = full)
+};
+
+// A complete skin: identity + palette + typography + GPU-effect strengths. `dark`
+// hints the OS chrome (DWM immersive dark on Win32 / NSAppearance on mac).
 struct Skin {
     std::string id;        // stable token, e.g. "dark" — this is the persisted selection
     std::string name;      // display name, e.g. "Dark"
     bool        dark = true;
+    SkinGpu     gpu;       // per-skin GPU-effect strengths (glow); default == today's look
     SkinPalette palette;
     SkinFont    body, title, glyph;
 };
@@ -99,5 +112,11 @@ SkinColor   skinColorFromString(const std::string& s, const SkinColor& fallback)
 // every saved skin. Do NOT reorder roles — position is identity.
 std::string skinPaletteToString(const SkinPalette& p);
 SkinPalette skinPaletteFromString(const std::string& s, const SkinPalette& fallback);
+
+// GPU manifest: "stripGlow,edgeGlow" (two %.3f 0..1 floats). Exact-arity or whole
+// fallback (palette-codec discipline); values clamp to 0..1. Not persisted yet (only
+// the id is, §4.4), so the format is free to change until user-customizable skins ship.
+std::string skinGpuToString(const SkinGpu& g);
+SkinGpu     skinGpuFromString(const std::string& s, const SkinGpu& fallback);
 
 }  // namespace rabbitears

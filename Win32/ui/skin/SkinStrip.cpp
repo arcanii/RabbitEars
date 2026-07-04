@@ -180,7 +180,7 @@ bool renderOffscreen(StripState* st, UINT w, UINT h) {
     cb.resolution[0] = static_cast<float>(w);
     cb.resolution[1] = static_cast<float>(h);
     cb.time = static_cast<float>((GetTickCount64() - st->t0) / 1000.0);
-    cb.intensity = 1.0f;
+    cb.intensity = currentSkin().gpu.stripGlow;  // per-skin underglow strength (SkinGpu manifest)
     fillColor(cb.bg, th.windowBg);
     fillColor(cb.accent, th.accent);
     c->UpdateSubresource(st->cbuf.Get(), 0, nullptr, &cb, 0, 0);
@@ -281,7 +281,7 @@ bool renderEdgeOffscreen(EdgeState* st, UINT w, UINT h) {
     cb.resolution[0] = static_cast<float>(w);
     cb.resolution[1] = static_cast<float>(h);
     cb.time = 0.0f;        // static — gutters render on WM_PAINT, not the animation tick
-    cb.intensity = 0.9f;   // neon strength on the thin bar (owner-tunable)
+    cb.intensity = currentSkin().gpu.edgeGlow;  // per-skin gutter-neon strength (SkinGpu manifest)
     fillColor(cb.bg, th.windowBg);
     fillColor(cb.accent, th.accent);
     c->UpdateSubresource(st->cbuf.Get(), 0, nullptr, &cb, 0, 0);

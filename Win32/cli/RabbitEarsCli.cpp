@@ -245,6 +245,28 @@ int selftest() {
         expect(skinById("dark").glyph.symbol && !skinById("dark").body.symbol,
                "glyph is a symbol font; body is not");
         expect(std::string(skinSettingKey()) == "skin", "shared skin settings key");
+
+        // GPU-effect manifest: per-skin glow strengths -> the HLSL uIntensity.
+        expect(SkinGpu{}.stripGlow == 1.0f && SkinGpu{}.edgeGlow == 0.9f,
+               "default SkinGpu reproduces the pre-manifest hardcoded strengths");
+        expect(skinById("dark").gpu.stripGlow == 1.0f && skinById("dark").gpu.edgeGlow == 0.9f,
+               "dark keeps the owner-approved glow (strip 1.0 / edge 0.9)");
+        expect(skinById("cyberpunk").gpu.edgeGlow == 1.0f, "cyberpunk pushes the gutter neon to full");
+        expect(skinById("steampunk").gpu.stripGlow < skinById("dark").gpu.stripGlow &&
+                   skinById("steampunk").gpu.edgeGlow < skinById("dark").gpu.edgeGlow,
+               "steampunk softens the glow vs dark (brass embers, not neon)");
+        expect(skinById("light").gpu.stripGlow < 0.5f,
+               "light dials the glow down (neon reads wrong on a light theme)");
+        expect(skinGpuFromString(skinGpuToString(SkinGpu{0.5f, 0.25f}), {}).stripGlow == 0.5f &&
+                   skinGpuFromString(skinGpuToString(SkinGpu{0.5f, 0.25f}), {}).edgeGlow == 0.25f,
+               "gpu codec round-trips (exact for 0.5/0.25)");
+        expect(skinGpuFromString("1.0", SkinGpu{0.7f, 0.7f}).edgeGlow == 0.7f,
+               "gpu codec wrong arity -> whole fallback");
+        expect(skinGpuFromString("2.0,-1.0", {}).stripGlow == 1.0f &&
+                   skinGpuFromString("2.0,-1.0", {}).edgeGlow == 0.0f,
+               "gpu codec clamps to 0..1");
+        expect(skinGpuFromString("nan,inf", SkinGpu{0.3f, 0.4f}).stripGlow == 0.3f,
+               "gpu codec rejects non-finite (nan/inf) -> whole fallback");
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");

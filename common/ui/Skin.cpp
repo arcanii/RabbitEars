@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/Skin.h"
 
+#include <cmath>    // std::isfinite — reject NaN/inf in skinGpuFromString
 #include <cstdio>
+#include <cstdlib>  // std::strtof — skinGpuFromString
 
 namespace rabbitears {
 
@@ -23,6 +25,7 @@ Skin makeDarkSkin() {
     s.id = "dark";
     s.name = "Dark";
     s.dark = true;
+    s.gpu = {1.0f, 0.9f};  // approved baseline (Phase-1 strip + 4b-2 gutter, owner-verified live)
     s.palette = SkinPalette{
         .windowBg = {22, 22, 24},   .panelBg = {26, 26, 28},   .panelElevBg = {32, 32, 35},
         .altRowBg = {28, 28, 31},   .hoverBg = {42, 42, 45},   .border = {48, 48, 52},
@@ -41,6 +44,7 @@ Skin makeLightSkin() {
     s.id = "light";
     s.name = "Light";
     s.dark = false;
+    s.gpu = {0.35f, 0.30f};  // subtle — a neon underglow reads wrong on a light surface
     s.palette = SkinPalette{
         .windowBg = {255, 255, 255}, .panelBg = {255, 255, 255}, .panelElevBg = {244, 244, 246},
         .altRowBg = {245, 245, 245}, .hoverBg = {232, 232, 234}, .border = {214, 214, 218},
@@ -63,6 +67,7 @@ Skin makeCyberpunkSkin() {
     s.id = "cyberpunk";
     s.name = "Cyberpunk";
     s.dark = true;
+    s.gpu = {1.0f, 1.0f};  // full neon — the gutter tube runs hot on the midnight base
     s.palette = SkinPalette{
         .windowBg = {9, 11, 18},    .panelBg = {13, 16, 26},   .panelElevBg = {20, 25, 40},
         .altRowBg = {15, 19, 31},   .hoverBg = {28, 40, 64},   .border = {42, 78, 120},
@@ -87,6 +92,7 @@ Skin makeSteampunkSkin() {
     s.id = "steampunk";
     s.name = "Steampunk";
     s.dark = true;
+    s.gpu = {0.85f, 0.70f};  // softer, warmer — brass embers rather than a neon tube
     s.palette = SkinPalette{
         .windowBg = {26, 21, 16},   .panelBg = {32, 26, 19},   .panelElevBg = {43, 35, 25},
         .altRowBg = {29, 23, 17},   .hoverBg = {56, 45, 31},   .border = {82, 64, 42},
@@ -212,6 +218,33 @@ SkinPalette skinPaletteFromString(const std::string& s, const SkinPalette& fallb
     p.textMuted = r[8];     p.accent = r[9];        p.accentText = r[10];  p.selectionBg = r[11];
     p.selectionText = r[12]; p.dangerHover = r[13];
     return p;
+}
+
+// NB: %.3f/strtof assume the C locale's '.' decimal point (which the app keeps — there
+// is no setlocale() call anywhere). If this codec is ever fed persisted data under a
+// user locale, switch to std::from_chars (locale-independent) so a comma-decimal locale
+// can't collide with the ',' field separator. Only the selftest exercises it today.
+std::string skinGpuToString(const SkinGpu& g) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.3f,%.3f", g.stripGlow, g.edgeGlow);
+    return b;
+}
+
+SkinGpu skinGpuFromString(const std::string& s, const SkinGpu& fallback) {
+    const size_t comma = s.find(',');
+    if (comma == std::string::npos) return fallback;  // exact arity or whole fallback
+    const std::string a = s.substr(0, comma);
+    const std::string b = s.substr(comma + 1);
+    auto parse01 = [](const std::string& t, float& out) -> bool {
+        char* end = nullptr;
+        const float v = std::strtof(t.c_str(), &end);
+        if (end == t.c_str() || *end != '\0' || !std::isfinite(v)) return false;  // junk / NaN / inf
+        out = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);         // clamp 0..1 (the shader saturates too)
+        return true;
+    };
+    SkinGpu g;
+    if (!parse01(a, g.stripGlow) || !parse01(b, g.edgeGlow)) return fallback;
+    return g;
 }
 
 }  // namespace rabbitears
