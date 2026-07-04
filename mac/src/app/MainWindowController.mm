@@ -412,18 +412,33 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)refreshChannels {
     if (!_db) { _channels.clear(); [_table reloadData]; return; }
     const std::wstring q = ws(_search.stringValue);
-    if (!q.empty()) {
-        _channels = _db->searchChannels(q);
-    } else {
-        NSMenuItem* sel = _filter.selectedItem;
+    NSMenuItem* sel = _filter.selectedItem;
+
+    // The channel set for the active filter (favourites / group / country / all).
+    auto filteredSet = [&]() -> std::vector<Channel> {
         switch (sel.tag) {
-            case kFilterFavourites: _channels = _db->favourites(); break;
-            case kFilterGroup:      _channels = _db->channelsByGroup(ws(sel.representedObject)); break;
-            case kFilterCountry:    _channels = _db->channelsByCountry(ws(sel.representedObject)); break;
-            default:                _channels = _currentPid ? _db->channelsByPlaylist(_currentPid)
-                                                            : _db->allChannels(); break;
+            case kFilterFavourites: return _db->favourites();
+            case kFilterGroup:      return _db->channelsByGroup(ws(sel.representedObject));
+            case kFilterCountry:    return _db->channelsByCountry(ws(sel.representedObject));
+            default:                return _currentPid ? _db->channelsByPlaylist(_currentPid)
+                                                       : _db->allChannels();
         }
+    };
+
+    if (q.empty()) {
+        _channels = filteredSet();
+    } else if (sel.tag == kFilterAll) {
+        _channels = _db->searchChannels(q);  // search across the full (all-channels) view
+    } else {
+        // Search AND filter both apply: intersect the search hits with the filter
+        // set by id, so e.g. ★ Favourites + "news" shows favourites matching "news".
+        std::set<long long> keep;
+        for (const auto& c : filteredSet()) keep.insert(c.id);
+        _channels.clear();
+        for (auto& c : _db->searchChannels(q))
+            if (keep.count(c.id)) _channels.push_back(std::move(c));
     }
+
     [_table deselectAll:nil];
     [_table reloadData];
     [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
@@ -547,11 +562,6 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* meterItem = [m addItemWithTitle:@"Audio Level Meter"
-                                         action:@selector(toggleMeter:) keyEquivalent:@""];
-    meterItem.target = self;
-    meterItem.state = _meterEnabled ? NSControlStateValueOn : NSControlStateValueOff;  // ✓ when enabled
-    [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"About RabbitEars" action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
     [m popUpMenuPositioningItem:nil
@@ -639,7 +649,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     else    [self stopLevelTap];
 }
 
-- (void)toggleMeter:(id)__unused sender { [self setMeterEnabled:!_meterEnabled]; }
+- (void)toggleMeter { [self setMeterEnabled:!_meterEnabled]; }
+- (BOOL)meterEnabled { return _meterEnabled; }
 
 // Show/hide the meter strip: off → the video fills the whole right pane (no dead
 // strip); on → a kMeterH strip sits below the video.
@@ -665,8 +676,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 }
 
 - (void)stopLevelTap {
-    [_levelTap stop];   // tears down the Core Audio tap / aggregate / IOProc
-    _levelTap = nil;    // MRC: leaks the now-inert wrapper (small, benign); CoreAudio freed above
+    [_levelTap stop];      // tears down the Core Audio tap / aggregate / IOProc
+    [_levelTap release];   // MRC: balance the +1 from -alloc. Safe — stop() already ran
+    _levelTap = nil;       // AudioDeviceStop (synchronous) so no IOProc is in flight, and
+                           // _meter (captured by the tap's block) is app-lifetime.
     [_meter reset];
 }
 
