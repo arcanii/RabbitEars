@@ -48,24 +48,15 @@ if(RABBITEARS_BUILD_MAC)
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
-    src/app/MeterView.mm
-    src/app/AudioLevelTap.mm
     platform/Log.mm
     platform/Updater.mm
     "${RE_MAC_ICNS}")
-
-  # MeterView + AudioLevelTap are written for ARC (weak-self timer; CoreFoundation
-  # bridging for the Core Audio process tap). The rest of the app is MRC-style, so
-  # enable ARC for just these two files.
-  set_source_files_properties(
-    src/app/MeterView.mm src/app/AudioLevelTap.mm
-    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app"   # AppDelegate.h, VlcPlayerMac.h
     "${CMAKE_BINARY_DIR}")                  # "generated/version.h"
   target_link_libraries(RabbitEars PRIVATE
-    RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit" "-framework CoreAudio")
+    RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit")
   set_target_properties(RabbitEars PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "RabbitEars"
