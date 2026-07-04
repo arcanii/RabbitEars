@@ -10,18 +10,18 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 `M3uParser`, `Database`, `DockLayout`, models, platform seam *headers*), **`Win32/`** (the
 Windows app), **`mac/`** (this — the Cocoa app), under a unified root `CMakeLists.txt`
 (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**. `main` is on
-**0.1.7** (the Windows team ships from `main` — don't destabilize their build).
+**0.2.0** (the theme-engine release; the Windows team ships from `main` — don't destabilize their build).
 
-## Current state — first release SHIPPED + MERGED to `main` (PR #11, 2026-07-03)
+## Current state — v0.1.8-mac SHIPPED; `main` now on 0.2.0 (theme engine)
 
-The mac app is **feature-complete for a first release** and **published**: **`v0.1.7-mac`** on
-GitHub — a **universal (Intel + Apple Silicon), notarized, self-contained** DMG that opens with a
-normal double-click. **PR #11 was rebase-merged to `main` on 2026-07-03** (`main` @ `5f57118`), landing the code **and**
-`mac/packaging/appcast-mac.xml`; the `mac-ui` branch is now deleted. The Sparkle feed URL serves
-from `main`, so in-app auto-updates are **live** — the feed advertises `sparkle:version=68` (= the
-shipped build), so existing users aren't re-prompted; the channel is simply armed for the next
-release. The mac work was **Windows-safe** (`mac/` + docs/scripts only; no `common/`/`Win32/`
-changes), so the Windows team's build from `main` was unaffected.
+The mac app is **shipped and auto-updating**: **`v0.1.8-mac`** on GitHub — universal (Intel + Apple
+Silicon), notarized, self-contained. The Sparkle auto-update path is **proven end-to-end** (0.1.7→
+0.1.8 succeeded on-device; the one snag was an XML `--` in an appcast comment — **always `xmllint`
+the appcast before publishing**). `main` has since advanced to **0.2.0**, the Windows-led
+**theme-engine** release (`docs/SKIN_MODEL.md` = the shared, graphics-free skin model; the meter
+*model* still lives under `Win32/ui/`). **App minimum is macOS 26** — a deliberate "latest is best"
+policy (`LSMinimumSystemVersion`; the compile-time deployment target stays unpinned so CI's older
+SDK still builds). All mac work stays **Windows-safe** (`mac/` + docs/scripts only).
 
 The app **plays IPTV** via libVLC in a native window:
 - **rich channel grid** — ★ / # / name / group columns, live **search**, filter popup
@@ -37,9 +37,9 @@ The app **plays IPTV** via libVLC in a native window:
   app, so it runs with **no VLC.app installed**;
 - an **app icon** (`RabbitEars.icns`), a menu bar (Cmd-C/V/X/A/Z), CI on both platforms.
 
-The mac `.mm` are ObjC++ written **ARC-style** (no manual retain/release); note `-fobjc-arc` is
-**not** currently enabled in the mac build (it was only on the reverted, since-deleted `mac-meters` branch). The
-shared core is portable C++ whose headers carry `#if defined(_WIN32)` branches.
+The mac `.mm` are ObjC++ written **MRC-style** (ARC off target-wide; app-lifetime objects leak
+benignly). `-fobjc-arc` is enabled **per-file** only where needed (e.g. `StatMeterView.mm`'s
+weak-self timer). The shared core is portable C++ whose headers carry `#if defined(_WIN32)` branches.
 
 ## Build & run
 
@@ -54,25 +54,30 @@ unified root build also works directly: `cmake -S . -B build-mac -DRABBITEARS_BU
 Unsigned dev builds trip Gatekeeper — right‑click → Open, or
 `xattr -dr com.apple.quarantine build-mac/mac/RabbitEars.app`.
 
-## Audio meters — tried on‑device, reverted, deferred (branch `mac-meters` / PR #9 now DELETED)
+## Meters — Core Audio tap tried & pulled; redone off libVLC stats (IN PROGRESS)
 
-A native LED **audio meter** (`MeterView`) under the video, driven by a **libVLC audio tap** in
-`VlcPlayerMac` (`libvlc_audio_set_callbacks` → peak metering + AudioQueue re‑output). It was
-integrated onto `mac-ui` and **tested on‑device (2026‑07‑03): audio came out jerky and out of
-A/V sync (audio led the video), so it was reverted.**
+**History.** v0.1.8 shipped a `MeterView` LED strip fed by a **non‑invasive Core Audio process tap**
+(`AudioLevelTap`, macOS 14.2+ — the mac peer of Win32's WASAPI `SpectrumTap`). Audio stayed in sync
+(the tap only *observes*; it never takes over libVLC's output). But it hit **denied consent**: on a
+denied audio‑capture prompt the tap still *succeeds* and just delivers silence → a dark, undetectable
+strip. So the whole Core Audio meter was **removed** (`main` @ `c355feb`). Recover it from git history
+before that commit if ever needed. (The older libVLC‑3.x `libvlc_audio_set_callbacks` tap — which
+took over output and desynced — was a separate, earlier dead end; do NOT revisit it.)
 
-Root cause: taking over libVLC's audio output means pacing each PCM chunk to its `pts` **and**
-reporting AudioQueue's output latency back into libVLC's master clock — but **libVLC 3.x (what
-VLC.app ships) has no API to report that latency** (libVLC 4.x's timed audio callback fixes
-exactly this). A fixed `audio-desync` offset is per‑stream and drifts, so there's no clean knob.
-
-**Status:** the first release ships **without** meters (clean, in‑sync audio). The `MeterView`
-LED code is good; only its level *source* (the tap) was the problem. **The `mac-meters` branch was
-deleted on 2026‑07‑04 (PR #9 auto‑closed); its tip was `eb730ea`** — restore it via GitHub's
-"Restore branch" on the closed PR #9 (or check out that SHA) to get the `MeterView` code back,
-else re‑create it. Redo post‑release by moving playback to **libVLC 4.x** (timed audio callbacks) or by
-driving the meter from a **non‑invasive OS tap** (Core Audio process tap on macOS 14.4+, or
-ScreenCaptureKit on 13+). **Don't re‑attempt the tap on libVLC 3.x.**
+**Redo — align with the Win32 meter set.** Win32 has `Win32/audio/SpectrumTap` (loopback + FFT),
+`Win32/ui/MiniMeter` (Spectrum/Signal/Bitrate/Frames dot‑matrix), `Win32/ui/BufferMeter` (fluid sim).
+**KEY: only Spectrum needs audio capture; Signal/Bitrate/Frames/Buffer run off
+`libvlc_media_get_stats` — no consent, no desync.** So lead with those. Progress (branch
+`mac-stats-meter` / **PR #22**):
+- **A ✅** `VlcPlayerMac::sampleStats()` → `FlowStats` (peer of Win32 `VlcPlayer::sampleStats`: byte
+  rates over wall‑clock, buffered‑ahead, fps, corruption/lost deltas).
+- **B ✅** `StatMeterView` — a Win32‑style LED **dot‑matrix** meter (small square cells, 30fps easing,
+  peak‑hold, mono readout).
+- **C ✅** wired: a 250ms poll below the video → bar = throughput vs a rolling peak, readout
+  `X Mb/s · Y fps · N drop`.
+- **D ⏳** Spectrum meter (reuse a Core Audio tap + FFT) — **opt‑in** (the only consent‑needing one).
+- **E ⏳** promote `FlowStats` + the meter model (`MeterKind/Style/Palette`, still Win32‑only) into
+  `common/` for the shared skin (the theme‑engine boundary).
 
 ## Releasing (v0.1.7-mac shipped this way — full recipe in the `mac-release-deployment` memory)
 
@@ -107,12 +112,12 @@ mac/CMakeLists.txt                     # mac targets (app / self-test / play-pro
 mac/cmake/Mac.cmake                    # libVLC + Sparkle provisioning (-DLIBVLC_MAC_PREFIX overrides VLC.app)
 mac/src/app/AppDelegate.mm             # lifecycle + menu bar (App/Edit/View) + custom About + Check-for-Updates
 mac/src/app/MainWindowController.mm    # the UI: top bar, grid, search/filter, split, volume, fullscreen, playback
-mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper (prefers bundled Contents/PlugIns); NO audio tap on mac-ui
+mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper (bundled PlugIns) + sampleStats()->FlowStats for the meters
 mac/platform/{Http,Log,Updater}.mm  mac/platform/Paths.cpp   # macOS platform layer
 mac/src/tools/{selftest.cpp,playprobe.mm}
 mac/packaging/{Info.plist.in, appcast-mac.xml, RabbitEars.icns, RabbitEars.entitlements}
 scripts/{build-mac.sh, package-mac.sh, make-icns.py, xcode.sh}  # build / bundle+sign+notarize / icon / Xcode-gen
-mac/src/app/MeterView.{h,mm} + the VlcPlayerMac audio tap       # deferred; branch mac-meters DELETED — restore from closed PR #9 / eb730ea
+mac/src/app/StatMeterView.{h,mm}                              # libVLC-stats LED dot-matrix meter (no audio capture); PR #22
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 
@@ -129,16 +134,24 @@ mac/src/app/MeterView.{h,mm} + the VlcPlayerMac audio tap       # deferred; bran
 
 ```
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
-(Windows + macOS) in one repo (common/ + Win32/ + mac/, unified root CMake). The macOS app is
-feature-complete, SHIPPED, and MERGED: v0.1.7-mac on GitHub (universal, notarized, self-contained);
-PR #11 is merged to main (main @ 5f57118), so the code + mac/packaging/appcast-mac.xml are on main and
-the Sparkle feed (served from main) is LIVE. mac-ui is deleted.
-Build: scripts/build-mac.sh [--app] (needs VLC.app). Release recipe: scripts/package-mac.sh + the
-mac-release-deployment memory (Developer ID 386M76FV3K, notary profile SQLTerminal-notarize,
-sign_update --account SQLTerminal; universal needs vlc-*-universal.dmg). GUI/audio can't be verified
-headlessly — real Mac testing required. Open items: (1) audio meters are deferred — the libVLC 3.x
-tap caused A/V desync, do NOT retry (use a non-invasive OS tap or libVLC 4.x); the mac-meters branch
-was DELETED (restore from closed PR #9 / SHA eb730ea if you revisit it); (2) the x86_64 slice of the
-universal build is untested on real Intel hardware. Branch off main;
-keep common/ edits Windows-safe (windows-core CI validates).
+(Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
+SQLite). main is on 0.2.0 (the Windows-led theme-engine release). The mac app is shipped and
+auto-updating: v0.1.8-mac on GitHub (universal, notarized, self-contained); the Sparkle update path
+is proven end-to-end. App minimum is macOS 26 ("latest is best" — LSMinimumSystemVersion only, the
+deployment target stays unpinned so CI's older SDK builds). Build: scripts/build-mac.sh [--app]
+(needs VLC.app). Release recipe: scripts/package-mac.sh + the mac-release-deployment memory (Developer
+ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal; universal needs
+vlc-3.0.23-universal.dmg; ALWAYS xmllint mac/packaging/appcast-mac.xml before publishing — an XML '--'
+in a comment broke the feed once). GUI/audio can't be verified headlessly — real Mac testing required;
+branch off main, PR back, keep common/ edits Windows-safe (windows-core CI validates).
+
+IN PROGRESS: the mac METER redo (branch mac-stats-meter / PR #22), aligned with the Win32 meter set
+(Win32/audio/SpectrumTap + Win32/ui/{MiniMeter,BufferMeter}). The earlier Core Audio process-tap meter
+shipped in 0.1.8 then was REMOVED (main @ c355feb) because denied audio-capture consent gave a dark,
+undetectable strip. KEY: only the Spectrum meter needs audio capture; Signal/Bitrate/Frames/Buffer run
+off libvlc_media_get_stats (no consent, no desync). DONE: (A) VlcPlayerMac::sampleStats()->FlowStats,
+(B) StatMeterView (Win32-style LED dot-matrix), (C) wired 250ms poll below the video. NEXT: (D) Spectrum
+meter (reuse a Core Audio tap + FFT, opt-in), (E) promote FlowStats + the meter model (MeterKind/Style/
+Palette, still Win32-only) to common/ for the shared skin. Other open item: the universal build's x86_64
+slice is untested on real Intel hardware (backlogged).
 ```
