@@ -60,6 +60,13 @@ skin-model boundary to the macOS team** before any engine code lands (they move 
   runs + looks good)**; the **x86_64 slice has never run on a physical Intel Mac**. When an Intel
   machine is available: launch the app + run `RabbitEarsPlayProbe` (headless play smoke test) + a
   quick GUI/playback pass. Arranging hardware may take a while — parked, not blocking.
+- **Faster update propagation — move the Sparkle feed off `raw.githubusercontent.com`** — the
+  `SUFeedURL` (in `mac/packaging/Info.plist.in`) points at the raw appcast, which is served with
+  `Cache-Control: max-age=300`, so a published or fixed appcast takes up to ~5 min to reach
+  clients (a stale cache re-served the broken feed once during the 0.1.8 rollout). Move the feed to
+  **GitHub Pages** (or another low-cache host) and update `SUFeedURL`. Gotcha: already-shipped
+  clients keep polling the OLD URL baked into their Info.plist, so keep the raw appcast alive (or
+  301-redirect it) — the switch only speeds up builds cut after the change.
 
 ## Features
 
