@@ -584,13 +584,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)tickStats {
     const FlowStats fs = _player->sampleStats();
     if (!fs.playing) { [_statMeter reset]; _spectrumSilentTicks = 0; return; }
-    _bitrateMax = std::max(fs.readBytesPerSec, _bitrateMax * 0.97);  // adapt to the stream's own rate
+    // Use the DEMUX byte-rate as the throughput: HLS/segmented inputs fetch their
+    // segments internally and report i_read_bytes (readBytesPerSec) as 0, but the demux
+    // rate tracks the real media bitrate for both HLS and plain streams.
+    _bitrateMax = std::max(fs.demuxBytesPerSec, _bitrateMax * 0.97);  // adapt to the stream's own rate
     const double denom = std::max(_bitrateMax, 1000.0);
-    [_statMeter setLevel:(float)std::clamp(fs.readBytesPerSec / denom, 0.0, 1.0)];
+    [_statMeter setLevel:(float)std::clamp(fs.demuxBytesPerSec / denom, 0.0, 1.0)];
     NSString* drops = fs.lostPicturesDelta > 0
         ? [NSString stringWithFormat:@" · %d drop", fs.lostPicturesDelta] : @"";
     [_statMeter setReadout:[NSString stringWithFormat:@"%.1f Mb/s · %d fps%@",
-                            fs.readBytesPerSec * 8.0 / 1.0e6,
+                            fs.demuxBytesPerSec * 8.0 / 1.0e6,
                             (int)std::lround(fs.displayedPerSec), drops]];
     [self updateSpectrumAvailability:fs];
 }
