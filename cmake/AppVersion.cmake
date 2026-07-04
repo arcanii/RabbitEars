@@ -6,4 +6,4 @@
 # is computed separately in each; only this dotted version is shared.
 #
 # Bump this on release (the git tag + appcast still gate the actual rollout).
-set(APP_VERSION "0.1.8")
+set(APP_VERSION "0.2.0")
