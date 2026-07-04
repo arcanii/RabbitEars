@@ -68,8 +68,9 @@ static const CGFloat kMeterH = 26;   // audio-level meter strip height (when ena
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
-    AudioLevelTap*                _levelTap;      // non-invasive Core Audio output tap → _meter (opt-in)
-    BOOL                          _meterEnabled;  // Settings ▸ Audio Level Meter (persisted; default off)
+    AudioLevelTap*                _levelTap;       // non-invasive Core Audio output tap → _meter (opt-in)
+    BOOL                          _meterEnabled;   // View ▸ Show/Hide Audio Meter (persisted; default off)
+    BOOL                          _meterTapFailed; // tap couldn't start (e.g. consent denied) — don't retry per-play
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
@@ -411,6 +412,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // Apply the current search text + filter selection and reload the table.
 - (void)refreshChannels {
     if (!_db) { _channels.clear(); [_table reloadData]; return; }
+    // Remember the selected channel so a filter / search / favourite change keeps the user's place.
+    long long selId = 0;
+    if (_table.selectedRow >= 0 && _table.selectedRow < (NSInteger)_channels.size())
+        selId = _channels[(size_t)_table.selectedRow].id;
     const std::wstring q = ws(_search.stringValue);
     NSMenuItem* sel = _filter.selectedItem;
 
@@ -439,8 +444,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
             if (keep.count(c.id)) _channels.push_back(std::move(c));
     }
 
-    [_table deselectAll:nil];
     [_table reloadData];
+    [_table deselectAll:nil];
+    if (selId) {  // restore the selection if that channel survived the new filter/search
+        for (size_t i = 0; i < _channels.size(); ++i)
+            if (_channels[i].id == selId) {
+                [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)i] byExtendingSelection:NO];
+                [_table scrollRowToVisible:(NSInteger)i];
+                break;
+            }
+    }
     [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
                      q.empty() ? @"" : @" (search)"]];
     _emptyHint.hidden = !_channels.empty();
@@ -645,7 +658,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _meterEnabled = on;
     if (_db) _db->setSetting(L"meter_enabled", on ? L"1" : L"0");
     [self applyMeterLayout];
-    if (on) [self startLevelTap];  // the one-time consent prompt happens here, on a user action
+    if (on) { _meterTapFailed = NO; [self startLevelTap]; }  // fresh attempt; the consent prompt happens here
     else    [self stopLevelTap];
 }
 
@@ -667,12 +680,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // Create the non-invasive audio-level tap (idempotent; only when enabled). macOS
 // caches a consent denial, so a failed attempt won't re-prompt on later plays.
 - (void)startLevelTap {
-    if (_levelTap || !_meterEnabled) return;
+    if (_levelTap || _meterTapFailed || !_meterEnabled) return;
     MeterView* meter = _meter;  // capture the view, NOT self, for the RT-thread handler
     [meter pushLevel:0.0f];     // warm the -pushLevel: selector cache on the main thread
     _levelTap = [[AudioLevelTap alloc] initWithLevelHandler:^(float lv) {
         [meter pushLevel:lv];   // thread-safe (atomic store)
     }];
+    if (!_levelTap) {  // consent denied / tap couldn't be created — surface it, and don't retry every play
+        _meterTapFailed = YES;
+        [self setStatus:@"Audio meter unavailable — allow audio capture in System Settings ▸ Privacy & Security."];
+    }
 }
 
 - (void)stopLevelTap {
