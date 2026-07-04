@@ -48,6 +48,7 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
 // Chrome metrics, shared by showWindow and the hide/show-chrome relayout.
 static const CGFloat kBarH = 46;     // top command bar height
 static const CGFloat kStatusH = 22;  // bottom status/volume bar height
+static const CGFloat kMeterH = 26;   // audio-level meter strip height (when enabled)
 
 @implementation MainWindowController {
     NSWindow*      _window;
@@ -67,8 +68,8 @@ static const CGFloat kStatusH = 22;  // bottom status/volume bar height
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
-    AudioLevelTap*                _levelTap;       // non-invasive Core Audio output tap → _meter
-    BOOL                          _levelTapTried;  // start the tap once, on first play
+    AudioLevelTap*                _levelTap;      // non-invasive Core Audio output tap → _meter (opt-in)
+    BOOL                          _meterEnabled;  // Settings ▸ Audio Level Meter (persisted; default off)
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
@@ -110,6 +111,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (!_db->open(Database::defaultDbPath(), &err)) {
         diag::error(L"DB open failed: " + err);
         _db.reset();  // make the unusable state explicit; the guards below surface it
+    }
+    if (_db) {
+        const auto me = _db->getSetting(L"meter_enabled");
+        _meterEnabled = (me && *me == L"1");  // audio meter is opt-in (default off — no consent prompt)
     }
 
     // ---- top bar (one row): [+ Add Playlist] [Settings ▾] … [search] [filter] [Stop]
@@ -214,7 +219,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     // pinned below it. The meter is a SIBLING under the video, never overlaid on
     // it, so it never fights libVLC's rendering surface for z-order.
     NSView* videoPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
-    const CGFloat meterH = 26;
+    const CGFloat meterH = kMeterH;
     _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, meterH, 600, 100 - meterH)];
     _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
@@ -241,6 +246,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [content addSubview:split];
     _gridWidth = 380;
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
+    [self applyMeterLayout];        // meter is opt-in — hidden (video fills) unless enabled
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
 
@@ -541,6 +547,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* meterItem = [m addItemWithTitle:@"Audio Level Meter"
+                                         action:@selector(toggleMeter:) keyEquivalent:@""];
+    meterItem.target = self;
+    meterItem.state = _meterEnabled ? NSControlStateValueOn : NSControlStateValueOff;  // ✓ when enabled
+    [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"About RabbitEars" action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
     [m popUpMenuPositioningItem:nil
@@ -617,18 +628,46 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     }];
 }
 
-// Lazily start the non-invasive audio-level tap on first playback, so any one-time
-// system consent prompt happens on a user action (not at launch), then keep it for
-// the app's lifetime. No-op (meter stays dark) on macOS < 14.2 or if the tap fails.
-- (void)ensureLevelTap {
-    if (_levelTapTried) return;
-    _levelTapTried = YES;
+// The audio meter is OPT-IN (Settings ▸ Audio Level Meter): it uses a Core Audio
+// process tap that prompts once for audio-capture consent, so it's off by default.
+
+- (void)setMeterEnabled:(BOOL)on {
+    _meterEnabled = on;
+    if (_db) _db->setSetting(L"meter_enabled", on ? L"1" : L"0");
+    [self applyMeterLayout];
+    if (on) [self startLevelTap];  // the one-time consent prompt happens here, on a user action
+    else    [self stopLevelTap];
+}
+
+- (void)toggleMeter:(id)__unused sender { [self setMeterEnabled:!_meterEnabled]; }
+
+// Show/hide the meter strip: off → the video fills the whole right pane (no dead
+// strip); on → a kMeterH strip sits below the video.
+- (void)applyMeterLayout {
+    NSView* pane = _videoView.superview;
+    if (!pane) return;
+    const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
+    const CGFloat mH = _meterEnabled ? kMeterH : 0;
+    _meter.hidden = !_meterEnabled;
+    _meter.frame = NSMakeRect(0, 0, W, mH);
+    _videoView.frame = NSMakeRect(0, mH, W, H - mH);
+}
+
+// Create the non-invasive audio-level tap (idempotent; only when enabled). macOS
+// caches a consent denial, so a failed attempt won't re-prompt on later plays.
+- (void)startLevelTap {
+    if (_levelTap || !_meterEnabled) return;
     MeterView* meter = _meter;  // capture the view, NOT self, for the RT-thread handler
-    [meter pushLevel:0.0f];     // warm the -pushLevel: method cache on the main thread, so the
-                                // tap's first real-time-thread call can't hit the runtime's slow path
+    [meter pushLevel:0.0f];     // warm the -pushLevel: selector cache on the main thread
     _levelTap = [[AudioLevelTap alloc] initWithLevelHandler:^(float lv) {
         [meter pushLevel:lv];   // thread-safe (atomic store)
     }];
+}
+
+- (void)stopLevelTap {
+    [_levelTap stop];   // tears down the Core Audio tap / aggregate / IOProc
+    _levelTap = nil;    // MRC: leaks the now-inert wrapper (small, benign); CoreAudio freed above
+    [_meter reset];
 }
 
 - (void)playRow:(NSInteger)row {
@@ -636,7 +675,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     const Channel& c = _channels[(size_t)row];
     _player->play(c.streamUrl, c.userAgent, c.referrer);
     _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
-    [self ensureLevelTap];  // begin metering our own output (once)
+    if (_meterEnabled) [self startLevelTap];  // meter is opt-in (Settings ▸ Audio Level Meter)
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
