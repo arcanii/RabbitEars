@@ -17,6 +17,8 @@
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "ui/DockLayout.h"
 
+#include "MeterModel.h"  // mac-local meter model (rabbitears::mac) — codecs tested below
+
 using namespace rabbitears;
 
 namespace {
@@ -191,6 +193,51 @@ int main() {
         for (int k = 0; k < kPanelCount; ++k)
             allPresent &= (r2[k].right > r2[k].left && r2[k].bottom > r2[k].top);
         expect(allPresent, "re-dock keeps all three panels laid out");
+    }
+
+    out("\n== Meter model codecs (rabbitears::mac) ==\n");
+    {
+        using namespace rabbitears::mac;
+
+        // Style: round-trips for every look; unknown -> fallback.
+        bool styleRt = true;
+        for (MeterStyle s : {MeterStyle::Led, MeterStyle::Tube, MeterStyle::Lcd, MeterStyle::Scope})
+            styleRt &= (meterStyleFromString(meterStyleToString(s), MeterStyle::Led) == s);
+        expect(styleRt, "meter style round-trips for all looks");
+        expect(meterStyleFromString("bogus", MeterStyle::Scope) == MeterStyle::Scope,
+               "unknown meter style -> fallback");
+
+        // Palette: the classic default pins both the look and the codec token order.
+        const std::string kDefault = "inherit,26282C,60CD80,E8BC56,E86056,D97757,ECECF0";
+        expect(meterPaletteToString(defaultMeterPalette(MeterKind::Spectrum)) == kDefault,
+               "default meter palette serializes to the classic tokens");
+        expect(meterPaletteToString(meterPaletteFromString(kDefault, MeterPalette{})) == kDefault,
+               "meter palette string round-trips");
+        expect(meterPaletteFromString("theme,26282C,60CD80,E8BC56,E86056,D97757,ECECF0",
+                                      MeterPalette{})
+                   .bg.inherit,
+               "legacy 'theme' bg parses as inherit");
+
+        // Wrong arity -> whole fallback; one bad token -> just that field falls back.
+        MeterPalette fb;
+        fb.off = SkinColor{1, 2, 3};
+        expect(meterPaletteToString(meterPaletteFromString("26282C", fb)) == meterPaletteToString(fb),
+               "meter palette wrong arity -> whole fallback");
+        const MeterPalette pf =
+            meterPaletteFromString("inherit,ZZZZZZ,60CD80,E8BC56,E86056,D97757,ECECF0", fb);
+        expect(pf.off == fb.off && pf.low == SkinColor{96, 205, 128},
+               "one garbled palette token -> that field falls back, others parse");
+
+        // Tuning: neutral default; clamp 0..1 + per-field fallback; wrong arity -> fallback.
+        expect(meterTuningToString(defaultMeterTuning()) == "0.500,0.500,0.500,0.500,0.500",
+               "default meter tuning serializes neutral");
+        const MeterTuning tfb;  // all 0.5
+        const MeterTuning t = meterTuningFromString("2.0,-1.0,x,0.25,0.75", tfb);
+        expect(t.glow == 1.0f && t.smoothing == 0.0f && t.sensitivity == 0.5f &&
+                   t.peakHold == 0.25f && t.breathing == 0.75f,
+               "meter tuning clamps 0..1 and falls back per garbled field");
+        expect(meterTuningToString(meterTuningFromString("0.1,0.2", tfb)) == meterTuningToString(tfb),
+               "meter tuning wrong arity -> whole fallback");
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");

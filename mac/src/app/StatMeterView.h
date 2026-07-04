@@ -12,8 +12,14 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "MeterModel.h"  // rabbitears::mac::MeterPalette — the meter's colour roles
+
 @interface StatMeterView : NSView
 - (void)setLevel:(float)level;       // 0..1 (e.g. normalized throughput)
 - (void)setReadout:(NSString*)text;  // small mono readout (e.g. "12.4 Mb/s · 25 fps")
 - (void)reset;                       // drop to idle (e.g. on stop)
+// Recolour the LEDs from the shared meter model. Defaults to the classic palette
+// (defaultMeterPalette) at init; call this to follow a skin. `bg.inherit` resolves
+// to the dark panel background (the mac stand-in for the theme window background).
+- (void)setPalette:(const rabbitears::mac::MeterPalette&)palette;
 @end

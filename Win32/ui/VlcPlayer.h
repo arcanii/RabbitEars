@@ -22,6 +22,8 @@
 
 #include <windows.h>
 
+#include "models/FlowStats.h"
+
 struct libvlc_instance_t;
 struct libvlc_media_t;
 struct libvlc_media_player_t;
@@ -38,21 +40,6 @@ enum class PlayerEvent : unsigned {
     EndReached = 5,
     Error = 6,
     Stats = 7,      // periodic throughput/packet-health sample; read via flowStats()
-};
-
-// A snapshot of the real stream health, sampled off libVLC's media stats on the
-// worker thread. Byte rates are measured from cumulative-counter deltas over
-// wall-clock (unambiguous B/s); the *Delta fields count events since the last
-// sample. Consumed by the UI to drive the buffer meter's flow + turbulence.
-struct FlowStats {
-    double demuxBytesPerSec = 0.0;  // data the demux actually consumed (playback throughput)
-    double readBytesPerSec = 0.0;   // bytes read off the network (arrival rate)
-    double displayedPerSec = 0.0;    // video frames displayed per second (≈ effective fps)
-    int    corruptedDelta = 0;       // demux-corrupted blocks since last sample
-    int    discontinuityDelta = 0;   // demux discontinuities since last sample
-    int    lostPicturesDelta = 0;    // dropped video frames since last sample
-    long long bufferedBytes = 0;     // input read minus demux read = data buffered ahead
-    bool   playing = false;
 };
 
 class VlcPlayer {
