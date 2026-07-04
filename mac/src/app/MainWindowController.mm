@@ -21,6 +21,8 @@
 #include "platform/Updater.h"
 
 #import "AppDelegate.h"
+#import "SpectrumMeterView.h"
+#import "SpectrumTap.h"
 #import "StatMeterView.h"
 #import "VlcPlayerMac.h"
 
@@ -49,6 +51,9 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
 // Chrome metrics, shared by showWindow and the hide/show-chrome relayout.
 static const CGFloat kBarH = 46;     // top command bar height
 static const CGFloat kStatusH = 22;  // bottom status/volume bar height
+static const CGFloat kMeterH = 24;    // meter line height (both meters share one line)
+static const CGFloat kMeterW = 300;   // each meter is a fixed ~300px wide (does NOT stretch)
+static const CGFloat kMeterGap = 8;   // gap between the stats meter and the spectrum meter
 
 @implementation MainWindowController {
     NSWindow*      _window;
@@ -56,7 +61,8 @@ static const CGFloat kStatusH = 22;  // bottom status/volume bar height
     NSPopUpButton* _filter;
     RETableView*   _table;
     NSView*        _videoView;
-    StatMeterView* _statMeter;   // libVLC-stats meter strip below the video
+    StatMeterView* _statMeter;   // always-on libVLC-stats meter strip below the video
+    SpectrumMeterView* _spectrum;  // opt-in FFT spectrum strip below the stats meter
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
@@ -70,6 +76,10 @@ static const CGFloat kStatusH = 22;  // bottom status/volume bar height
     std::unique_ptr<VlcPlayerMac> _player;
     NSTimer*                      _statsTimer;   // 250ms libVLC-stats poll → _statMeter
     double                        _bitrateMax;   // rolling throughput peak for the meter scale
+    SpectrumTap*                  _spectrumTap;      // Core Audio process tap → _spectrum (opt-in)
+    BOOL                          _spectrumEnabled;  // View ▸ Show Spectrum (persisted; default off)
+    int                           _spectrumSilentTicks;   // audible-but-tap-silent polls (denial detection)
+    BOOL                          _spectrumEverHadEnergy;  // tap has produced audio => capture granted this session
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
@@ -111,6 +121,10 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (!_db->open(Database::defaultDbPath(), &err)) {
         diag::error(L"DB open failed: " + err);
         _db.reset();  // make the unusable state explicit; the guards below surface it
+    }
+    if (_db) {
+        const auto se = _db->getSetting(L"spectrum_enabled");
+        _spectrumEnabled = (se && *se == L"1");  // spectrum is opt-in (default off — no consent prompt)
     }
 
     // ---- top bar (one row): [+ Add Playlist] [Settings ▾] … [search] [filter] [Stop]
@@ -211,19 +225,26 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     scroll.documentView = _table;
     [split addSubview:scroll];
 
-    // Right split pane: the video with a libVLC-stats meter strip pinned below it
-    // (a sibling, not overlaid — no z-order fight with libVLC's surface).
+    // Right split pane: the video, with both meters on ONE fixed-width line pinned to
+    // the bottom-left (siblings, not overlaid — no z-order fight with libVLC's surface).
+    // The always-on stats meter is at the left; the opt-in spectrum meter sits to its
+    // right when enabled. Each is a fixed kMeterW wide — they do NOT stretch with the
+    // window; the video fills the space above. -applyMeterLayout positions them.
     NSView* videoPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
-    const CGFloat meterH = 24;
-    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, meterH, 600, 100 - meterH)];
+    _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, kMeterH, 600, 100 - kMeterH)];
     _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [videoPane addSubview:_videoView];
 
-    _statMeter = [[StatMeterView alloc] initWithFrame:NSMakeRect(0, 0, 600, meterH)];
-    _statMeter.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;  // fixed height, pinned bottom
+    _statMeter = [[StatMeterView alloc] initWithFrame:NSMakeRect(0, 0, kMeterW, kMeterH)];
+    _statMeter.autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
     [videoPane addSubview:_statMeter];
+
+    _spectrum = [[SpectrumMeterView alloc] initWithFrame:NSMakeRect(kMeterW + kMeterGap, 0, kMeterW, kMeterH)];
+    _spectrum.autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
+    _spectrum.hidden = YES;  // opt-in — shown by -applyMeterLayout when enabled
+    [videoPane addSubview:_spectrum];
     [split addSubview:videoPane];
 
     // Empty-state hint, centered over the (black) video pane until channels exist.
@@ -241,6 +262,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [content addSubview:split];
     _gridWidth = 380;
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
+    [self applyMeterLayout];        // spectrum strip hidden (video fills) unless enabled
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
 
@@ -551,6 +573,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)stop:(id)__unused sender {
     _player->stop();
     [_statMeter reset];
+    [self stopSpectrumTap];  // clear the strip + free the tap's RT thread (no spinning on silence)
     _window.title = @"RabbitEars";
     [self setStatus:@"Stopped."];
 }
@@ -560,7 +583,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // so it fills while data flows at its usual rate and drops when the stream stalls.
 - (void)tickStats {
     const FlowStats fs = _player->sampleStats();
-    if (!fs.playing) { [_statMeter reset]; return; }
+    if (!fs.playing) { [_statMeter reset]; _spectrumSilentTicks = 0; return; }
     _bitrateMax = std::max(fs.readBytesPerSec, _bitrateMax * 0.97);  // adapt to the stream's own rate
     const double denom = std::max(_bitrateMax, 1000.0);
     [_statMeter setLevel:(float)std::clamp(fs.readBytesPerSec / denom, 0.0, 1.0)];
@@ -569,6 +592,82 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [_statMeter setReadout:[NSString stringWithFormat:@"%.1f Mb/s · %d fps%@",
                             fs.readBytesPerSec * 8.0 / 1.0e6,
                             (int)std::lround(fs.displayedPerSec), drops]];
+    [self updateSpectrumAvailability:fs];
+}
+
+// ---- opt-in Spectrum meter (Core Audio process tap + FFT) --------------------
+// OPT-IN (View ▸ Show Spectrum, ⌥⌘M): the tap prompts once for audio-capture consent,
+// so it's off by default. The always-on stats strip is the "floor" — the spectrum
+// sits above it and, on denied/silent capture, shows a placeholder rather than a dark
+// strip (detected via the FlowStats cross-check below).
+
+// Both meters share ONE line at the bottom-left, each a fixed kMeterW wide; the video
+// fills the space above. Stats is always shown; the opt-in spectrum sits to its right
+// when enabled (toggling it does not resize the video).
+- (void)applyMeterLayout {
+    NSView* pane = _videoView.superview;
+    if (!pane) return;
+    const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
+    _statMeter.frame = NSMakeRect(0, 0, kMeterW, kMeterH);
+    _spectrum.hidden = !_spectrumEnabled;
+    _spectrum.frame  = NSMakeRect(kMeterW + kMeterGap, 0, kMeterW, kMeterH);
+    _videoView.frame = NSMakeRect(0, kMeterH, W, std::max(0.0, H - kMeterH));
+}
+
+- (void)toggleSpectrum { [self setSpectrumEnabled:!_spectrumEnabled]; }
+- (BOOL)spectrumEnabled { return _spectrumEnabled; }
+
+- (void)setSpectrumEnabled:(BOOL)on {
+    _spectrumEnabled = on;
+    if (_db) _db->setSetting(L"spectrum_enabled", on ? L"1" : L"0");
+    [self applyMeterLayout];
+    if (on) { [_spectrum setAvailable:YES]; [self startSpectrumTap]; }  // consent prompt happens here
+    else    { [self stopSpectrumTap]; }
+}
+
+// Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
+// audio-capture consent prompt happens on the FIRST creation. macOS caches a denial,
+// so a denied prompt won't re-ask — which is exactly why -updateSpectrumAvailability:
+// must detect denial behaviourally rather than trust a non-nil tap.
+- (void)startSpectrumTap {
+    if (_spectrumTap || !_spectrumEnabled) return;
+    _spectrumSilentTicks = 0;
+    SpectrumMeterView* view = _spectrum;  // capture the VIEW, not self (no retain cycle)
+    _spectrumTap = [[SpectrumTap alloc] initWithBandCount:24
+                                          spectrumHandler:^(const float* bands, int count) {
+        [view pushSpectrum:bands count:count];  // RT audio thread → brief lock in the view
+    }];
+    if (!_spectrumTap) [_spectrum setAvailable:NO];  // macOS < 14.2, or the tap couldn't be built
+}
+
+- (void)stopSpectrumTap {
+    [_spectrumTap stop];     // tears down the tap / aggregate / IOProc (AudioDeviceStop is synchronous)
+    [_spectrumTap release];  // MRC: balance the +1 from -alloc. Safe — stop() already ran, so no IOProc
+    _spectrumTap = nil;      // is in flight, and the view it captured is app-lifetime.
+    _spectrumSilentTicks = 0;
+    [_spectrum reset];
+}
+
+// Decide live-spectrum vs the "grant permission" placeholder by cross-checking the tap
+// against libVLC's own view of the stream: audio flowing + audible but the tap silent
+// for ~2s => capture denied/unavailable. This is the fix for the dark-strip failure
+// that pulled the meter before (a denied tap "succeeds" but delivers only silence).
+- (void)updateSpectrumAvailability:(const FlowStats&)fs {
+    if (!_spectrumEnabled || !_spectrumTap) return;
+    if ([_spectrum consumeHadEnergy]) {          // the tap delivered real audio
+        _spectrumEverHadEnergy = YES;            // => capture is granted for this session
+        _spectrumSilentTicks = 0;
+        [_spectrum setAvailable:YES];
+        return;
+    }
+    // Once the tap has EVER produced energy this session, capture is granted — a later
+    // silent stretch is just quiet audio (a pause, a silent slate), NOT a permission
+    // problem, so we must never flip to the placeholder. Only a tap that has never once
+    // produced energy while audio is audible indicates a denied prompt.
+    if (_spectrumEverHadEnergy) return;
+    const BOOL audible = fs.demuxBytesPerSec > 0 && _volume.doubleValue > 0;
+    if (!audible) { _spectrumSilentTicks = 0; return; }
+    if (++_spectrumSilentTicks >= 16) [_spectrum setAvailable:NO];  // ~4s audible but no tap energy => denied
 }
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
@@ -658,6 +757,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     const Channel& c = _channels[(size_t)row];
     _player->play(c.streamUrl, c.userAgent, c.referrer);
     _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
+    if (_spectrumEnabled) [self startSpectrumTap];  // spectrum is opt-in (View ▸ Show Spectrum)
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];

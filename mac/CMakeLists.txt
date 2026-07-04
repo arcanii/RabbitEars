@@ -53,19 +53,25 @@ if(RABBITEARS_BUILD_MAC)
     src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
     src/app/StatMeterView.mm
+    src/app/SpectrumTap.mm
+    src/app/SpectrumMeterView.mm
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm
     "${RE_MAC_ICNS}")
 
-  # StatMeterView uses a weak-self timer (ARC); the rest of the app is MRC-style.
-  set_source_files_properties(src/app/StatMeterView.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  # These use ARC (weak-self timers; CoreFoundation bridging + a block-owning C++
+  # struct for the Core Audio spectrum tap). The rest of the app is MRC-style.
+  set_source_files_properties(
+    src/app/StatMeterView.mm src/app/SpectrumTap.mm src/app/SpectrumMeterView.mm
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app"   # AppDelegate.h, VlcPlayerMac.h
     "${CMAKE_BINARY_DIR}")                  # "generated/version.h"
   target_link_libraries(RabbitEars PRIVATE
-    RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit")
+    RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit"
+    "-framework CoreAudio" "-framework Accelerate")
   set_target_properties(RabbitEars PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "RabbitEars"

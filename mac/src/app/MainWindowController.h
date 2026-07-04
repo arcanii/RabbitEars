@@ -18,6 +18,8 @@
 // in-window toolbar is hidden. The getters back the menu titles (Hide ⇄ Show).
 - (void)toggleChannelList;
 - (void)toggleToolbar;
+- (void)toggleSpectrum;   // View ▸ Show/Hide the opt-in FFT spectrum strip (⌥⌘M)
 - (BOOL)channelListHidden;
 - (BOOL)toolbarHidden;
+- (BOOL)spectrumEnabled;
 @end
