@@ -20,6 +20,7 @@ cbuffer Constants : register(b0)
     float  uIntensity;   // 0..1 master strength (lets the effect fade in/out)
     float4 uBgColor;     // window background (straight RGBA, matches the flat strip today)
     float4 uAccent;      // coral accent driving the glow
+    float4 uParams;      // effect params: x = heatHaze (0..1); yzw reserved
 };
 
 struct VSOut
@@ -43,14 +44,33 @@ float4 PSMain(VSOut i) : SV_Target
 {
     float3 col = uBgColor.rgb;                          // parity: flat window background
 
-    // A soft coral glow confined to the bottom ~22% of the strip — a subtle underline that
-    // reads behind the transport controls, not a band filling the empty middle.
-    float fromBottom = i.uv.y;                          // 0 top .. 1 bottom
-    float band       = smoothstep(0.78, 1.0, fromBottom);
-    float shimmer    = 0.65 + 0.35 * sin(i.uv.x * 6.28318 * 1.2 + uTime * 0.9);
-    float glow       = band * shimmer * saturate(uIntensity);
+    // Heat-haze (Steampunk): a wavering vertical displacement scrolling upward — hot air
+    // rising off brass — that ripples the underglow so it shimmers. uParams.x (heatHaze) is
+    // 0 for every other skin, so wob==0, yWarp==uv.y, and the plume below is skipped: a
+    // strict no-op there (the plain underglow is byte-identical).
+    float hz  = saturate(uParams.x);
+    float wob = 0.0;
+    if (hz > 0.0) {
+        wob = sin(i.uv.x * 24.0 + uTime * 3.1) * 0.5
+            + sin(i.uv.x * 47.0 - uTime * 2.2) * 0.3
+            + sin(i.uv.x * 11.0 + uTime * 1.5) * 0.2;   // layered ripple, ~[-1,1]
+    }
+    float yWarp = i.uv.y + wob * 0.06 * hz;             // displaced band coordinate
 
-    col += uAccent.rgb * glow * 0.38;                   // gentle additive coral
+    // A soft coral/brass glow confined to the bottom ~22% of the strip — a subtle underline
+    // that reads behind the transport controls, not a band filling the empty middle.
+    float band    = smoothstep(0.78, 1.0, yWarp);
+    float shimmer = 0.65 + 0.35 * sin(i.uv.x * 6.28318 * 1.2 + uTime * 0.9);
+    float glow    = band * shimmer * saturate(uIntensity);
+    col += uAccent.rgb * glow * 0.38;                   // gentle additive glow
+
+    // Rising haze plume: a fainter warm veil that climbs higher than the band and "boils",
+    // fading toward the top. Entirely gated by hz, so it exists only for Steampunk.
+    if (hz > 0.0) {
+        float plume = smoothstep(0.2, 1.0, yWarp);  // brightest at the bottom (hot strip), fading up
+        float boil  = 0.55 + 0.45 * sin(i.uv.x * 33.0 - uTime * 5.0);
+        col += uAccent.rgb * plume * boil * hz * 0.12;
+    }
     return float4(saturate(col), 1.0);
 }
 

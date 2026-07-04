@@ -30,6 +30,7 @@ struct StripConstants {
     float intensity;      // uIntensity   (fills register b0.0)
     float bg[4];          // uBgColor
     float accent[4];      // uAccent
+    float params[4];      // uParams: x = heatHaze; yzw reserved (keeps the size a 16B multiple)
 };
 
 struct StripState {
@@ -180,7 +181,9 @@ bool renderOffscreen(StripState* st, UINT w, UINT h) {
     cb.resolution[0] = static_cast<float>(w);
     cb.resolution[1] = static_cast<float>(h);
     cb.time = static_cast<float>((GetTickCount64() - st->t0) / 1000.0);
-    cb.intensity = currentSkin().gpu.stripGlow;  // per-skin underglow strength (SkinGpu manifest)
+    const SkinGpu& gpu = currentSkin().gpu;
+    cb.intensity = gpu.stripGlow;                // per-skin underglow strength (SkinGpu manifest)
+    cb.params[0] = gpu.heatHaze;                 // per-skin heat-haze shimmer (Steampunk; 0 elsewhere)
     fillColor(cb.bg, th.windowBg);
     fillColor(cb.accent, th.accent);
     c->UpdateSubresource(st->cbuf.Get(), 0, nullptr, &cb, 0, 0);

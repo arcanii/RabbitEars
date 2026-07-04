@@ -85,14 +85,14 @@ Skin makeCyberpunkSkin() {
 // polished-brass accent, oxidised-rust danger hover. This is the FIRST skin to diverge
 // its typography — a Georgia serif title (resolved through the Phase-3 font seam) gives
 // the chrome title + dialog headings a Victorian flourish, while the body stays Segoe UI
-// so the dense channel grid keeps its legibility. Colours + type only; the neon /
-// heat-haze shaders that complete the look layer on next (SkinDevice/HLSL, THEME_ENGINE §6).
+// so the dense channel grid keeps its legibility. The Phase-1 strip underglow renders
+// brass beneath it, and the heatHaze SkinGpu param adds a rising heat-shimmer (underglow.hlsl).
 Skin makeSteampunkSkin() {
     Skin s;
     s.id = "steampunk";
     s.name = "Steampunk";
     s.dark = true;
-    s.gpu = {0.85f, 0.70f};  // softer, warmer — brass embers rather than a neon tube
+    s.gpu = {0.85f, 0.70f, 0.70f};  // softer glow + heat-haze shimmer (brass rising off hot iron)
     s.palette = SkinPalette{
         .windowBg = {26, 21, 16},   .panelBg = {32, 26, 19},   .panelElevBg = {43, 35, 25},
         .altRowBg = {29, 23, 17},   .hoverBg = {56, 45, 31},   .border = {82, 64, 42},
@@ -225,16 +225,22 @@ SkinPalette skinPaletteFromString(const std::string& s, const SkinPalette& fallb
 // user locale, switch to std::from_chars (locale-independent) so a comma-decimal locale
 // can't collide with the ',' field separator. Only the selftest exercises it today.
 std::string skinGpuToString(const SkinGpu& g) {
-    char b[32];
-    std::snprintf(b, sizeof b, "%.3f,%.3f", g.stripGlow, g.edgeGlow);
+    char b[48];
+    std::snprintf(b, sizeof b, "%.3f,%.3f,%.3f", g.stripGlow, g.edgeGlow, g.heatHaze);
     return b;
 }
 
 SkinGpu skinGpuFromString(const std::string& s, const SkinGpu& fallback) {
-    const size_t comma = s.find(',');
-    if (comma == std::string::npos) return fallback;  // exact arity or whole fallback
-    const std::string a = s.substr(0, comma);
-    const std::string b = s.substr(comma + 1);
+    // Split on commas -> EXACTLY 3 tokens or whole fallback (palette-codec discipline).
+    std::vector<std::string> tok;
+    size_t start = 0;
+    for (;;) {
+        const size_t comma = s.find(',', start);
+        if (comma == std::string::npos) { tok.push_back(s.substr(start)); break; }
+        tok.push_back(s.substr(start, comma - start));
+        start = comma + 1;
+    }
+    if (tok.size() != 3) return fallback;
     auto parse01 = [](const std::string& t, float& out) -> bool {
         char* end = nullptr;
         const float v = std::strtof(t.c_str(), &end);
@@ -243,7 +249,8 @@ SkinGpu skinGpuFromString(const std::string& s, const SkinGpu& fallback) {
         return true;
     };
     SkinGpu g;
-    if (!parse01(a, g.stripGlow) || !parse01(b, g.edgeGlow)) return fallback;
+    if (!parse01(tok[0], g.stripGlow) || !parse01(tok[1], g.edgeGlow) || !parse01(tok[2], g.heatHaze))
+        return fallback;
     return g;
 }
 

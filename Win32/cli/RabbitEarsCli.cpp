@@ -246,27 +246,32 @@ int selftest() {
                "glyph is a symbol font; body is not");
         expect(std::string(skinSettingKey()) == "skin", "shared skin settings key");
 
-        // GPU-effect manifest: per-skin glow strengths -> the HLSL uIntensity.
-        expect(SkinGpu{}.stripGlow == 1.0f && SkinGpu{}.edgeGlow == 0.9f,
-               "default SkinGpu reproduces the pre-manifest hardcoded strengths");
-        expect(skinById("dark").gpu.stripGlow == 1.0f && skinById("dark").gpu.edgeGlow == 0.9f,
-               "dark keeps the owner-approved glow (strip 1.0 / edge 0.9)");
+        // GPU-effect manifest: per-skin glow + heat-haze strengths -> the HLSL shader.
+        expect(SkinGpu{}.stripGlow == 1.0f && SkinGpu{}.edgeGlow == 0.9f && SkinGpu{}.heatHaze == 0.0f,
+               "default SkinGpu reproduces the pre-manifest strengths (heat-haze off)");
+        expect(skinById("dark").gpu.stripGlow == 1.0f && skinById("dark").gpu.edgeGlow == 0.9f &&
+                   skinById("dark").gpu.heatHaze == 0.0f,
+               "dark keeps the approved glow, heat-haze off");
         expect(skinById("cyberpunk").gpu.edgeGlow == 1.0f, "cyberpunk pushes the gutter neon to full");
         expect(skinById("steampunk").gpu.stripGlow < skinById("dark").gpu.stripGlow &&
                    skinById("steampunk").gpu.edgeGlow < skinById("dark").gpu.edgeGlow,
                "steampunk softens the glow vs dark (brass embers, not neon)");
+        expect(skinById("steampunk").gpu.heatHaze > 0.0f, "steampunk enables the heat-haze shimmer");
+        expect(skinById("dark").gpu.heatHaze == 0.0f && skinById("light").gpu.heatHaze == 0.0f &&
+                   skinById("cyberpunk").gpu.heatHaze == 0.0f,
+               "heat-haze is Steampunk-only (dark/light/cyberpunk = 0)");
         expect(skinById("light").gpu.stripGlow < 0.5f,
                "light dials the glow down (neon reads wrong on a light theme)");
-        expect(skinGpuFromString(skinGpuToString(SkinGpu{0.5f, 0.25f}), {}).stripGlow == 0.5f &&
-                   skinGpuFromString(skinGpuToString(SkinGpu{0.5f, 0.25f}), {}).edgeGlow == 0.25f,
-               "gpu codec round-trips (exact for 0.5/0.25)");
-        expect(skinGpuFromString("1.0", SkinGpu{0.7f, 0.7f}).edgeGlow == 0.7f,
-               "gpu codec wrong arity -> whole fallback");
-        expect(skinGpuFromString("2.0,-1.0", {}).stripGlow == 1.0f &&
-                   skinGpuFromString("2.0,-1.0", {}).edgeGlow == 0.0f,
-               "gpu codec clamps to 0..1");
-        expect(skinGpuFromString("nan,inf", SkinGpu{0.3f, 0.4f}).stripGlow == 0.3f,
-               "gpu codec rejects non-finite (nan/inf) -> whole fallback");
+        expect(skinGpuFromString(skinGpuToString(SkinGpu{0.5f, 0.25f, 0.75f}), {}).heatHaze == 0.75f,
+               "gpu codec round-trips heatHaze (exact for 0.75)");
+        expect(skinGpuFromString("1.0,0.9", SkinGpu{0.7f, 0.7f, 0.1f}).stripGlow == 0.7f,
+               "gpu codec wrong arity (2 tokens) -> whole fallback");
+        expect(skinGpuFromString("2.0,-1.0,3.0", {}).stripGlow == 1.0f &&
+                   skinGpuFromString("2.0,-1.0,3.0", {}).edgeGlow == 0.0f &&
+                   skinGpuFromString("2.0,-1.0,3.0", {}).heatHaze == 1.0f,
+               "gpu codec clamps all three to 0..1");
+        expect(skinGpuFromString("0.5,nan,0.5", SkinGpu{0.3f, 0.4f, 0.2f}).edgeGlow == 0.4f,
+               "gpu codec rejects non-finite -> whole fallback");
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");

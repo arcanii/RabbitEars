@@ -67,6 +67,7 @@ struct SkinPalette {
 struct SkinGpu {
     float stripGlow = 1.0f;   // transport-strip underglow strength (0 = off .. 1 = full)
     float edgeGlow  = 0.9f;   // dock-gutter neon strength          (0 = off .. 1 = full)
+    float heatHaze  = 0.0f;   // procedural heat-shimmer on the strip underglow (0 = off; Steampunk)
 };
 
 // A complete skin: identity + palette + typography + GPU-effect strengths. `dark`
@@ -113,9 +114,9 @@ SkinColor   skinColorFromString(const std::string& s, const SkinColor& fallback)
 std::string skinPaletteToString(const SkinPalette& p);
 SkinPalette skinPaletteFromString(const std::string& s, const SkinPalette& fallback);
 
-// GPU manifest: "stripGlow,edgeGlow" (two %.3f 0..1 floats). Exact-arity or whole
-// fallback (palette-codec discipline); values clamp to 0..1. Not persisted yet (only
-// the id is, §4.4), so the format is free to change until user-customizable skins ship.
+// GPU manifest: "stripGlow,edgeGlow,heatHaze" (three %.3f 0..1 floats). Exact-arity or
+// whole fallback (palette-codec discipline); values clamp to 0..1. Not persisted yet
+// (only the id is, §4.4), so the format is free to change until user skins ship.
 std::string skinGpuToString(const SkinGpu& g);
 SkinGpu     skinGpuFromString(const std::string& s, const SkinGpu& fallback);
 
