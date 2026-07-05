@@ -7,7 +7,7 @@
 ; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.2.0"
+#define MyVer "0.2.1"
 
 [Setup]
 AppId={{E5C26129-79DE-4A86-8C69-0AF1B95B2130}}
