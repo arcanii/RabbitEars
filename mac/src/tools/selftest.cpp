@@ -162,6 +162,34 @@ int main() {
         expect(db.channelsByCountry(L"de").empty(), "channelsByCountry('de') -> 0");
     }
 
+    out("\n== Playlist enable/disable ==\n");
+    {
+        // State here: pid (Test, 4 channels incl. the lcn-5 favourite + lcn-12 Bee TV,
+        // groups Movies/News;Local/Sports) and pid2 (CC, 4 channels, no groups) => 8 total.
+        auto pls = db.listPlaylists();
+        expect(pls.size() == 2, "listPlaylists -> 2");
+        bool allEnabled = true;
+        for (const auto& p : pls) allEnabled = allEnabled && p.enabled;
+        expect(allEnabled, "new playlists default to enabled");
+        expect(db.allChannels().size() == 8, "allChannels -> 8 before disable");
+
+        db.setPlaylistEnabled(pid, false);  // hide the Test playlist
+        bool disabled = false;
+        for (const auto& p : db.listPlaylists()) if (p.id == pid) disabled = !p.enabled;
+        expect(disabled, "setPlaylistEnabled(false) persists");
+        expect(db.channelsByPlaylist(pid).size() == 4, "channelsByPlaylist ignores the disabled flag");
+        expect(db.allChannels().size() == 4, "allChannels hides a disabled playlist");
+        expect(db.favourites().empty(), "favourites hides a disabled playlist's favourite");
+        expect(!db.channelByLcn(5) && !db.channelByLcn(12), "channelByLcn skips a disabled playlist");
+        expect(!hasGroup(db.listGroups(), L"Movies"), "listGroups drops a disabled playlist's groups");
+
+        db.setPlaylistEnabled(pid, true);  // restore for any later assertions
+        expect(db.allChannels().size() == 8, "re-enable restores allChannels");
+        expect(db.favourites().size() == 1, "re-enable restores favourites");
+        expect(db.channelByLcn(5) && db.channelByLcn(5)->name == L"Channel, One",
+               "re-enable restores LCN lookup");
+    }
+
     out("\n== Dock layout ==\n");
     {
         DockLayout def = DockLayout::makeDefault();

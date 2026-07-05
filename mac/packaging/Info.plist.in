@@ -27,8 +27,8 @@
   <key>SUEnableAutomaticChecks</key><true/>
   <!-- The opt-in Spectrum meter observes THIS app's own audio output via a Core Audio
        process tap (macOS 14.2+) to draw a frequency analyser. Only created on an
-       explicit user action (View ▸ Show Spectrum), which is when this consent prompt
-       appears. Playback and the always-on stats meter never need it. -->
+       explicit user action (enabling the Spectrum meter in Settings ▸ Meters…), which is
+       when this consent prompt appears. Playback and the other meters never need it. -->
   <key>NSAudioCaptureUsageDescription</key><string>RabbitEars reads its own audio output to animate the on-screen spectrum meter.</string>
 </dict>
 </plist>

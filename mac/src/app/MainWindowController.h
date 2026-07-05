@@ -18,10 +18,15 @@
 // in-window toolbar is hidden. The getters back the menu titles (Hide ⇄ Show).
 - (void)toggleChannelList;
 - (void)toggleToolbar;
-- (void)toggleSpectrum;   // View ▸ Show/Hide the opt-in FFT spectrum strip (⌥⌘M)
 - (void)toggleVideoOnly;  // View ▸ Video Only — collapse all chrome to just the video
 - (BOOL)channelListHidden;
 - (BOOL)toolbarHidden;
-- (BOOL)spectrumEnabled;
 - (BOOL)videoOnly;
+
+// Command actions surfaced in BOTH the in-window Settings ▾ pull-down and the app
+// menu bar (the menu-bar items forward here from AppDelegate).
+- (void)addPlaylist:(id)sender;
+- (void)openFile:(id)sender;
+- (void)showPlaylists:(id)sender;
+- (void)showMeters:(id)sender;
 @end

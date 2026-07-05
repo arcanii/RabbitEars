@@ -46,6 +46,21 @@ using namespace rabbitears;
     [appMenu addItemWithTitle:@"Quit RabbitEars" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
 
+    // File menu — playlist import + management. The Mac-native home for these commands
+    // (they're also on the in-window Settings ▾ pull-down). Items target self and forward
+    // to _mainController, which is nil until the window loads just after buildMenu.
+    NSMenuItem* fileItem = [[NSMenuItem alloc] init];
+    [menubar addItem:fileItem];
+    NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    [[fileMenu addItemWithTitle:@"Add Playlist…"
+                         action:@selector(addPlaylist:) keyEquivalent:@"n"] setTarget:self];
+    [[fileMenu addItemWithTitle:@"Open Playlist File…"
+                         action:@selector(openFile:) keyEquivalent:@"o"] setTarget:self];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    [[fileMenu addItemWithTitle:@"Manage Playlists…"
+                         action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
+    fileItem.submenu = fileMenu;
+
     // Edit menu — REQUIRED for Cmd-X/C/V/A/Z to work in text fields: Cocoa routes
     // the standard editing commands through these menu items' key equivalents,
     // down the responder chain to the focused field editor. Without it, paste
@@ -82,14 +97,15 @@ using namespace rabbitears;
                                               action:@selector(toggleToolbar:) keyEquivalent:@"t"];
     hideBar.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     hideBar.target = self;
-    NSMenuItem* spec = [viewMenu addItemWithTitle:@"Show Spectrum"
-                                           action:@selector(toggleSpectrum:) keyEquivalent:@"m"];
-    spec.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
-    spec.target = self;
     NSMenuItem* vidOnly = [viewMenu addItemWithTitle:@"Video Only"
                                               action:@selector(toggleVideoOnly:) keyEquivalent:@"f"];
     vidOnly.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     vidOnly.target = self;
+
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    [[viewMenu addItemWithTitle:@"Meters…"
+                         action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
+
     viewItem.submenu = viewMenu;
 
     NSApp.mainMenu = menubar;
@@ -100,8 +116,15 @@ using namespace rabbitears;
 // View-menu chrome toggles, forwarded to the window controller.
 - (void)toggleChannelList:(id)__unused sender { [_mainController toggleChannelList]; }
 - (void)toggleToolbar:(id)__unused sender { [_mainController toggleToolbar]; }
-- (void)toggleSpectrum:(id)__unused sender { [_mainController toggleSpectrum]; }
 - (void)toggleVideoOnly:(id)__unused sender { [_mainController toggleVideoOnly]; }
+
+// File/View command actions, forwarded to the window controller (same handlers the
+// in-window Settings ▾ pull-down targets). _mainController is nil until just after
+// buildMenu, so an early invocation would no-op safely.
+- (void)addPlaylist:(id)sender { [_mainController addPlaylist:sender]; }
+- (void)openFile:(id)sender { [_mainController openFile:sender]; }
+- (void)showPlaylists:(id)sender { [_mainController showPlaylists:sender]; }
+- (void)showMeters:(id)sender { [_mainController showMeters:sender]; }
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
@@ -109,8 +132,6 @@ using namespace rabbitears;
         item.title = _mainController.channelListHidden ? @"Show Channel List" : @"Hide Channel List";
     else if (item.action == @selector(toggleToolbar:))
         item.title = _mainController.toolbarHidden ? @"Show Toolbar" : @"Hide Toolbar";
-    else if (item.action == @selector(toggleSpectrum:))
-        item.title = _mainController.spectrumEnabled ? @"Hide Spectrum" : @"Show Spectrum";
     else if (item.action == @selector(toggleVideoOnly:))
         item.title = _mainController.videoOnly ? @"Exit Video Only" : @"Video Only";
     return YES;

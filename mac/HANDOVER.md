@@ -74,24 +74,69 @@ ARC/threading/CoreAudio review). **KEY: only Spectrum needs audio capture; Signa
   a neutral `rabbitears::meter` ns) is the deferred E3**; `Win32/ui/MiniMeter`'s model stays as-is until then.
 - **`MeterView.{h,mm}`** (ARC) — ONE view renders any kind × style from a `MeterConfig` (peer of Win32
   `MiniMeter`). Spectrum folds in the RT-thread `os_unfair_lock` latch + energy probe + "grant permission"
-  placeholder. 30fps easing. **LED + LCD are real; Tube + Scope currently render as LED (TODO M1b/c).**
+  placeholder. 30fps easing. **All four styles render for real now: LED (dot-matrix), LCD (ghosted matrix),
+  Tube (translucent-halo glow on lit cells, sized by the glow knob), Scope (a phosphor `NSBezierPath` trace
+  of each kind's level series with an `NSShadow` bloom).** The 5 tuning knobs are wired: sensitivity→gain,
+  smoothing→easing inertia, peakHold→spectrum peak decay, breathing→bitrate ceiling ebb, glow→Tube/Scope
+  bloom (all centred so 0.5 ≈ the pre-tuning behaviour). Tube/Scope + the knob curves are **first-draft —
+  expect on-device tuning** (`fillCell`/`strokeScope` in `MeterView.mm`).
 - **`SpectrumTap.{h,mm}`** (ARC) — the recovered process tap + a **vDSP FFT** → 24 log bands (fixed
   preallocated buffers, no RT alloc). Opt-in: creating it triggers the one-time consent prompt.
 - **`MetersDialog.{h,mm}`** (ARC) — Settings ▸ Meters… config sheet: per-kind **Show + Style + 7 colour
-  wells**; persists `meter_<kind>` / `_style` / `_colors` (Win32-compatible keys). **Tuning sliders + a live
-  preview are the remaining dialog work (M2c/d).**
-- **MainWindowController** (MRC) glue: `loadMeterConfig`/`applyMeterConfig` (launch + dialog OK + ⌥⌘M);
+  wells + 5 tuning sliders + a live preview**. The preview is a real `MeterView` per kind fed synthetic
+  animated data by a weak-self `_previewTimer`, updated live as any control changes (`controlChanged:` →
+  `configForKind:` → `[preview setConfig:]`). Persists `meter_<kind>` / `_style` / `_colors` / `_tuning`
+  (Win32-compatible keys); `loadMeterConfig` reads `_tuning` back into the live meters too.
+- **MainWindowController** (MRC) glue: `loadMeterConfig`/`applyMeterConfig` (launch + dialog OK; Spectrum
+  is toggled via the Meters dialog's per-kind Show — the old standalone ⌥⌘M "Show Spectrum" menu was removed as redundant);
   `tickStats` feeds Bitrate/Frames/Signal from `FlowStats` + Spectrum from the tap; the FlowStats consent
   cross-check is **gated on `VlcPlayerMac::hasAudioTrack()`** so a silent/video-only/muted stream isn't
   mistaken for denied capture; a **`DraggableMeterBar`** floats the meters over a full-bleed video (drag
   anywhere; position persisted `meter_pos_x/y`); a bottom-bar **show/hide button** (`meters_hidden`); and
   **Video Only** mode (⌥⌘F / Esc / double-click). `StatMeterView` + `SpectrumMeterView` were retired.
 
-**Remaining:** **Tube + Scope** style rendering (glow / trace — render as LED today; the hardest to get
-right blind, expect on-device tuning), **tuning sliders** wired into the renderer + a live preview
-(M2c/d), and the **E3** promotion above. Then on-device-validate the lot and merge PR #22 to `main`.
+**Remaining:** **on-device tuning** of the Tube glow + Scope trace + the knob response curves (built blind,
+first-draft), and the **E3** promotion above (`MeterModel` → `common/ui` under a neutral `rabbitears::meter`
+ns once Win32 reviews). Then on-device-validate the lot and merge PR #22 to `main`.
+
+## Playlists — enable / disable / rename / refresh / delete (branch `mac-stats-meter` / PR #22, alongside the meters)
+
+A **Settings ▸ Manage Playlists…** sheet (`PlaylistsDialog`, ARC) lists every imported playlist with an
+**Enabled** checkbox + per-row **⟳ Refresh** / **✎ Rename** (SF-Symbol icon buttons) + a **Delete** button
+(destructive confirm). Changes apply live and refresh the grid.
+- **Data layer (shared `common/db/Database`)** — this added the repo's **first schema migration**: a
+  `user_version`-gated `Database::migrate()` steps 1→2 and `ALTER`s in
+  `playlists.enabled INTEGER NOT NULL DEFAULT 1` (idempotent via a `hasColumn` check; SQLite backfills
+  existing rows to 1, so no playlist vanishes on upgrade). `setPlaylistEnabled()` toggles it,
+  `listPlaylists()` reads it. **Future schema changes extend `migrate()` with the next `if (v < N)` step.**
+- **Disabled = hidden from every cross-playlist view** — `allChannels`, `favourites`, `channelsByGroup`,
+  `listGroups`, `listCountries`, `channelsByCountry`, `searchChannels`, and `channelByLcn` all gained a
+  `playlist_id IN (SELECT id FROM playlists WHERE enabled=1)` predicate (`kEnabledOnly`). `channelsByPlaylist()`
+  stays literal — an explicit "show me exactly this playlist" accessor. **Windows-safe**: default-enabled +
+  no Win32 disable UI ⇒ the predicate is a no-op there (windows-core CI validates).
+- **Controller glue (MRC)** — `showPlaylists:` opens the sheet; `reloadAfterPlaylistChange` re-points the
+  active playlist when you disable/delete the one you're viewing (falls back to the last enabled one) and
+  **preserves the grid's active filter** across the menu rebuild; `restoreLastPlaylist` now restores the last
+  *enabled* playlist. 12 self-test assertions cover the DB behaviour. On-device-validated (the list needed a
+  flipped `RETopClipView` so a short list top-anchors instead of sinking to the bottom of the scroll box).
+- **Rename / Refresh / friendly names** — **Rename** (`✎`) prompts a sheet → `Database::renamePlaylist`.
+  **Refresh** (`⟳`) re-downloads (URL) or re-reads (file) the source off the main queue and upserts via
+  `bulkInsertChannels` (favourites + custom LCNs preserved; new/changed channels appear — it does **not**
+  prune removed ones), weak-self so a dismissed sheet is a no-op. Imports now derive a **friendly default
+  name** (`friendlyName()` — file/last-path-segment stem, else host) instead of the raw URL; the full
+  URL/path is still kept as `source`, and users can rename after.
+- **Menu-bar parity** — the import/management/meter commands now live in the macOS menu bar too, not just
+  the in-window Settings ▾ pull-down: a new **File** menu (Add Playlist ⌘N / Open Playlist File ⌘O /
+  Manage Playlists…) and **View ▸ Meters…**. `AppDelegate.buildMenu` builds them; items target the app
+  delegate and forward to `MainWindowController` (its action selectors are now in the header), matching the
+  existing View-toggle pattern (the controller isn't in the responder chain). The in-window bar stays for now.
 
 ## Releasing (v0.1.7-mac shipped this way — full recipe in the `mac-release-deployment` memory)
+
+**Version:** the mac marketing version is now **decoupled from Windows** — `cmake/AppVersion.cmake` keeps
+`APP_VERSION 0.2.0` for Windows but overrides it to **`0.1.9`** when `APPLE` (the mac port lacks the 0.2.0
+skin/theme engine, so it deliberately trails). That feeds both `CFBundleShortVersionString` and the generated
+`version.h`; the Windows `.exe` / `windows-core` CI are unaffected. Bump the mac line in `AppVersion.cmake`.
 
 Deployed like the sibling **SQLTerminal** (`~/Desktop/github_repos/SQLTerminal/scripts/build.sh`),
 **reusing the family credentials — no new setup**: Developer ID **`386M76FV3K`** signs, notarize
@@ -122,7 +167,7 @@ build-mac*/sparkle/bin/sign_update --account SQLTerminal <dmg>   # prints edSign
 ```
 mac/CMakeLists.txt                     # mac targets (app / self-test / play-probe); rpath; Sparkle embed; icon
 mac/cmake/Mac.cmake                    # libVLC + Sparkle provisioning (-DLIBVLC_MAC_PREFIX overrides VLC.app)
-mac/src/app/AppDelegate.mm             # lifecycle + menu bar (App/Edit/View) + custom About + Check-for-Updates
+mac/src/app/AppDelegate.mm             # lifecycle + menu bar (App/File/Edit/View) + custom About + Check-for-Updates
 mac/src/app/MainWindowController.mm    # the UI: top bar, grid, search/filter, split, volume, fullscreen, playback
 mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper (bundled PlugIns) + sampleStats()->FlowStats for the meters
 mac/platform/{Http,Log,Updater}.mm  mac/platform/Paths.cpp   # macOS platform layer
@@ -134,6 +179,7 @@ mac/src/app/MeterModel.{h,cpp}                               # mac-local meter m
 mac/src/app/MeterView.{h,mm}                                 # unified meter renderer (4 kinds x styles); peer of Win32 MiniMeter
 mac/src/app/SpectrumTap.{h,mm}                               # Core Audio process tap + vDSP FFT -> bands (opt-in)
 mac/src/app/MetersDialog.{h,mm}                              # Settings > Meters config sheet (Show/Style/Colours)
+mac/src/app/PlaylistsDialog.{h,mm}                          # Settings > Manage Playlists sheet (enable/disable/delete)
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 

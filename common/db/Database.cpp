@@ -75,6 +75,12 @@ constexpr const char* kChannelCols =
     "id,playlist_id,name,stream_url,logo_url,group_title,tvg_id,tvg_name,lcn,"
     "is_favourite,dead_status,last_checked_at,sort_order,user_agent,referrer";
 
+// Predicate restricting a channel query to enabled playlists. Disabled playlists
+// keep their rows but vanish from every cross-playlist view; channelsByPlaylist()
+// deliberately omits it (an explicit "show me exactly this playlist" accessor).
+constexpr const char* kEnabledOnly =
+    "playlist_id IN (SELECT id FROM playlists WHERE enabled=1)";
+
 Channel readChannel(Stmt& q) {
     Channel c;
     c.id = q.intCol(0);
@@ -209,8 +215,40 @@ CREATE INDEX IF NOT EXISTS idx_channels_name     ON channels(name COLLATE NOCASE
 CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, stream_url);
 )SQL";
     if (!exec(kSchema)) return false;
-    exec("PRAGMA user_version=1;");
+    migrate();
     return true;
+}
+
+// Incremental, idempotent schema upgrades, gated on PRAGMA user_version.
+//   v1: the baseline schema above.
+//   v2: playlists.enabled — per-playlist on/off toggle.
+// A fresh DB starts at user_version 0 (kSchema just built the v1 shape, sans the
+// `enabled` column), an existing 0.1.x DB is at 1; both take the v2 upgrade once.
+void Database::migrate() {
+    long long v = 0;
+    {
+        Stmt q(db_, "PRAGMA user_version");
+        if (q && q.step()) v = q.intCol(0);
+    }
+    if (v >= 2) return;
+    // v2: playlists.enabled. Idempotent even if a prior run added the column but never
+    // bumped the version — add it only when missing, and commit v2 only once it is
+    // actually present (so a fresh DB whose ALTER fails transiently retries next open
+    // instead of wedging the version ahead of the schema).
+    if (!hasColumn("playlists", "enabled"))
+        exec("ALTER TABLE playlists ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
+    if (hasColumn("playlists", "enabled"))
+        exec("PRAGMA user_version=2");
+}
+
+bool Database::hasColumn(const char* table, const char* column) {
+    // `table` is always a compile-time literal here, so the concatenation is injection-safe.
+    Stmt q(db_, (std::string("PRAGMA table_info(") + table + ")").c_str());
+    if (!q) return false;
+    const std::wstring want = wideFromUtf8(column);
+    while (q.step())
+        if (q.textCol(1) == want) return true;  // column 1 of table_info is the name
+    return false;
 }
 
 // ---- Playlists -------------------------------------------------------------
@@ -233,8 +271,8 @@ long long Database::addPlaylist(const std::wstring& name, const std::wstring& so
 std::vector<Playlist> Database::listPlaylists() {
     std::vector<Playlist> out;
     Stmt q(db_,
-           "SELECT id,name,source_url,source_path,is_url,added_at,last_refreshed_at,channel_count "
-           "FROM playlists ORDER BY added_at");
+           "SELECT id,name,source_url,source_path,is_url,added_at,last_refreshed_at,channel_count,"
+           "enabled FROM playlists ORDER BY added_at");
     if (!q) return out;
     while (q.step()) {
         Playlist p;
@@ -246,6 +284,7 @@ std::vector<Playlist> Database::listPlaylists() {
         p.addedAt = q.intCol(5);
         p.lastRefreshedAt = q.intCol(6);
         p.channelCount = static_cast<int>(q.intCol(7));
+        p.enabled = q.intCol(8) != 0;
         out.push_back(std::move(p));
     }
     return out;
@@ -262,6 +301,14 @@ void Database::renamePlaylist(long long playlistId, const std::wstring& name) {
     Stmt q(db_, "UPDATE playlists SET name=? WHERE id=?");
     if (!q) return;
     q.bindText(1, name);
+    q.bindInt(2, playlistId);
+    q.stepDone();
+}
+
+void Database::setPlaylistEnabled(long long playlistId, bool enabled) {
+    Stmt q(db_, "UPDATE playlists SET enabled=? WHERE id=?");
+    if (!q) return;
+    q.bindInt(1, enabled ? 1 : 0);
     q.bindInt(2, playlistId);
     q.stepDone();
 }
@@ -314,8 +361,8 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
 
 std::vector<Channel> Database::allChannels() {
     return runChannelQuery(
-        db_, std::string("SELECT ") + kChannelCols +
-                 " FROM channels ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
+        db_, std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + kEnabledOnly +
+                 " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
 }
 
 std::vector<Channel> Database::channelsByPlaylist(long long playlistId) {
@@ -329,15 +376,15 @@ std::vector<Channel> Database::channelsByPlaylist(long long playlistId) {
 std::vector<Channel> Database::channelsByGroup(const std::wstring& group) {
     return runChannelQuery(db_,
                            std::string("SELECT ") + kChannelCols +
-                               " FROM channels WHERE group_title=? "
-                               "ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
+                               " FROM channels WHERE group_title=? AND " + kEnabledOnly +
+                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
                            &group);
 }
 
 std::vector<Channel> Database::favourites() {
     return runChannelQuery(db_, std::string("SELECT ") + kChannelCols +
-                                    " FROM channels WHERE is_favourite=1 "
-                                    "ORDER BY (lcn IS NULL), lcn, name COLLATE NOCASE");
+                                    " FROM channels WHERE is_favourite=1 AND " + kEnabledOnly +
+                                    " ORDER BY (lcn IS NULL), lcn, name COLLATE NOCASE");
 }
 
 std::vector<Channel> Database::searchChannels(const std::wstring& term) {
@@ -345,9 +392,9 @@ std::vector<Channel> Database::searchChannels(const std::wstring& term) {
     const std::wstring pattern = L"%" + term + L"%";
     std::vector<Channel> out;
     Stmt q(db_, (std::string("SELECT ") + kChannelCols +
-                 " FROM channels WHERE name LIKE ?1 COLLATE NOCASE "
-                 "OR group_title LIKE ?1 COLLATE NOCASE OR tvg_name LIKE ?1 COLLATE NOCASE "
-                 "ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE")
+                 " FROM channels WHERE (name LIKE ?1 COLLATE NOCASE "
+                 "OR group_title LIKE ?1 COLLATE NOCASE OR tvg_name LIKE ?1 COLLATE NOCASE) AND " +
+                 kEnabledOnly + " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE")
                     .c_str());
     if (!q) return out;
     q.bindText(1, pattern);
@@ -356,8 +403,8 @@ std::vector<Channel> Database::searchChannels(const std::wstring& term) {
 }
 
 std::optional<Channel> Database::channelByLcn(int lcn) {
-    auto rows = runChannelQuery(db_, std::string("SELECT ") + kChannelCols +
-                                         " FROM channels WHERE lcn=? ORDER BY sort_order LIMIT 1",
+    auto rows = runChannelQuery(db_, std::string("SELECT ") + kChannelCols + " FROM channels WHERE lcn=? AND " +
+                                         kEnabledOnly + " ORDER BY sort_order LIMIT 1",
                                 nullptr, lcn);
     if (rows.empty()) return std::nullopt;
     return rows.front();
@@ -365,9 +412,10 @@ std::optional<Channel> Database::channelByLcn(int lcn) {
 
 std::vector<std::wstring> Database::listGroups() {
     std::vector<std::wstring> out;
-    Stmt q(db_,
-           "SELECT DISTINCT group_title FROM channels WHERE group_title IS NOT NULL "
-           "AND group_title<>'' ORDER BY group_title COLLATE NOCASE");
+    Stmt q(db_, (std::string("SELECT DISTINCT group_title FROM channels WHERE group_title IS NOT NULL "
+                             "AND group_title<>'' AND ") +
+                 kEnabledOnly + " ORDER BY group_title COLLATE NOCASE")
+                    .c_str());
     if (!q) return out;
     while (q.step()) out.push_back(q.textCol(0));
     return out;
@@ -375,7 +423,9 @@ std::vector<std::wstring> Database::listGroups() {
 
 std::vector<std::wstring> Database::listCountries() {
     std::set<std::wstring> codes;  // sorted + distinct
-    Stmt q(db_, "SELECT tvg_id FROM channels WHERE tvg_id IS NOT NULL AND tvg_id<>''");
+    Stmt q(db_, (std::string("SELECT tvg_id FROM channels WHERE tvg_id IS NOT NULL AND tvg_id<>'' AND ") +
+                 kEnabledOnly)
+                    .c_str());
     if (!q) return {};
     while (q.step()) {
         std::wstring cc = countryFromTvgId(q.textCol(0));
@@ -390,8 +440,8 @@ std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
     const std::wstring pattern = L"%." + code;
     return runChannelQuery(db_,
                            std::string("SELECT ") + kChannelCols +
-                               " FROM channels WHERE tvg_id LIKE ? "
-                               "ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
+                               " FROM channels WHERE tvg_id LIKE ? AND " + kEnabledOnly +
+                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
                            &pattern);
 }
 

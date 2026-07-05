@@ -23,6 +23,7 @@
 #import "AppDelegate.h"
 #import "MeterView.h"
 #import "MetersDialog.h"
+#import "PlaylistsDialog.h"
 #import "SpectrumTap.h"
 #import "VlcPlayerMac.h"
 
@@ -131,6 +132,40 @@ static NSString* ns(const std::wstring& w) {
 }
 static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
+// A readable display name from a playlist source: the file / last-path-segment stem
+// (minus any .m3u/.m3u8), else the URL host, else the raw source. The full URL/path is
+// still stored separately as the playlist's `source`; users can rename afterwards.
+static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
+    std::wstring s = src;
+    if (isUrl) {
+        const size_t q = s.find_first_of(L"?#");  // drop query/fragment
+        if (q != std::wstring::npos) s.erase(q);
+    }
+    const size_t slash = s.find_last_of(L"/\\");
+    std::wstring last = (slash == std::wstring::npos) ? s : s.substr(slash + 1);
+    auto endsWithCI = [](const std::wstring& a, const std::wstring& suf) {
+        if (a.size() < suf.size()) return false;
+        for (size_t i = 0; i < suf.size(); ++i) {
+            wchar_t c = a[a.size() - suf.size() + i];
+            if (c >= L'A' && c <= L'Z') c = (wchar_t)(c + 32);
+            if (c != suf[i]) return false;
+        }
+        return true;
+    };
+    if (endsWithCI(last, L".m3u8")) last.erase(last.size() - 5);
+    else if (endsWithCI(last, L".m3u")) last.erase(last.size() - 4);
+    if (!last.empty()) return last;
+    if (isUrl) {  // no file segment (e.g. http://host/) — fall back to the host
+        std::wstring h = src;
+        const size_t scheme = h.find(L"://");
+        if (scheme != std::wstring::npos) h.erase(0, scheme + 3);
+        const size_t slash2 = h.find_first_of(L"/?#");
+        if (slash2 != std::wstring::npos) h.erase(slash2);
+        if (!h.empty()) return h;
+    }
+    return src;
+}
+
 - (void)showWindow {
     const NSRect frame = NSMakeRect(0, 0, 980, 640);
     _window = [[NSWindow alloc]
@@ -155,7 +190,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     }
     [self loadMeterConfig];  // per-kind enable/style/colours from settings
 
-    // ---- top bar (one row): [+ Add Playlist] [Settings ▾] … [search] [filter] [Stop]
+    // ---- top bar (one row): [+ Add Playlist] [⚙] … [search] [filter] [Stop]
     //      — the mac peer of the Win32 command bar (kCmdBtns = + Add Playlist, Settings).
     const CGFloat barH = kBarH;
     NSView* bar = [[NSView alloc]
@@ -170,9 +205,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     addBtn.bezelColor = NSColor.controlAccentColor;  // accent, like the Win32 button
     [bar addSubview:addBtn];
 
-    NSButton* setBtn = [NSButton buttonWithTitle:@"Settings  ▾"
-                                          target:self action:@selector(showSettings:)];
-    setBtn.frame = NSMakeRect(158, 9, 116, 28);
+    // A gear that pops the Open/Manage/Meters/Updates/About menu (showSettings:).
+    NSImage* gear = [NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:@"Settings"];
+    NSButton* setBtn = [NSButton buttonWithImage:gear target:self action:@selector(showSettings:)];
+    setBtn.frame = NSMakeRect(158, 9, 40, 28);
+    setBtn.toolTip = @"Settings";
     [bar addSubview:setBtn];
 
     // Right (pinned): Stop, the filter popup, and the stretchy search field between.
@@ -463,12 +500,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)restoreLastPlaylist {
     if (!_db) { [self setStatus:@"Database unavailable — check disk permissions and restart."]; return; }
     const auto playlists = _db->listPlaylists();
-    if (playlists.empty()) {
-        [self setStatus:@"Ready — load an M3U URL or open a file to begin."];
+    long long pid = 0;
+    for (const auto& p : playlists) if (p.enabled) pid = p.id;  // last enabled (added_at order)
+    if (!pid) {
+        [self setStatus:playlists.empty()
+                            ? @"Ready — load an M3U URL or open a file to begin."
+                            : @"All playlists are disabled — enable one in Settings ▸ Manage Playlists…."];
         [self rebuildFilterMenu];
         return;
     }
-    [self showPlaylist:playlists.back().id];
+    [self showPlaylist:pid];
     [self selectLastPlayed];
 }
 
@@ -604,7 +645,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (token != self->_loadToken) return;  // a newer load superseded this one
             if (!ok) { [self setStatus:[NSString stringWithFormat:@"Download failed: %@", ns(derr)]]; return; }
-            [self importDoc:*doc name:url source:url isUrl:true];
+            [self importDoc:*doc name:friendlyName(url, true) source:url isUrl:true];
         });
     });
 }
@@ -619,7 +660,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         std::wstring perr;
         const M3uDocument doc = parseM3uFile(path, &perr);
         if (!perr.empty()) { [self setStatus:[NSString stringWithFormat:@"Read failed: %@", ns(perr)]]; return; }
-        [self importDoc:doc name:path source:path isUrl:false];
+        [self importDoc:doc name:friendlyName(path, false) source:path isUrl:false];
     }];
 }
 
@@ -705,8 +746,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // Each MeterView is shown/positioned per its MeterConfig. Only Spectrum needs the
 // audio-capture tap (opt-in); Signal/Bitrate/Frames run off FlowStats.
 
-// Load per-kind enable/style/colours from the settings DB (Win32-compatible keys
-// meter_<kind> / _style / _colors); defaults otherwise.
+// Load per-kind enable/style/colours/tuning from the settings DB (Win32-compatible keys
+// meter_<kind> / _style / _colors / _tuning); defaults otherwise.
 - (void)loadMeterConfig {
     static const char* keys[4] = {"spectrum", "signal", "bitrate", "frames"};
     static const MeterKind kinds[4] = {MeterKind::Spectrum, MeterKind::Signal,
@@ -716,6 +757,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         _meterCfg[k].enabled = false;
         _meterCfg[k].style   = defaultMeterStyle(kinds[k]);
         _meterCfg[k].palette = defaultMeterPalette(kinds[k]);
+        _meterCfg[k].tuning  = defaultMeterTuning();
         if (!_db) continue;
         const std::wstring base = wideFromUtf8((std::string("meter_") + keys[k]).c_str());
         if (auto e = _db->getSetting(base)) _meterCfg[k].enabled = (*e == L"1");
@@ -723,6 +765,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
             _meterCfg[k].style = meterStyleFromString(utf8FromWide(*s), _meterCfg[k].style);
         if (auto c = _db->getSetting(base + L"_colors"))
             _meterCfg[k].palette = meterPaletteFromString(utf8FromWide(*c), _meterCfg[k].palette);
+        if (auto t = _db->getSetting(base + L"_tuning"))
+            _meterCfg[k].tuning = meterTuningFromString(utf8FromWide(*t), _meterCfg[k].tuning);
     }
     if (_db) {
         if (auto h = _db->getSetting(L"meters_hidden")) _metersHidden = (*h == L"1");
@@ -785,17 +829,6 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     }
 }
 
-- (BOOL)spectrumEnabled { return _meterCfg[(int)MeterKind::Spectrum].enabled; }
-
-// The ⌥⌘M menu toggle is a shortcut for the Spectrum meter's Show checkbox.
-- (void)toggleSpectrum {
-    const int s = (int)MeterKind::Spectrum;
-    _meterCfg[s].enabled = !_meterCfg[s].enabled;
-    if (_db) _db->setSetting(wideFromUtf8("meter_spectrum"), _meterCfg[s].enabled ? L"1" : L"0");
-    if (_meterCfg[s].enabled) [_meters[s] setAvailable:YES];
-    [self applyMeterConfig];  // relayout + start/stop the tap (the consent prompt is here)
-}
-
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
 // audio-capture consent prompt happens on the FIRST creation. macOS caches a denial,
 // so a denied prompt won't re-ask — which is exactly why -updateSpectrumAvailability:
@@ -852,6 +885,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)showSettings:(NSButton*)sender {
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Manage Playlists…" action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Meters…" action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
@@ -874,6 +908,49 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     }];
     [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
 }
+
+// Settings ▾ ▸ Manage Playlists… — enable/disable/delete imported playlists.
+- (void)showPlaylists:(id)__unused sender {
+    PlaylistsDialog* dlg = [[PlaylistsDialog alloc] initWithDatabase:_db.get()];
+    [dlg presentForWindow:_window onChange:^{ [self reloadAfterPlaylistChange]; }];
+    [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
+}
+
+// Re-sync the grid after Manage Playlists enables/disables/deletes something. If the
+// active playlist is now gone or disabled, fall back to the last still-enabled one
+// (or the empty state); otherwise just rebuild the filters + reload counts.
+- (void)reloadAfterPlaylistChange {
+    if (!_db) return;
+    const auto playlists = _db->listPlaylists();
+    bool currentOK = false;
+    long long lastEnabled = 0;
+    for (const auto& p : playlists) {
+        if (p.enabled) lastEnabled = p.id;                       // last enabled (added_at order)
+        if (p.id == _currentPid && p.enabled) currentOK = true;
+    }
+    if (!currentOK) _currentPid = lastEnabled;  // 0 => all-channels view (empty if none enabled)
+
+    // rebuildFilterMenu resets the popup to "All channels" (the enabled set can add or
+    // remove groups/countries). If the active playlist is unchanged, preserve the user's
+    // current filter across the rebuild — re-select it if it still exists, else fall back
+    // to All. When the playlist itself changed, a fresh view legitimately starts at All.
+    NSMenuItem* prev = _filter.selectedItem;
+    const NSInteger prevTag = prev ? prev.tag : kFilterAll;
+    NSString* const prevRep = prev ? (NSString*)prev.representedObject : nil;
+    [self rebuildFilterMenu];
+    if (currentOK) {
+        for (NSMenuItem* it in _filter.itemArray) {
+            if (it.isSeparatorItem) continue;
+            NSString* rep = (NSString*)it.representedObject;
+            const BOOL repEq = (!rep && !prevRep) || (rep && prevRep && [rep isEqualToString:prevRep]);
+            if (it.tag == prevTag && repEq) { [_filter selectItem:it]; break; }
+        }
+    }
+    [self refreshChannels];
+    if (!_currentPid && lastEnabled == 0 && !playlists.empty())
+        [self setStatus:@"All playlists are disabled — enable one to see channels."];
+}
+
 - (void)showAbout:(id)sender { [(AppDelegate*)NSApp.delegate showAboutPanel:sender]; }
 
 - (void)playClicked:(id)__unused sender { [self playRow:_table.clickedRow]; }
