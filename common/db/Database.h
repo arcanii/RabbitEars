@@ -14,6 +14,7 @@
 #include "models/Channel.h"
 #include "models/ParsedChannel.h"
 #include "models/Playlist.h"
+#include "models/Programme.h"
 
 struct sqlite3;  // forward-declared; sqlite3.h is included only in the .cpp
 
@@ -37,9 +38,10 @@ public:
     static std::wstring defaultDbPath();
 
     // ---- Playlists ---------------------------------------------------------
-    // Returns the new playlist id, or 0 on failure.
+    // Returns the new playlist id, or 0 on failure. `epgUrl` is the playlist's XMLTV
+    // guide URL (defaulted so existing/mac callers are unaffected).
     long long addPlaylist(const std::wstring& name, const std::wstring& source, bool isUrl,
-                          long long nowEpoch);
+                          long long nowEpoch, const std::wstring& epgUrl = {});
     std::vector<Playlist> listPlaylists();
     void deletePlaylist(long long playlistId);
     // Change a playlist's friendly display name (its channels/source are untouched).
@@ -74,6 +76,21 @@ public:
     void toggleFavourite(long long channelId);
     void setChannelNumber(long long channelId, std::optional<int> lcn);
     void setDeadStatus(long long channelId, DeadStatus status, long long nowEpoch);
+
+    // ---- EPG (programmes) --------------------------------------------------
+    // Replace this playlist's stored guide with a freshly-parsed batch, in one
+    // transaction (a refresh is authoritative — old rows are cleared first). Also
+    // records an `epg_refreshed_<id>` settings timestamp. Returns rows stored.
+    int bulkInsertProgrammes(long long playlistId, const std::vector<Programme>& programmes,
+                             long long nowEpoch);
+    // The programme airing at `nowEpoch` plus the one after it (0–2 rows) for a
+    // channel's tvg-id; empty when the guide has no coverage there.
+    std::vector<Programme> nowNext(long long playlistId, const std::wstring& channelId,
+                                   long long nowEpoch);
+    // Every programme overlapping [windowStartUtc, windowEndUtc), ordered by channel
+    // then start — the timeline-guide query.
+    std::vector<Programme> programmesInWindow(long long playlistId, long long windowStartUtc,
+                                              long long windowEndUtc);
 
     // ---- Settings (key/value blob) ----------------------------------------
     std::optional<std::wstring> getSetting(const std::wstring& key);
