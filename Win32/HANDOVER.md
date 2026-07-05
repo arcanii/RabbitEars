@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.2.0 SHIPPED (the theme engine, theme-ON by default) · macOS Phase-1 in progress
+## Current state — v0.2.0 SHIPPED · **0.2.1 in dev** (EPG + Scheduled Recordings, branch `epg-xmltv` / PR pending) · macOS Phase-1
 
 **Released:** **`v0.2.0`** (2026-07-04), tag `v0.2.0` @ `343aa0e`, full version `0.2.0.107`, signed
 **`RabbitEars-0.2.0-setup.exe`** (appcast @ `7b3946a`) — **the theme engine** (see the section below);
@@ -48,6 +48,53 @@ M3uParser, Database, DockLayout, models, platform *contracts*), **`Win32/`** (th
 Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `installer.iss` +
 `build-installer.cmd` were fixed to match (0.1.7). The macOS team is moving fast on `main`: Phase-1
 (playback + native channel grid + Sparkle + CI `.app` build) is in progress.
+
+### 📺 EPG + ⏺ Scheduled Recordings (0.2.1 dev — branch `epg-xmltv`, **PR pending**)
+
+The 0.2.1 feature pair, built + committed + pushed on **`epg-xmltv`** (11 commits; branched off `main` @
+`bc74015`, `main` unchanged since). Open the PR at `github.com/arcanii/RabbitEars/pull/new/epg-xmltv`
+(the `pr_body.md` draft is in the session scratchpad; **`gh` here is installed but not authenticated** —
+needs `gh auth login`). All new **core** lands in `common/` and is **headless-tested** via
+`RabbitEarsCli --selftest` (42 assertions incl. gzip, XMLTV parse, the v2→v4 migration, and the pure
+scheduler); the **GUI is build-verified BOTH theme flags but NOT runtime-verified** (sandbox can't launch
+it) — the owner's runtime pass is the last gate before merge.
+
+- **EPG (XMLTV):** vendored **miniz** (`third_party/miniz`, a `miniz` static lib in the root CMake) +
+  `common/core/Gzip` gunzip `.xml.gz` (WinHTTP/NSURLSession only auto-decompress *transfer*-encoded gzip);
+  a hand-rolled `common/core/XmltvParser` (+ `common/models/Programme`) mirroring `M3uParser`; **schema
+  v3** (`playlists.epg_url` + a playlist-scoped `epg_programmes` table, `ON DELETE CASCADE`) via the
+  `migrate()` step-wise pattern + DAO (`bulkInsertProgrammes`, `nowNext`, `programmesInWindow`). The M3U
+  `x-tvg-url` is now **persisted** (was parsed then dropped).
+  - `Settings ▸ Refresh Guide…` — off-thread fetch → gunzip → parse → store (mirrors `startPlaylistWorker`).
+  - `Settings ▸ TV Guide` — a **new modeless Direct2D control** `Win32/ui/EpgGuideControl` (channels×time,
+    frozen channel column + hour axis, "now" line, 2-D scroll; borrows `ChannelGridControl`'s D2D scaffolding).
+    Click an entry → a **Play channel / Schedule… / Close** popup (`programmeDialog`, `Dialogs.cpp`).
+  - CLI: `--epg <url|file>` (fetch → gunzip → parse → summary). **EPG-source caveat (important):** the guide
+    only shows channels the *feed* covers. iptv-org's `index.m3u` (13,069 channels) declares
+    `x-tvg-url=…worker-9dd4.onrender.com/guide.xml.gz`, which is a **2-channel / 114-programme stub** — so the
+    guide shows ~2 rows. **Not a bug.** **Follow-up:** a per-playlist or global **custom EPG-URL override**
+    (today the x-tvg-url is used as-is, no override UI).
+- **Scheduled recordings:** **schema v4** (`scheduled_recordings` — self-contained rows: stream URL/UA/
+  referrer captured at schedule time, standalone/not playlist-scoped) + DAO + `channelByTvgId`; a **pure,
+  unit-tested `common/core/RecordingScheduler::planScheduler(schedules, now, busy)`** decision core applied
+  by a ~30s `kSchedulerTimer=0xA2` tick in `MainWindow` (this **ungated the theme-gated `WM_TIMER`** — keep
+  the scheduler case outside the `#ifdef`). `AppState::activeScheduleId` gives the single shared `rec_`
+  recorder explicit ownership so the manual Record button + the scheduler never stomp; a one-time startup
+  reconcile resets stale `Recording` rows. `Settings ▸ Scheduled Recordings…` = a manager (list +
+  New/Cancel/Delete); the *New…* `scheduleDialog` is a type-ahead channel combo + start/stop
+  DateTimePickers (needs `ICC_DATE_CLASSES`, added to `InitCommonControlsEx`) — also for no-EPG channels.
+  **v1 limits:** one recording at a time; **app-must-be-running** (Task-Scheduler wake is a later phase);
+  concurrent recording ⇒ the multi-player roadmap.
+- **App icon → clockwork** (`packaging/app.ico` regenerated from `art/clockwork_icon.png`;
+  `scripts/make_ico.py` repointed at it — needs Pillow, absent here so the .ico was built via a
+  System.Drawing PowerShell one-off) + README badge; two more studies (`happy`/`style`) checked in.
+  Marketing **version bumped to 0.2.1** in the 4 places (AppVersion.cmake / installer.iss / RabbitEars.rc /
+  app.manifest); mac keeps its 0.1.9 `APPLE` override.
+- Both big UI surfaces (the guide control + the schedule dialogs) passed an **adversarial review**; fixes
+  applied — notably a `scheduleDialog` OK-path **read-after-destroy** (it read its controls after IDOK
+  destroyed the window; now captured in the Proc) and the **WM_QUIT-under-modal** use-after-free (the new
+  modal loops + `showInfoDialog` now `DestroyWindow` + re-post the quit). Run the same adversarial pass on
+  any new Win32/D2D UI — it keeps catching real bugs.
 
 ### 🎨 Theme engine (0.2.x epic) — SHIPPED in v0.2.0 (merged to `main`; theme-ON by default)
 
@@ -564,25 +611,66 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **The THEME ENGINE SHIPPED in v0.2.0** — merged to `main`, theme-ON by default, branches consolidated
-   (only `main` remains). See the "🎨 Theme engine" section for the commit-by-commit history. ⚠️ **Always
-   build the GUI with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the flag default is ON, but build dirs
-   cache it, and a stale theme-OFF cache once shipped a Theme-menu-less exe during the 0.2.0 live pass.
-   **On `main` for 0.2.1:** the **macOS app-icon** swap (`packaging/app.ico`, owner-verified). **Next:** cut
-   **0.2.1** (bump the version + build → sign-on-mac → appcast per `docs/RELEASING.md`); optional per-skin
-   glow/heat-haze *tuning* (`SkinGpu` in `common/ui/Skin.cpp` + `underglow.hlsl`); Steampunk palette/serif
-   polish; extend `SkinGpu` to the button glow; refresh the About/Splash logo art; or reskin a new surface.
-2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
-   Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
-   **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
-   39→52 mid-cut because of concurrent mac pushes).
-3. **Easy point-release candidates** from the backlog: the dialog work-area clamp + shared
-   `runModalLoop`, resume-last-channel, DPI-change relayout — small, ship as 0.1.x.
+1. **0.2.1 IN DEV — EPG + Scheduled Recordings + clockwork icon, branch `epg-xmltv` (pushed, PR pending).**
+   See the "📺 EPG + ⏺ Scheduled Recordings" section above. Core is headless-tested; the GUI is
+   build-verified both flags but **needs the owner's runtime pass** (sandbox can't launch it): confirm the
+   clockwork icon, the guide renders, click → Play / Schedule, the manager + manual dialog, and an actual
+   near-future recording. **Then:** open + merge the PR (`gh auth login` first, or the compare link) → cut
+   **0.2.1** (version bump is done; build → sign-on-mac → appcast per `docs/RELEASING.md`). ⚠️ **Build with
+   `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — build dirs cache the flag (a stale theme-OFF cache once
+   shipped a Theme-menu-less exe during the 0.2.0 live pass).
+2. **Roadmap after 0.2.1** (memory `rabbitears-feature-roadmap`): a **custom EPG-URL override** (the guide
+   only shows what the *feed* covers — iptv-org's index.m3u ships a 2-channel stub EPG), then the owner's
+   video roadmap — **PIP**, **multiple simultaneous views**, **split view** — all of which sit on the
+   **multi-player engine** keystone (today one `VlcPlayer` = one worker + one video HWND; N players unlock
+   split-view / PIP / **concurrent recording**).
+3. **macOS Phase-1** continues on `main`; keep `common/` green (the `mac-core` CI is the drift alarm) and
+   **`git fetch`/rebase before every release** — `main` is shared (0.1.7's build count jumped 39→52 mid-cut
+   from concurrent mac pushes). Aside: the mac `HANDOVER.md` is stale — PR #22 is merged; its "E3"
+   `MeterModel`→`common/ui` promotion is now post-merge backlog.
 
 ## Seed prompt for a new session
 
 Paste this verbatim to start a fresh session with working context restored:
 
+> You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC 3.0.23**
+> with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome (coral
+> `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps vendored/NuGet.
+> **Read `Win32/HANDOVER.md` first — the "📺 EPG + ⏺ Scheduled Recordings" + "🎨 Theme engine" sections —
+> plus the recalled memories.**
+>
+> **State:** last SHIPPED = **v0.2.0** (theme engine, theme-ON by default). **In dev = 0.2.1** on branch
+> **`epg-xmltv`** (pushed, **PR pending** — 11 commits off `main`@`bc74015`): the **EPG** (XMLTV — vendored
+> miniz gunzip + `common/core/XmltvParser` + schema v3 `epg_programmes`; a Direct2D **TV Guide** window
+> `Win32/ui/EpgGuideControl` + `Settings ▸ Refresh Guide`; click an entry → Play/Schedule popup) and
+> **Scheduled recordings** (schema v4 `scheduled_recordings` + a **pure, unit-tested**
+> `common/core/RecordingScheduler::planScheduler` applied by a ~30s `kSchedulerTimer` tick;
+> `Settings ▸ Scheduled Recordings…` manager + a manual `scheduleDialog`; **one-at-a-time,
+> app-must-be-running**). Plus the **clockwork app icon** (`packaging/app.ico`) and the **0.2.1** version
+> bump (4 places; mac keeps 0.1.9). Core is headless-tested (`RabbitEarsCli --selftest`, 42 assertions incl.
+> the v2→v4 migration + planScheduler); the **GUI is build-verified both theme flags but NOT
+> runtime-verified** — the owner's runtime pass is the gate before merge. Both big UI surfaces were
+> adversarially reviewed.
+>
+> **Immediate next:** owner runtime-verifies the GUI → open/merge the `epg-xmltv` PR
+> (`github.com/arcanii/RabbitEars/pull/new/epg-xmltv`; `gh` here needs `gh auth login`) → cut **0.2.1**
+> (bump done; build → sign-on-mac → appcast per `docs/RELEASING.md`). **EPG caveat:** the guide shows only
+> channels the *feed* covers — iptv-org's index.m3u ships a 2-channel stub EPG; a **custom EPG-URL override**
+> is a good follow-up. **Roadmap** (memory `rabbitears-feature-roadmap`): the **multi-player engine** is the
+> keystone that unlocks split-view / PIP / concurrent recording.
+>
+> **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
+> then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
+> Gotchas: `cmake`/`cl` NOT on PATH — use `scripts\build.cmd`; Windows outputs in `build\Win32\`; **LINK1168 =
+> a running RabbitEars.exe locks the exe** → `Stop-Process -Name RabbitEars -Force`, rebuild; ⚠️ build with
+> `-DRABBITEARS_THEME_ENGINE=ON` explicitly (build dirs cache the flag); static CRT (`/MT`, no redist); the
+> sandbox **can't launch the GUI** — build-verify + reason, owner runtime-verifies; `common/` stays mac-safe
+> (`mac-core` CI compiles it on clang). Commit only when asked; stage **specific paths** (never `git add -A` —
+> the owner adds `art/*.png`); end commits with the `Co-Authored-By` trailer; branch off `main`, PR back.
+>
+> ---
+> *The prior theme-engine-era seed prompt follows (still-useful build gotchas + the 0.2.0 phase history):*
+>
 > You are continuing work on **RabbitEars** (`G:\RabbitEars`), a native **Windows Win32 / C++20** IPTV
 > player on **libVLC 3.0.23**, themed to match its sibling apps `G:\SQLTerminal-Win32` and
 > `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral `#D97757`, custom `WM_NCCALCSIZE` title-bar
