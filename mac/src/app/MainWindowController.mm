@@ -68,11 +68,13 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
     NSButton*      _muteBtn;     // 🔊 / 🔇 toggle
+    NSButton*      _meterBtn;    // bottom-bar show/hide-meters toggle
     NSView*        _topBar;      // top command bar (add / settings / search / filter)
     NSSplitView*   _split;       // channel grid | video
     BOOL           _gridHidden;    // View ▸ Hide Channel List
     BOOL           _toolbarHidden; // View ▸ Hide Toolbar
     BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
+    BOOL           _metersHidden;  // bottom-bar toggle: hide the whole meter line
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
@@ -189,6 +191,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _muteBtn.frame = NSMakeRect(cs.width - 132, 1, 24, 20);
     _muteBtn.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
     [content addSubview:_muteBtn];
+
+    _meterBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"waveform"
+                                                  accessibilityDescription:@"Show/Hide meters"]
+                                   target:self action:@selector(toggleMeters:)];
+    _meterBtn.bordered = NO;
+    _meterBtn.toolTip = @"Show / hide the meters";
+    _meterBtn.frame = NSMakeRect(cs.width - 162, 1, 24, 20);
+    _meterBtn.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+    _meterBtn.alphaValue = _metersHidden ? 0.35 : 1.0;
+    [content addSubview:_meterBtn];
 
     _volume = [NSSlider sliderWithValue:vol0 minValue:0 maxValue:100
                                  target:self action:@selector(volumeChanged:)];
@@ -680,6 +692,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         if (auto c = _db->getSetting(base + L"_colors"))
             _meterCfg[k].palette = meterPaletteFromString(utf8FromWide(*c), _meterCfg[k].palette);
     }
+    if (_db)
+        if (auto h = _db->getSetting(L"meters_hidden")) _metersHidden = (*h == L"1");
 }
 
 // Push the loaded config into the views, relayout, and match the Spectrum tap to its
@@ -704,7 +718,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     CGFloat x = 0;
     BOOL anyShown = NO;
     for (int k = 0; k < 4; ++k) {
-        const BOOL show = _meterCfg[k].enabled && !_videoOnly;
+        const BOOL show = _meterCfg[k].enabled && !_videoOnly && !_metersHidden;
         _meters[k].hidden = !show;
         if (!show) continue;
         _meters[k].frame = NSMakeRect(x, 0, kMeterW[k], kMeterH);
@@ -822,6 +836,15 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)toggleMute:(id)__unused sender {
     _volume.doubleValue = (_volume.doubleValue == 0) ? _preMuteVolume : 0;
     [self volumeChanged:nil];
+}
+
+// Bottom-bar meter toggle — hide/show the whole meter line (independent of the
+// per-kind Show checkboxes in Settings ▸ Meters…).
+- (void)toggleMeters:(id)__unused sender {
+    _metersHidden = !_metersHidden;
+    if (_db) _db->setSetting(L"meters_hidden", _metersHidden ? L"1" : L"0");
+    _meterBtn.alphaValue = _metersHidden ? 0.35 : 1.0;
+    [self applyMeterLayout];
 }
 
 - (void)toggleFavouriteForRow:(NSInteger)row {
