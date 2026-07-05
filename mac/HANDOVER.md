@@ -140,7 +140,9 @@ mirroring the Win32 gate (`Win32/ui` `showTerms`) with the **verbatim terms text
 `MainWindowController -showWindow`, right after the DB opens: if `tos_accepted` ≠ the current full
 version (`RE_VERSION_FULL_W`, marketing.build) → run the modal. **Accept** persists the version +
 continues; **Decline** quits (`[NSApp terminate:]`). Every other launch is silent. Same `tos_accepted`
-key + full-version scheme as Win32 (so a build-number bump re-prompts too). Passed an adversarial
+key + full-version scheme as Win32 (so a build-number bump re-prompts too). The dialog header shows the
+version being accepted (`RE_VERSION_W`); this branch also bumps the mac version to **0.1.10** (the next
+release). Passed an adversarial
 ObjC++ review — clean (one fix applied: activate the app before the modal so it's frontmost on
 login-item / `open -a` launches). **Needs on-device validation** (modal at launch + terms rendering)
 before it ships.

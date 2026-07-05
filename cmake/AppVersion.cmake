@@ -13,5 +13,5 @@ set(APP_VERSION "0.2.0")
 # feeding both CFBundleShortVersionString and the generated version.h. Windows
 # (the .exe / windows-core CI) is unaffected and stays on 0.2.0.
 if(APPLE)
-  set(APP_VERSION "0.1.9")
+  set(APP_VERSION "0.1.10")
 endif()

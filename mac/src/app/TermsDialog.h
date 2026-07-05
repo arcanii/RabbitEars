@@ -9,6 +9,8 @@
 #import <Cocoa/Cocoa.h>
 
 @interface TermsDialog : NSObject
+// `version` (e.g. the marketing version being accepted) is shown in the dialog header.
+- (instancetype)initWithVersion:(NSString*)version;
 // Runs the modal gate. Returns YES on "I Accept", NO on "Decline".
 - (BOOL)runModal;
 @end

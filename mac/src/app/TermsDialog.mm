@@ -26,6 +26,12 @@ NSString* const kTermsText =
 
 @implementation TermsDialog {
     NSWindow* _panel;
+    NSString* _version;
+}
+
+- (instancetype)initWithVersion:(NSString*)version {
+    if ((self = [super init])) _version = [version copy];
+    return self;
 }
 
 - (BOOL)runModal {
@@ -46,6 +52,13 @@ NSString* const kTermsText =
     title.font = [NSFont boldSystemFontOfSize:15];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:title];
+
+    NSTextField* ver = [NSTextField labelWithString:
+        _version.length ? [NSString stringWithFormat:@"Version %@", _version] : @""];
+    ver.font = [NSFont systemFontOfSize:11];
+    ver.textColor = NSColor.secondaryLabelColor;
+    ver.translatesAutoresizingMaskIntoConstraints = NO;
+    [content addSubview:ver];
 
     // Read-only, scrollable terms. Standard NSTextView-in-NSScrollView setup: the text
     // view tracks the clip width and grows vertically so long text scrolls.
@@ -83,8 +96,10 @@ NSString* const kTermsText =
     [NSLayoutConstraint activateConstraints:@[
         [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:16],
         [title.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:20],
+        [ver.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2],
+        [ver.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:20],
 
-        [scroll.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10],
+        [scroll.topAnchor constraintEqualToAnchor:ver.bottomAnchor constant:10],
         [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:20],
         [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-20],
 

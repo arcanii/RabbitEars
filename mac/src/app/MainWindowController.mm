@@ -26,6 +26,9 @@
 #ifndef RE_VERSION_FULL_W
 #define RE_VERSION_FULL_W L"dev"  // fallback when the generated header is absent
 #endif
+#ifndef RE_VERSION_W
+#define RE_VERSION_W L"dev"       // marketing version shown in the Terms dialog
+#endif
 
 #import "AppDelegate.h"
 #import "MeterView.h"
@@ -206,7 +209,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         const std::wstring tosVer = RE_VERSION_FULL_W;
         const auto accepted = _db->getSetting(L"tos_accepted");
         if (!accepted || *accepted != tosVer) {
-            TermsDialog* terms = [[TermsDialog alloc] init];
+            TermsDialog* terms = [[TermsDialog alloc] initWithVersion:ns(RE_VERSION_W)];
             const BOOL ok = [terms runModal];
             [terms release];  // MRC: balance the alloc (runModal has returned)
             if (!ok) {
