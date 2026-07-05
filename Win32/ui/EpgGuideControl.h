@@ -7,6 +7,7 @@
 // MainWindow assembles them from the DB (programmesInWindow joined to channels).
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -22,13 +23,24 @@ struct GuideProgramme {
 };
 
 struct GuideRow {
+    std::wstring                channelId;    // tvg-id — resolves to a recordable stream (may be empty)
     std::wstring                channelName;
     std::vector<GuideProgramme> programmes;  // sorted by startUtc
 };
 
+struct GuideCallbacks {
+    // Right-click a programme block → "Schedule recording". The host resolves the channel
+    // and creates the schedule. Empty (default) → the menu item is not offered.
+    std::function<void(const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title, long long startUtc, long long stopUtc)>
+        onSchedule;
+};
+
 // Open (or focus + refresh, if already open) the single modeless guide window over
 // `owner`, populated with `rows` and marking "now" at `nowUtc`. Safe to call again to
-// repopulate. `rows` may be empty (the window shows an empty guide).
-void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc);
+// repopulate. `rows` may be empty (the window shows an empty guide). `cb.onSchedule`, if
+// set, adds a right-click "Schedule recording" action on programme blocks.
+void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
+                  GuideCallbacks cb = {});
 
 }  // namespace rabbitears

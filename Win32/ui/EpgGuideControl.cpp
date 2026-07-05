@@ -45,6 +45,7 @@ struct GuideState {
     long long nowUtc = 0;
     UINT      dpi = 96;
     HINSTANCE hInst = nullptr;
+    GuideCallbacks cb;
 
     int scrollX = 0;  // px along the time axis
     int scrollY = 0;  // px along the channel axis
@@ -270,21 +271,48 @@ int rowAtY(HWND hwnd, GuideState* st, int y) {
     return (idx >= 0 && idx < static_cast<int>(st->rows.size())) ? idx : -1;
 }
 
-void onClick(HWND hwnd, GuideState* st, int x, int y) {
-    if (x < st->channelColW) return;  // channel column / header — nothing to open
+// The programme block at a client point (or nullptr); *rowOut gets its channel row.
+const GuideProgramme* programmeAt(HWND hwnd, GuideState* st, int x, int y, int* rowOut) {
+    if (x < st->channelColW) return nullptr;  // channel column / header
     const int r = rowAtY(hwnd, st, y);
-    if (r < 0) return;
+    if (r < 0) return nullptr;
     const long long t =
         st->originUtc + static_cast<long long>(x - st->channelColW + st->scrollX) * 3600 / st->pxPerHour;
-    for (const GuideProgramme& p : st->rows[r].programmes) {
+    for (const GuideProgramme& p : st->rows[r].programmes)
         if (p.startUtc <= t && t < p.stopUtc) {
-            std::wstring body = st->rows[r].channelName + L"\r\n" + hm(p.startUtc) + L" – " +
-                                hm(p.stopUtc) + L"\r\n";
-            if (!p.descr.empty()) body += L"\r\n" + p.descr;
-            showInfoDialog(hwnd, st->hInst, st->dpi, L"Programme", p.title, body);
-            return;
+            if (rowOut) *rowOut = r;
+            return &p;
         }
-    }
+    return nullptr;
+}
+
+void onClick(HWND hwnd, GuideState* st, int x, int y) {
+    int r = -1;
+    const GuideProgramme* p = programmeAt(hwnd, st, x, y, &r);
+    if (!p) return;
+    std::wstring body =
+        st->rows[r].channelName + L"\r\n" + hm(p->startUtc) + L" – " + hm(p->stopUtc) + L"\r\n";
+    if (!p->descr.empty()) body += L"\r\n" + p->descr;
+    showInfoDialog(hwnd, st->hInst, st->dpi, L"Programme", p->title, body);
+}
+
+void onRightClick(HWND hwnd, GuideState* st, int x, int y) {
+    if (!st->cb.onSchedule) return;
+    int r = -1;
+    const GuideProgramme* p = programmeAt(hwnd, st, x, y, &r);
+    if (!p) return;
+    // Snapshot the fields before any message pumping (TrackPopupMenu / the modal below).
+    const std::wstring channelId = st->rows[r].channelId, channelName = st->rows[r].channelName,
+                       title = p->title;
+    const long long startUtc = p->startUtc, stopUtc = p->stopUtc;
+
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 1, L"Schedule recording…");
+    POINT pt{x, y};
+    ClientToScreen(hwnd, &pt);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, nullptr);
+    DestroyMenu(menu);
+    if (cmd == 1) st->cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
 }
 
 LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -383,6 +411,9 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_LBUTTONDOWN:
             onClick(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             return 0;
+        case WM_RBUTTONDOWN:
+            onRightClick(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return 0;
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {
                 DestroyWindow(hwnd);
@@ -460,11 +491,13 @@ void applyData(GuideState* st, std::vector<GuideRow> rows, long long nowUtc) {
 
 }  // namespace
 
-void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc) {
+void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
+                  GuideCallbacks cb) {
     registerGuideClass(hInst);
     if (g_guide && IsWindow(g_guide)) {  // already open — repopulate + focus
         GuideState* st = stateOf(g_guide);
         if (st) {
+            st->cb = std::move(cb);
             applyData(st, std::move(rows), nowUtc);
             // Start scrolled so "now" sits a little in from the left edge.
             st->scrollX = std::max(0, timeToContentX(st, nowUtc) - dpx(st->dpi, 80));
@@ -483,6 +516,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
     g_guide = hwnd;
     if (GuideState* st = stateOf(hwnd)) {
         st->hInst = hInst;
+        st->cb = std::move(cb);
         st->dpi = GetDpiForWindow(hwnd);
         computeMetrics(st);
         recreateFormats(st);

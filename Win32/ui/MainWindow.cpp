@@ -1177,6 +1177,10 @@ void onEpgDone(AppState* st, EpgResult* res) {
 // Assemble the timeline guide from stored programmes (all enabled playlists) and open
 // the guide window. Programmes are joined to channel display names by tvg-id; rows with
 // no guide data are omitted. The whole loaded window scrolls client-side (no re-query).
+// Defined below (after the scheduler helpers) — declared here for onEpgGuide's callback.
+void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title, long long startUtc, long long stopUtc);
+
 void onEpgGuide(AppState* st) {
     const long long now = static_cast<long long>(time(nullptr));
     const long long winStart = now - 6 * 3600;    // a little history
@@ -1201,6 +1205,7 @@ void onEpgGuide(AppState* st) {
             if (!have || p.channelId != curId) {
                 flush();
                 curId = p.channelId;
+                cur.channelId = curId;
                 auto it = nameByTvg.find(curId);
                 cur.channelName = (it != nameByTvg.end() && !it->second.empty()) ? it->second : curId;
                 have = true;
@@ -1218,7 +1223,12 @@ void onEpgGuide(AppState* st) {
     }
     std::sort(rows.begin(), rows.end(),
               [](const GuideRow& a, const GuideRow& b) { return a.channelName < b.channelName; });
-    showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now);
+    GuideCallbacks cb;
+    cb.onSchedule = [st](const std::wstring& channelId, const std::wstring& channelName,
+                         const std::wstring& title, long long startUtc, long long stopUtc) {
+        scheduleFromGuide(st, channelId, channelName, title, startUtc, stopUtc);
+    };
+    showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
 }
 
 void toggleFullscreen(AppState* st) {
@@ -1366,6 +1376,42 @@ void onSchedulerTick(AppState* st) {
             st->db.updateScheduleStatus(id, ScheduleStatus::Failed);
             diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
         }
+    }
+}
+
+// Schedule a recording for a guide programme: resolve its tvg-id to a recordable stream,
+// store the (self-contained) schedule, nudge the scheduler in case it is already airing,
+// and confirm. Called from the TV Guide's right-click "Schedule recording".
+void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title, long long startUtc, long long stopUtc) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    std::optional<Channel> ch;
+    if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
+    if (!ch) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Channel not found",
+                       L"Couldn't match \"" + channelName + L"\" to a playable channel in your "
+                       L"library (its tvg-id isn't in an enabled playlist).");
+        return;
+    }
+    ScheduledRecording s;
+    s.channelId = channelId;
+    s.channelName = ch->name.empty() ? channelName : ch->name;
+    s.streamUrl = ch->streamUrl;
+    s.userAgent = ch->userAgent;
+    s.referrer = ch->referrer;
+    s.title = title;
+    s.startUtc = startUtc;
+    s.stopUtc = stopUtc;
+    s.mux = st->recFormat;  // the app's current TS/MKV setting
+    s.createdAt = static_cast<long long>(time(nullptr));
+    if (st->db.addSchedule(s) > 0) {
+        onSchedulerTick(st);  // start immediately if the programme is already on air
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Recording scheduled",
+                       title + L"\r\n" + s.channelName +
+                           L"\r\n\r\nThe app must be running at the scheduled time.");
+    } else {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Could not schedule",
+                       L"The recording could not be saved.");
     }
 }
 
