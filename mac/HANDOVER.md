@@ -95,9 +95,11 @@ ARC/threading/CoreAudio review). **KEY: only Spectrum needs audio capture; Signa
   anywhere; position persisted `meter_pos_x/y`); a bottom-bar **show/hide button** (`meters_hidden`); and
   **Video Only** mode (⌥⌘F / Esc / double-click). `StatMeterView` + `SpectrumMeterView` were retired.
 
-**Remaining:** **on-device tuning** of the Tube glow + Scope trace + the knob response curves (built blind,
-first-draft), and the **E3** promotion above (`MeterModel` → `common/ui` under a neutral `rabbitears::meter`
-ns once Win32 reviews). Then on-device-validate the lot and merge PR #22 to `main`.
+**Remaining:** the **E3** promotion above (`MeterModel` → `common/ui` under a neutral `rabbitears::meter` ns
+once Win32 reviews) is the last pre-merge item, then merge PR #22 to `main`. **Backlog (not blocking):**
+fine-tuning the Tube glow radius / Scope trace weight / knob response curves — built blind but on-device-validated
+as ship-quality (Scope + LED confirmed by the owner 2026-07-05); tweak the constants in `fillCell`/`strokeScope`
+if a later pass wants them dialed in.
 
 ## Playlists — enable / disable / rename / refresh / delete (branch `mac-stats-meter` / PR #22, alongside the meters)
 
