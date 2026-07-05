@@ -9,9 +9,10 @@
 
 #include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM
 
+#include "resource.h"     // IDI_APPICON
 #include "ui/D2DSupport.h"
-#include "ui/Dialogs.h"  // showInfoDialog
-#include "ui/Theme.h"
+#include "ui/Dialogs.h"   // showInfoDialog
+#include "ui/Theme.h"     // currentTheme + applyDialogDarkMode
 
 // windows.h maps DrawText -> DrawTextW and d2d1.h declares ID2D1RenderTarget::DrawText
 // through that same macro, so rt->DrawText(...) resolves to DrawTextW consistently
@@ -420,6 +421,10 @@ void registerGuideClass(HINSTANCE hInst) {
     wc.hInstance = hInst;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;
+    wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));  // taskbar / Alt-Tab icon
+    wc.hIconSm = static_cast<HICON>(LoadImageW(hInst, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+                                               GetSystemMetrics(SM_CXSMICON),
+                                               GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     wc.lpszClassName = kClass;
     RegisterClassExW(&wc);
     done = true;
@@ -466,6 +471,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
             updateScrollbars(g_guide, st);
             InvalidateRect(g_guide, nullptr, FALSE);
         }
+        applyDialogDarkMode(g_guide);  // re-theme the caption in case the skin changed
         SetForegroundWindow(g_guide);
         return;
     }
@@ -484,6 +490,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
         st->scrollX = std::max(0, timeToContentX(st, nowUtc) - dpx(st->dpi, 80));
         updateScrollbars(hwnd, st);
     }
+    applyDialogDarkMode(hwnd);  // dark/immersive caption + themed border (matches the app chrome)
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 }
