@@ -112,6 +112,7 @@ constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
 constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
 constexpr int ID_EPG_GUIDE = 2048;     // Settings → TV Guide (open the timeline guide window)
+constexpr int ID_SCHEDULES = 2070;     // Settings → Scheduled Recordings… (recording scheduler manager)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
@@ -1415,6 +1416,39 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
     }
 }
 
+// Settings ▸ Scheduled Recordings… — the manager (list + New/Cancel/Delete). The host
+// callbacks own the recorder + DB so cancel/delete stop an active recording, and New
+// opens scheduleDialog over the manager and stores + nudges the scheduler.
+void onManageSchedules(AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    ScheduleManagerCallbacks cb;
+    cb.list = [st] { return st->db.listSchedules(); };
+    cb.cancel = [st](long long id) {
+        if (st->activeScheduleId == id) {
+            st->player.stopRecording();
+            st->activeScheduleId = 0;
+        }
+        st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+    };
+    cb.remove = [st](long long id) {
+        if (st->activeScheduleId == id) {
+            st->player.stopRecording();
+            st->activeScheduleId = 0;
+        }
+        st->db.deleteSchedule(id);
+    };
+    cb.addNew = [st](HWND owner) {
+        HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+        ScheduledRecording d;
+        if (scheduleDialog(owner, hi, st->dpi, st->db.allChannels(), d)) {
+            d.mux = st->recFormat;
+            d.createdAt = static_cast<long long>(time(nullptr));
+            if (st->db.addSchedule(d) > 0) onSchedulerTick(st);  // start now if already airing
+        }
+    };
+    manageSchedules(st->hwnd, hInst, st->dpi, cb);
+}
+
 // Serialize the category include-set as a newline-joined list. Group titles come
 // from a single M3U line so they never contain a newline; an empty stored value
 // means the filter is off (show everything).
@@ -1564,6 +1598,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 catLabel.c_str());
     AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, L"TV Guide");
     AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
+    AppendMenuW(m, MF_STRING, ID_SCHEDULES, L"Scheduled Recordings…");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
     // row live there now — the old inline quick-toggle checkboxes were redundant).
@@ -1653,6 +1688,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_EPG_GUIDE:
             onEpgGuide(st);
+            break;
+        case ID_SCHEDULES:
+            onManageSchedules(st);
             break;
         case ID_EPG_REFRESH:
             onEpgRefresh(st);
@@ -2750,7 +2788,8 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     HWND splash = showSplash(hInst);
 
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_BAR_CLASSES | ICC_TREEVIEW_CLASSES |
-                                              ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
+                                              ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES |
+                                              ICC_DATE_CLASSES};
     InitCommonControlsEx(&icc);
     registerClasses(hInst);
 

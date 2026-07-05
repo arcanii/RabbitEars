@@ -1356,4 +1356,442 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
     return st.ok;
 }
 
+// ---- Scheduled recordings: New/Edit dialog + Manager -----------------------
+
+namespace {
+
+// epoch (UTC seconds) <-> local SYSTEMTIME, for the DateTimePickers.
+SYSTEMTIME epochToLocalSt(long long epoch) {
+    const unsigned long long ft100 = static_cast<unsigned long long>(epoch + 11644473600LL) * 10000000ULL;
+    FILETIME ft{static_cast<DWORD>(ft100 & 0xFFFFFFFFULL), static_cast<DWORD>(ft100 >> 32)};
+    SYSTEMTIME utc{}, local{};
+    FileTimeToSystemTime(&ft, &utc);
+    SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local);
+    return local;
+}
+long long localStToEpoch(const SYSTEMTIME& local) {
+    SYSTEMTIME utc{};
+    TzSpecificLocalTimeToSystemTime(nullptr, &local, &utc);
+    FILETIME ft{};
+    SystemTimeToFileTime(&utc, &ft);
+    const unsigned long long ft100 =
+        (static_cast<unsigned long long>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    return static_cast<long long>(ft100 / 10000000ULL) - 11644473600LL;
+}
+
+constexpr int ID_SCH_CHAN = 1601, ID_SCH_TITLE = 1602, ID_SCH_START = 1603, ID_SCH_STOP = 1604;
+
+struct ScheduleDlgState {
+    HWND  combo = nullptr, title = nullptr, start = nullptr, stop = nullptr;
+    HFONT font = nullptr;
+    UINT  dpi = 96;
+    bool  ok = false, done = false;
+    // Captured in the IDOK handler *before* the window (and its controls) are destroyed,
+    // so the show-function reads these, not the dead HWNDs.
+    const Channel* picked = nullptr;
+    SYSTEMTIME     pickedStart{}, pickedStop{};
+    std::wstring   pickedTitle;
+};
+
+LRESULT CALLBACK ScheduleDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<ScheduleDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, w);
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            SetBkMode(dc, TRANSPARENT);
+            HGDIOBJ of = SelectObject(dc, st->font);
+            SetTextColor(dc, currentTheme().textPrimary);
+            const wchar_t* labels[4] = {L"Channel:", L"Title:", L"Start:", L"Stop:"};
+            const int ys[4] = {18, 76, 134, 192};
+            for (int i = 0; i < 4; ++i) {
+                RECT r{dp(18, st->dpi), dp(ys[i], st->dpi), dp(86, st->dpi), dp(ys[i] + 20, st->dpi)};
+                DrawTextW(dc, labels[i], -1, &r, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            }
+            SelectObject(dc, of);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(w)) {
+                case IDOK: {  // validate + capture BEFORE destroy (the controls die with the window)
+                    const int sel = static_cast<int>(SendMessageW(st->combo, CB_GETCURSEL, 0, 0));
+                    SYSTEMTIME a{}, b{};
+                    if (sel < 0 || DateTime_GetSystemtime(st->start, &a) != GDT_VALID ||
+                        DateTime_GetSystemtime(st->stop, &b) != GDT_VALID ||
+                        localStToEpoch(b) <= localStToEpoch(a)) {
+                        MessageBeep(MB_ICONWARNING);
+                        return 0;  // keep the dialog open
+                    }
+                    st->picked =
+                        reinterpret_cast<const Channel*>(SendMessageW(st->combo, CB_GETITEMDATA, sel, 0));
+                    st->pickedStart = a;
+                    st->pickedStop = b;
+                    wchar_t t[256] = L"";
+                    GetWindowTextW(st->title, t, ARRAYSIZE(t));
+                    st->pickedTitle = t;
+                    st->ok = true;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                case IDCANCEL:
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+
+}  // namespace
+
+bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Channel>& channels,
+                    ScheduledRecording& out) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ScheduleDlgProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsSchedule";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    // Sort a pointer view of the channels by name for the type-ahead combo. `channels`
+    // outlives this modal call, so the stored Channel* item-data stays valid.
+    std::vector<const Channel*> sorted;
+    sorted.reserve(channels.size());
+    for (const auto& c : channels) sorted.push_back(&c);
+    std::sort(sorted.begin(), sorted.end(),
+              [](const Channel* a, const Channel* b) { return a->name < b->name; });
+
+    ScheduleDlgState st;
+    st.dpi = dpi;
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
+    const int W = dp(460, dpi), H = dp(300, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsSchedule",
+                               out.channelName.empty() ? L"New Recording Schedule" : L"Schedule Recording",
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        return false;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(18, dpi), fx = dp(90, dpi), fw = cr.right - fx - m;
+
+    st.combo = CreateWindowExW(0, L"COMBOBOX", L"",
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, fx,
+                               dp(14, dpi), fw, dp(320, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SCH_CHAN)), hInst, nullptr);
+    int preSel = -1;
+    for (int i = 0; i < static_cast<int>(sorted.size()); ++i) {
+        const int idx = static_cast<int>(
+            SendMessageW(st.combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(sorted[i]->name.c_str())));
+        SendMessageW(st.combo, CB_SETITEMDATA, idx, reinterpret_cast<LPARAM>(sorted[i]));
+        if (preSel < 0 && !out.streamUrl.empty() && sorted[i]->streamUrl == out.streamUrl) preSel = idx;
+        else if (preSel < 0 && !out.channelId.empty() && sorted[i]->tvgId == out.channelId) preSel = idx;
+    }
+    if (preSel >= 0) SendMessageW(st.combo, CB_SETCURSEL, preSel, 0);
+
+    st.title = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", out.title.c_str(),
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, fx, dp(72, dpi), fw,
+                               dp(26, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SCH_TITLE)), hInst, nullptr);
+
+    st.start = CreateWindowExW(0, DATETIMEPICK_CLASS, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, fx,
+                               dp(130, dpi), fw, dp(26, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SCH_START)), hInst, nullptr);
+    st.stop = CreateWindowExW(0, DATETIMEPICK_CLASS, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, fx,
+                              dp(188, dpi), fw, dp(26, dpi), dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SCH_STOP)), hInst, nullptr);
+    DateTime_SetFormat(st.start, L"yyyy-MM-dd  HH:mm");
+    DateTime_SetFormat(st.stop, L"yyyy-MM-dd  HH:mm");
+    SYSTEMTIME nowSt;
+    GetLocalTime(&nowSt);
+    const long long nowE = localStToEpoch(nowSt);
+    SYSTEMTIME s0 = epochToLocalSt(out.startUtc > 0 ? out.startUtc : nowE + 300);
+    SYSTEMTIME s1 = epochToLocalSt(out.stopUtc > 0 ? out.stopUtc : nowE + 3900);
+    DateTime_SetSystemtime(st.start, GDT_VALID, &s0);
+    DateTime_SetSystemtime(st.stop, GDT_VALID, &s1);
+
+    const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                              cr.right - 2 * bw - dp(28, dpi), btnY, bw, bh, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  cr.right - bw - dp(18, dpi), btnY, bw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
+    for (HWND h : {st.combo, st.title, st.start, st.stop, ok, cancel})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(st.combo);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(msg.wParam)); DestroyWindow(dlg); break; }
+        if (r == -1) { DestroyWindow(dlg); break; }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    bool result = false;
+    if (st.ok && st.picked) {  // captured in the IDOK handler (the controls are gone now)
+        out.channelId = st.picked->tvgId;
+        out.channelName = st.picked->name;
+        out.streamUrl = st.picked->streamUrl;
+        out.userAgent = st.picked->userAgent;
+        out.referrer = st.picked->referrer;
+        out.title = st.pickedTitle;
+        out.startUtc = localStToEpoch(st.pickedStart);
+        out.stopUtc = localStToEpoch(st.pickedStop);
+        result = true;
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(st.font);
+    return result;
+}
+
+namespace {
+
+constexpr int ID_MG_LV = 1701, ID_MG_NEW = 1702, ID_MG_CANCEL = 1703, ID_MG_DELETE = 1704;
+
+const wchar_t* scheduleStatusText(ScheduleStatus s) {
+    switch (s) {
+        case ScheduleStatus::Pending: return L"Pending";
+        case ScheduleStatus::Recording: return L"● Recording";
+        case ScheduleStatus::Done: return L"Done";
+        case ScheduleStatus::Missed: return L"Missed";
+        case ScheduleStatus::Failed: return L"Failed";
+        case ScheduleStatus::Cancelled: return L"Cancelled";
+    }
+    return L"";
+}
+
+std::wstring scheduleWhen(long long start, long long stop) {
+    SYSTEMTIME a = epochToLocalSt(start), b = epochToLocalSt(stop);
+    wchar_t buf[80];
+    if (a.wYear == b.wYear && a.wMonth == b.wMonth && a.wDay == b.wDay)
+        swprintf_s(buf, L"%04d-%02d-%02d  %02d:%02d–%02d:%02d", a.wYear, a.wMonth, a.wDay, a.wHour,
+                   a.wMinute, b.wHour, b.wMinute);
+    else  // crosses midnight — show the stop date too
+        swprintf_s(buf, L"%04d-%02d-%02d %02d:%02d – %02d-%02d %02d:%02d", a.wYear, a.wMonth, a.wDay,
+                   a.wHour, a.wMinute, b.wMonth, b.wDay, b.wHour, b.wMinute);
+    return buf;
+}
+
+struct ManageDlgState {
+    HWND  lv = nullptr;
+    HFONT font = nullptr;
+    UINT  dpi = 96;
+    ScheduleManagerCallbacks cb;
+    std::vector<ScheduledRecording> rows;
+    bool  done = false;
+};
+
+void mgRepopulate(ManageDlgState* st) {
+    st->rows = st->cb.list ? st->cb.list() : std::vector<ScheduledRecording>{};
+    SendMessageW(st->lv, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(st->lv);
+    for (int i = 0; i < static_cast<int>(st->rows.size()); ++i) {
+        const ScheduledRecording& s = st->rows[i];
+        std::wstring title = s.title.empty() ? L"(untitled)" : s.title;
+        LVITEMW it{};
+        it.mask = LVIF_TEXT | LVIF_PARAM;
+        it.iItem = i;
+        it.lParam = i;
+        it.pszText = const_cast<LPWSTR>(title.c_str());
+        const int row = ListView_InsertItem(st->lv, &it);
+        ListView_SetItemText(st->lv, row, 1, const_cast<LPWSTR>(s.channelName.c_str()));
+        std::wstring when = scheduleWhen(s.startUtc, s.stopUtc);
+        ListView_SetItemText(st->lv, row, 2, const_cast<LPWSTR>(when.c_str()));
+        ListView_SetItemText(st->lv, row, 3, const_cast<LPWSTR>(scheduleStatusText(s.status)));
+    }
+    SendMessageW(st->lv, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(st->lv, nullptr, TRUE);
+}
+
+long long mgSelectedId(ManageDlgState* st) {
+    const int sel = ListView_GetNextItem(st->lv, -1, LVNI_SELECTED);
+    if (sel < 0) return 0;
+    LVITEMW it{};
+    it.mask = LVIF_PARAM;
+    it.iItem = sel;
+    if (!ListView_GetItem(st->lv, &it)) return 0;
+    const int idx = static_cast<int>(it.lParam);
+    return (idx >= 0 && idx < static_cast<int>(st->rows.size())) ? st->rows[idx].id : 0;
+}
+
+LRESULT CALLBACK ManageDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<ManageDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, w);
+        case WM_COMMAND:
+            switch (LOWORD(w)) {
+                case ID_MG_NEW:
+                    if (st->cb.addNew) {
+                        st->cb.addNew(hwnd);
+                        mgRepopulate(st);
+                    }
+                    return 0;
+                case ID_MG_CANCEL:
+                    if (const long long id = mgSelectedId(st); id && st->cb.cancel) {
+                        st->cb.cancel(id);
+                        mgRepopulate(st);
+                    }
+                    return 0;
+                case ID_MG_DELETE:
+                    if (const long long id = mgSelectedId(st); id && st->cb.remove) {
+                        st->cb.remove(id);
+                        mgRepopulate(st);
+                    }
+                    return 0;
+                case IDCANCEL:
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+
+}  // namespace
+
+void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCallbacks cb) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ManageDlgProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsScheduleMgr";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    ManageDlgState st;
+    st.dpi = dpi;
+    st.cb = std::move(cb);
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
+    const int W = dp(640, dpi), H = dp(460, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg =
+        CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsScheduleMgr", L"Scheduled Recordings",
+                        WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst, nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        return;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(16, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(14, dpi);
+    const int listBottom = btnY - dp(10, dpi);
+
+    st.lv = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
+                                LVS_SHOWSELALWAYS,
+                            m, m, cr.right - 2 * m, listBottom - m, dlg,
+                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_LV)), hInst, nullptr);
+    ListView_SetExtendedListViewStyle(st.lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    const int lvW = cr.right - 2 * m - GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+    const struct { const wchar_t* h; int pct; } cols[4] = {
+        {L"Title", 34}, {L"Channel", 26}, {L"When", 28}, {L"Status", 12}};
+    for (int i = 0; i < 4; ++i) {
+        LVCOLUMNW col{};
+        col.mask = LVCF_TEXT | LVCF_WIDTH;
+        col.pszText = const_cast<LPWSTR>(cols[i].h);
+        col.cx = lvW * cols[i].pct / 100;
+        ListView_InsertColumn(st.lv, i, &col);
+    }
+
+    const int bw = dp(96, dpi), gap = dp(8, dpi);
+    HWND newB = CreateWindowExW(0, L"BUTTON", L"New…", WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, bw,
+                                bh, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_NEW)), hInst,
+                                nullptr);
+    HWND cancelB = CreateWindowExW(0, L"BUTTON", L"Cancel recording",
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + bw + gap, btnY, dp(140, dpi),
+                                   bh, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_CANCEL)),
+                                   hInst, nullptr);
+    HWND delB = CreateWindowExW(0, L"BUTTON", L"Delete", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                m + bw + gap + dp(140, dpi) + gap, btnY, bw, bh, dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_DELETE)), hInst,
+                                nullptr);
+    HWND closeB = CreateWindowExW(0, L"BUTTON", L"Close",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                  cr.right - bw - dp(16, dpi), btnY, bw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
+    for (HWND h : {st.lv, newB, cancelB, delB, closeB})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+
+    applyDialogDarkMode(dlg);
+    const Theme& th = currentTheme();
+    ListView_SetBkColor(st.lv, th.windowBg);
+    ListView_SetTextBkColor(st.lv, th.windowBg);
+    ListView_SetTextColor(st.lv, th.textPrimary);
+    mgRepopulate(&st);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(st.lv);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(msg.wParam)); DestroyWindow(dlg); break; }
+        if (r == -1) { DestroyWindow(dlg); break; }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(st.font);
+}
+
 }  // namespace rabbitears
