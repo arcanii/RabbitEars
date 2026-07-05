@@ -15,6 +15,7 @@
 #include "models/ParsedChannel.h"
 #include "models/Playlist.h"
 #include "models/Programme.h"
+#include "models/ScheduledRecording.h"
 
 struct sqlite3;  // forward-declared; sqlite3.h is included only in the .cpp
 
@@ -65,6 +66,9 @@ public:
     std::vector<Channel> favourites();
     std::vector<Channel> searchChannels(const std::wstring& term);
     std::optional<Channel> channelByLcn(int lcn);
+    // First enabled channel carrying this tvg-id (the EPG join key); nullopt if none.
+    // Used to resolve a guide programme back to a recordable stream.
+    std::optional<Channel> channelByTvgId(const std::wstring& tvgId);
 
     std::vector<std::wstring> listGroups();
     // Distinct ISO country codes (lowercase) derived from tvg-id suffixes
@@ -91,6 +95,12 @@ public:
     // then start — the timeline-guide query.
     std::vector<Programme> programmesInWindow(long long playlistId, long long windowStartUtc,
                                               long long windowEndUtc);
+
+    // ---- Scheduled recordings ----------------------------------------------
+    long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
+    std::vector<ScheduledRecording> listSchedules();     // ordered by start_utc
+    void updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath = {});
+    void deleteSchedule(long long id);
 
     // ---- Settings (key/value blob) ----------------------------------------
     std::optional<std::wstring> getSetting(const std::wstring& key);

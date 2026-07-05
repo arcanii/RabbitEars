@@ -32,6 +32,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
@@ -69,6 +70,7 @@ constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
 constexpr UINT WM_APP_EPG_DONE = WM_APP + 3;  // EPG fetch/parse worker -> UI thread
+constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 
 // Shutdown safety-net: once teardown begins, guarantee the process exits within a
 // bounded time. libVLC's stop()/release() can block on a stuck stream, leaving
@@ -226,6 +228,8 @@ struct AppState {
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
+    long long  activeScheduleId = 0;   // id of the schedule currently owning the recorder (0 = none)
+    bool       schedulerReconciled = false;  // one-time startup reset of stale "Recording" rows
     std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv"
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
     bool       categoryActive = false;    // is the Categories include-filter on?
@@ -1284,6 +1288,10 @@ std::wstring recordingPath(const std::wstring& channelName, const std::wstring& 
 }
 
 void onToggleRecord(AppState* st) {
+    if (st->activeScheduleId != 0) {  // the recorder is owned by a scheduled recording
+        setStatus(st, L"A scheduled recording is in progress — manage it in Scheduled Recordings.");
+        return;
+    }
     if (st->player.isRecording()) {
         const std::wstring file = st->player.recordingFile();
         st->player.stopRecording();
@@ -1302,6 +1310,62 @@ void onToggleRecord(AppState* st) {
                                   st->nowPlaying.referrer, path, mux)) {
         SetWindowTextW(st->btnRec, kGlyphStop);
         setStatus(st, L"● Recording " + st->nowPlaying.name + L"  →  " + path);
+    }
+}
+
+// The recording scheduler tick (~30s): decide via the pure planScheduler() core, then
+// apply — driving the single shared recorder and writing status back to the DB. Runs
+// only while the app is open (a schedule whose window passed while closed is marked
+// Missed on the next tick). Guards against the manual Record button via activeScheduleId.
+void onSchedulerTick(AppState* st) {
+    auto schedules = st->db.listSchedules();
+    if (schedules.empty()) return;
+    // One-time startup reconcile: a schedule still marked Recording is stale (a prior
+    // session was closed mid-record — nothing is actually recording now), so reset it to
+    // Pending and let planScheduler resume it (if still in window) or miss it.
+    if (!st->schedulerReconciled) {
+        st->schedulerReconciled = true;
+        bool changed = false;
+        for (const auto& s : schedules)
+            if (s.status == ScheduleStatus::Recording) {
+                st->db.updateScheduleStatus(s.id, ScheduleStatus::Pending);
+                changed = true;
+            }
+        if (changed) schedules = st->db.listSchedules();
+    }
+    const long long now = static_cast<long long>(time(nullptr));
+    // "Manual" recording = the recorder is busy but no schedule owns it.
+    const bool manualRecording = st->player.isRecording() && st->activeScheduleId == 0;
+    const SchedulerPlan plan = planScheduler(schedules, now, manualRecording);
+
+    for (long long id : plan.stop) {
+        st->player.stopRecording();
+        st->db.updateScheduleStatus(id, ScheduleStatus::Done);
+        if (st->activeScheduleId == id) st->activeScheduleId = 0;
+        diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
+        setStatus(st, L"Scheduled recording saved.");
+    }
+    for (long long id : plan.miss) {
+        st->db.updateScheduleStatus(id, ScheduleStatus::Missed);
+        diag::warn(L"scheduled recording missed (id " + std::to_wstring(id) + L")");
+    }
+    for (long long id : plan.start) {  // planScheduler yields at most one
+        const ScheduledRecording* s = nullptr;
+        for (const auto& x : schedules)
+            if (x.id == id) { s = &x; break; }
+        if (!s) continue;
+        const std::wstring ext = (s->mux == L"mkv") ? L".mkv" : L".ts";
+        const std::string mux = (s->mux == L"mkv") ? "mkv" : "ts";
+        const std::wstring path = recordingPath(s->channelName, ext);
+        if (st->player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
+            st->activeScheduleId = id;
+            st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path);
+            diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
+            setStatus(st, L"● Recording (scheduled) " + s->channelName);
+        } else {
+            st->db.updateScheduleStatus(id, ScheduleStatus::Failed);
+            diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
+        }
     }
 }
 
@@ -1677,6 +1741,7 @@ void createChildren(HWND hwnd, AppState* st) {
     st->skinStripOn = skin::initSkinStrip();
     if (st->skinStripOn) SetTimer(hwnd, kSkinAnimTimer, 16, nullptr);  // ~60 fps
 #endif
+    SetTimer(hwnd, kSchedulerTimer, 30000, nullptr);  // recording scheduler: check every ~30 s
     st->nav = CreateWindowExW(0, WC_TREEVIEWW, L"",
                               WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TVS_HASBUTTONS |
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
@@ -1941,8 +2006,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             EndPaint(hwnd, &ps);
             return 0;
         }
-#ifdef RABBITEARS_THEME_ENGINE
         case WM_TIMER:
+            if (st && wParam == kSchedulerTimer) {
+                onSchedulerTick(st);
+                return 0;
+            }
+#ifdef RABBITEARS_THEME_ENGINE
             if (st && wParam == kSkinAnimTimer) {
                 // Animate the GPU strip via a child-clipped DC (DCX_CLIPCHILDREN) so the
                 // transport controls are excluded and the command bar isn't redrawn each
@@ -1958,8 +2027,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 return 0;
             }
-            break;
 #endif
+            break;
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (st->panelDragActive && (wParam & MK_LBUTTON)) {
@@ -2441,6 +2510,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_DESTROY:
             armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
+            KillTimer(hwnd, kSchedulerTimer);
 #ifdef RABBITEARS_THEME_ENGINE
             KillTimer(hwnd, kSkinAnimTimer);
             skin::shutdownSkinStrip();

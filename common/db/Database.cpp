@@ -119,6 +119,29 @@ Programme readProgramme(Stmt& q) {
     return p;
 }
 
+// SELECT column order shared by every scheduled-recording query below.
+constexpr const char* kScheduleCols =
+    "id,channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
+    "status,file_path,created_at";
+
+ScheduledRecording readSchedule(Stmt& q) {
+    ScheduledRecording s;
+    s.id = q.intCol(0);
+    s.channelId = q.textCol(1);
+    s.channelName = q.textCol(2);
+    s.streamUrl = q.textCol(3);
+    s.userAgent = q.textCol(4);
+    s.referrer = q.textCol(5);
+    s.title = q.textCol(6);
+    s.startUtc = q.intCol(7);
+    s.stopUtc = q.intCol(8);
+    s.mux = q.textCol(9);
+    s.status = static_cast<ScheduleStatus>(q.intCol(10));
+    s.filePath = q.textCol(11);
+    s.createdAt = q.intCol(12);
+    return s;
+}
+
 std::vector<Channel> runChannelQuery(sqlite3* db, const std::string& sql,
                                      const std::wstring* bindText = nullptr,
                                      std::optional<long long> bindInt = std::nullopt) {
@@ -241,6 +264,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v1: the baseline schema above.
 //   v2: playlists.enabled — per-playlist on/off toggle.
 //   v3: EPG — playlists.epg_url + the epg_programmes table (XMLTV now/next + guide).
+//   v4: scheduled_recordings — the recording scheduler queue.
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -249,7 +273,7 @@ void Database::migrate() {
         Stmt q(db_, "PRAGMA user_version");
         if (q && q.step()) v = q.intCol(0);
     }
-    if (v >= 3) return;
+    if (v >= 4) return;
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -276,11 +300,35 @@ void Database::migrate() {
     exec("CREATE INDEX IF NOT EXISTS idx_epg_lookup "
          "ON epg_programmes(playlist_id, channel_id, start_utc);");
 
+    // v4: the recording-scheduler queue. Self-contained rows (the stream URL + hints are
+    // captured at schedule time), standalone (not playlist-scoped — a schedule outlives
+    // its source playlist).
+    exec(
+        "CREATE TABLE IF NOT EXISTS scheduled_recordings("
+        "  id           INTEGER PRIMARY KEY,"
+        "  channel_id   TEXT,"
+        "  channel_name TEXT NOT NULL,"
+        "  stream_url   TEXT NOT NULL,"
+        "  user_agent   TEXT,"
+        "  referrer     TEXT,"
+        "  title        TEXT,"
+        "  start_utc    INTEGER NOT NULL,"
+        "  stop_utc     INTEGER NOT NULL,"
+        "  mux          TEXT NOT NULL DEFAULT 'ts',"
+        "  status       INTEGER NOT NULL DEFAULT 0,"
+        "  file_path    TEXT,"
+        "  created_at   INTEGER NOT NULL"
+        ");");
+    exec("CREATE INDEX IF NOT EXISTS idx_sched_start ON scheduled_recordings(start_utc);");
+
     // Advance user_version to reflect exactly what actually landed, so a partial
-    // failure retries the missing step next open instead of skipping it.
+    // failure retries the missing step next open instead of skipping it. (hasColumn on a
+    // column of a table doubles as a table-exists check — table_info is empty if absent.)
     const bool haveV2 = hasColumn("playlists", "enabled");
     const bool haveV3 = haveV2 && hasColumn("playlists", "epg_url");
-    if (haveV3) exec("PRAGMA user_version=3");
+    const bool haveV4 = haveV3 && hasColumn("scheduled_recordings", "id");
+    if (haveV4) exec("PRAGMA user_version=4");
+    else if (haveV3) exec("PRAGMA user_version=3");
     else if (haveV2) exec("PRAGMA user_version=2");
 }
 
@@ -455,6 +503,16 @@ std::optional<Channel> Database::channelByLcn(int lcn) {
     return rows.front();
 }
 
+std::optional<Channel> Database::channelByTvgId(const std::wstring& tvgId) {
+    auto rows = runChannelQuery(db_,
+                                std::string("SELECT ") + kChannelCols +
+                                    " FROM channels WHERE tvg_id=? AND " + kEnabledOnly +
+                                    " ORDER BY sort_order LIMIT 1",
+                                &tvgId);
+    if (rows.empty()) return std::nullopt;
+    return rows.front();
+}
+
 std::vector<std::wstring> Database::listGroups() {
     std::vector<std::wstring> out;
     Stmt q(db_, (std::string("SELECT DISTINCT group_title FROM channels WHERE group_title IS NOT NULL "
@@ -589,6 +647,67 @@ std::vector<Programme> Database::programmesInWindow(long long playlistId, long l
     q.bindInt(3, windowStartUtc);
     while (q.step()) out.push_back(readProgramme(q));
     return out;
+}
+
+// ---- Scheduled recordings --------------------------------------------------
+
+long long Database::addSchedule(const ScheduledRecording& s) {
+    Stmt q(db_,
+           "INSERT INTO scheduled_recordings("
+           "channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
+           "status,file_path,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+    if (!q) return 0;
+    q.bindText(1, s.channelId);
+    q.bindText(2, s.channelName);
+    q.bindText(3, s.streamUrl);
+    q.bindText(4, s.userAgent);
+    q.bindText(5, s.referrer);
+    q.bindText(6, s.title);
+    q.bindInt(7, s.startUtc);
+    q.bindInt(8, s.stopUtc);
+    q.bindText(9, s.mux);
+    q.bindInt(10, static_cast<int>(s.status));
+    q.bindText(11, s.filePath);
+    q.bindInt(12, s.createdAt);
+    if (q.stepDone() != SQLITE_DONE) return 0;
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::vector<ScheduledRecording> Database::listSchedules() {
+    std::vector<ScheduledRecording> out;
+    if (!db_) return out;
+    Stmt q(db_,
+           (std::string("SELECT ") + kScheduleCols + " FROM scheduled_recordings ORDER BY start_utc")
+               .c_str());
+    if (!q) return out;
+    while (q.step()) out.push_back(readSchedule(q));
+    return out;
+}
+
+void Database::updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath) {
+    // Set file_path only when a non-empty one is given, so a later status change (Done,
+    // Failed…) doesn't clobber the path captured when recording started.
+    if (filePath.empty()) {
+        Stmt q(db_, "UPDATE scheduled_recordings SET status=? WHERE id=?");
+        if (!q) return;
+        q.bindInt(1, static_cast<int>(status));
+        q.bindInt(2, id);
+        q.stepDone();
+    } else {
+        Stmt q(db_, "UPDATE scheduled_recordings SET status=?, file_path=? WHERE id=?");
+        if (!q) return;
+        q.bindInt(1, static_cast<int>(status));
+        q.bindText(2, filePath);
+        q.bindInt(3, id);
+        q.stepDone();
+    }
+}
+
+void Database::deleteSchedule(long long id) {
+    Stmt q(db_, "DELETE FROM scheduled_recordings WHERE id=?");
+    if (!q) return;
+    q.bindInt(1, id);
+    q.stepDone();
 }
 
 // ---- Settings --------------------------------------------------------------

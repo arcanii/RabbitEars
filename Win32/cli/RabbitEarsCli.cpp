@@ -19,6 +19,7 @@
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Encoding.h"
@@ -272,6 +273,95 @@ int selftest() {
                "ON DELETE CASCADE removes the playlist's programmes");
     }
 
+    out("== Scheduled recordings ==\n");
+    {
+        ScheduledRecording s;
+        s.channelId = L"cnn.us";
+        s.channelName = L"CNN";
+        s.streamUrl = L"http://s/cnn";
+        s.userAgent = L"UA/1";
+        s.title = L"News";
+        s.startUtc = 5000;
+        s.stopUtc = 8000;
+        s.mux = L"mkv";
+        s.createdAt = 1000;
+        const long long sid = db.addSchedule(s);
+        expect(sid > 0, "addSchedule returns id");
+
+        auto list = db.listSchedules();
+        expect(list.size() == 1 && list[0].channelName == L"CNN" &&
+                   list[0].streamUrl == L"http://s/cnn" && list[0].startUtc == 5000 &&
+                   list[0].stopUtc == 8000 && list[0].mux == L"mkv" &&
+                   list[0].status == ScheduleStatus::Pending,
+               "listSchedules round-trips the row");
+
+        db.updateScheduleStatus(sid, ScheduleStatus::Recording, L"C:\\rec\\news.mkv");
+        auto rec = db.listSchedules();
+        expect(rec.size() == 1 && rec[0].status == ScheduleStatus::Recording &&
+                   rec[0].filePath == L"C:\\rec\\news.mkv",
+               "updateScheduleStatus sets status + file path");
+
+        db.updateScheduleStatus(sid, ScheduleStatus::Done);  // empty path must not clobber
+        auto done = db.listSchedules();
+        expect(done.size() == 1 && done[0].status == ScheduleStatus::Done &&
+                   done[0].filePath == L"C:\\rec\\news.mkv",
+               "status update with no path preserves the recorded file");
+
+        db.deleteSchedule(sid);
+        expect(db.listSchedules().empty(), "deleteSchedule removes the row");
+    }
+
+    out("== Scheduler planning ==\n");
+    {
+        auto mk = [](long long id, long long start, long long stop, ScheduleStatus st) {
+            ScheduledRecording s;
+            s.id = id;
+            s.startUtc = start;
+            s.stopUtc = stop;
+            s.status = st;
+            return s;
+        };
+        using S = ScheduleStatus;
+        {  // airing + recorder free -> start
+            auto p = planScheduler({mk(1, 100, 200, S::Pending)}, 150, false);
+            expect(p.start.size() == 1 && p.start[0] == 1 && p.stop.empty() && p.miss.empty(),
+                   "airing + free -> start");
+        }
+        {  // airing + a manual recording holds the recorder -> stay pending (retry)
+            auto p = planScheduler({mk(1, 100, 200, S::Pending)}, 150, true);
+            expect(p.start.empty() && p.miss.empty(), "airing + recorder busy -> no start (retry)");
+        }
+        {  // window fully passed while still pending -> miss
+            auto p = planScheduler({mk(1, 100, 200, S::Pending)}, 250, false);
+            expect(p.miss.size() == 1 && p.miss[0] == 1 && p.start.empty(), "window passed -> miss");
+        }
+        {  // recording and now >= stop -> stop
+            auto p = planScheduler({mk(1, 100, 200, S::Recording)}, 200, false);
+            expect(p.stop.size() == 1 && p.stop[0] == 1 && p.start.empty(), "recording, now>=stop -> stop");
+        }
+        {  // recording mid-window -> no action
+            auto p = planScheduler({mk(1, 100, 200, S::Recording)}, 150, false);
+            expect(p.stop.empty() && p.start.empty() && p.miss.empty(), "recording mid-window -> no-op");
+        }
+        {  // two airing + free -> only ONE starts (single recorder)
+            auto p = planScheduler({mk(1, 100, 200, S::Pending), mk(2, 100, 200, S::Pending)}, 150, false);
+            expect(p.start.size() == 1, "two airing + free -> only one starts");
+        }
+        {  // an active recording blocks a second pending from starting
+            auto p =
+                planScheduler({mk(1, 100, 300, S::Recording), mk(2, 100, 200, S::Pending)}, 150, false);
+            expect(p.start.empty() && p.stop.empty(), "busy with a schedule -> no second start");
+        }
+        {  // future schedule -> nothing yet
+            auto p = planScheduler({mk(1, 500, 600, S::Pending)}, 100, false);
+            expect(p.start.empty() && p.miss.empty() && p.stop.empty(), "future schedule -> no action");
+        }
+        {  // Done/Cancelled are inert
+            auto p = planScheduler({mk(1, 100, 200, S::Done), mk(2, 100, 200, S::Cancelled)}, 150, false);
+            expect(p.start.empty() && p.stop.empty() && p.miss.empty(), "terminal statuses are inert");
+        }
+    }
+
     out("\n== By country (tvg-id suffix) ==\n");
     {
         const std::string ccSample = "#EXTM3U\n"
@@ -398,10 +488,10 @@ int selftest() {
                "gpu codec rejects non-finite -> whole fallback");
     }
 
-    out("== EPG schema migration (v2 -> v3) ==\n");
+    out("== schema migration (v2 -> v4) ==\n");
     {
         // Hand-build a pre-EPG (v2) database, then let Database::open() upgrade it —
-        // proving an existing 0.1.9 DB gains EPG support without losing channel data.
+        // proving an existing 0.1.9 DB gains EPG + scheduler tables without losing data.
         const std::wstring mpath = std::wstring(tmp) + L"rabbitears_migrate.db";
         DeleteFileW(mpath.c_str());
         DeleteFileW((mpath + L"-wal").c_str());
@@ -444,6 +534,12 @@ int selftest() {
         pr.stopUtc = 2000;
         pr.title = L"x";
         expect(mdb.bulkInsertProgrammes(7, {pr}, 3000) == 1, "epg_programmes table added by migration");
+        ScheduledRecording ms;
+        ms.channelName = L"Ch";
+        ms.streamUrl = L"http://c";
+        ms.startUtc = 1;
+        ms.stopUtc = 2;
+        expect(mdb.addSchedule(ms) > 0, "scheduled_recordings table added by migration (v4)");
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");
