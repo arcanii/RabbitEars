@@ -21,13 +21,13 @@
 #include "platform/Updater.h"
 
 #import "AppDelegate.h"
+#import "MeterView.h"
 #import "MetersDialog.h"
-#import "SpectrumMeterView.h"
 #import "SpectrumTap.h"
-#import "StatMeterView.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
+using namespace rabbitears::mac;  // MeterKind / MeterStyle / MeterConfig + the meter codecs
 
 // NSTableView that plays the selected row on Return/Enter (the keyboard peer of the
 // double-click action), so the grid is fully keyboard-navigable.
@@ -52,9 +52,10 @@ enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry =
 // Chrome metrics, shared by showWindow and the hide/show-chrome relayout.
 static const CGFloat kBarH = 46;     // top command bar height
 static const CGFloat kStatusH = 22;  // bottom status/volume bar height
-static const CGFloat kMeterH = 24;    // meter line height (both meters share one line)
-static const CGFloat kMeterW = 300;   // each meter is a fixed ~300px wide (does NOT stretch)
-static const CGFloat kMeterGap = 8;   // gap between the stats meter and the spectrum meter
+static const CGFloat kMeterH = 24;   // meter line height
+static const CGFloat kMeterGap = 8;  // gap between adjacent meters
+// Per-kind meter widths (index = (int)MeterKind: Spectrum, Signal, Bitrate, Frames).
+static const CGFloat kMeterW[4] = {180, 64, 130, 96};
 
 @implementation MainWindowController {
     NSWindow*      _window;
@@ -62,8 +63,7 @@ static const CGFloat kMeterGap = 8;   // gap between the stats meter and the spe
     NSPopUpButton* _filter;
     RETableView*   _table;
     NSView*        _videoView;
-    StatMeterView* _statMeter;   // always-on libVLC-stats meter strip below the video
-    SpectrumMeterView* _spectrum;  // opt-in FFT spectrum strip below the stats meter
+    MeterView*     _meters[4];   // Spectrum / Signal / Bitrate / Frames (index = (int)MeterKind)
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
@@ -79,8 +79,8 @@ static const CGFloat kMeterGap = 8;   // gap between the stats meter and the spe
     std::unique_ptr<VlcPlayerMac> _player;
     NSTimer*                      _statsTimer;   // 250ms libVLC-stats poll → _statMeter
     double                        _bitrateMax;   // rolling throughput peak for the meter scale
-    SpectrumTap*                  _spectrumTap;      // Core Audio process tap → _spectrum (opt-in)
-    BOOL                          _spectrumEnabled;  // View ▸ Show Spectrum (persisted; default off)
+    SpectrumTap*                  _spectrumTap;      // Core Audio process tap → the Spectrum meter
+    rabbitears::mac::MeterConfig  _meterCfg[4];      // per-kind config (from the dialog + persistence)
     int                           _spectrumSilentTicks;   // audible-but-tap-silent polls (denial detection)
     BOOL                          _spectrumEverHadEnergy;  // tap has produced audio => capture granted this session
     std::vector<Channel>          _channels;
@@ -125,10 +125,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         diag::error(L"DB open failed: " + err);
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
-    if (_db) {
-        const auto se = _db->getSetting(L"spectrum_enabled");
-        _spectrumEnabled = (se && *se == L"1");  // spectrum is opt-in (default off — no consent prompt)
-    }
+    [self loadMeterConfig];  // per-kind enable/style/colours from settings
 
     // ---- top bar (one row): [+ Add Playlist] [Settings ▾] … [search] [filter] [Stop]
     //      — the mac peer of the Win32 command bar (kCmdBtns = + Add Playlist, Settings).
@@ -245,14 +242,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [_videoView addGestureRecognizer:dbl];
     [dbl release];  // MRC: the view retains it
 
-    _statMeter = [[StatMeterView alloc] initWithFrame:NSMakeRect(0, 0, kMeterW, kMeterH)];
-    _statMeter.autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
-    [videoPane addSubview:_statMeter];
-
-    _spectrum = [[SpectrumMeterView alloc] initWithFrame:NSMakeRect(kMeterW + kMeterGap, 0, kMeterW, kMeterH)];
-    _spectrum.autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
-    _spectrum.hidden = YES;  // opt-in — shown by -applyMeterLayout when enabled
-    [videoPane addSubview:_spectrum];
+    // One MeterView per kind (Spectrum/Signal/Bitrate/Frames), laid out on one line at
+    // the bottom-left; -applyMeterConfig configures + shows the enabled ones.
+    static const MeterKind meterKinds[4] = {MeterKind::Spectrum, MeterKind::Signal,
+                                            MeterKind::Bitrate, MeterKind::Frames};
+    for (int k = 0; k < 4; ++k) {
+        _meters[k] = [[MeterView alloc] initWithKind:meterKinds[k]];
+        _meters[k].autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
+        _meters[k].hidden = YES;
+        [videoPane addSubview:_meters[k]];
+    }
     [split addSubview:videoPane];
 
     // Empty-state hint, centered over the (black) video pane until channels exist.
@@ -270,7 +269,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [content addSubview:split];
     _gridWidth = 380;
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
-    [self applyMeterLayout];        // spectrum strip hidden (video fills) unless enabled
+    [self applyMeterConfig];        // configure + show the enabled meters (start the tap if Spectrum is on)
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
 
@@ -366,16 +365,14 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _status.hidden = v;
     _muteBtn.hidden = v;
     _volume.hidden = v;
-    _statMeter.hidden = v;
-    _spectrum.hidden = v || !_spectrumEnabled;
 
     NSView* content = _window.contentView;
     const CGFloat W = content.bounds.size.width, H = content.bounds.size.height;
     const CGFloat topEdge = (v || _toolbarHidden) ? H : H - kBarH;
     const CGFloat botEdge = v ? 0 : kStatusH;
     _split.frame = NSMakeRect(0, botEdge, W, topEdge - botEdge);
-    [self layoutSplitPanes:_split];   // grid stays hidden while video-only
-    if (!v) [self applyMeterLayout];  // restore the meter frames/visibility on exit
+    [self layoutSplitPanes:_split];  // grid stays hidden while video-only
+    [self applyMeterLayout];         // hides the meters + fills the video while video-only
 
     if (v) [self installEscMonitor];
     else   [self removeEscMonitor];
@@ -634,8 +631,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 
 - (void)stop:(id)__unused sender {
     _player->stop();
-    [_statMeter reset];
-    [self stopSpectrumTap];  // clear the strip + free the tap's RT thread (no spinning on silence)
+    for (MeterView* m : _meters) [m reset];
+    [self stopSpectrumTap];  // free the tap's RT thread (no spinning on silence)
     _window.title = @"RabbitEars";
     [self setStatus:@"Stopped."];
 }
@@ -645,49 +642,88 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // so it fills while data flows at its usual rate and drops when the stream stalls.
 - (void)tickStats {
     const FlowStats fs = _player->sampleStats();
-    if (!fs.playing) { [_statMeter reset]; _spectrumSilentTicks = 0; return; }
-    // Use the DEMUX byte-rate as the throughput: HLS/segmented inputs fetch their
-    // segments internally and report i_read_bytes (readBytesPerSec) as 0, but the demux
-    // rate tracks the real media bitrate for both HLS and plain streams.
-    _bitrateMax = std::max(fs.demuxBytesPerSec, _bitrateMax * 0.97);  // adapt to the stream's own rate
-    const double denom = std::max(_bitrateMax, 1000.0);
-    [_statMeter setLevel:(float)std::clamp(fs.demuxBytesPerSec / denom, 0.0, 1.0)];
-    NSString* drops = fs.lostPicturesDelta > 0
-        ? [NSString stringWithFormat:@" · %d drop", fs.lostPicturesDelta] : @"";
-    [_statMeter setReadout:[NSString stringWithFormat:@"%.1f Mb/s · %d fps%@",
-                            fs.demuxBytesPerSec * 8.0 / 1.0e6,
-                            (int)std::lround(fs.displayedPerSec), drops]];
+    if (!fs.playing) { for (MeterView* m : _meters) [m reset]; _spectrumSilentTicks = 0; return; }
+    // Bitrate: the DEMUX byte-rate — HLS/segmented inputs report i_read_bytes as 0, but
+    // the demux rate tracks the real media bitrate for both HLS and plain streams.
+    [_meters[(int)MeterKind::Bitrate] pushBitrate:fs.demuxBytesPerSec];
+    [_meters[(int)MeterKind::Frames] setFrames:(int)std::lround(fs.displayedPerSec)
+                                    dropsDelta:fs.lostPicturesDelta];
+    // Signal: a composite of stream health — errors (corrupt/discontinuity/lost) raise
+    // "trouble" (red tint) and cut strength; a clean, flowing stream reads near-full.
+    const float trouble = std::clamp(
+        (float)(fs.corruptedDelta + fs.discontinuityDelta + fs.lostPicturesDelta) / 5.0f, 0.0f, 1.0f);
+    [_meters[(int)MeterKind::Signal] setSignal:std::clamp(1.0f - trouble * 0.7f, 0.15f, 1.0f)
+                                       trouble:trouble];
     [self updateSpectrumAvailability:fs];
 }
 
-// ---- opt-in Spectrum meter (Core Audio process tap + FFT) --------------------
-// OPT-IN (View ▸ Show Spectrum, ⌥⌘M): the tap prompts once for audio-capture consent,
-// so it's off by default. The always-on stats strip is the "floor" — the spectrum
-// sits above it and, on denied/silent capture, shows a placeholder rather than a dark
-// strip (detected via the FlowStats cross-check below).
+// ---- Meters (per-kind config from the dialog + persistence) ------------------
+// Each MeterView is shown/positioned per its MeterConfig. Only Spectrum needs the
+// audio-capture tap (opt-in); Signal/Bitrate/Frames run off FlowStats.
 
-// Both meters share ONE line at the bottom-left, each a fixed kMeterW wide; the video
-// fills the space above. Stats is always shown; the opt-in spectrum sits to its right
-// when enabled (toggling it does not resize the video).
+// Load per-kind enable/style/colours from the settings DB (Win32-compatible keys
+// meter_<kind> / _style / _colors); defaults otherwise.
+- (void)loadMeterConfig {
+    static const char* keys[4] = {"spectrum", "signal", "bitrate", "frames"};
+    static const MeterKind kinds[4] = {MeterKind::Spectrum, MeterKind::Signal,
+                                       MeterKind::Bitrate, MeterKind::Frames};
+    for (int k = 0; k < 4; ++k) {
+        _meterCfg[k] = MeterConfig{};
+        _meterCfg[k].enabled = false;
+        _meterCfg[k].style   = defaultMeterStyle(kinds[k]);
+        _meterCfg[k].palette = defaultMeterPalette(kinds[k]);
+        if (!_db) continue;
+        const std::wstring base = wideFromUtf8((std::string("meter_") + keys[k]).c_str());
+        if (auto e = _db->getSetting(base)) _meterCfg[k].enabled = (*e == L"1");
+        if (auto s = _db->getSetting(base + L"_style"))
+            _meterCfg[k].style = meterStyleFromString(utf8FromWide(*s), _meterCfg[k].style);
+        if (auto c = _db->getSetting(base + L"_colors"))
+            _meterCfg[k].palette = meterPaletteFromString(utf8FromWide(*c), _meterCfg[k].palette);
+    }
+}
+
+// Push the loaded config into the views, relayout, and match the Spectrum tap to its
+// enabled state (creating the tap is what triggers the one-time consent prompt).
+- (void)applyMeterConfig {
+    for (int k = 0; k < 4; ++k) [_meters[k] setConfig:_meterCfg[k]];
+    [self applyMeterLayout];
+    if (_meterCfg[(int)MeterKind::Spectrum].enabled) {
+        [_meters[(int)MeterKind::Spectrum] setAvailable:YES];
+        [self startSpectrumTap];
+    } else {
+        [self stopSpectrumTap];
+    }
+}
+
+// Lay the enabled meters out on one line at the bottom-left (each a fixed per-kind
+// width); the video fills the space above. All hidden while video-only.
 - (void)applyMeterLayout {
     NSView* pane = _videoView.superview;
     if (!pane) return;
     const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
-    _statMeter.frame = NSMakeRect(0, 0, kMeterW, kMeterH);
-    _spectrum.hidden = !_spectrumEnabled;
-    _spectrum.frame  = NSMakeRect(kMeterW + kMeterGap, 0, kMeterW, kMeterH);
-    _videoView.frame = NSMakeRect(0, kMeterH, W, std::max(0.0, H - kMeterH));
+    CGFloat x = 0;
+    BOOL anyShown = NO;
+    for (int k = 0; k < 4; ++k) {
+        const BOOL show = _meterCfg[k].enabled && !_videoOnly;
+        _meters[k].hidden = !show;
+        if (!show) continue;
+        _meters[k].frame = NSMakeRect(x, 0, kMeterW[k], kMeterH);
+        x += kMeterW[k] + kMeterGap;
+        anyShown = YES;
+    }
+    const CGFloat lineH = anyShown ? kMeterH : 0;
+    _videoView.frame = NSMakeRect(0, lineH, W, std::max(0.0, H - lineH));
 }
 
-- (void)toggleSpectrum { [self setSpectrumEnabled:!_spectrumEnabled]; }
-- (BOOL)spectrumEnabled { return _spectrumEnabled; }
+- (BOOL)spectrumEnabled { return _meterCfg[(int)MeterKind::Spectrum].enabled; }
 
-- (void)setSpectrumEnabled:(BOOL)on {
-    _spectrumEnabled = on;
-    if (_db) _db->setSetting(L"spectrum_enabled", on ? L"1" : L"0");
-    [self applyMeterLayout];
-    if (on) { [_spectrum setAvailable:YES]; [self startSpectrumTap]; }  // consent prompt happens here
-    else    { [self stopSpectrumTap]; }
+// The ⌥⌘M menu toggle is a shortcut for the Spectrum meter's Show checkbox.
+- (void)toggleSpectrum {
+    const int s = (int)MeterKind::Spectrum;
+    _meterCfg[s].enabled = !_meterCfg[s].enabled;
+    if (_db) _db->setSetting(wideFromUtf8("meter_spectrum"), _meterCfg[s].enabled ? L"1" : L"0");
+    if (_meterCfg[s].enabled) [_meters[s] setAvailable:YES];
+    [self applyMeterConfig];  // relayout + start/stop the tap (the consent prompt is here)
 }
 
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
@@ -695,14 +731,15 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // so a denied prompt won't re-ask — which is exactly why -updateSpectrumAvailability:
 // must detect denial behaviourally rather than trust a non-nil tap.
 - (void)startSpectrumTap {
-    if (_spectrumTap || !_spectrumEnabled) return;
+    const int s = (int)MeterKind::Spectrum;
+    if (_spectrumTap || !_meterCfg[s].enabled) return;
     _spectrumSilentTicks = 0;
-    SpectrumMeterView* view = _spectrum;  // capture the VIEW, not self (no retain cycle)
+    MeterView* view = _meters[s];  // capture the VIEW, not self (no retain cycle)
     _spectrumTap = [[SpectrumTap alloc] initWithBandCount:24
                                           spectrumHandler:^(const float* bands, int count) {
         [view pushSpectrum:bands count:count];  // RT audio thread → brief lock in the view
     }];
-    if (!_spectrumTap) [_spectrum setAvailable:NO];  // macOS < 14.2, or the tap couldn't be built
+    if (!_spectrumTap) [_meters[s] setAvailable:NO];  // macOS < 14.2, or the tap couldn't be built
 }
 
 - (void)stopSpectrumTap {
@@ -710,7 +747,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [_spectrumTap release];  // MRC: balance the +1 from -alloc. Safe — stop() already ran, so no IOProc
     _spectrumTap = nil;      // is in flight, and the view it captured is app-lifetime.
     _spectrumSilentTicks = 0;
-    [_spectrum reset];
+    [_meters[(int)MeterKind::Spectrum] reset];
 }
 
 // Decide live-spectrum vs the "grant permission" placeholder by cross-checking the tap
@@ -718,11 +755,12 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 // for ~2s => capture denied/unavailable. This is the fix for the dark-strip failure
 // that pulled the meter before (a denied tap "succeeds" but delivers only silence).
 - (void)updateSpectrumAvailability:(const FlowStats&)fs {
-    if (!_spectrumEnabled || !_spectrumTap) return;
-    if ([_spectrum consumeHadEnergy]) {          // the tap delivered real audio
+    const int s = (int)MeterKind::Spectrum;
+    if (!_meterCfg[s].enabled || !_spectrumTap) return;
+    if ([_meters[s] consumeHadEnergy]) {         // the tap delivered real audio
         _spectrumEverHadEnergy = YES;            // => capture is granted for this session
         _spectrumSilentTicks = 0;
-        [_spectrum setAvailable:YES];
+        [_meters[s] setAvailable:YES];
         return;
     }
     // Once the tap has EVER produced energy this session, capture is granted — a later
@@ -732,7 +770,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     if (_spectrumEverHadEnergy) return;
     const BOOL audible = fs.demuxBytesPerSec > 0 && _volume.doubleValue > 0;
     if (!audible) { _spectrumSilentTicks = 0; return; }
-    if (++_spectrumSilentTicks >= 16) [_spectrum setAvailable:NO];  // ~4s audible but no tap energy => denied
+    if (++_spectrumSilentTicks >= 16) [_meters[s] setAvailable:NO];  // ~4s audible but no tap energy => denied
 }
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
@@ -756,8 +794,9 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)showMeters:(id)__unused sender {
     MetersDialog* dlg = [[MetersDialog alloc] initWithDatabase:_db.get()];
     [dlg presentForWindow:_window onApply:^{
+        [self loadMeterConfig];
+        [self applyMeterConfig];
         [self setStatus:@"Meter settings saved."];
-        // TODO(M1): re-read the meter_<kind> config and refresh the live meters.
     }];
     [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
 }
@@ -834,7 +873,7 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     const Channel& c = _channels[(size_t)row];
     _player->play(c.streamUrl, c.userAgent, c.referrer);
     _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
-    if (_spectrumEnabled) [self startSpectrumTap];  // spectrum is opt-in (View ▸ Show Spectrum)
+    if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];

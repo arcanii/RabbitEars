@@ -52,9 +52,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
-    src/app/StatMeterView.mm
     src/app/SpectrumTap.mm
-    src/app/SpectrumMeterView.mm
     src/app/MeterView.mm
     src/app/MetersDialog.mm
     src/app/MeterModel.cpp
@@ -65,8 +63,7 @@ if(RABBITEARS_BUILD_MAC)
   # These use ARC (weak-self timers; CoreFoundation bridging + a block-owning C++
   # struct for the Core Audio spectrum tap). The rest of the app is MRC-style.
   set_source_files_properties(
-    src/app/StatMeterView.mm src/app/SpectrumTap.mm src/app/SpectrumMeterView.mm
-    src/app/MetersDialog.mm src/app/MeterView.mm
+    src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
