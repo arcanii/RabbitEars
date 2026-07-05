@@ -38,6 +38,11 @@ public:
     // frames meters with NO audio capture (no consent prompt, no A/V desync).
     FlowStats sampleStats();
 
+    // Whether the current media has at least one audio track (false when stopped or for
+    // a video-only stream). Gates the Spectrum consent cross-check so a legitimately
+    // silent stream isn't mistaken for denied audio capture.
+    bool hasAudioTrack() const;
+
 private:
     struct Impl;
     Impl* impl_;

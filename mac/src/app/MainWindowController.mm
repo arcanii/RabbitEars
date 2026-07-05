@@ -782,9 +782,13 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     // problem, so we must never flip to the placeholder. Only a tap that has never once
     // produced energy while audio is audible indicates a denied prompt.
     if (_spectrumEverHadEnergy) return;
-    const BOOL audible = fs.demuxBytesPerSec > 0 && _volume.doubleValue > 0;
+    // Only suspect a denied tap when audio SHOULD be audible: an audio track is present,
+    // data is flowing, and we're not muted. A video-only / no-audio / muted stream is
+    // legitimately silent — don't nag. Needs a sustained silence so a quiet intro on an
+    // audio stream doesn't false-flag.
+    const BOOL audible = _player->hasAudioTrack() && fs.demuxBytesPerSec > 0 && _volume.doubleValue > 0;
     if (!audible) { _spectrumSilentTicks = 0; return; }
-    if (++_spectrumSilentTicks >= 16) [_meters[s] setAvailable:NO];  // ~4s audible but no tap energy => denied
+    if (++_spectrumSilentTicks >= 32) [_meters[s] setAvailable:NO];  // ~8s audible but no tap energy => denied
 }
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for

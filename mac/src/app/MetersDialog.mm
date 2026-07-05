@@ -23,7 +23,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     return [NSColor colorWithSRGBRed:c.r / 255.0 green:c.g / 255.0 blue:c.b / 255.0 alpha:c.a / 255.0];
 }
 rabbitears::SkinColor skinFromNS(NSColor* col) {
-    NSColor* c = [col colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    NSColor* c = [col colorUsingColorSpace:NSColorSpace.sRGBColorSpace] ?: NSColor.blackColor;
     rabbitears::SkinColor s;
     s.r = (uint8_t)std::lround(c.redComponent * 255);
     s.g = (uint8_t)std::lround(c.greenComponent * 255);

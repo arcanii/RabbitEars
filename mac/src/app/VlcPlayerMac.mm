@@ -166,4 +166,13 @@ FlowStats VlcPlayerMac::sampleStats() {
     return fs;
 }
 
+bool VlcPlayerMac::hasAudioTrack() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return false;
+    return libvlc_audio_get_track_count(impl_->player) > 0;
+#else
+    return false;
+#endif
+}
+
 }  // namespace rabbitears
