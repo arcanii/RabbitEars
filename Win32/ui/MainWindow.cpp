@@ -14,6 +14,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <commctrl.h>
@@ -41,6 +42,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/ChannelGridControl.h"
 #include "ui/Dialogs.h"
 #include "ui/DockLayout.h"
+#include "ui/EpgGuideControl.h"
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -107,6 +109,7 @@ constexpr int ID_METER_FRAMES = 2033;
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
 constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
+constexpr int ID_EPG_GUIDE = 2048;     // Settings → TV Guide (open the timeline guide window)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
@@ -1167,6 +1170,53 @@ void onEpgDone(AppState* st, EpgResult* res) {
     delete res;
 }
 
+// Assemble the timeline guide from stored programmes (all enabled playlists) and open
+// the guide window. Programmes are joined to channel display names by tvg-id; rows with
+// no guide data are omitted. The whole loaded window scrolls client-side (no re-query).
+void onEpgGuide(AppState* st) {
+    const long long now = static_cast<long long>(time(nullptr));
+    const long long winStart = now - 6 * 3600;    // a little history
+    const long long winEnd = now + 72 * 3600;     // three days ahead
+    std::vector<GuideRow> rows;
+    for (const auto& pl : st->db.listPlaylists()) {
+        if (!pl.enabled) continue;
+        auto progs = st->db.programmesInWindow(pl.id, winStart, winEnd);  // ordered channel_id, start
+        if (progs.empty()) continue;
+        std::unordered_map<std::wstring, std::wstring> nameByTvg;
+        for (const auto& c : st->db.channelsByPlaylist(pl.id))
+            if (!c.tvgId.empty()) nameByTvg.emplace(c.tvgId, c.name);
+        GuideRow cur;
+        std::wstring curId;
+        bool have = false;
+        auto flush = [&] {
+            if (have && !cur.programmes.empty()) rows.push_back(std::move(cur));
+            cur = GuideRow{};
+            have = false;
+        };
+        for (auto& p : progs) {
+            if (!have || p.channelId != curId) {
+                flush();
+                curId = p.channelId;
+                auto it = nameByTvg.find(curId);
+                cur.channelName = (it != nameByTvg.end() && !it->second.empty()) ? it->second : curId;
+                have = true;
+            }
+            cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
+        }
+        flush();
+    }
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (rows.empty()) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"No guide data yet",
+                       L"There is no stored programme data for your enabled playlists.\r\n\r\n"
+                       L"Run Settings ▸ Refresh Guide… first (a playlist must carry an x-tvg-url).");
+        return;
+    }
+    std::sort(rows.begin(), rows.end(),
+              [](const GuideRow& a, const GuideRow& b) { return a.channelName < b.channelName; });
+    showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now);
+}
+
 void toggleFullscreen(AppState* st) {
     HWND hwnd = st->hwnd;
     st->fullscreen = !st->fullscreen;
@@ -1402,6 +1452,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
     AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
                 catLabel.c_str());
+    AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, L"TV Guide");
     AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
@@ -1489,6 +1540,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_CATEGORIES:
             onCategories(st);
+            break;
+        case ID_EPG_GUIDE:
+            onEpgGuide(st);
             break;
         case ID_EPG_REFRESH:
             onEpgRefresh(st);

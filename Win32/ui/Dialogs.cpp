@@ -892,7 +892,15 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
     ShowWindow(dlg, SW_SHOW);
     SetFocus(ok);
     MSG msg;
-    while (!st.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) {  // WM_QUIT (the app was closed under this modal — e.g. from the TV
+            // guide, whose owned window is destroyed with the main window). Re-post so
+            // runApp's OUTER loop also exits, instead of the 4s watchdog force-killing it.
+            PostQuitMessage(static_cast<int>(msg.wParam));
+            break;
+        }
+        if (r == -1) break;  // GetMessage error
         if (!IsDialogMessageW(dlg, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
