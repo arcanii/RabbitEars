@@ -6,8 +6,8 @@
 //   * Signal   — 5 antenna-style strength bars (composite stream health).
 //   * Bitrate  — a scrolling throughput history.
 //   * Frames   — displayed fps as lit cells, with a red flare on dropped frames.
-// Styles: LED (solid dot-matrix) today; LCD/Tube/Scope land incrementally (an
-// unimplemented style renders as LED). Colours come from the MeterConfig palette.
+// Styles: LED (dot-matrix), LCD (ghosted matrix), Tube (glowing matrix), and Scope
+// (a phosphor trace of the level series). Colours + tuning come from the MeterConfig.
 //
 // The Spectrum kind folds in what SpectrumMeterView had: a thread-safe push from the
 // real-time audio thread, an energy probe, and a "grant permission" placeholder so a

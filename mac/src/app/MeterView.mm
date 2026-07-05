@@ -15,12 +15,17 @@ constexpr int kHist     = 96;  // bitrate history depth
 NSColor* nscolor(const rabbitears::SkinColor& c) {
     return [NSColor colorWithSRGBRed:c.r / 255.0 green:c.g / 255.0 blue:c.b / 255.0 alpha:c.a / 255.0];
 }
+inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in 0..1
 }  // namespace
 
 @implementation MeterView {
     MeterKind  _kind;
     MeterStyle _style;
-    float      _gain;   // from tuning.sensitivity (0.5 -> 1.0 unity)
+    float      _gain;       // tuning.sensitivity (0.5 -> unity gain)
+    float      _glow;       // tuning.glow — Tube/Scope bloom radius
+    float      _smoothing;  // tuning.smoothing — easing inertia
+    float      _peakHold;   // tuning.peakHold — spectrum peak linger
+    float      _breathing;  // tuning.breathing — bitrate ceiling ebb
     NSTimer*   _timer;
 
     NSColor *_bg, *_off, *_low, *_mid, *_high, *_accent, *_peak;
@@ -48,6 +53,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
         _kind = kind;
         _style = MeterStyle::Led;
         _gain = 1.0f;
+        _glow = _smoothing = _peakHold = _breathing = 0.5f;
         _lock = OS_UNFAIR_LOCK_INIT;
         _available = YES;
         _drawBands = 24;
@@ -77,7 +83,11 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
 
 - (void)setConfig:(const MeterConfig&)cfg {
     _style = cfg.style;
-    _gain = std::clamp(cfg.tuning.sensitivity * 2.0f, 0.05f, 4.0f);  // 0.5 knob == unity
+    _gain      = std::clamp(cfg.tuning.sensitivity * 2.0f, 0.05f, 4.0f);  // 0.5 knob == unity
+    _glow      = std::clamp(cfg.tuning.glow, 0.0f, 1.0f);
+    _smoothing = std::clamp(cfg.tuning.smoothing, 0.0f, 1.0f);
+    _peakHold  = std::clamp(cfg.tuning.peakHold, 0.0f, 1.0f);
+    _breathing = std::clamp(cfg.tuning.breathing, 0.0f, 1.0f);
     const MeterPalette& p = cfg.palette;
     _bg     = p.bg.inherit ? [NSColor colorWithWhite:0.08 alpha:1.0] : nscolor(p.bg);
     _off    = nscolor(p.off);
@@ -108,7 +118,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
 }
 
 - (void)pushBitrate:(double)bytesPerSec {
-    _histMax = std::max(bytesPerSec, _histMax * 0.97);  // adaptive ceiling
+    _histMax = std::max(bytesPerSec, _histMax * mix(0.99f, 0.95f, _breathing));  // ceiling; 0.5 -> 0.97
     const double denom = std::max(_histMax, 1000.0);
     _hist[_histHead] = (float)std::clamp(bytesPerSec / denom, 0.0, 1.0);
     _histHead = (_histHead + 1) % kHist;
@@ -163,26 +173,30 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
             _haveData = NO;
             os_unfair_lock_unlock(&_lock);
             if (n > 0) _drawBands = n;
+            const float attack = mix(0.76f, 0.24f, _smoothing);       // 0.5 -> 0.50 (pre-tuning)
+            const float decay  = mix(0.24f, 0.06f, _smoothing);       // 0.5 -> 0.15
+            const float peakDecay = mix(0.036f, 0.004f, _peakHold);   // 0.5 -> 0.02
             for (int b = 0; b < _drawBands; ++b) {
                 const float target = std::clamp((b < n ? tgt[b] : 0.0f) * _gain, 0.0f, 1.0f);
                 const float pl = _specLevel[b], pp = _specPeak[b];
-                _specLevel[b] += (target > _specLevel[b] ? 0.5f : 0.15f) * (target - _specLevel[b]);
+                _specLevel[b] += (target > _specLevel[b] ? attack : decay) * (target - _specLevel[b]);
                 if (_specLevel[b] > _specPeak[b]) _specPeak[b] = _specLevel[b];
-                else _specPeak[b] = std::max(_specLevel[b], _specPeak[b] - 0.02f);
+                else _specPeak[b] = std::max(_specLevel[b], _specPeak[b] - peakDecay);
                 if (_specLevel[b] != pl || _specPeak[b] != pp) changed = YES;
             }
             break;
         }
         case MeterKind::Signal: {
+            const float e = mix(0.38f, 0.12f, _smoothing);  // 0.5 -> 0.25 (pre-tuning)
             const float ps = _sigStrength, pt = _sigTrouble;
-            _sigStrength += 0.25f * (_sigStrengthT - _sigStrength);
-            _sigTrouble  += 0.25f * (_sigTroubleT - _sigTrouble);
+            _sigStrength += e * (_sigStrengthT - _sigStrength);
+            _sigTrouble  += e * (_sigTroubleT - _sigTrouble);
             if (_sigStrength != ps || _sigTrouble != pt) changed = YES;
             break;
         }
         case MeterKind::Frames: {
             const float pf = _fps, pl = _flare;
-            _fps += 0.3f * (_fpsT - _fps);
+            _fps += mix(0.45f, 0.15f, _smoothing) * (_fpsT - _fps);  // 0.5 -> 0.30 (pre-tuning)
             _flare = std::max(0.0f, _flare - 0.05f);
             if (_fps != pf || _flare != pl) changed = YES;
             break;
@@ -197,11 +211,24 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
 - (NSColor*)ramp:(float)frac {
     return frac < 0.60f ? _low : (frac < 0.85f ? _mid : _high);
 }
-// Unlit cell per style: LED (+ Tube/Scope, still LED for now) = solid off; LCD = a
-// faint 16% ghost of the lit colour.
+// Unlit cell per style: LED/Tube/Scope = solid off; LCD = a faint 16% ghost of the lit colour.
 - (NSColor*)unlitFor:(NSColor*)lit {
     if (_style == MeterStyle::Lcd) return [_off blendedColorWithFraction:0.16 ofColor:lit];
     return _off;
+}
+
+// One dot-matrix cell honouring the style. LED/LCD fill flat (LCD's unlit is ghosted by
+// -unlitFor:); Tube blooms a lit cell with a translucent halo sized by the glow knob, so
+// overlapping halos read as a warm valve glow.
+- (void)fillCell:(NSRect)r color:(NSColor*)lit lit:(BOOL)on {
+    if (!on) { [[self unlitFor:lit] setFill]; NSRectFill(r); return; }
+    if (_style == MeterStyle::Tube && _glow > 0.01f) {
+        const CGFloat halo = 1.0 + _glow * 3.0;
+        [[lit colorWithAlphaComponent:0.20f + 0.30f * _glow] setFill];
+        NSRectFill(NSInsetRect(r, -halo, -halo));
+    }
+    [lit setFill];
+    NSRectFill(r);
 }
 
 - (void)drawRect:(NSRect)__unused dirty {
@@ -210,6 +237,8 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     NSRectFill(b);
     [[NSColor colorWithWhite:0.22 alpha:1.0] set];
     NSFrameRectWithWidth(b, 1);
+    if (_kind == MeterKind::Spectrum && !_available) { [self drawUnavailable:b]; return; }
+    if (_style == MeterStyle::Scope) { [self drawScope:b]; return; }
     switch (_kind) {
         case MeterKind::Spectrum: [self drawSpectrum:b]; break;
         case MeterKind::Signal:   [self drawSignal:b]; break;
@@ -218,19 +247,19 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     }
 }
 
+- (void)drawUnavailable:(NSRect)b {
+    NSDictionary* attrs = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: [NSColor colorWithWhite:0.62 alpha:1.0],
+    };
+    NSString* msg = @"No audio — check Settings ▸ Privacy ▸ Audio";
+    const NSSize sz = [msg sizeWithAttributes:attrs];
+    [msg drawAtPoint:NSMakePoint(std::max(4.0, (b.size.width - sz.width) / 2.0),
+                                 (b.size.height - sz.height) / 2.0)
+      withAttributes:attrs];
+}
+
 - (void)drawSpectrum:(NSRect)b {
-    if (!_available) {
-        NSDictionary* attrs = @{
-            NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightMedium],
-            NSForegroundColorAttributeName: [NSColor colorWithWhite:0.62 alpha:1.0],
-        };
-        NSString* msg = @"No audio — check Settings ▸ Privacy ▸ Audio";
-        const NSSize sz = [msg sizeWithAttributes:attrs];
-        [msg drawAtPoint:NSMakePoint(std::max(4.0, (b.size.width - sz.width) / 2.0),
-                                     (b.size.height - sz.height) / 2.0)
-          withAttributes:attrs];
-        return;
-    }
     const CGFloat pad = 2, cellH = 3, gapY = 1, gapX = 1;
     const int n = std::max(1, _drawBands);
     const CGFloat colStride = (b.size.width - 2 * pad) / n;
@@ -243,10 +272,10 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
         for (int r = 0; r < rows; ++r) {
             const float frac = rows > 1 ? (float)r / (rows - 1) : 0.0f;
             NSColor* rc = [self ramp:frac];
-            const BOOL lit = r < litRows;
             const BOOL isPeak = (r == peakRow && peakRow > 0);
-            [(isPeak ? _peak : (lit ? rc : [self unlitFor:rc])) setFill];
-            NSRectFill(NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH));
+            const NSRect cell = NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH);
+            if (isPeak) [self fillCell:cell color:_peak lit:YES];
+            else        [self fillCell:cell color:rc lit:(r < litRows)];
         }
     }
 }
@@ -264,10 +293,8 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     for (int c = 0; c < bars; ++c) {
         const CGFloat x = pad + c * colStride;
         const BOOL barLit = c < litBars;
-        for (int r = 0; r < rows; ++r) {
-            [(barLit ? base : [self unlitFor:base]) setFill];
-            NSRectFill(NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH));
-        }
+        for (int r = 0; r < rows; ++r)
+            [self fillCell:NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH) color:base lit:barLit];
     }
 }
 
@@ -282,10 +309,9 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
         const CGFloat x = pad + (cols - 1 - i) * colW;
         for (int r = 0; r < rows; ++r) {
             const float rf = rows > 1 ? (float)r / (rows - 1) : 0.0f;
-            NSColor* lit = [_accent blendedColorWithFraction:rf * 0.5f ofColor:_peak];
-            const BOOL on = r < litRows;
-            [(on ? lit : [self unlitFor:lit]) setFill];
-            NSRectFill(NSMakeRect(x, pad + r * (cellH + gapY), std::max(1.0, colW - 1), cellH));
+            NSColor* litc = [_accent blendedColorWithFraction:rf * 0.5f ofColor:_peak];
+            [self fillCell:NSMakeRect(x, pad + r * (cellH + gapY), std::max(1.0, colW - 1), cellH)
+                     color:litc lit:(r < litRows)];
         }
     }
 }
@@ -301,11 +327,85 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     for (int c = 0; c < cols; ++c) {
         const BOOL on = c < lit;
         const CGFloat x = pad + c * (cellW + gapX);
-        for (int r = 0; r < rows; ++r) {
-            [(on ? base : [self unlitFor:base]) setFill];
-            NSRectFill(NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH));
+        for (int r = 0; r < rows; ++r)
+            [self fillCell:NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH) color:base lit:on];
+    }
+}
+
+// ---- Scope style: a phosphor oscilloscope trace of each kind's level series -------
+- (void)drawScope:(NSRect)b {
+    float series[kMaxBands];
+    int n = 0;
+    NSColor* trace = _accent;
+    switch (_kind) {
+        case MeterKind::Spectrum:
+            n = std::min(kMaxBands, std::max(1, _drawBands));
+            for (int i = 0; i < n; ++i) series[i] = std::clamp(_specLevel[i], 0.0f, 1.0f);
+            break;
+        case MeterKind::Bitrate: {
+            const int show = std::min(kHist, 48);
+            for (int i = 0; i < show; ++i) {  // oldest -> newest, left -> right
+                const int idx = ((_histHead - show + i) % kHist + kHist) % kHist;
+                series[i] = std::clamp(_hist[idx] * _gain, 0.0f, 1.0f);
+            }
+            n = show;
+            break;
+        }
+        case MeterKind::Signal: {
+            const float s = std::clamp(_sigStrength * _gain, 0.0f, 1.0f);
+            series[0] = series[1] = s;
+            n = 2;
+            trace = s > 0.6f ? _low : (s > 0.3f ? _mid : _high);
+            trace = [trace blendedColorWithFraction:std::clamp(_sigTrouble * 0.6f, 0.0f, 1.0f) ofColor:_high];
+            break;
+        }
+        case MeterKind::Frames: {
+            const float s = std::clamp(_fps / 60.0f * _gain, 0.0f, 1.0f);
+            series[0] = series[1] = s;
+            n = 2;
+            const int fps = (int)std::lround(_fps);
+            trace = fps >= 24 ? _low : (fps >= 15 ? _mid : _high);
+            trace = [trace blendedColorWithFraction:std::clamp(_flare, 0.0f, 1.0f) ofColor:_high];
+            break;
         }
     }
+    [self strokeScope:series count:n in:b color:trace];
+}
+
+// A dim filled area under a glowing polyline of the level series; the glow knob sets
+// the phosphor bloom radius.
+- (void)strokeScope:(const float*)v count:(int)n in:(NSRect)b color:(NSColor*)c {
+    if (n < 1) return;
+    const CGFloat pad = 3;
+    const CGFloat w = std::max(1.0, b.size.width - 2 * pad);
+    const CGFloat h = std::max(1.0, b.size.height - 2 * pad);
+    NSBezierPath* line = [NSBezierPath bezierPath];
+    for (int i = 0; i < n; ++i) {
+        const CGFloat x = pad + (n == 1 ? w * 0.5 : w * i / (n - 1));
+        const CGFloat y = pad + std::clamp(v[i], 0.0f, 1.0f) * h;
+        if (i == 0) [line moveToPoint:NSMakePoint(x, y)];
+        else        [line lineToPoint:NSMakePoint(x, y)];
+    }
+    NSBezierPath* area = [line copy];
+    [area lineToPoint:NSMakePoint(pad + w, pad)];
+    [area lineToPoint:NSMakePoint(pad, pad)];
+    [area closePath];
+    [[c colorWithAlphaComponent:0.16] setFill];
+    [area fill];
+
+    [NSGraphicsContext saveGraphicsState];
+    if (_glow > 0.01f) {
+        NSShadow* sh = [[NSShadow alloc] init];
+        sh.shadowBlurRadius = 1.5 + _glow * 6.0;
+        sh.shadowColor = c;
+        sh.shadowOffset = NSZeroSize;
+        [sh set];
+    }
+    line.lineWidth = 1.5;
+    line.lineJoinStyle = NSLineJoinStyleRound;
+    [[_peak blendedColorWithFraction:0.35 ofColor:c] setStroke];
+    [line stroke];
+    [NSGraphicsContext restoreGraphicsState];
 }
 
 @end

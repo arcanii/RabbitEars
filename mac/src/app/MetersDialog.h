@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // MetersDialog — the macOS "Meters" config panel (peer of Win32 Settings → Meters).
-// Per meter kind (Spectrum/Signal/Bitrate/Frames): a Show toggle and a Style
-// (LED/LCD/Tube/Scope). Loads from + persists to the settings DB under the
-// Win32-compatible keys (meter_<kind> / meter_<kind>_style). Colour wells, tuning
-// sliders, and a live preview are follow-up increments; the meters themselves grow
-// to honour this config (M1). Compiled with -fobjc-arc.
+// Per meter kind (Spectrum/Signal/Bitrate/Frames): a Show toggle, a Style
+// (LED/LCD/Tube/Scope), 7 colour wells, 5 tuning sliders, and a live preview fed
+// synthetic data. Loads from + persists to the settings DB under the Win32-compatible
+// keys (meter_<kind> / _style / _colors / _tuning). Compiled with -fobjc-arc.
 #pragma once
 
 #import <Cocoa/Cocoa.h>
