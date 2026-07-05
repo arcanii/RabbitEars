@@ -28,8 +28,10 @@
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
 
+#include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/Updater.h"
@@ -64,6 +66,7 @@ constexpr wchar_t kMainClass[] = L"RabbitEarsMain";
 constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
+constexpr UINT WM_APP_EPG_DONE = WM_APP + 3;  // EPG fetch/parse worker -> UI thread
 
 // Shutdown safety-net: once teardown begins, guarantee the process exits within a
 // bounded time. libVLC's stop()/release() can block on a stuck stream, leaving
@@ -103,6 +106,7 @@ constexpr int ID_METER_BITRATE = 2032;
 constexpr int ID_METER_FRAMES = 2033;
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
+constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
@@ -155,6 +159,25 @@ struct PlaylistResult {
     int          parsed = 0;    // channels the parser produced
     int          imported = 0;  // rows inserted/updated in the DB
     int          groups = 0;    // distinct non-empty group titles in this import
+};
+
+// EPG (Refresh Guide) — one enabled playlist that carries an XMLTV URL, the fetch
+// worker's per-playlist outcome, and the batch posted back to the UI thread. Fetch +
+// parse run off-thread; the DB write (bulkInsertProgrammes) runs on the UI thread,
+// mirroring the playlist-import split.
+struct EpgTarget {
+    long long    id = 0;
+    std::wstring name;
+    std::wstring url;
+};
+struct EpgFetch {
+    long long              playlistId = 0;
+    std::wstring           name;
+    std::wstring           error;       // empty on success
+    std::vector<Programme> programmes;  // parsed rows (empty on failure)
+};
+struct EpgResult {
+    std::vector<EpgFetch> fetches;
 };
 
 struct AppState {
@@ -1030,7 +1053,7 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
     const std::wstring src = L"Source:  " + res->source + L"\r\n\r\n";
     if (res->ok && !res->doc.channels.empty()) {
         const long long now = static_cast<long long>(time(nullptr));
-        const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now);
+        const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now, res->doc.epgUrl);
         if (pid == 0) {
             setStatus(st, L"Add playlist failed: could not save to the database");
             diag::error(L"playlist add failed: addPlaylist returned 0 for " + res->source);
@@ -1065,6 +1088,82 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
                    st->dpi, L"Import results", summary, details);
+    delete res;
+}
+
+// Fetch + store the XMLTV guide for every enabled playlist that carries an EPG URL.
+// Mirrors startPlaylistWorker: the download + gunzip + parse run on a detached worker
+// (busy-guarded), then WM_APP_EPG_DONE stores the parsed programmes on the UI thread.
+void onEpgRefresh(AppState* st) {
+    if (st->busy) {
+        setStatus(st, L"Busy — please wait…");
+        return;
+    }
+    std::vector<EpgTarget> targets;
+    for (const auto& pl : st->db.listPlaylists())
+        if (pl.enabled && !pl.epgUrl.empty()) targets.push_back({pl.id, pl.name, pl.epgUrl});
+
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (targets.empty()) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Refresh Guide", L"No guide source found",
+                       L"None of your enabled playlists carry an XMLTV guide URL (x-tvg-url in the "
+                       L"#EXTM3U header).\r\n\r\nAdd a playlist that includes one, then try again.");
+        return;
+    }
+    st->busy = true;
+    setStatus(st, L"Downloading guide…");
+    diag::info(L"EPG refresh start: " + std::to_wstring(targets.size()) + L" playlist(s)");
+    HWND hwnd = st->hwnd;
+    std::thread([hwnd, targets]() {
+        auto* res = new EpgResult();
+        for (const auto& t : targets) {
+            EpgFetch f;
+            f.playlistId = t.id;
+            f.name = t.name;
+            std::string bytes;
+            std::wstring err;
+            if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60 s
+                f.error = err.empty() ? L"download failed" : err;
+            } else {
+                const std::string xml = gunzipIfNeeded(bytes);
+                if (xml.empty())
+                    f.error = L"empty or invalid after decompression";
+                else
+                    f.programmes = parseXmltv(xml).programmes;
+            }
+            res->fetches.push_back(std::move(f));
+        }
+        PostMessageW(hwnd, WM_APP_EPG_DONE, 0, reinterpret_cast<LPARAM>(res));
+    }).detach();
+}
+
+void onEpgDone(AppState* st, EpgResult* res) {
+    st->busy = false;
+    const long long now = static_cast<long long>(time(nullptr));
+    int okCount = 0, totalProg = 0;
+    std::set<std::wstring> chans;
+    std::wstring detail;
+    for (auto& f : res->fetches) {
+        if (!f.error.empty()) {
+            detail += f.name + L":  " + f.error + L"\r\n";
+            diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error);
+            continue;
+        }
+        const int stored = st->db.bulkInsertProgrammes(f.playlistId, f.programmes, now);
+        ++okCount;
+        totalProg += stored;
+        for (const auto& p : f.programmes) chans.insert(p.channelId);
+        detail += f.name + L":  " + std::to_wstring(stored) + L" programmes\r\n";
+        diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
+    }
+    const std::wstring summary =
+        okCount > 0 ? L"Stored " + std::to_wstring(totalProg) + L" programmes across " +
+                          std::to_wstring(chans.size()) + L" channels"
+                    : L"Could not refresh the guide";
+    setStatus(st, summary);
+    showInfoDialog(st->hwnd,
+                   reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
+                   st->dpi, L"Refresh Guide", summary, detail);
     delete res;
 }
 
@@ -1303,6 +1402,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
     AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
                 catLabel.c_str());
+    AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
     // row live there now — the old inline quick-toggle checkboxes were redundant).
@@ -1389,6 +1489,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_CATEGORIES:
             onCategories(st);
+            break;
+        case ID_EPG_REFRESH:
+            onEpgRefresh(st);
             break;
         case ID_METERS_SETUP:
             onMeters(st);
@@ -2268,6 +2371,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_APP_PLAYLIST_DONE:
             onPlaylistDone(st, reinterpret_cast<PlaylistResult*>(lParam));
+            return 0;
+        case WM_APP_EPG_DONE:
+            onEpgDone(st, reinterpret_cast<EpgResult*>(lParam));
             return 0;
         case WM_SETTINGCHANGE:
             applyDarkChrome(hwnd);
