@@ -46,6 +46,30 @@ using namespace rabbitears::mac;  // MeterKind / MeterStyle / MeterConfig + the 
 }
 @end
 
+// A container that floats the meters over the video; the user can drag it anywhere.
+// Reports its new position (via onMoved) after each drag so the controller persists it.
+@interface DraggableMeterBar : NSView
+@property (nonatomic, copy) void (^onMoved)(void);
+@end
+
+@implementation DraggableMeterBar {
+    NSPoint _grab;  // cursor offset within the bar at mouse-down
+}
+- (void)mouseDown:(NSEvent*)e { _grab = [self convertPoint:e.locationInWindow fromView:nil]; }
+- (void)mouseDragged:(NSEvent*)e {
+    NSView* pane = self.superview;
+    if (!pane) return;
+    const NSPoint p = [pane convertPoint:e.locationInWindow fromView:nil];
+    const CGFloat maxX = std::max(0.0, pane.bounds.size.width - self.frame.size.width);
+    const CGFloat maxY = std::max(0.0, pane.bounds.size.height - self.frame.size.height);
+    NSRect f = self.frame;
+    f.origin.x = std::clamp(p.x - _grab.x, 0.0, maxX);
+    f.origin.y = std::clamp(p.y - _grab.y, 0.0, maxY);
+    self.frame = f;
+}
+- (void)mouseUp:(NSEvent*)__unused e { if (_onMoved) _onMoved(); }
+@end
+
 // Filter popup tags.
 enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
 
@@ -64,6 +88,7 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     RETableView*   _table;
     NSView*        _videoView;
     MeterView*     _meters[4];   // Spectrum / Signal / Bitrate / Frames (index = (int)MeterKind)
+    DraggableMeterBar* _meterBar;  // floats the meters over the video; user-draggable
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
     NSTextField*   _status;
     NSSlider*      _volume;      // bottom-bar volume (0..100)
@@ -75,6 +100,7 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     BOOL           _toolbarHidden; // View ▸ Hide Toolbar
     BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
     BOOL           _metersHidden;  // bottom-bar toggle: hide the whole meter line
+    CGFloat        _meterPosX, _meterPosY;  // meter-bar position as a 0..1 fraction of the pane
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
@@ -254,16 +280,22 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     [_videoView addGestureRecognizer:dbl];
     [dbl release];  // MRC: the view retains it
 
-    // One MeterView per kind (Spectrum/Signal/Bitrate/Frames), laid out on one line at
-    // the bottom-left; -applyMeterConfig configures + shows the enabled ones.
+    // The meters live in a draggable bar that floats over the video. -applyMeterLayout
+    // lays out the enabled ones inside it and sizes + positions the bar.
+    _meterBar = [[DraggableMeterBar alloc] initWithFrame:NSMakeRect(0, 0, 10, kMeterH)];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle
+    _meterBar.onMoved = ^{ [me persistMeterPos]; };
     static const MeterKind meterKinds[4] = {MeterKind::Spectrum, MeterKind::Signal,
                                             MeterKind::Bitrate, MeterKind::Frames};
     for (int k = 0; k < 4; ++k) {
         _meters[k] = [[MeterView alloc] initWithKind:meterKinds[k]];
-        _meters[k].autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
         _meters[k].hidden = YES;
-        [videoPane addSubview:_meters[k]];
+        [_meterBar addSubview:_meters[k]];
     }
+    [videoPane addSubview:_meterBar];  // sibling of the video, on top (floats)
+    videoPane.postsFrameChangedNotifications = YES;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(videoPaneResized:)
+                                               name:NSViewFrameDidChangeNotification object:videoPane];
     [split addSubview:videoPane];
 
     // Empty-state hint, centered over the (black) video pane until channels exist.
@@ -692,8 +724,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
         if (auto c = _db->getSetting(base + L"_colors"))
             _meterCfg[k].palette = meterPaletteFromString(utf8FromWide(*c), _meterCfg[k].palette);
     }
-    if (_db)
+    if (_db) {
         if (auto h = _db->getSetting(L"meters_hidden")) _metersHidden = (*h == L"1");
+        if (auto x = _db->getSetting(L"meter_pos_x")) _meterPosX = std::clamp(std::wcstod(x->c_str(), nullptr), 0.0, 1.0);
+        if (auto y = _db->getSetting(L"meter_pos_y")) _meterPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
+    }
 }
 
 // Push the loaded config into the views, relayout, and match the Spectrum tap to its
@@ -715,18 +750,39 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     NSView* pane = _videoView.superview;
     if (!pane) return;
     const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
+    _videoView.frame = pane.bounds;  // video fills; the meter bar floats on top
+
+    // Lay the enabled meters left-to-right inside the bar; size the bar to fit them.
     CGFloat x = 0;
-    BOOL anyShown = NO;
     for (int k = 0; k < 4; ++k) {
         const BOOL show = _meterCfg[k].enabled && !_videoOnly && !_metersHidden;
         _meters[k].hidden = !show;
         if (!show) continue;
         _meters[k].frame = NSMakeRect(x, 0, kMeterW[k], kMeterH);
         x += kMeterW[k] + kMeterGap;
-        anyShown = YES;
     }
-    const CGFloat lineH = anyShown ? kMeterH : 0;
-    _videoView.frame = NSMakeRect(0, lineH, W, std::max(0.0, H - lineH));
+    const CGFloat barW = x > 0 ? x - kMeterGap : 0;  // drop the trailing gap
+    _meterBar.hidden = (barW <= 0);
+    if (barW <= 0) return;
+    // Position the bar at the persisted fraction of the available range, clamped.
+    const CGFloat availX = std::max(0.0, W - barW), availY = std::max(0.0, H - kMeterH);
+    _meterBar.frame = NSMakeRect(_meterPosX * availX, _meterPosY * availY, barW, kMeterH);
+}
+
+- (void)videoPaneResized:(NSNotification*)__unused n { [self applyMeterLayout]; }
+
+// Record the meter bar's position as a 0..1 fraction of the pane (called after a drag).
+- (void)persistMeterPos {
+    NSView* pane = _videoView.superview;
+    if (!pane) return;
+    const CGFloat availX = std::max(1.0, pane.bounds.size.width - _meterBar.frame.size.width);
+    const CGFloat availY = std::max(1.0, pane.bounds.size.height - _meterBar.frame.size.height);
+    _meterPosX = std::clamp(_meterBar.frame.origin.x / availX, 0.0, 1.0);
+    _meterPosY = std::clamp(_meterBar.frame.origin.y / availY, 0.0, 1.0);
+    if (_db) {
+        _db->setSetting(L"meter_pos_x", std::to_wstring(_meterPosX));
+        _db->setSetting(L"meter_pos_y", std::to_wstring(_meterPosY));
+    }
 }
 
 - (BOOL)spectrumEnabled { return _meterCfg[(int)MeterKind::Spectrum].enabled; }
