@@ -21,6 +21,7 @@
 #include "platform/Updater.h"
 
 #import "AppDelegate.h"
+#import "MetersDialog.h"
 #import "SpectrumMeterView.h"
 #import "SpectrumTap.h"
 #import "StatMeterView.h"
@@ -740,6 +741,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
+    [[m addItemWithTitle:@"Meters…" action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
+    [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"About RabbitEars" action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
     [m popUpMenuPositioningItem:nil
@@ -748,6 +751,16 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
+
+// Settings ▾ ▸ Meters… — the config dialog (peer of Win32 Settings → Meters).
+- (void)showMeters:(id)__unused sender {
+    MetersDialog* dlg = [[MetersDialog alloc] initWithDatabase:_db.get()];
+    [dlg presentForWindow:_window onApply:^{
+        [self setStatus:@"Meter settings saved."];
+        // TODO(M1): re-read the meter_<kind> config and refresh the live meters.
+    }];
+    [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
+}
 - (void)showAbout:(id)sender { [(AppDelegate*)NSApp.delegate showAboutPanel:sender]; }
 
 - (void)playClicked:(id)__unused sender { [self playRow:_table.clickedRow]; }
