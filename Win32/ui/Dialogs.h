@@ -3,12 +3,15 @@
 // single-line text prompt. Split out of MainWindow.cpp to keep it focused.
 #pragma once
 
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include <windows.h>
 
+#include "models/Channel.h"             // channel pick-list for scheduleDialog
+#include "models/ScheduledRecording.h"  // schedule rows for the manager + add dialogs
 #include "ui/MiniMeter.h"  // MeterConfig for chooseMeters
 
 namespace rabbitears {
@@ -30,6 +33,15 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi);
 void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
                     const std::wstring& summary, const std::wstring& details);
 
+// Action chosen in the programme popup (see programmeDialog).
+enum class ProgrammeAction { None, Play, Schedule };
+
+// Modal programme popup shown when a TV Guide entry is clicked: the programme `title` +
+// `info` (channel / time / description) with Play channel / Schedule… / Close buttons.
+// Returns the chosen action (None on Close/Esc).
+ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                                const std::wstring& info);
+
 // Modal categories checklist (Settings → Categories…). `allGroups` is every
 // distinct group title; `checked` is in/out — the initially-checked groups on
 // entry, the user's final selection on exit. A live filter box, Select All /
@@ -45,5 +57,26 @@ bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
 // (indexed by MeterKind) and `dataFlowOn` are in/out — seeded on entry, overwritten with
 // the user's choices on OK. Returns true if OK was pressed (Cancel leaves both untouched).
 bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bool& dataFlowOn);
+
+// Modal "New / Edit schedule": pick a channel (type-ahead combo) + set start/stop
+// (DateTimePickers) + a title. On OK returns true and fills `out.channelId/channelName/
+// streamUrl/userAgent/referrer/title/startUtc/stopUtc`; the caller fills mux/status/
+// createdAt and stores it. `channels` is the pick list (sorted by name inside). If
+// `out` arrives pre-populated (a guide programme), those values seed the fields.
+bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Channel>& channels,
+                    ScheduledRecording& out);
+
+// Host-provided actions for the schedule manager (the host owns the recorder + DB, so it
+// stops an active recording on cancel/delete). All are invoked on the UI thread.
+struct ScheduleManagerCallbacks {
+    std::function<std::vector<ScheduledRecording>()> list;    // current queue (fetched on refresh)
+    std::function<void(long long id)> cancel;                 // cancel (stop if it's recording)
+    std::function<void(long long id)> remove;                 // delete (stop if it's recording)
+    std::function<void(HWND owner)>   addNew;                 // New… (opens scheduleDialog over `owner`)
+};
+
+// Modal schedule manager (Settings → Scheduled Recordings…): a list of schedules with
+// New / Cancel / Delete / Close. Re-queries via cb.list() after every change.
+void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCallbacks cb);
 
 }  // namespace rabbitears

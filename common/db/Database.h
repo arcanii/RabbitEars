@@ -14,6 +14,8 @@
 #include "models/Channel.h"
 #include "models/ParsedChannel.h"
 #include "models/Playlist.h"
+#include "models/Programme.h"
+#include "models/ScheduledRecording.h"
 
 struct sqlite3;  // forward-declared; sqlite3.h is included only in the .cpp
 
@@ -37,9 +39,10 @@ public:
     static std::wstring defaultDbPath();
 
     // ---- Playlists ---------------------------------------------------------
-    // Returns the new playlist id, or 0 on failure.
+    // Returns the new playlist id, or 0 on failure. `epgUrl` is the playlist's XMLTV
+    // guide URL (defaulted so existing/mac callers are unaffected).
     long long addPlaylist(const std::wstring& name, const std::wstring& source, bool isUrl,
-                          long long nowEpoch);
+                          long long nowEpoch, const std::wstring& epgUrl = {});
     std::vector<Playlist> listPlaylists();
     void deletePlaylist(long long playlistId);
     // Change a playlist's friendly display name (its channels/source are untouched).
@@ -63,6 +66,9 @@ public:
     std::vector<Channel> favourites();
     std::vector<Channel> searchChannels(const std::wstring& term);
     std::optional<Channel> channelByLcn(int lcn);
+    // First enabled channel carrying this tvg-id (the EPG join key); nullopt if none.
+    // Used to resolve a guide programme back to a recordable stream.
+    std::optional<Channel> channelByTvgId(const std::wstring& tvgId);
 
     std::vector<std::wstring> listGroups();
     // Distinct ISO country codes (lowercase) derived from tvg-id suffixes
@@ -74,6 +80,27 @@ public:
     void toggleFavourite(long long channelId);
     void setChannelNumber(long long channelId, std::optional<int> lcn);
     void setDeadStatus(long long channelId, DeadStatus status, long long nowEpoch);
+
+    // ---- EPG (programmes) --------------------------------------------------
+    // Replace this playlist's stored guide with a freshly-parsed batch, in one
+    // transaction (a refresh is authoritative — old rows are cleared first). Also
+    // records an `epg_refreshed_<id>` settings timestamp. Returns rows stored.
+    int bulkInsertProgrammes(long long playlistId, const std::vector<Programme>& programmes,
+                             long long nowEpoch);
+    // The programme airing at `nowEpoch` plus the one after it (0–2 rows) for a
+    // channel's tvg-id; empty when the guide has no coverage there.
+    std::vector<Programme> nowNext(long long playlistId, const std::wstring& channelId,
+                                   long long nowEpoch);
+    // Every programme overlapping [windowStartUtc, windowEndUtc), ordered by channel
+    // then start — the timeline-guide query.
+    std::vector<Programme> programmesInWindow(long long playlistId, long long windowStartUtc,
+                                              long long windowEndUtc);
+
+    // ---- Scheduled recordings ----------------------------------------------
+    long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
+    std::vector<ScheduledRecording> listSchedules();     // ordered by start_utc
+    void updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath = {});
+    void deleteSchedule(long long id);
 
     // ---- Settings (key/value blob) ----------------------------------------
     std::optional<std::wstring> getSetting(const std::wstring& key);

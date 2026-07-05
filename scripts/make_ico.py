@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Regenerate packaging/app.ico from art/RabbitEars_icon.png as a multi-resolution
+# Regenerate packaging/app.ico from art/clockwork_icon.png as a multi-resolution
 # Windows .ico (16/24/32/48/64/128/256). Requires Pillow.
 #   python scripts/make_ico.py
 import os
@@ -12,7 +12,7 @@ SIZES = [16, 24, 32, 48, 64, 128, 256]
 
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src = os.path.join(root, "art", "RabbitEars_icon.png")
+    src = os.path.join(root, "art", "clockwork_icon.png")
     dst = os.path.join(root, "packaging", "app.ico")
 
     img = Image.open(src).convert("RGBA")

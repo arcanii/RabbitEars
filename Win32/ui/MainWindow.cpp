@@ -14,6 +14,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <commctrl.h>
@@ -28,8 +29,11 @@
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
 
+#include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/RecordingScheduler.h"
+#include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/Updater.h"
@@ -39,6 +43,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/ChannelGridControl.h"
 #include "ui/Dialogs.h"
 #include "ui/DockLayout.h"
+#include "ui/EpgGuideControl.h"
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -64,6 +69,8 @@ constexpr wchar_t kMainClass[] = L"RabbitEarsMain";
 constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
+constexpr UINT WM_APP_EPG_DONE = WM_APP + 3;  // EPG fetch/parse worker -> UI thread
+constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 
 // Shutdown safety-net: once teardown begins, guarantee the process exits within a
 // bounded time. libVLC's stop()/release() can block on a stuck stream, leaving
@@ -103,6 +110,9 @@ constexpr int ID_METER_BITRATE = 2032;
 constexpr int ID_METER_FRAMES = 2033;
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
+constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
+constexpr int ID_EPG_GUIDE = 2048;     // Settings → TV Guide (open the timeline guide window)
+constexpr int ID_SCHEDULES = 2070;     // Settings → Scheduled Recordings… (recording scheduler manager)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
@@ -157,6 +167,25 @@ struct PlaylistResult {
     int          groups = 0;    // distinct non-empty group titles in this import
 };
 
+// EPG (Refresh Guide) — one enabled playlist that carries an XMLTV URL, the fetch
+// worker's per-playlist outcome, and the batch posted back to the UI thread. Fetch +
+// parse run off-thread; the DB write (bulkInsertProgrammes) runs on the UI thread,
+// mirroring the playlist-import split.
+struct EpgTarget {
+    long long    id = 0;
+    std::wstring name;
+    std::wstring url;
+};
+struct EpgFetch {
+    long long              playlistId = 0;
+    std::wstring           name;
+    std::wstring           error;       // empty on success
+    std::vector<Programme> programmes;  // parsed rows (empty on failure)
+};
+struct EpgResult {
+    std::vector<EpgFetch> fetches;
+};
+
 struct AppState {
     Database   db;
     VlcPlayer  player;
@@ -200,6 +229,8 @@ struct AppState {
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
+    long long  activeScheduleId = 0;   // id of the schedule currently owning the recorder (0 = none)
+    bool       schedulerReconciled = false;  // one-time startup reset of stale "Recording" rows
     std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv"
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
     bool       categoryActive = false;    // is the Categories include-filter on?
@@ -1030,7 +1061,7 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
     const std::wstring src = L"Source:  " + res->source + L"\r\n\r\n";
     if (res->ok && !res->doc.channels.empty()) {
         const long long now = static_cast<long long>(time(nullptr));
-        const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now);
+        const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now, res->doc.epgUrl);
         if (pid == 0) {
             setStatus(st, L"Add playlist failed: could not save to the database");
             diag::error(L"playlist add failed: addPlaylist returned 0 for " + res->source);
@@ -1066,6 +1097,145 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
                    st->dpi, L"Import results", summary, details);
     delete res;
+}
+
+// Fetch + store the XMLTV guide for every enabled playlist that carries an EPG URL.
+// Mirrors startPlaylistWorker: the download + gunzip + parse run on a detached worker
+// (busy-guarded), then WM_APP_EPG_DONE stores the parsed programmes on the UI thread.
+void onEpgRefresh(AppState* st) {
+    if (st->busy) {
+        setStatus(st, L"Busy — please wait…");
+        return;
+    }
+    std::vector<EpgTarget> targets;
+    for (const auto& pl : st->db.listPlaylists())
+        if (pl.enabled && !pl.epgUrl.empty()) targets.push_back({pl.id, pl.name, pl.epgUrl});
+
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (targets.empty()) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Refresh Guide", L"No guide source found",
+                       L"None of your enabled playlists carry an XMLTV guide URL (x-tvg-url in the "
+                       L"#EXTM3U header).\r\n\r\nAdd a playlist that includes one, then try again.");
+        return;
+    }
+    st->busy = true;
+    setStatus(st, L"Downloading guide…");
+    diag::info(L"EPG refresh start: " + std::to_wstring(targets.size()) + L" playlist(s)");
+    HWND hwnd = st->hwnd;
+    std::thread([hwnd, targets]() {
+        auto* res = new EpgResult();
+        for (const auto& t : targets) {
+            EpgFetch f;
+            f.playlistId = t.id;
+            f.name = t.name;
+            std::string bytes;
+            std::wstring err;
+            if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60 s
+                f.error = err.empty() ? L"download failed" : err;
+            } else {
+                const std::string xml = gunzipIfNeeded(bytes);
+                if (xml.empty())
+                    f.error = L"empty or invalid after decompression";
+                else
+                    f.programmes = parseXmltv(xml).programmes;
+            }
+            res->fetches.push_back(std::move(f));
+        }
+        PostMessageW(hwnd, WM_APP_EPG_DONE, 0, reinterpret_cast<LPARAM>(res));
+    }).detach();
+}
+
+void onEpgDone(AppState* st, EpgResult* res) {
+    st->busy = false;
+    const long long now = static_cast<long long>(time(nullptr));
+    int okCount = 0, totalProg = 0;
+    std::set<std::wstring> chans;
+    std::wstring detail;
+    for (auto& f : res->fetches) {
+        if (!f.error.empty()) {
+            detail += f.name + L":  " + f.error + L"\r\n";
+            diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error);
+            continue;
+        }
+        const int stored = st->db.bulkInsertProgrammes(f.playlistId, f.programmes, now);
+        ++okCount;
+        totalProg += stored;
+        for (const auto& p : f.programmes) chans.insert(p.channelId);
+        detail += f.name + L":  " + std::to_wstring(stored) + L" programmes\r\n";
+        diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
+    }
+    const std::wstring summary =
+        okCount > 0 ? L"Stored " + std::to_wstring(totalProg) + L" programmes across " +
+                          std::to_wstring(chans.size()) + L" channels"
+                    : L"Could not refresh the guide";
+    setStatus(st, summary);
+    showInfoDialog(st->hwnd,
+                   reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
+                   st->dpi, L"Refresh Guide", summary, detail);
+    delete res;
+}
+
+// Assemble the timeline guide from stored programmes (all enabled playlists) and open
+// the guide window. Programmes are joined to channel display names by tvg-id; rows with
+// no guide data are omitted. The whole loaded window scrolls client-side (no re-query).
+// Defined below (after the scheduler helpers) — declared here for onEpgGuide's callback.
+void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title, long long startUtc, long long stopUtc);
+
+void onEpgGuide(AppState* st) {
+    const long long now = static_cast<long long>(time(nullptr));
+    const long long winStart = now - 6 * 3600;    // a little history
+    const long long winEnd = now + 72 * 3600;     // three days ahead
+    std::vector<GuideRow> rows;
+    for (const auto& pl : st->db.listPlaylists()) {
+        if (!pl.enabled) continue;
+        auto progs = st->db.programmesInWindow(pl.id, winStart, winEnd);  // ordered channel_id, start
+        if (progs.empty()) continue;
+        std::unordered_map<std::wstring, std::wstring> nameByTvg;
+        for (const auto& c : st->db.channelsByPlaylist(pl.id))
+            if (!c.tvgId.empty()) nameByTvg.emplace(c.tvgId, c.name);
+        GuideRow cur;
+        std::wstring curId;
+        bool have = false;
+        auto flush = [&] {
+            if (have && !cur.programmes.empty()) rows.push_back(std::move(cur));
+            cur = GuideRow{};
+            have = false;
+        };
+        for (auto& p : progs) {
+            if (!have || p.channelId != curId) {
+                flush();
+                curId = p.channelId;
+                cur.channelId = curId;
+                auto it = nameByTvg.find(curId);
+                cur.channelName = (it != nameByTvg.end() && !it->second.empty()) ? it->second : curId;
+                have = true;
+            }
+            cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
+        }
+        flush();
+    }
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (rows.empty()) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"No guide data yet",
+                       L"There is no stored programme data for your enabled playlists.\r\n\r\n"
+                       L"Run Settings ▸ Refresh Guide… first (a playlist must carry an x-tvg-url).");
+        return;
+    }
+    std::sort(rows.begin(), rows.end(),
+              [](const GuideRow& a, const GuideRow& b) { return a.channelName < b.channelName; });
+    GuideCallbacks cb;
+    cb.onSchedule = [st](const std::wstring& channelId, const std::wstring& channelName,
+                         const std::wstring& title, long long startUtc, long long stopUtc) {
+        scheduleFromGuide(st, channelId, channelName, title, startUtc, stopUtc);
+    };
+    cb.onPlay = [st](const std::wstring& channelId, const std::wstring& channelName) {
+        std::optional<Channel> ch;
+        if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
+        if (ch) playChannel(st, *ch);
+        else setStatus(st, L"No playable channel found for \"" + channelName + L"\".");
+    };
+    showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
 }
 
 void toggleFullscreen(AppState* st) {
@@ -1135,6 +1305,10 @@ std::wstring recordingPath(const std::wstring& channelName, const std::wstring& 
 }
 
 void onToggleRecord(AppState* st) {
+    if (st->activeScheduleId != 0) {  // the recorder is owned by a scheduled recording
+        setStatus(st, L"A scheduled recording is in progress — manage it in Scheduled Recordings.");
+        return;
+    }
     if (st->player.isRecording()) {
         const std::wstring file = st->player.recordingFile();
         st->player.stopRecording();
@@ -1154,6 +1328,131 @@ void onToggleRecord(AppState* st) {
         SetWindowTextW(st->btnRec, kGlyphStop);
         setStatus(st, L"● Recording " + st->nowPlaying.name + L"  →  " + path);
     }
+}
+
+// The recording scheduler tick (~30s): decide via the pure planScheduler() core, then
+// apply — driving the single shared recorder and writing status back to the DB. Runs
+// only while the app is open (a schedule whose window passed while closed is marked
+// Missed on the next tick). Guards against the manual Record button via activeScheduleId.
+void onSchedulerTick(AppState* st) {
+    auto schedules = st->db.listSchedules();
+    if (schedules.empty()) return;
+    // One-time startup reconcile: a schedule still marked Recording is stale (a prior
+    // session was closed mid-record — nothing is actually recording now), so reset it to
+    // Pending and let planScheduler resume it (if still in window) or miss it.
+    if (!st->schedulerReconciled) {
+        st->schedulerReconciled = true;
+        bool changed = false;
+        for (const auto& s : schedules)
+            if (s.status == ScheduleStatus::Recording) {
+                st->db.updateScheduleStatus(s.id, ScheduleStatus::Pending);
+                changed = true;
+            }
+        if (changed) schedules = st->db.listSchedules();
+    }
+    const long long now = static_cast<long long>(time(nullptr));
+    // "Manual" recording = the recorder is busy but no schedule owns it.
+    const bool manualRecording = st->player.isRecording() && st->activeScheduleId == 0;
+    const SchedulerPlan plan = planScheduler(schedules, now, manualRecording);
+
+    for (long long id : plan.stop) {
+        st->player.stopRecording();
+        st->db.updateScheduleStatus(id, ScheduleStatus::Done);
+        if (st->activeScheduleId == id) st->activeScheduleId = 0;
+        diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
+        setStatus(st, L"Scheduled recording saved.");
+    }
+    for (long long id : plan.miss) {
+        st->db.updateScheduleStatus(id, ScheduleStatus::Missed);
+        diag::warn(L"scheduled recording missed (id " + std::to_wstring(id) + L")");
+    }
+    for (long long id : plan.start) {  // planScheduler yields at most one
+        const ScheduledRecording* s = nullptr;
+        for (const auto& x : schedules)
+            if (x.id == id) { s = &x; break; }
+        if (!s) continue;
+        const std::wstring ext = (s->mux == L"mkv") ? L".mkv" : L".ts";
+        const std::string mux = (s->mux == L"mkv") ? "mkv" : "ts";
+        const std::wstring path = recordingPath(s->channelName, ext);
+        if (st->player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
+            st->activeScheduleId = id;
+            st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path);
+            diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
+            setStatus(st, L"● Recording (scheduled) " + s->channelName);
+        } else {
+            st->db.updateScheduleStatus(id, ScheduleStatus::Failed);
+            diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
+        }
+    }
+}
+
+// Schedule a recording for a guide programme: resolve its tvg-id to a recordable stream,
+// store the (self-contained) schedule, nudge the scheduler in case it is already airing,
+// and confirm. Called from the TV Guide's right-click "Schedule recording".
+void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title, long long startUtc, long long stopUtc) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    std::optional<Channel> ch;
+    if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
+    if (!ch) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Channel not found",
+                       L"Couldn't match \"" + channelName + L"\" to a playable channel in your "
+                       L"library (its tvg-id isn't in an enabled playlist).");
+        return;
+    }
+    ScheduledRecording s;
+    s.channelId = channelId;
+    s.channelName = ch->name.empty() ? channelName : ch->name;
+    s.streamUrl = ch->streamUrl;
+    s.userAgent = ch->userAgent;
+    s.referrer = ch->referrer;
+    s.title = title;
+    s.startUtc = startUtc;
+    s.stopUtc = stopUtc;
+    s.mux = st->recFormat;  // the app's current TS/MKV setting
+    s.createdAt = static_cast<long long>(time(nullptr));
+    if (st->db.addSchedule(s) > 0) {
+        onSchedulerTick(st);  // start immediately if the programme is already on air
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Recording scheduled",
+                       title + L"\r\n" + s.channelName +
+                           L"\r\n\r\nThe app must be running at the scheduled time.");
+    } else {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Could not schedule",
+                       L"The recording could not be saved.");
+    }
+}
+
+// Settings ▸ Scheduled Recordings… — the manager (list + New/Cancel/Delete). The host
+// callbacks own the recorder + DB so cancel/delete stop an active recording, and New
+// opens scheduleDialog over the manager and stores + nudges the scheduler.
+void onManageSchedules(AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    ScheduleManagerCallbacks cb;
+    cb.list = [st] { return st->db.listSchedules(); };
+    cb.cancel = [st](long long id) {
+        if (st->activeScheduleId == id) {
+            st->player.stopRecording();
+            st->activeScheduleId = 0;
+        }
+        st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+    };
+    cb.remove = [st](long long id) {
+        if (st->activeScheduleId == id) {
+            st->player.stopRecording();
+            st->activeScheduleId = 0;
+        }
+        st->db.deleteSchedule(id);
+    };
+    cb.addNew = [st](HWND owner) {
+        HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+        ScheduledRecording d;
+        if (scheduleDialog(owner, hi, st->dpi, st->db.allChannels(), d)) {
+            d.mux = st->recFormat;
+            d.createdAt = static_cast<long long>(time(nullptr));
+            if (st->db.addSchedule(d) > 0) onSchedulerTick(st);  // start now if already airing
+        }
+    };
+    manageSchedules(st->hwnd, hInst, st->dpi, cb);
 }
 
 // Serialize the category include-set as a newline-joined list. Group titles come
@@ -1303,6 +1602,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
     AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
                 catLabel.c_str());
+    AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, L"TV Guide");
+    AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
+    AppendMenuW(m, MF_STRING, ID_SCHEDULES, L"Scheduled Recordings…");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
     // row live there now — the old inline quick-toggle checkboxes were redundant).
@@ -1389,6 +1691,15 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_CATEGORIES:
             onCategories(st);
+            break;
+        case ID_EPG_GUIDE:
+            onEpgGuide(st);
+            break;
+        case ID_SCHEDULES:
+            onManageSchedules(st);
+            break;
+        case ID_EPG_REFRESH:
+            onEpgRefresh(st);
             break;
         case ID_METERS_SETUP:
             onMeters(st);
@@ -1520,6 +1831,7 @@ void createChildren(HWND hwnd, AppState* st) {
     st->skinStripOn = skin::initSkinStrip();
     if (st->skinStripOn) SetTimer(hwnd, kSkinAnimTimer, 16, nullptr);  // ~60 fps
 #endif
+    SetTimer(hwnd, kSchedulerTimer, 30000, nullptr);  // recording scheduler: check every ~30 s
     st->nav = CreateWindowExW(0, WC_TREEVIEWW, L"",
                               WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TVS_HASBUTTONS |
                                   TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_TRACKSELECT,
@@ -1784,8 +2096,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             EndPaint(hwnd, &ps);
             return 0;
         }
-#ifdef RABBITEARS_THEME_ENGINE
         case WM_TIMER:
+            if (st && wParam == kSchedulerTimer) {
+                onSchedulerTick(st);
+                return 0;
+            }
+#ifdef RABBITEARS_THEME_ENGINE
             if (st && wParam == kSkinAnimTimer) {
                 // Animate the GPU strip via a child-clipped DC (DCX_CLIPCHILDREN) so the
                 // transport controls are excluded and the command bar isn't redrawn each
@@ -1801,8 +2117,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 return 0;
             }
-            break;
 #endif
+            break;
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (st->panelDragActive && (wParam & MK_LBUTTON)) {
@@ -2269,6 +2585,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_APP_PLAYLIST_DONE:
             onPlaylistDone(st, reinterpret_cast<PlaylistResult*>(lParam));
             return 0;
+        case WM_APP_EPG_DONE:
+            onEpgDone(st, reinterpret_cast<EpgResult*>(lParam));
+            return 0;
         case WM_SETTINGCHANGE:
             applyDarkChrome(hwnd);
             InvalidateRect(hwnd, nullptr, TRUE);
@@ -2281,6 +2600,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_DESTROY:
             armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
+            KillTimer(hwnd, kSchedulerTimer);
 #ifdef RABBITEARS_THEME_ENGINE
             KillTimer(hwnd, kSkinAnimTimer);
             skin::shutdownSkinStrip();
@@ -2474,7 +2794,8 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     HWND splash = showSplash(hInst);
 
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_BAR_CLASSES | ICC_TREEVIEW_CLASSES |
-                                              ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
+                                              ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES |
+                                              ICC_DATE_CLASSES};
     InitCommonControlsEx(&icc);
     registerClasses(hInst);
 

@@ -48,6 +48,7 @@ if(RABBITEARS_BUILD_GUI)
     WinMain.cpp
     ui/MainWindow.cpp
     ui/ChannelGridControl.cpp
+    ui/EpgGuideControl.cpp
     ui/BufferMeter.cpp
     ui/MiniMeter.cpp
     ui/Dialogs.cpp

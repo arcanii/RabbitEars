@@ -85,6 +85,18 @@ if(MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
+# miniz — vendored single-file DEFLATE/inflate (MIT), shared by both apps. Used
+# by common/core/Gzip to gunzip `.xml.gz` EPG feeds: WinHTTP / NSURLSession only
+# auto-decompress transfer-encoded gzip, not gzip *file bodies*. Static lib with
+# warnings off, exactly like sqlite3.
+# ---------------------------------------------------------------------------
+add_library(miniz STATIC third_party/miniz/miniz.c)
+target_include_directories(miniz PUBLIC third_party/miniz)
+if(MSVC)
+  target_compile_options(miniz PRIVATE /w)  # don't hold third-party C to our bar
+endif()
+
+# ---------------------------------------------------------------------------
 # Per-platform subdirectories. common/ builds the shared RabbitEarsCore on both
 # OSes; Win32/ and mac/ each consume it and add their platform layer + app.
 # ---------------------------------------------------------------------------
