@@ -71,6 +71,8 @@ static const CGFloat kMeterGap = 8;   // gap between the stats meter and the spe
     NSSplitView*   _split;       // channel grid | video
     BOOL           _gridHidden;    // View ▸ Hide Channel List
     BOOL           _toolbarHidden; // View ▸ Hide Toolbar
+    BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
+    id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcPlayerMac> _player;
@@ -236,6 +238,11 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [videoPane addSubview:_videoView];
+    NSClickGestureRecognizer* dbl =
+        [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(videoDoubleClicked:)];
+    dbl.numberOfClicksRequired = 2;
+    [_videoView addGestureRecognizer:dbl];
+    [dbl release];  // MRC: the view retains it
 
     _statMeter = [[StatMeterView alloc] initWithFrame:NSMakeRect(0, 0, kMeterW, kMeterH)];
     _statMeter.autoresizingMask = NSViewMaxXMargin | NSViewMaxYMargin;  // fixed size, pinned bottom-left
@@ -293,8 +300,8 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
 - (void)layoutSplitPanes:(NSSplitView*)sv {
     if (sv.subviews.count < 2) return;
     const CGFloat W = NSWidth(sv.bounds), H = NSHeight(sv.bounds), d = sv.dividerThickness;
-    sv.subviews[0].hidden = _gridHidden;
-    if (_gridHidden) {  // channel list collapsed — video fills the pane, no divider gap
+    sv.subviews[0].hidden = _gridHidden || _videoOnly;
+    if (_gridHidden || _videoOnly) {  // channel list collapsed — video fills the pane, no divider gap
         sv.subviews[0].frame = NSMakeRect(0, 0, 0, H);
         sv.subviews[1].frame = NSMakeRect(0, 0, W, H);
         return;
@@ -343,6 +350,60 @@ static std::wstring ws(NSString* s) { return wideFromUtf8(s.UTF8String ?: ""); }
     const CGFloat W = content.bounds.size.width, H = content.bounds.size.height;
     const CGFloat topEdge = _toolbarHidden ? H : H - kBarH;
     _split.frame = NSMakeRect(0, kStatusH, W, topEdge - kStatusH);
+}
+
+// ---- Video Only (View ▸ Video Only) ------------------------------------------
+// Collapse ALL chrome — toolbar, channel list, the meters, and the bottom volume/
+// status bar — so the video fills the window; toggling back restores the prior chrome
+// state. Esc or a double-click on the video exits (mirrors the Win32 video-only mode).
+- (BOOL)videoOnly { return _videoOnly; }
+- (void)toggleVideoOnly { _videoOnly = !_videoOnly; [self applyVideoOnly]; }
+
+- (void)applyVideoOnly {
+    const BOOL v = _videoOnly;
+    _topBar.hidden = v || _toolbarHidden;
+    _status.hidden = v;
+    _muteBtn.hidden = v;
+    _volume.hidden = v;
+    _statMeter.hidden = v;
+    _spectrum.hidden = v || !_spectrumEnabled;
+
+    NSView* content = _window.contentView;
+    const CGFloat W = content.bounds.size.width, H = content.bounds.size.height;
+    const CGFloat topEdge = (v || _toolbarHidden) ? H : H - kBarH;
+    const CGFloat botEdge = v ? 0 : kStatusH;
+    _split.frame = NSMakeRect(0, botEdge, W, topEdge - botEdge);
+    [self layoutSplitPanes:_split];   // grid stays hidden while video-only
+    if (!v) [self applyMeterLayout];  // restore the meter frames/visibility on exit
+
+    if (v) [self installEscMonitor];
+    else   [self removeEscMonitor];
+}
+
+- (void)videoDoubleClicked:(id)__unused g {
+    if (_videoOnly) [self toggleVideoOnly];  // double-click exits video-only (Win32 parity)
+}
+
+// Esc exits video-only. A local monitor is installed only while video-only is active,
+// so Esc behaves normally otherwise.
+- (void)installEscMonitor {
+    if (_escMonitor) return;
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no block retain cycle (MRC)
+    _escMonitor = [[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                                         handler:^NSEvent*(NSEvent* e) {
+        if (e.keyCode == 53 && me->_videoOnly) {  // 53 = Esc
+            [me toggleVideoOnly];
+            return nil;  // consume
+        }
+        return e;
+    }] retain];  // MRC: the returned monitor is autoreleased — hold it until -removeEscMonitor
+}
+
+- (void)removeEscMonitor {
+    if (!_escMonitor) return;
+    [NSEvent removeMonitor:_escMonitor];
+    [_escMonitor release];
+    _escMonitor = nil;
 }
 
 - (NSMenu*)makeRowMenu {

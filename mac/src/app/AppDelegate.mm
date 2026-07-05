@@ -86,6 +86,10 @@ using namespace rabbitears;
                                            action:@selector(toggleSpectrum:) keyEquivalent:@"m"];
     spec.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     spec.target = self;
+    NSMenuItem* vidOnly = [viewMenu addItemWithTitle:@"Video Only"
+                                              action:@selector(toggleVideoOnly:) keyEquivalent:@"f"];
+    vidOnly.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    vidOnly.target = self;
     viewItem.submenu = viewMenu;
 
     NSApp.mainMenu = menubar;
@@ -97,6 +101,7 @@ using namespace rabbitears;
 - (void)toggleChannelList:(id)__unused sender { [_mainController toggleChannelList]; }
 - (void)toggleToolbar:(id)__unused sender { [_mainController toggleToolbar]; }
 - (void)toggleSpectrum:(id)__unused sender { [_mainController toggleSpectrum]; }
+- (void)toggleVideoOnly:(id)__unused sender { [_mainController toggleVideoOnly]; }
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
@@ -106,6 +111,8 @@ using namespace rabbitears;
         item.title = _mainController.toolbarHidden ? @"Show Toolbar" : @"Hide Toolbar";
     else if (item.action == @selector(toggleSpectrum:))
         item.title = _mainController.spectrumEnabled ? @"Hide Spectrum" : @"Show Spectrum";
+    else if (item.action == @selector(toggleVideoOnly:))
+        item.title = _mainController.videoOnly ? @"Exit Video Only" : @"Video Only";
     return YES;
 }
 

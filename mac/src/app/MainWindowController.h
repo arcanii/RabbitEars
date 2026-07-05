@@ -19,7 +19,9 @@
 - (void)toggleChannelList;
 - (void)toggleToolbar;
 - (void)toggleSpectrum;   // View ▸ Show/Hide the opt-in FFT spectrum strip (⌥⌘M)
+- (void)toggleVideoOnly;  // View ▸ Video Only — collapse all chrome to just the video
 - (BOOL)channelListHidden;
 - (BOOL)toolbarHidden;
 - (BOOL)spectrumEnabled;
+- (BOOL)videoOnly;
 @end
