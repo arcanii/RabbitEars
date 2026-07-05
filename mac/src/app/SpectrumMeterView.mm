@@ -32,6 +32,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
 
     // LED colours resolved from the meter palette (see -setPalette:).
     NSColor* _bgCol;
+    NSColor* _offCol;   // unlit cell (Win32 LED: solid palette.off)
     NSColor* _lowCol;
     NSColor* _midCol;
     NSColor* _highCol;
@@ -109,6 +110,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
 
 - (void)setPalette:(const rabbitears::mac::MeterPalette&)p {
     _bgCol   = p.bg.inherit ? [NSColor colorWithWhite:0.08 alpha:1.0] : nscolor(p.bg);
+    _offCol  = nscolor(p.off);
     _lowCol  = nscolor(p.low);
     _midCol  = nscolor(p.mid);
     _highCol = nscolor(p.high);
@@ -143,6 +145,8 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     const NSRect b = self.bounds;
     [_bgCol setFill];
     NSRectFill(b);
+    [[NSColor colorWithWhite:0.22 alpha:1.0] set];
+    NSFrameRectWithWidth(b, 1);  // subtle 1px frame (Win32 draws a theme-border frame)
 
     if (!_available) {
         NSDictionary* attrs = @{
@@ -171,10 +175,10 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
         const int peakRow = (int)std::lround(_peak[bd] * rows);
         for (int r = 0; r < rows; ++r) {
             const float frac = rows > 1 ? (float)r / (rows - 1) : 0.0f;  // 0 bottom .. 1 top
-            NSColor* ramp = frac < 0.70f ? _lowCol : (frac < 0.90f ? _midCol : _highCol);
+            NSColor* ramp = frac < 0.60f ? _lowCol : (frac < 0.85f ? _midCol : _highCol);
             const BOOL lit = r < litRows;
             const BOOL isPeak = (r == peakRow && peakRow > 0);
-            [(isPeak ? _peakCol : (lit ? ramp : [ramp colorWithAlphaComponent:0.12])) setFill];
+            [(isPeak ? _peakCol : (lit ? ramp : _offCol)) setFill];  // Win32 LED: unlit = palette.off
             const CGFloat y = pad + r * (cellH + gapY);
             [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, y, cellW, cellH) xRadius:0.8 yRadius:0.8] fill];
         }

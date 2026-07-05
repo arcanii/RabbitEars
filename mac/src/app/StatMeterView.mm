@@ -20,6 +20,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     NSTimer*  _timer;
     // LED colours resolved from the meter palette (see -setPalette:).
     NSColor*  _bgCol;
+    NSColor*  _offCol;   // unlit cell (Win32 LED: solid palette.off)
     NSColor*  _lowCol;
     NSColor*  _midCol;
     NSColor*  _highCol;
@@ -64,6 +65,7 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     // bg.inherit == "follow the theme window background" — the mac stand-in is the
     // dark panel colour the meter has always used.
     _bgCol   = p.bg.inherit ? [NSColor colorWithWhite:0.08 alpha:1.0] : nscolor(p.bg);
+    _offCol  = nscolor(p.off);
     _lowCol  = nscolor(p.low);
     _midCol  = nscolor(p.mid);
     _highCol = nscolor(p.high);
@@ -85,6 +87,8 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     const NSRect b = self.bounds;
     [_bgCol setFill];
     NSRectFill(b);
+    [[NSColor colorWithWhite:0.22 alpha:1.0] set];
+    NSFrameRectWithWidth(b, 1);  // subtle 1px frame (Win32 draws a theme-border frame)
 
     // Win32-MiniMeter-style LED dot-matrix: small square cells with gaps, lit as a
     // left-to-right bar (whole columns), with a bright peak-hold cap column. Colours
@@ -100,10 +104,10 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
     const CGFloat y0 = (b.size.height - gridH) / 2.0;
     for (int c = 0; c < cols; ++c) {
         const float frac = cols > 1 ? (float)c / (cols - 1) : 0.0f;
-        NSColor* ramp = frac < 0.70f ? _lowCol : (frac < 0.90f ? _midCol : _highCol);
+        NSColor* ramp = frac < 0.60f ? _lowCol : (frac < 0.85f ? _midCol : _highCol);
         const BOOL lit = c < litCols;
         const BOOL isPeak = (c == peakColumn && peakColumn > 0);
-        [(isPeak ? _peakCol : (lit ? ramp : [ramp colorWithAlphaComponent:0.14])) setFill];
+        [(isPeak ? _peakCol : (lit ? ramp : _offCol)) setFill];  // Win32 LED: unlit = palette.off
         const CGFloat x = pad + c * (cell + gap);
         for (int r = 0; r < rows; ++r) {
             const CGFloat y = y0 + r * (cell + gap);
