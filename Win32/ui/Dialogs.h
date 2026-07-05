@@ -33,6 +33,15 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi);
 void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
                     const std::wstring& summary, const std::wstring& details);
 
+// Action chosen in the programme popup (see programmeDialog).
+enum class ProgrammeAction { None, Play, Schedule };
+
+// Modal programme popup shown when a TV Guide entry is clicked: the programme `title` +
+// `info` (channel / time / description) with Play channel / Schedule… / Close buttons.
+// Returns the chosen action (None on Close/Esc).
+ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                                const std::wstring& info);
+
 // Modal categories checklist (Settings → Categories…). `allGroups` is every
 // distinct group title; `checked` is in/out — the initially-checked groups on
 // entry, the user's final selection on exit. A live filter box, Select All /

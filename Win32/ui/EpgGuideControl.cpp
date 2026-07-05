@@ -290,29 +290,18 @@ void onClick(HWND hwnd, GuideState* st, int x, int y) {
     int r = -1;
     const GuideProgramme* p = programmeAt(hwnd, st, x, y, &r);
     if (!p) return;
-    std::wstring body =
-        st->rows[r].channelName + L"\r\n" + hm(p->startUtc) + L" – " + hm(p->stopUtc) + L"\r\n";
-    if (!p->descr.empty()) body += L"\r\n" + p->descr;
-    showInfoDialog(hwnd, st->hInst, st->dpi, L"Programme", p->title, body);
-}
-
-void onRightClick(HWND hwnd, GuideState* st, int x, int y) {
-    if (!st->cb.onSchedule) return;
-    int r = -1;
-    const GuideProgramme* p = programmeAt(hwnd, st, x, y, &r);
-    if (!p) return;
-    // Snapshot the fields before any message pumping (TrackPopupMenu / the modal below).
+    // Snapshot the fields before the modal below pumps messages (p may be invalidated).
     const std::wstring channelId = st->rows[r].channelId, channelName = st->rows[r].channelName,
                        title = p->title;
     const long long startUtc = p->startUtc, stopUtc = p->stopUtc;
+    std::wstring info = channelName + L"\r\n" + hm(startUtc) + L" – " + hm(stopUtc) + L"\r\n";
+    if (!p->descr.empty()) info += L"\r\n" + p->descr;
 
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, 1, L"Schedule recording…");
-    POINT pt{x, y};
-    ClientToScreen(hwnd, &pt);
-    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, nullptr);
-    DestroyMenu(menu);
-    if (cmd == 1) st->cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
+    const ProgrammeAction act = programmeDialog(hwnd, st->hInst, st->dpi, title, info);
+    if (act == ProgrammeAction::Play && st->cb.onPlay)
+        st->cb.onPlay(channelId, channelName);
+    else if (act == ProgrammeAction::Schedule && st->cb.onSchedule)
+        st->cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
 }
 
 LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -410,9 +399,6 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_LBUTTONDOWN:
             onClick(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            return 0;
-        case WM_RBUTTONDOWN:
-            onRightClick(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             return 0;
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {

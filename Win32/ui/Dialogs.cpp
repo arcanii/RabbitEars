@@ -912,6 +912,122 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
     DeleteObject(headFont);
 }
 
+// ---- Programme popup (click a TV Guide entry) ------------------------------
+
+namespace {
+constexpr int ID_PROG_PLAY = 1801, ID_PROG_SCHED = 1802;
+
+struct ProgrammeDlgState {
+    ProgrammeAction action = ProgrammeAction::None;  // set in the Proc before destroy
+    bool            done = false;
+};
+
+LRESULT CALLBACK ProgrammeDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<ProgrammeDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, w);
+        case WM_COMMAND:
+            switch (LOWORD(w)) {
+                case ID_PROG_PLAY: st->action = ProgrammeAction::Play; st->done = true; DestroyWindow(hwnd); return 0;
+                case ID_PROG_SCHED: st->action = ProgrammeAction::Schedule; st->done = true; DestroyWindow(hwnd); return 0;
+                case IDCANCEL: st->done = true; DestroyWindow(hwnd); return 0;
+            }
+            return 0;
+        case WM_CLOSE: st->done = true; DestroyWindow(hwnd); return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+}  // namespace
+
+ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                                const std::wstring& info) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ProgrammeDlgProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsProgramme";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    ProgrammeDlgState st;
+    HFONT bodyFont = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
+    HFONT headFont = themeFont(FontRole::Body, dpi, 15, FW_SEMIBOLD);
+    const int W = dp(460, dpi), H = dp(300, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsProgramme",
+                               title.empty() ? L"Programme" : title.c_str(),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(bodyFont);
+        DeleteObject(headFont);
+        return ProgrammeAction::None;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(20, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
+
+    HWND head = CreateWindowExW(0, L"STATIC", title.c_str(), WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                                m, dp(16, dpi), cr.right - 2 * m, dp(24, dpi), dlg, nullptr, hInst,
+                                nullptr);
+    HWND body = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", info.c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE |
+                                    ES_READONLY | ES_AUTOVSCROLL,
+                                m, dp(48, dpi), cr.right - 2 * m, btnY - dp(60, dpi), dlg, nullptr, hInst,
+                                nullptr);
+    const int pw = dp(116, dpi), sw = dp(104, dpi), cw = dp(84, dpi), gap = dp(8, dpi);
+    HWND play = CreateWindowExW(0, L"BUTTON", L"Play channel",
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, m, btnY, pw, bh,
+                                dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_PLAY)), hInst,
+                                nullptr);
+    HWND sched = CreateWindowExW(0, L"BUTTON", L"Schedule…", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                 m + pw + gap, btnY, sw, bh, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SCHED)), hInst,
+                                 nullptr);
+    HWND close = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                 cr.right - cw - m, btnY, cw, bh, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
+    SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
+    for (HWND h : {body, play, sched, close})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(play);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(msg.wParam)); DestroyWindow(dlg); break; }
+        if (r == -1) { DestroyWindow(dlg); break; }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(bodyFont);
+    DeleteObject(headFont);
+    return st.action;
+}
+
 // ---- Meters… setup dialog (Settings → Meters…) -----------------------------
 namespace {
 

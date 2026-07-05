@@ -29,11 +29,13 @@ struct GuideRow {
 };
 
 struct GuideCallbacks {
-    // Right-click a programme block → "Schedule recording". The host resolves the channel
-    // and creates the schedule. Empty (default) → the menu item is not offered.
+    // Clicking a programme opens a popup with Play / Schedule / Close. The host resolves
+    // the channel (by tvg-id) and plays it / creates the schedule. Empty callbacks hide
+    // the corresponding action.
     std::function<void(const std::wstring& channelId, const std::wstring& channelName,
                        const std::wstring& title, long long startUtc, long long stopUtc)>
         onSchedule;
+    std::function<void(const std::wstring& channelId, const std::wstring& channelName)> onPlay;
 };
 
 // Open (or focus + refresh, if already open) the single modeless guide window over

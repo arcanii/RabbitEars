@@ -1229,6 +1229,12 @@ void onEpgGuide(AppState* st) {
                          const std::wstring& title, long long startUtc, long long stopUtc) {
         scheduleFromGuide(st, channelId, channelName, title, startUtc, stopUtc);
     };
+    cb.onPlay = [st](const std::wstring& channelId, const std::wstring& channelName) {
+        std::optional<Channel> ch;
+        if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
+        if (ch) playChannel(st, *ch);
+        else setStatus(st, L"No playable channel found for \"" + channelName + L"\".");
+    };
     showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
 }
 
