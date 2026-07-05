@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.2.0 SHIPPED · **0.2.1 in dev** (EPG + Scheduled Recordings, branch `epg-xmltv` / PR pending) · macOS Phase-1
+## Current state — v0.2.0 SHIPPED · **0.2.1 on `main`** (EPG + Scheduled Recordings, merged @ `85c7ec6` — ready to cut) · macOS Phase-1
 
 **Released:** **`v0.2.0`** (2026-07-04), tag `v0.2.0` @ `343aa0e`, full version `0.2.0.107`, signed
 **`RabbitEars-0.2.0-setup.exe`** (appcast @ `7b3946a`) — **the theme engine** (see the section below);
@@ -49,15 +49,14 @@ Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `insta
 `build-installer.cmd` were fixed to match (0.1.7). The macOS team is moving fast on `main`: Phase-1
 (playback + native channel grid + Sparkle + CI `.app` build) is in progress.
 
-### 📺 EPG + ⏺ Scheduled Recordings (0.2.1 dev — branch `epg-xmltv`, **PR pending**)
+### 📺 EPG + ⏺ Scheduled Recordings (0.2.1 — **merged to `main` @ `85c7ec6`**)
 
-The 0.2.1 feature pair, built + committed + pushed on **`epg-xmltv`** (11 commits; branched off `main` @
-`bc74015`, `main` unchanged since). Open the PR at `github.com/arcanii/RabbitEars/pull/new/epg-xmltv`
-(the `pr_body.md` draft is in the session scratchpad; **`gh` here is installed but not authenticated** —
-needs `gh auth login`). All new **core** lands in `common/` and is **headless-tested** via
-`RabbitEarsCli --selftest` (42 assertions incl. gzip, XMLTV parse, the v2→v4 migration, and the pure
-scheduler); the **GUI is build-verified BOTH theme flags but NOT runtime-verified** (sandbox can't launch
-it) — the owner's runtime pass is the last gate before merge.
+The 0.2.1 feature pair, **merged to `main` @ `85c7ec6`** (the `epg-xmltv` branch — 11 commits + the merge —
+is deleted; it branched off `main` @ `bc74015`). All new **core** lands in `common/` and is
+**headless-tested** via `RabbitEarsCli --selftest` (42 assertions incl. gzip, XMLTV parse, the v2→v4
+migration, and the pure scheduler); the **GUI is build-verified BOTH theme flags but NOT runtime-verified**
+(sandbox can't launch it) — the owner's runtime pass, and the `mac-core` CI check on `main` for the
+`common/` additions, are still to confirm (the direct merge skipped the pre-merge CI gate).
 
 - **EPG (XMLTV):** vendored **miniz** (`third_party/miniz`, a `miniz` static lib in the root CMake) +
   `common/core/Gzip` gunzip `.xml.gz` (WinHTTP/NSURLSession only auto-decompress *transfer*-encoded gzip);
@@ -611,12 +610,13 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **0.2.1 IN DEV — EPG + Scheduled Recordings + clockwork icon, branch `epg-xmltv` (pushed, PR pending).**
+1. **0.2.1 — EPG + Scheduled Recordings + clockwork icon, MERGED to `main` @ `85c7ec6`** (branch deleted).
    See the "📺 EPG + ⏺ Scheduled Recordings" section above. Core is headless-tested; the GUI is
-   build-verified both flags but **needs the owner's runtime pass** (sandbox can't launch it): confirm the
-   clockwork icon, the guide renders, click → Play / Schedule, the manager + manual dialog, and an actual
-   near-future recording. **Then:** open + merge the PR (`gh auth login` first, or the compare link) → cut
-   **0.2.1** (version bump is done; build → sign-on-mac → appcast per `docs/RELEASING.md`). ⚠️ **Build with
+   build-verified both flags but **still needs the owner's runtime pass** (sandbox can't launch it): confirm
+   the clockwork icon, the guide renders, click → Play / Schedule, the manager + manual dialog, and an actual
+   near-future recording. Also watch the **`mac-core` CI on `main`** (the direct merge skipped the pre-merge
+   gate; the `common/` additions are standard C++20, written mac-safe). **Then cut 0.2.1:** the version bump
+   is done → build → sign-on-mac → appcast per `docs/RELEASING.md`. ⚠️ **Build with
    `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — build dirs cache the flag (a stale theme-OFF cache once
    shipped a Theme-menu-less exe during the 0.2.0 live pass).
 2. **Roadmap after 0.2.1** (memory `rabbitears-feature-roadmap`): a **custom EPG-URL override** (the guide
@@ -639,8 +639,8 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the "📺 EPG + ⏺ Scheduled Recordings" + "🎨 Theme engine" sections —
 > plus the recalled memories.**
 >
-> **State:** last SHIPPED = **v0.2.0** (theme engine, theme-ON by default). **In dev = 0.2.1** on branch
-> **`epg-xmltv`** (pushed, **PR pending** — 11 commits off `main`@`bc74015`): the **EPG** (XMLTV — vendored
+> **State:** last SHIPPED = **v0.2.0** (theme engine, theme-ON by default). **0.2.1 = MERGED to `main` @
+> `85c7ec6`** (the `epg-xmltv` branch is deleted): the **EPG** (XMLTV — vendored
 > miniz gunzip + `common/core/XmltvParser` + schema v3 `epg_programmes`; a Direct2D **TV Guide** window
 > `Win32/ui/EpgGuideControl` + `Settings ▸ Refresh Guide`; click an entry → Play/Schedule popup) and
 > **Scheduled recordings** (schema v4 `scheduled_recordings` + a **pure, unit-tested**
@@ -649,11 +649,10 @@ Paste this verbatim to start a fresh session with working context restored:
 > app-must-be-running**). Plus the **clockwork app icon** (`packaging/app.ico`) and the **0.2.1** version
 > bump (4 places; mac keeps 0.1.9). Core is headless-tested (`RabbitEarsCli --selftest`, 42 assertions incl.
 > the v2→v4 migration + planScheduler); the **GUI is build-verified both theme flags but NOT
-> runtime-verified** — the owner's runtime pass is the gate before merge. Both big UI surfaces were
-> adversarially reviewed.
+> runtime-verified** — the owner's runtime pass (+ the `main` `mac-core` CI on the `common/` additions) is
+> still to confirm. Both big UI surfaces were adversarially reviewed.
 >
-> **Immediate next:** owner runtime-verifies the GUI → open/merge the `epg-xmltv` PR
-> (`github.com/arcanii/RabbitEars/pull/new/epg-xmltv`; `gh` here needs `gh auth login`) → cut **0.2.1**
+> **Immediate next:** owner runtime-verifies the GUI (+ watch `mac-core` CI on `main`) → cut **0.2.1**
 > (bump done; build → sign-on-mac → appcast per `docs/RELEASING.md`). **EPG caveat:** the guide shows only
 > channels the *feed* covers — iptv-org's index.m3u ships a 2-channel stub EPG; a **custom EPG-URL override**
 > is a good follow-up. **Roadmap** (memory `rabbitears-feature-roadmap`): the **multi-player engine** is the
