@@ -25,7 +25,11 @@ target_link_libraries(RabbitEarsPlatformMac PUBLIC RabbitEarsCore "-framework Fo
 # RabbitEarsSelfTest — proves the shared core end-to-end on macOS (peer of the
 # Windows CLI --selftest).
 # ---------------------------------------------------------------------------
-add_executable(RabbitEarsSelfTest src/tools/selftest.cpp)
+# MeterModel.cpp is pure C++ (the mac-local meter model, rabbitears::mac) — compiled
+# in here too so the codec round-trip is exercised headlessly (it is NOT in
+# RabbitEarsCore yet; it lives in mac/ until promotion to common/ — see MeterModel.h).
+add_executable(RabbitEarsSelfTest src/tools/selftest.cpp src/app/MeterModel.cpp)
+target_include_directories(RabbitEarsSelfTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
 target_link_libraries(RabbitEarsSelfTest PRIVATE RabbitEarsPlatformMac)
 add_test(NAME selftest COMMAND RabbitEarsSelfTest)
 
@@ -48,15 +52,29 @@ if(RABBITEARS_BUILD_MAC)
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
     src/app/VlcPlayerMac.mm
+    src/app/SpectrumTap.mm
+    src/app/MeterView.mm
+    src/app/MetersDialog.mm
+    src/app/PlaylistsDialog.mm
+    src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm
     "${RE_MAC_ICNS}")
+
+  # These use ARC (weak-self timers; CoreFoundation bridging + a block-owning C++
+  # struct for the Core Audio spectrum tap; block-captured self in the dialogs). The
+  # rest of the app is MRC-style.
+  set_source_files_properties(
+    src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
+    src/app/PlaylistsDialog.mm
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app"   # AppDelegate.h, VlcPlayerMac.h
     "${CMAKE_BINARY_DIR}")                  # "generated/version.h"
   target_link_libraries(RabbitEars PRIVATE
-    RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit")
+    RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit"
+    "-framework CoreAudio" "-framework Accelerate")
   set_target_properties(RabbitEars PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "RabbitEars"

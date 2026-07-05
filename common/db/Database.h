@@ -44,6 +44,10 @@ public:
     void deletePlaylist(long long playlistId);
     // Change a playlist's friendly display name (its channels/source are untouched).
     void renamePlaylist(long long playlistId, const std::wstring& name);
+    // Enable/disable a playlist. A disabled playlist keeps its rows but is excluded
+    // from every cross-playlist query (all-channels, favourites, groups, countries,
+    // search, LCN lookup); channelsByPlaylist() still returns it verbatim.
+    void setPlaylistEnabled(long long playlistId, bool enabled);
 
     // ---- Channels ----------------------------------------------------------
     // Insert/refresh a freshly-parsed batch under `playlistId` in one transaction.
@@ -80,6 +84,8 @@ public:
 private:
     bool exec(const char* sql);
     bool createSchema();
+    void migrate();  // incremental, idempotent schema upgrades keyed off PRAGMA user_version
+    bool hasColumn(const char* table, const char* column);  // PRAGMA table_info membership test
 
     sqlite3*     db_ = nullptr;
     std::wstring lastError_;

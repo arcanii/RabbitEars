@@ -10,6 +10,8 @@
 // the buffer/spectrum meters.
 #import "VlcPlayerMac.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <string>
 
@@ -26,6 +28,10 @@ struct VlcPlayerMac::Impl {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     libvlc_instance_t* vlc = nullptr;
     libvlc_media_player_t* player = nullptr;
+    // Stats accumulators (main-thread only) for per-second deltas across samples.
+    int  prevRead = 0, prevDemux = 0, prevCorrupted = 0, prevDiscont = 0, prevLost = 0, prevShown = 0;
+    bool firstSample = true;
+    std::chrono::steady_clock::time_point lastSample{};
 #endif
     NSView* videoView = nil;  // weak; owned by the window
 };
@@ -92,6 +98,7 @@ void VlcPlayerMac::play(const std::wstring& url, const std::wstring& userAgent,
     libvlc_media_player_set_media(impl_->player, media);
     libvlc_media_release(media);
     libvlc_media_player_play(impl_->player);
+    impl_->firstSample = true;  // fresh stats baseline for the new stream
 #else
     (void)userAgent;
     (void)referrer;
@@ -110,6 +117,61 @@ void VlcPlayerMac::setVolume(int percent) {
     if (impl_->player) libvlc_audio_set_volume(impl_->player, percent);
 #else
     (void)percent;
+#endif
+}
+
+// Peer of Win32 VlcPlayer::sampleStats. Reads libVLC's cumulative media stats and
+// turns them into per-second rates (byte-counter deltas over wall-clock) + per-sample
+// event deltas. Main-thread only (called from the UI's meter timer).
+FlowStats VlcPlayerMac::sampleStats() {
+    FlowStats fs;
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return fs;
+    fs.playing = libvlc_media_player_is_playing(impl_->player) != 0;
+    libvlc_media_t* media = libvlc_media_player_get_media(impl_->player);  // +1 ref
+    if (!media) return fs;
+    libvlc_media_stats_t s{};
+    const bool ok = libvlc_media_get_stats(media, &s);
+    libvlc_media_release(media);
+    if (!ok) return fs;
+
+    const auto now = std::chrono::steady_clock::now();
+    double dt = std::chrono::duration<double>(now - impl_->lastSample).count();
+    if (dt < 0.001) dt = 0.001;
+
+    // read - demux = data arrived off the network but not yet consumed ≈ buffered ahead.
+    fs.bufferedBytes = std::max(0LL, (long long)s.i_read_bytes - (long long)s.i_demux_read_bytes);
+    if (!impl_->firstSample) {
+        // 32-bit cumulative counters can wrap on long streams; a negative delta = wrap → 0.
+        const auto perSec = [dt](long long cur, long long prev) {
+            const long long d = cur - prev;
+            return d > 0 ? (double)d / dt : 0.0;
+        };
+        fs.demuxBytesPerSec   = perSec(s.i_demux_read_bytes, impl_->prevDemux);
+        fs.readBytesPerSec    = perSec(s.i_read_bytes, impl_->prevRead);
+        fs.corruptedDelta     = std::max(0, s.i_demux_corrupted - impl_->prevCorrupted);
+        fs.discontinuityDelta = std::max(0, s.i_demux_discontinuity - impl_->prevDiscont);
+        fs.lostPicturesDelta  = std::max(0, s.i_lost_pictures - impl_->prevLost);
+        fs.displayedPerSec    = std::max(0, s.i_displayed_pictures - impl_->prevShown) / dt;
+    }
+    impl_->prevDemux     = s.i_demux_read_bytes;
+    impl_->prevRead      = s.i_read_bytes;
+    impl_->prevCorrupted = s.i_demux_corrupted;
+    impl_->prevDiscont   = s.i_demux_discontinuity;
+    impl_->prevLost      = s.i_lost_pictures;
+    impl_->prevShown     = s.i_displayed_pictures;
+    impl_->lastSample    = now;
+    impl_->firstSample   = false;
+#endif
+    return fs;
+}
+
+bool VlcPlayerMac::hasAudioTrack() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return false;
+    return libvlc_audio_get_track_count(impl_->player) > 0;
+#else
+    return false;
 #endif
 }
 

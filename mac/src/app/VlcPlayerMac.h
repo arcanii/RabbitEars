@@ -12,6 +12,8 @@
 
 #include <string>
 
+#include "models/FlowStats.h"
+
 namespace rabbitears {
 
 class VlcPlayerMac {
@@ -29,6 +31,17 @@ public:
     void play(const std::wstring& url, const std::wstring& userAgent, const std::wstring& referrer);
     void stop();
     void setVolume(int percent);  // 0..100
+
+    // Sample libVLC's media stats into a FlowStats snapshot (per-second byte rates
+    // over wall-clock + per-sample event deltas). Call on a steady ~250ms timer from
+    // the main thread — the deltas are stateful. Drives the buffer/bitrate/signal/
+    // frames meters with NO audio capture (no consent prompt, no A/V desync).
+    FlowStats sampleStats();
+
+    // Whether the current media has at least one audio track (false when stopped or for
+    // a video-only stream). Gates the Spectrum consent cross-check so a legitimately
+    // silent stream isn't mistaken for denied audio capture.
+    bool hasAudioTrack() const;
 
 private:
     struct Impl;

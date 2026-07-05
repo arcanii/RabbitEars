@@ -15,6 +15,7 @@ struct Playlist {
     long long    addedAt = 0;       // unix epoch seconds
     long long    lastRefreshedAt = 0;
     int          channelCount = 0;
+    bool         enabled = true;    // disabled playlists are hidden from every cross-playlist view
 };
 
 }  // namespace rabbitears
