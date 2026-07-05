@@ -38,8 +38,9 @@ The app **plays IPTV** via libVLC in a native window:
 - an **app icon** (`RabbitEars.icns`), a menu bar (Cmd-C/V/X/A/Z), CI on both platforms.
 
 The mac `.mm` are ObjC++ written **MRC-style** (ARC off target-wide; app-lifetime objects leak
-benignly). `-fobjc-arc` is enabled **per-file** only where needed (e.g. `StatMeterView.mm`'s
-weak-self timer). The shared core is portable C++ whose headers carry `#if defined(_WIN32)` branches.
+benignly). `-fobjc-arc` is enabled **per-file** only where needed (`MeterView.mm`, `MetersDialog.mm`,
+`SpectrumTap.mm` — weak-self timers, blocks, an RT latch). The shared core is portable C++ whose
+headers carry `#if defined(_WIN32)` branches.
 
 ## Build & run
 
@@ -54,30 +55,41 @@ unified root build also works directly: `cmake -S . -B build-mac -DRABBITEARS_BU
 Unsigned dev builds trip Gatekeeper — right‑click → Open, or
 `xattr -dr com.apple.quarantine build-mac/mac/RabbitEars.app`.
 
-## Meters — Core Audio tap tried & pulled; redone off libVLC stats (IN PROGRESS)
+## Meters — full Win32-parity meter system (branch `mac-stats-meter` / PR #22, NOT merged)
 
-**History.** v0.1.8 shipped a `MeterView` LED strip fed by a **non‑invasive Core Audio process tap**
-(`AudioLevelTap`, macOS 14.2+ — the mac peer of Win32's WASAPI `SpectrumTap`). Audio stayed in sync
-(the tap only *observes*; it never takes over libVLC's output). But it hit **denied consent**: on a
-denied audio‑capture prompt the tap still *succeeds* and just delivers silence → a dark, undetectable
-strip. So the whole Core Audio meter was **removed** (`main` @ `c355feb`). Recover it from git history
-before that commit if ever needed. (The older libVLC‑3.x `libvlc_audio_set_callbacks` tap — which
-took over output and desynced — was a separate, earlier dead end; do NOT revisit it.)
+**History.** A non-invasive Core Audio process tap (`AudioLevelTap`, macOS 14.2+) shipped in v0.1.8 then
+was **removed** (`main` @ `c355feb`): on *denied* audio-capture consent the tap still succeeds and just
+delivers silence → a dark, undetectable strip. (The older libVLC-3.x `libvlc_audio_set_callbacks` tap —
+took over output, desynced — was an earlier dead end; do NOT revisit it.) Both were rebuilt properly.
 
-**Redo — align with the Win32 meter set.** Win32 has `Win32/audio/SpectrumTap` (loopback + FFT),
-`Win32/ui/MiniMeter` (Spectrum/Signal/Bitrate/Frames dot‑matrix), `Win32/ui/BufferMeter` (fluid sim).
-**KEY: only Spectrum needs audio capture; Signal/Bitrate/Frames/Buffer run off
-`libvlc_media_get_stats` — no consent, no desync.** So lead with those. Progress (branch
-`mac-stats-meter` / **PR #22**):
-- **A ✅** `VlcPlayerMac::sampleStats()` → `FlowStats` (peer of Win32 `VlcPlayer::sampleStats`: byte
-  rates over wall‑clock, buffered‑ahead, fps, corruption/lost deltas).
-- **B ✅** `StatMeterView` — a Win32‑style LED **dot‑matrix** meter (small square cells, 30fps easing,
-  peak‑hold, mono readout).
-- **C ✅** wired: a 250ms poll below the video → bar = throughput vs a rolling peak, readout
-  `X Mb/s · Y fps · N drop`.
-- **D ⏳** Spectrum meter (reuse a Core Audio tap + FFT) — **opt‑in** (the only consent‑needing one).
-- **E ⏳** promote `FlowStats` + the meter model (`MeterKind/Style/Palette`, still Win32‑only) into
-  `common/` for the shared skin (the theme‑engine boundary).
+**Current architecture** (on `mac-stats-meter`; on-device-validated in pieces; passed a clean adversarial
+ARC/threading/CoreAudio review). **KEY: only Spectrum needs audio capture; Signal/Bitrate/Frames run off
+`FlowStats` — no consent, no desync.**
+- **`common/models/FlowStats.h`** — the shared stream-health snapshot (both `VlcPlayerMac::sampleStats()`
+  and Win32). Byte rates over wall-clock, buffered-ahead, fps, corruption/lost deltas.
+- **`MeterModel.{h,cpp}`** (`rabbitears::mac`, **MAC-LOCAL**) — `MeterKind` (Spectrum/Signal/Bitrate/
+  Frames), `MeterStyle` (Led/Lcd/Tube/Scope), `MeterPalette` (7 `SkinColor` roles; `inherit` = theme bg),
+  `MeterTuning` (5 knobs), `MeterConfig` + UTF-8 codecs (mirror `common/ui/Skin.cpp`). Kept out of
+  `common/` + the Windows binary until the Win32 team reviews it — **that promotion (to `common/ui` under
+  a neutral `rabbitears::meter` ns) is the deferred E3**; `Win32/ui/MiniMeter`'s model stays as-is until then.
+- **`MeterView.{h,mm}`** (ARC) — ONE view renders any kind × style from a `MeterConfig` (peer of Win32
+  `MiniMeter`). Spectrum folds in the RT-thread `os_unfair_lock` latch + energy probe + "grant permission"
+  placeholder. 30fps easing. **LED + LCD are real; Tube + Scope currently render as LED (TODO M1b/c).**
+- **`SpectrumTap.{h,mm}`** (ARC) — the recovered process tap + a **vDSP FFT** → 24 log bands (fixed
+  preallocated buffers, no RT alloc). Opt-in: creating it triggers the one-time consent prompt.
+- **`MetersDialog.{h,mm}`** (ARC) — Settings ▸ Meters… config sheet: per-kind **Show + Style + 7 colour
+  wells**; persists `meter_<kind>` / `_style` / `_colors` (Win32-compatible keys). **Tuning sliders + a live
+  preview are the remaining dialog work (M2c/d).**
+- **MainWindowController** (MRC) glue: `loadMeterConfig`/`applyMeterConfig` (launch + dialog OK + ⌥⌘M);
+  `tickStats` feeds Bitrate/Frames/Signal from `FlowStats` + Spectrum from the tap; the FlowStats consent
+  cross-check is **gated on `VlcPlayerMac::hasAudioTrack()`** so a silent/video-only/muted stream isn't
+  mistaken for denied capture; a **`DraggableMeterBar`** floats the meters over a full-bleed video (drag
+  anywhere; position persisted `meter_pos_x/y`); a bottom-bar **show/hide button** (`meters_hidden`); and
+  **Video Only** mode (⌥⌘F / Esc / double-click). `StatMeterView` + `SpectrumMeterView` were retired.
+
+**Remaining:** **Tube + Scope** style rendering (glow / trace — render as LED today; the hardest to get
+right blind, expect on-device tuning), **tuning sliders** wired into the renderer + a live preview
+(M2c/d), and the **E3** promotion above. Then on-device-validate the lot and merge PR #22 to `main`.
 
 ## Releasing (v0.1.7-mac shipped this way — full recipe in the `mac-release-deployment` memory)
 
@@ -117,7 +129,11 @@ mac/platform/{Http,Log,Updater}.mm  mac/platform/Paths.cpp   # macOS platform la
 mac/src/tools/{selftest.cpp,playprobe.mm}
 mac/packaging/{Info.plist.in, appcast-mac.xml, RabbitEars.icns, RabbitEars.entitlements}
 scripts/{build-mac.sh, package-mac.sh, make-icns.py, xcode.sh}  # build / bundle+sign+notarize / icon / Xcode-gen
-mac/src/app/StatMeterView.{h,mm}                              # libVLC-stats LED dot-matrix meter (no audio capture); PR #22
+common/models/FlowStats.h                                    # shared stream-health snapshot (Win32 + mac)
+mac/src/app/MeterModel.{h,cpp}                               # mac-local meter model (rabbitears::mac) + UTF-8 codecs
+mac/src/app/MeterView.{h,mm}                                 # unified meter renderer (4 kinds x styles); peer of Win32 MiniMeter
+mac/src/app/SpectrumTap.{h,mm}                               # Core Audio process tap + vDSP FFT -> bands (opt-in)
+mac/src/app/MetersDialog.{h,mm}                              # Settings > Meters config sheet (Show/Style/Colours)
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 
@@ -135,23 +151,30 @@ mac/src/app/StatMeterView.{h,mm}                              # libVLC-stats LED
 ```
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
-SQLite). main is on 0.2.0 (the Windows-led theme-engine release). The mac app is shipped and
-auto-updating: v0.1.8-mac on GitHub (universal, notarized, self-contained); the Sparkle update path
-is proven end-to-end. App minimum is macOS 26 ("latest is best" — LSMinimumSystemVersion only, the
-deployment target stays unpinned so CI's older SDK builds). Build: scripts/build-mac.sh [--app]
-(needs VLC.app). Release recipe: scripts/package-mac.sh + the mac-release-deployment memory (Developer
-ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal; universal needs
-vlc-3.0.23-universal.dmg; ALWAYS xmllint mac/packaging/appcast-mac.xml before publishing — an XML '--'
-in a comment broke the feed once). GUI/audio can't be verified headlessly — real Mac testing required;
-branch off main, PR back, keep common/ edits Windows-safe (windows-core CI validates).
+SQLite). main is on 0.2.0 (Windows-led theme engine). The mac app is shipped + auto-updating (v0.1.8-mac,
+universal, notarized, self-contained; Sparkle path proven end-to-end). App min macOS 26
+(LSMinimumSystemVersion only; deployment target unpinned so CI's older SDK builds). Build:
+scripts/build-mac.sh [--app] (needs VLC.app). Release recipe: scripts/package-mac.sh + the
+mac-release-deployment memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update
+--account SQLTerminal; universal needs vlc-3.0.23-universal.dmg; ALWAYS xmllint
+mac/packaging/appcast-mac.xml before publishing — an XML '--' in a comment broke the feed once). GUI/audio
+can't be verified headlessly — real Mac testing required. Branch off main, PR back; keep common/ edits
+Windows-safe (windows-core CI validates). mac .mm are MRC-style (app-lifetime leaks OK); -fobjc-arc
+per-file only (MeterView/MetersDialog/SpectrumTap). Run an adversarial ObjC++ review before merging.
 
-IN PROGRESS: the mac METER redo (branch mac-stats-meter / PR #22), aligned with the Win32 meter set
-(Win32/audio/SpectrumTap + Win32/ui/{MiniMeter,BufferMeter}). The earlier Core Audio process-tap meter
-shipped in 0.1.8 then was REMOVED (main @ c355feb) because denied audio-capture consent gave a dark,
-undetectable strip. KEY: only the Spectrum meter needs audio capture; Signal/Bitrate/Frames/Buffer run
-off libvlc_media_get_stats (no consent, no desync). DONE: (A) VlcPlayerMac::sampleStats()->FlowStats,
-(B) StatMeterView (Win32-style LED dot-matrix), (C) wired 250ms poll below the video. NEXT: (D) Spectrum
-meter (reuse a Core Audio tap + FFT, opt-in), (E) promote FlowStats + the meter model (MeterKind/Style/
-Palette, still Win32-only) to common/ for the shared skin. Other open item: the universal build's x86_64
-slice is untested on real Intel hardware (backlogged).
+IN PROGRESS: the mac METER system (branch mac-stats-meter / PR #22, NOT merged to main; validated
+on-device in pieces; adversarial-review-clean). Full Win32-MiniMeter parity: FlowStats -> common/models;
+a MAC-LOCAL meter model (rabbitears::mac, mac/src/app/MeterModel) = MeterKind/Style/Palette(SkinColor)/
+Tuning/Config + UTF-8 codecs; a unified MeterView (renders the 4 kinds Spectrum/Signal/Bitrate/Frames x
+styles from a MeterConfig); SpectrumTap (Core Audio process tap + vDSP FFT, opt-in — the only
+consent-needing one; the "denied" placeholder is gated on VlcPlayerMac::hasAudioTrack so silent/video-only
+streams don't false-flag); a Settings > Meters config dialog (per-kind Show + Style + 7 colour wells,
+persists meter_<kind>/_style/_colors); a draggable floating meter bar over full-bleed video (meter_pos_x/y);
+a bottom-bar show/hide button (meters_hidden); and Video Only mode (⌥⌘F/Esc/dbl-click). StatMeterView +
+SpectrumMeterView were retired. KEY: only Spectrum needs audio capture; Signal/Bitrate/Frames run off
+FlowStats (no consent). NEXT: (M1b/c) Tube + Scope styles — they render as LED today, the hardest to get
+right blind (expect on-device tuning); (M2c/d) tuning sliders wired into the renderer + a live preview in
+the dialog; (E3) promote MeterModel to common/ui under a neutral rabbitears::meter ns once the Win32 team
+reviews it (Win32/ui/MiniMeter stays as-is until then). Backlog: universal build's x86_64 slice untested
+on real Intel hardware.
 ```
