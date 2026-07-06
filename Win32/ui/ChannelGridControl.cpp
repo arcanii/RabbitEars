@@ -649,6 +649,18 @@ LRESULT CALLBACK GridProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
+        case WM_RBUTTONUP: {
+            const int r = rowAtY(st, GET_Y_LPARAM(lParam));
+            if (r < 0) return 0;
+            st->selectedRow = r;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            if (const Channel* c = channelAtRow(st, r); c && st->cb.onContextMenu) {
+                POINT pt;
+                GetCursorPos(&pt);
+                st->cb.onContextMenu(*c, pt);
+            }
+            return 0;
+        }
         case WM_MOUSEWHEEL: {
             commitEdit(hwnd, true);
             const int delta = GET_WHEEL_DELTA_WPARAM(wParam);

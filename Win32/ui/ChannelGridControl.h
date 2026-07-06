@@ -20,6 +20,7 @@ struct ChannelGridCallbacks {
     std::function<void(const Channel&)> onActivate;         // play this channel
     std::function<void(const Channel&)> onToggleFavourite;  // star toggled
     std::function<void(const Channel&)> onSetNumber;        // inline # (LCN) edited
+    std::function<void(const Channel&, POINT screenPt)> onContextMenu;  // right-click a row -> menu
 };
 
 void registerChannelGridClass(HINSTANCE hInst);

@@ -197,11 +197,13 @@ struct EpgResult {
 // because VlcPlayer owns a worker thread (so it isn't movable), and addressed by index —
 // the index lives in the video window's GWLP_USERDATA so VideoProc knows which pane it is.
 struct VideoPane {
-    HWND         hwnd = nullptr;   // video child window (kVideoClass)
+    HWND         hwnd = nullptr;   // kVideoClass window: a WS_CHILD tile, or a floating popup for PIP
     VlcPlayer    player;           // borrows AppState::engine's shared libVLC instance
     Channel      nowPlaying{};     // last channel played into this pane (for re-buffering)
     long long    nowPlayingId = 0;
     std::wstring nowPlayingName;
+    bool         floating = false;  // PIP: a top-level owned popup that composites OVER the big
+                                    // pane's libVLC surface (a child sibling gets occluded by it).
 };
 
 struct AppState {
@@ -250,6 +252,9 @@ struct AppState {
     POINT      videoDragStart{};      // cursor (screen) at drag start
     POINT      videoDragOrigin{};     // window top-left at drag start
     bool       videoDragMoved = false;  // crossed the drag threshold? (ignore sub-threshold jitter)
+    bool       draggingPip = false;    // the drag above is moving the floating PIP, not the main window
+    bool       pipMoved = false;       // user dragged the PIP — honour pipPos instead of the default corner
+    POINT      pipPos{};               // PIP top-left in main-client coords (used when pipMoved)
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
@@ -484,6 +489,28 @@ void drawCmdBar(HWND hwnd, AppState* st, HDC target) {
 
 // ---- layout ----------------------------------------------------------------
 
+// Position any floating (PIP) panes in SCREEN coords from their last laid-out client rect
+// (paneBounds), so the popup tracks the video area as the main window moves/resizes. The PIP is a
+// top-level owned window, so it can't ride in layout()'s DeferWindowPos child batch. Called at the
+// end of layout() and on WM_MOVE.
+void positionFloatingPip(AppState* st) {
+    for (int i = 0; i < static_cast<int>(st->panes.size()) && i < 4; ++i) {
+        VideoPane* p = st->panes[i].get();
+        if (!p->floating || !p->hwnd) continue;
+        RECT r = st->paneBounds[i];  // default corner, main-client coords from the last layout()
+        const int w = static_cast<int>(r.right - r.left), h = static_cast<int>(r.bottom - r.top);
+        // Honour a user-dragged position (pipPos, client coords); else the default corner. The size
+        // always comes from the layout — dragging only moves the PIP, it doesn't resize it.
+        POINT tl = st->pipMoved ? st->pipPos : POINT{r.left, r.top};
+        ClientToScreen(st->hwnd, &tl);
+        const bool show = (w > 0 && h > 0) && !st->fullscreen && !st->videoOnly;
+        // HWND_TOPMOST so it composites over the main window's libVLC D3D surface (an owned but
+        // non-topmost popup did not beat that surface).
+        SetWindowPos(p->hwnd, HWND_TOPMOST, tl.x, tl.y, w, h,
+                     SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    }
+}
+
 void layout(HWND hwnd, AppState* st) {
     RECT rc;
     GetClientRect(hwnd, &rc);
@@ -526,11 +553,15 @@ void layout(HWND hwnd, AppState* st) {
                        st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
                        st->meterFrames, st->gripNav, st->gripVideo, st->gripGrid})
             ShowWindow(h, SW_HIDE);
-        // Show only the active pane, filling the client; hide the others.
+        // Show the active tile full (or pane 0 if the active pane is the floating PIP); hide the
+        // rest, including the floating PIP (a separate top-level window, not in this child batch).
+        const int showIdx = st->panes[st->active]->floating ? 0 : st->active;
         for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
             HWND h = st->panes[i]->hwnd;
-            if (!h || !dwp) continue;
-            if (i == st->active)
+            if (!h) continue;
+            if (st->panes[i]->floating) { ShowWindow(h, SW_HIDE); continue; }
+            if (!dwp) continue;
+            if (i == showIdx)
                 dwp = DeferWindowPos(dwp, h, nullptr, 0, 0, W, H, kSwp | SWP_SHOWWINDOW);
             else
                 dwp = DeferWindowPos(dwp, h, nullptr, 0, 0, 0, 0,
@@ -565,10 +596,10 @@ void layout(HWND hwnd, AppState* st) {
 
     const int vidW = static_cast<int>(vidR.right - vidR.left);
     const int videoAreaH = std::max(0, static_cast<int>(vidR.bottom - vidR.top) - sHt);
-    // Lay the video panes across the video area per the current view mode (Single fills it,
-    // Split tiles a grid, PIP floats insets over pane 0). Record each pane's rect for the
-    // active-border paint; SWP_SHOWWINDOW reveals every pane this mode uses (extra panes are
-    // created hidden). Surplus panes never occur here — applyViewMode keeps panes.size() == mode.
+    // Lay the video panes across the video area per the current view mode (Single fills it, Split
+    // tiles a grid; the PIP pane is a floating top-level window placed by positionFloatingPip()).
+    // Record each pane's rect for the active-border paint + the PIP screen placement; SWP_SHOWWINDOW
+    // reveals the child tiles this mode uses (extra tiles are created hidden).
     VideoGridOpts vgo;
     vgo.gap = dp(3, st->dpi);
     vgo.pipW = dp(220, st->dpi);
@@ -578,14 +609,14 @@ void layout(HWND hwnd, AppState* st) {
                                          static_cast<int>(vidR.left), static_cast<int>(vidR.top),
                                          vidW, videoAreaH, vgo);
     for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
-        HWND h = st->panes[i]->hwnd;
         const PaneBox& b = boxes[i];
         if (i < 4) st->paneBounds[i] = RECT{b.x, b.y, b.x + b.w, b.y + b.h};
-        if (!h || !dwp) continue;
-        // PIP insets ride above pane 0; Single/Split panes don't overlap so z-order is free.
-        HWND after = (st->viewMode == ViewMode::Pip && i > 0) ? HWND_TOP : nullptr;
-        const UINT f = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_SHOWWINDOW | (after ? 0u : SWP_NOZORDER);
-        dwp = DeferWindowPos(dwp, h, after, b.x, b.y, std::max(0, b.w), std::max(0, b.h), f);
+        HWND h = st->panes[i]->hwnd;
+        // Floating (PIP) panes aren't children of this window — positionFloatingPip() places them
+        // in screen coords after the deferred child batch.
+        if (!h || st->panes[i]->floating || !dwp) continue;
+        const UINT f = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_SHOWWINDOW | SWP_NOZORDER;
+        dwp = DeferWindowPos(dwp, h, nullptr, b.x, b.y, std::max(0, b.w), std::max(0, b.h), f);
     }
 
     // Remember panel rects (for drop hit-testing) + place the drag-to-redock grips in
@@ -649,6 +680,7 @@ void layout(HWND hwnd, AppState* st) {
     placeMove(st->status, x, by, std::max(0, rightX - pad - x), btnH);
 
     if (dwp) EndDeferWindowPos(dwp);
+    positionFloatingPip(st);  // place the PIP popup (a top-level window) in screen coords
     InvalidateRect(hwnd, nullptr, FALSE);  // repaint the parent-drawn divider gutters
 }
 
@@ -997,21 +1029,31 @@ void refreshNav(AppState* st) {
 
 void resetStatMeters(AppState* st);  // defined below — clear the stat meters on switch
 
-void playChannel(AppState* st, const Channel& c) {
-    diag::info(L"select channel #" + std::to_wstring(c.id) + L" \"" + c.name + L"\" ua=[" +
-               c.userAgent + L"] ref=[" + c.referrer + L"]");
-    if (st->ap().player.isReady()) st->ap().player.play(c.streamUrl, c.userAgent, c.referrer);
-    st->ap().nowPlayingId = c.id;
-    st->ap().nowPlayingName = c.name;
-    st->ap().nowPlaying = c;
-    channelGridSetNowPlaying(st->grid, c.id);
-    st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
-    bufferMeterSetHealth(st->bufferMeter, 15);
-    resetStatMeters(st);  // clear signal/bitrate/frames so switching to a dead/stalled
-                          // stream can't leave the previous channel's readings frozen on
-                          // the meters (no new Stats arrive to overwrite them otherwise)
-    setStatus(st, L"Opening: " + c.name);
+// Play `c` into pane `idx`. When idx is the active pane it also drives the shared chrome (grid
+// now-playing highlight, meters, status, last-channel); a background pane (e.g. the PIP) just loads
+// and plays — muted, since only the active pane is audible (click it to hear it).
+void playChannelInPane(AppState* st, const Channel& c, int idx) {
+    if (idx < 0 || idx >= static_cast<int>(st->panes.size())) return;
+    VideoPane& p = *st->panes[idx];
+    diag::info(L"play pane " + std::to_wstring(idx) + L" #" + std::to_wstring(c.id) + L" \"" + c.name +
+               L"\" ua=[" + c.userAgent + L"] ref=[" + c.referrer + L"]");
+    if (p.player.isReady()) p.player.play(c.streamUrl, c.userAgent, c.referrer);
+    p.nowPlayingId = c.id;
+    p.nowPlayingName = c.name;
+    p.nowPlaying = c;
+    if (idx == st->active) {
+        channelGridSetNowPlaying(st->grid, c.id);
+        st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
+        bufferMeterSetHealth(st->bufferMeter, 15);
+        resetStatMeters(st);  // clear signal/bitrate/frames so switching to a dead/stalled stream
+                              // can't leave the previous channel's readings frozen on the meters
+        setStatus(st, L"Opening: " + c.name);
+    } else {
+        setStatus(st, L"PIP: " + c.name);
+    }
 }
+
+void playChannel(AppState* st, const Channel& c) { playChannelInPane(st, c, st->active); }
 
 std::wstring bufLabelText(int ms) {
     wchar_t b[24];
@@ -1405,15 +1447,26 @@ void toggleVideoOnly(AppState* st) {
 // so VideoProc knows which pane it is) bound to a fresh VlcPlayer that borrows the shared
 // engine. Each pane posts events tagged with its index; only the active pane drives the
 // transport strip. Created hidden — layout() shows the panes the current mode uses.
-VideoPane* addPane(HWND hwnd, AppState* st, int index) {
+VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating = false) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
     auto pane = std::make_unique<VideoPane>();
-    // Pane 0 is visible from creation (parity with the old single video window, which was
-    // WS_VISIBLE, in case the first layout() lands after the window is shown). Extra panes
-    // start hidden; applyViewMode() calls layout() right after adding them, which shows them.
-    const DWORD style = WS_CHILD | WS_CLIPSIBLINGS | (index == 0 ? WS_VISIBLE : 0u);
-    pane->hwnd = CreateWindowExW(0, kVideoClass, L"", style, 0, 0, 10, 10, hwnd, nullptr, hInst,
-                                 nullptr);
+    pane->floating = floating;
+    if (floating) {
+        // PIP: a top-level TOPMOST popup owned by the main window, so DWM composites it above the
+        // main window's libVLC D3D surface (a child sibling — even an owned, non-topmost popup —
+        // gets drawn under that surface and stays invisible). NOACTIVATE so clicking doesn't steal
+        // focus; TOOLWINDOW keeps it off the taskbar. Created hidden; positionFloatingPip() sizes +
+        // shows it in SCREEN coords.
+        pane->hwnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kVideoClass,
+                                     L"", WS_POPUP | WS_CLIPCHILDREN, 0, 0, 100, 100, hwnd, nullptr,
+                                     hInst, nullptr);
+    } else {
+        // A tile in the video area. Pane 0 is visible from creation (parity with the old single
+        // video window); extra tiles start hidden and layout() shows them.
+        const DWORD style = WS_CHILD | WS_CLIPSIBLINGS | (index == 0 ? WS_VISIBLE : 0u);
+        pane->hwnd = CreateWindowExW(0, kVideoClass, L"", style, 0, 0, 10, 10, hwnd, nullptr, hInst,
+                                     nullptr);
+    }
     SetWindowLongPtrW(pane->hwnd, GWLP_USERDATA, static_cast<LONG_PTR>(index));
     VideoPane* raw = pane.get();
     st->panes.push_back(std::move(pane));
@@ -1443,22 +1496,24 @@ void setActivePane(AppState* st, int idx) {
     InvalidateRect(st->hwnd, nullptr, FALSE);  // repaint the active-pane border + meters
 }
 
-// Switch the view mode, creating/destroying panes to match: Single=1, Split=4 (2x2),
-// Pip=2 (main + a corner inset). Surplus panes are torn down (worker joined) highest-index
-// first; the shared engine stays up. Re-asserts audio routing + chrome for the active pane.
+// Switch the view mode. Every pane except pane 0 is torn down and recreated for the target mode,
+// because their window TYPE differs — Split tiles are child windows, the PIP pane is a floating
+// top-level popup. Pane 0 (the primary child surface) always persists and keeps playing.
 void applyViewMode(AppState* st, ViewMode mode) {
-    const int want = mode == ViewMode::Split ? 4 : mode == ViewMode::Pip ? 2 : 1;
-    while (static_cast<int>(st->panes.size()) < want)
-        addPane(st->hwnd, st, static_cast<int>(st->panes.size()));
-    while (static_cast<int>(st->panes.size()) > want) {
+    while (static_cast<int>(st->panes.size()) > 1) {
         auto& p = st->panes.back();
         p->player.shutdown();  // join its worker + reaper threads before the window dies
         if (p->hwnd) DestroyWindow(p->hwnd);
         st->panes.pop_back();
     }
+    st->active = 0;
     st->viewMode = mode;
-    if (st->active >= static_cast<int>(st->panes.size())) st->active = 0;
-    setActivePane(st, st->active);
+    st->pipMoved = false;  // a fresh PIP starts in the default corner (until the user drags it)
+    if (mode == ViewMode::Split)
+        for (int i = 1; i < 4; ++i) addPane(st->hwnd, st, i);        // three more tiles -> 2x2
+    else if (mode == ViewMode::Pip)
+        addPane(st->hwnd, st, 1, /*floating=*/true);                 // the floating PIP popup
+    setActivePane(st, 0);
     layout(st->hwnd, st);
     InvalidateRect(st->hwnd, nullptr, TRUE);
 }
@@ -2144,6 +2199,20 @@ void createChildren(HWND hwnd, AppState* st) {
         if (st->filter.kind == ViewKind::Favourites) loadForFilter(st);
     };
     cb.onSetNumber = [st](const Channel& c) { st->db.setChannelNumber(c.id, c.lcn); };
+    cb.onContextMenu = [st](const Channel& c, POINT pt) {
+        HMENU m = CreatePopupMenu();
+        AppendMenuW(m, MF_STRING, 1, L"Play");
+        AppendMenuW(m, MF_STRING, 2, L"Play in PIP");
+        const int cmd =
+            TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, st->hwnd, nullptr);
+        DestroyMenu(m);
+        if (cmd == 1) {
+            playChannel(st, c);
+        } else if (cmd == 2) {
+            if (st->viewMode != ViewMode::Pip) applyViewMode(st, ViewMode::Pip);  // ensure a PIP exists
+            playChannelInPane(st, c, 1);  // pane 1 is the PIP — plays muted; click the PIP to hear it
+        }
+    };
     channelGridSetCallbacks(st->grid, cb);
 }
 
@@ -2247,6 +2316,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return hit;
         }
+        case WM_MOVE:
+            // The floating PIP is positioned in SCREEN coords, so it must follow the main window.
+            if (st->viewMode == ViewMode::Pip) positionFloatingPip(st);
+            break;  // fall through to DefWindowProc
         case WM_SIZE:
             layout(hwnd, st);
             InvalidateRect(hwnd, nullptr, FALSE);  // repaint command bar (max/restore glyph)
@@ -2295,7 +2368,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // active pane so it's clear which pane the transport + audio drive. Drawn in the
                 // parent's child-clipped DC, so it lands in the inter-pane gap, not over the
                 // libVLC surface. Single view has one pane, so no indicator is needed.
-                if (st->viewMode != ViewMode::Single && !st->panes.empty()) {
+                if (st->viewMode != ViewMode::Single && !st->panes.empty() &&
+                    !st->panes[st->active]->floating) {
                     RECT r = st->paneBounds[st->active];
                     const int t = dp(2, st->dpi);
                     InflateRect(&r, t, t);
@@ -2886,26 +2960,38 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 1;
         }
         case WM_LBUTTONDOWN: {
-            // Video-only has no title bar, so a click-drag on the video moves the window.
-            // Manual drag (not WM_NCLBUTTONDOWN) so it coexists with the double-click exit —
-            // a plain click doesn't move; a real drag does.
+            // A manual click-drag (not WM_NCLBUTTONDOWN, so it coexists with the double-click exit):
+            // on the floating PIP it moves the PIP; in video-only it moves the title-bar-less main
+            // window; otherwise a plain click just makes this pane active.
             AppState* st = stateOf(GetParent(hwnd));
-            if (st && st->videoOnly) {
+            if (!st) break;
+            const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+            const bool isPip =
+                idx >= 0 && idx < static_cast<int>(st->panes.size()) && st->panes[idx]->floating;
+            if (isPip) {
+                if (idx != st->active) setActivePane(st, idx);  // clicking the PIP activates it too
+                RECT wr;
+                GetWindowRect(hwnd, &wr);  // drag THIS window (the PIP), not the parent
+                GetCursorPos(&st->videoDragStart);
+                st->videoDragOrigin = {wr.left, wr.top};
+                st->videoDragging = true;
+                st->videoDragMoved = false;
+                st->draggingPip = true;
+                SetCapture(hwnd);
+                return 0;
+            }
+            if (st->videoOnly) {
                 RECT wr;
                 GetWindowRect(GetParent(hwnd), &wr);
                 GetCursorPos(&st->videoDragStart);
                 st->videoDragOrigin = {wr.left, wr.top};
                 st->videoDragging = true;
                 st->videoDragMoved = false;
+                st->draggingPip = false;
                 SetCapture(hwnd);
                 return 0;
             }
-            // Normal/split mode: a click makes this pane the active one (audio + transport +
-            // meters follow it), then falls through to libVLC / DefWindowProc for the click.
-            if (st && !st->videoOnly) {
-                const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-                if (idx != st->active) setActivePane(st, idx);
-            }
+            if (idx != st->active) setActivePane(st, idx);  // plain click: activate this pane
             break;
         }
         case WM_MOUSEMOVE: {
@@ -2917,10 +3003,22 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (!st->videoDragMoved && (std::abs(dx) >= GetSystemMetrics(SM_CXDRAG) ||
                                             std::abs(dy) >= GetSystemMetrics(SM_CYDRAG)))
                     st->videoDragMoved = true;  // past the dead zone -> a real drag, not a shaky click
-                if (st->videoDragMoved)
-                    SetWindowPos(GetParent(hwnd), nullptr, st->videoDragOrigin.x + dx,
-                                 st->videoDragOrigin.y + dy, 0, 0,
-                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                if (st->videoDragMoved) {
+                    const int nx = st->videoDragOrigin.x + dx, ny = st->videoDragOrigin.y + dy;
+                    if (st->draggingPip) {
+                        // Move the PIP popup; remember its offset from the main client so it keeps
+                        // tracking the main window afterwards (positionFloatingPip honours pipMoved).
+                        SetWindowPos(hwnd, nullptr, nx, ny, 0, 0,
+                                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                        POINT tl{nx, ny};
+                        ScreenToClient(st->hwnd, &tl);
+                        st->pipPos = tl;
+                        st->pipMoved = true;
+                    } else {
+                        SetWindowPos(GetParent(hwnd), nullptr, nx, ny, 0, 0,
+                                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
+                }
                 return 0;
             }
             break;
@@ -2929,6 +3027,7 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             AppState* st = stateOf(GetParent(hwnd));
             if (st && st->videoDragging) {
                 st->videoDragging = false;
+                st->draggingPip = false;
                 ReleaseCapture();
                 return 0;
             }
@@ -2936,7 +3035,7 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_CAPTURECHANGED: {
             AppState* st = stateOf(GetParent(hwnd));
-            if (st) st->videoDragging = false;  // capture lost -> end the drag cleanly
+            if (st) { st->videoDragging = false; st->draggingPip = false; }  // capture lost -> end drag
             return 0;
         }
         case WM_RBUTTONUP: {
