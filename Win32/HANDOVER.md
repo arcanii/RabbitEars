@@ -36,7 +36,8 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 **Released:** **`v0.2.1`** (2026-07-06), tag `v0.2.1` @ `79ab12c`, full version `0.2.1.148`, signed
 **`RabbitEars-0.2.1-setup.exe`** (appcast @ `a361b99`) — **EPG/TV-Guide + Scheduled Recordings + the
 multi-view (Split 2×2 / floating PIP) engine + the clockwork icon** (see the sections below); owner
-runtime-verified Split + PIP live. The GitHub release was created via the **REST API** (no `gh` CLI in the
+runtime-verified Split + PIP live, and **auto-update `0.2.0 → 0.2.1` confirmed in the wild** (About ▸ Check
+for Updates). The GitHub release was created via the **REST API** (no `gh` CLI in the
 sandbox — a cached git credential authenticated it); the appcast points 0.1.1–0.2.0 users at it. Prior:
 **`v0.2.0`** (2026-07-04), tag `v0.2.0` @ `343aa0e`, full version `0.2.0.107`, signed
 **`RabbitEars-0.2.0-setup.exe`** (appcast @ `7b3946a`) — **the theme engine** (see the section below);
