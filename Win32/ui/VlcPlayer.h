@@ -31,6 +31,8 @@ struct libvlc_event_t;
 
 namespace rabbitears {
 
+class VlcEngine;  // owns the shared libVLC instance (VlcEngine.h); players borrow its handle
+
 enum class PlayerEvent : unsigned {
     Opening = 0,
     Buffering = 1,  // lParam = percent 0..100
@@ -46,17 +48,23 @@ class VlcPlayer {
 public:
     VlcPlayer() = default;
     ~VlcPlayer();
-    // Synchronously tear down: join the worker + all reaper threads and release libVLC.
-    // Idempotent. Called from WM_DESTROY so the process is fully torn down before the
-    // message loop exits — a lingering process would block the auto-update installer.
+    // Synchronously tear down: join the worker + all reaper threads. Idempotent. The
+    // shared libVLC instance is owned by VlcEngine and released separately (shut every
+    // player down first). Called from WM_DESTROY so the worker/reaper threads are joined
+    // before the message loop exits — a lingering process would block the auto-update installer.
     void shutdown();
     VlcPlayer(const VlcPlayer&) = delete;
     VlcPlayer& operator=(const VlcPlayer&) = delete;
 
-    bool init();
+    // Bind this player to the shared engine's libVLC instance and start its worker
+    // thread. Returns false if the engine isn't initialized. Idempotent.
+    bool init(VlcEngine& engine);
     bool isReady() const { return inst_ != nullptr; }
 
     void setEventTarget(HWND target, UINT msg) { evtTarget_ = target; evtMsg_ = msg; }
+    // A small integer echoed in the HIWORD of every posted event's wParam (the LOWORD is
+    // the PlayerEvent), so a multi-pane host can tell which player fired it. Default 0.
+    void setTag(int tag) { tag_ = tag; }
     void attach(HWND video) { video_ = video; }
 
     // All of these return immediately; the worker performs the (possibly blocking)
@@ -115,6 +123,7 @@ private:
     HWND                   video_ = nullptr;
     HWND                   evtTarget_ = nullptr;
     UINT                   evtMsg_ = 0;
+    int                    tag_ = 0;   // pane index echoed to the event target (HIWORD of wParam)
     std::atomic<int>       volume_{80};
     std::atomic<int>       cachingMs_{1500};  // network-caching applied at media open
     std::atomic<bool>      playing_{false};

@@ -398,6 +398,14 @@ void Database::renamePlaylist(long long playlistId, const std::wstring& name) {
     q.stepDone();
 }
 
+void Database::setPlaylistEpgUrl(long long playlistId, const std::wstring& epgUrl) {
+    Stmt q(db_, "UPDATE playlists SET epg_url=? WHERE id=?");
+    if (!q) return;
+    q.bindText(1, epgUrl);
+    q.bindInt(2, playlistId);
+    q.stepDone();
+}
+
 void Database::setPlaylistEnabled(long long playlistId, bool enabled) {
     Stmt q(db_, "UPDATE playlists SET enabled=? WHERE id=?");
     if (!q) return;

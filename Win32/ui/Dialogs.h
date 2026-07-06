@@ -33,6 +33,16 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi);
 void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
                     const std::wstring& summary, const std::wstring& details);
 
+// A MODELESS themed "please wait" box for long async work (e.g. downloading + parsing the
+// TV guide). showLoadingDialog returns the window (or nullptr) — pump it via the main loop,
+// update its message line with updateLoadingDialog as progress arrives, and closeLoadingDialog
+// when done. updateLoadingDialog/closeLoadingDialog no-op on a null HWND, so callers needn't
+// null-check.
+HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                       const std::wstring& message);
+void updateLoadingDialog(HWND dlg, const std::wstring& message);
+void closeLoadingDialog(HWND dlg);
+
 // Action chosen in the programme popup (see programmeDialog).
 enum class ProgrammeAction { None, Play, Schedule };
 

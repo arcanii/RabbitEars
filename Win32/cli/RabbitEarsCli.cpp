@@ -25,6 +25,7 @@
 #include "platform/Encoding.h"
 #include "ui/DockLayout.h"
 #include "ui/Skin.h"
+#include "ui/VideoGrid.h"
 
 using namespace rabbitears;
 
@@ -237,6 +238,19 @@ int selftest() {
             if (pl.id == epgPid) storedEpg = pl.epgUrl;
         expect(storedEpg == L"http://x/epg.xml.gz", "epg_url persisted + read back via listPlaylists");
 
+        // Custom EPG-URL override: point Refresh Guide at a better guide than the M3U's x-tvg-url.
+        db.setPlaylistEpgUrl(epgPid, L"http://x/override.xml.gz");
+        std::wstring overEpg;
+        for (const auto& pl : db.listPlaylists())
+            if (pl.id == epgPid) overEpg = pl.epgUrl;
+        expect(overEpg == L"http://x/override.xml.gz", "setPlaylistEpgUrl overrides the guide URL");
+        db.setPlaylistEpgUrl(epgPid, L"");  // clearing resets it back to the original for the rows below
+        std::wstring clearedEpg = L"unset";
+        for (const auto& pl : db.listPlaylists())
+            if (pl.id == epgPid) clearedEpg = pl.epgUrl;
+        expect(clearedEpg.empty(), "setPlaylistEpgUrl(\"\") clears the override");
+        db.setPlaylistEpgUrl(epgPid, L"http://x/epg.xml.gz");  // restore for downstream programme tests
+
         auto mk = [](const wchar_t* ch, long long s, long long e, const wchar_t* t) {
             Programme p;
             p.channelId = ch;
@@ -413,6 +427,41 @@ int selftest() {
         for (int k = 0; k < kPanelCount; ++k)
             allPresent &= (r2[k].right > r2[k].left && r2[k].bottom > r2[k].top);
         expect(allPresent, "re-dock keeps all three panels laid out");
+    }
+
+    out("\n== Video grid (multi-pane) ==\n");
+    {
+        VideoGridOpts opts;  // gaps/insets 0 so the tiling arithmetic is exact to assert
+        // Single: one pane fills the region.
+        auto s1 = computeVideoPanes(ViewMode::Single, 1, 10, 20, 100, 80, opts);
+        expect(s1.size() == 1 && s1[0].x == 10 && s1[0].y == 20 && s1[0].w == 100 && s1[0].h == 80,
+               "Single: one pane fills the region");
+        // Split 2 -> side-by-side halves tiling the width exactly.
+        auto s2 = computeVideoPanes(ViewMode::Split, 2, 0, 0, 100, 80, opts);
+        expect(s2.size() == 2 && s2[0].x == 0 && s2[0].w == 50 && s2[1].x == 50 && s2[1].w == 50 &&
+                   s2[0].h == 80 && s2[1].h == 80,
+               "Split 2 -> side-by-side halves");
+        // Split 4 -> 2x2 quadrants; the far row/column lands exactly on the content edge.
+        auto s4 = computeVideoPanes(ViewMode::Split, 4, 0, 0, 100, 100, opts);
+        const bool quad = s4.size() == 4 && s4[0].x == 0 && s4[0].y == 0 && s4[0].w == 50 &&
+                          s4[0].h == 50 && s4[3].x == 50 && s4[3].y == 50 &&
+                          s4[3].x + s4[3].w == 100 && s4[3].y + s4[3].h == 100;
+        expect(quad, "Split 4 -> 2x2 quadrants tiling exactly");
+        // Split honours the inter-pane gap while still bounding the far edge.
+        VideoGridOpts g{};
+        g.gap = 10;
+        auto sg = computeVideoPanes(ViewMode::Split, 2, 0, 0, 100, 50, g);
+        expect(sg[0].w == 45 && sg[1].x == 55 && sg[1].x + sg[1].w == 100,
+               "Split honours the inter-pane gap");
+        // Pip: pane 0 fills; pane 1 is the bottom-right inset inside the region.
+        VideoGridOpts p{};
+        p.pipW = 30;
+        p.pipH = 20;
+        p.pipMargin = 5;
+        auto sp = computeVideoPanes(ViewMode::Pip, 2, 0, 0, 200, 100, p);
+        expect(sp.size() == 2 && sp[0].w == 200 && sp[0].h == 100, "Pip: pane 0 fills the region");
+        expect(sp[1].w == 30 && sp[1].h == 20 && sp[1].x == 165 && sp[1].y == 75,
+               "Pip: inset sits in the bottom-right corner");
     }
 
     out("\n== Skin model ==\n");

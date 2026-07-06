@@ -47,6 +47,10 @@ public:
     void deletePlaylist(long long playlistId);
     // Change a playlist's friendly display name (its channels/source are untouched).
     void renamePlaylist(long long playlistId, const std::wstring& name);
+    // Override a playlist's XMLTV guide URL (the M3U x-tvg-url is used as the default,
+    // but some feeds ship a stub/empty guide — this points Refresh Guide at a better one).
+    // Pass an empty string to clear the override back to "no guide for this playlist".
+    void setPlaylistEpgUrl(long long playlistId, const std::wstring& epgUrl);
     // Enable/disable a playlist. A disabled playlist keeps its rows but is excluded
     // from every cross-playlist query (all-channels, favourites, groups, countries,
     // search, LCN lookup); channelsByPlaylist() still returns it verbatim.

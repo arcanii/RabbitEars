@@ -2,11 +2,10 @@
 #include "ui/VlcPlayer.h"
 
 #include <algorithm>
-#include <cstdarg>
-#include <cstdio>
 
 #include <vlc/vlc.h>
 
+#include "ui/VlcEngine.h"
 #include "platform/Encoding.h"
 #include "platform/Log.h"
 
@@ -21,19 +20,6 @@ constexpr int kStatsPollMs = 250;
 // thread — only touches atomics + PostMessage (thread-safe), never mp_.
 void vlcEventThunk(const libvlc_event_t* e, void* opaque) {
     static_cast<VlcPlayer*>(opaque)->handleVlcEvent(e);
-}
-
-// libVLC's own log, routed into our diagnostic file (warnings + errors only, so
-// it stays small). Runs on libVLC threads — diag::write is thread-safe. This is
-// the payload for diagnosing why a stream won't play on a tester's machine.
-void vlcLogCb(void*, int level, const libvlc_log_t*, const char* fmt, va_list args) {
-    if (level < LIBVLC_WARNING) return;
-    char buf[1024];
-    va_list ap;
-    va_copy(ap, args);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    diag::write(level >= LIBVLC_ERROR ? L"VLC-ERR" : L"VLC-WARN", wideFromUtf8(buf));
 }
 
 }  // namespace
@@ -55,32 +41,24 @@ void VlcPlayer::shutdown() {
     for (auto& r : reapers_)
         if (r.th.joinable()) r.th.join();
     reapers_.clear();
-    if (inst_) {
-        libvlc_log_unset(inst_);
-        libvlc_release(inst_);
-        inst_ = nullptr;
-    }
+    // The libVLC instance is owned by VlcEngine — just drop our borrowed handle so no
+    // further libVLC work runs; the engine releases the instance once every player
+    // built on it has been shut down.
+    inst_ = nullptr;
 }
 
 VlcPlayer::~VlcPlayer() { shutdown(); }
 
-bool VlcPlayer::init() {
+bool VlcPlayer::init(VlcEngine& engine) {
     if (inst_) return true;
-    // NB: stats collection is left ENABLED (no "--no-stats") so we can sample
-    // real throughput + packet health per media and drive the buffer meter.
-    // "--quiet" is dropped so libVLC emits its warning/error log, which we route
-    // to the diagnostic file via libvlc_log_set (invaluable for stream triage).
-    const char* args[] = {
-        "--intf=dummy",       "--no-video-title-show", "--no-osd",
-        "--network-caching=1000", "--http-reconnect",
-    };
-    inst_ = libvlc_new(static_cast<int>(sizeof(args) / sizeof(args[0])), args);
+    // Borrow the shared libVLC instance — VlcEngine owns it (one libvlc_new per
+    // process; that single instance backs every player). All we spin up here is this
+    // player's own worker thread.
+    inst_ = engine.handle();
     if (!inst_) {
-        diag::error(L"libVLC init failed (libvlc_new returned null)");
+        diag::error(L"VlcPlayer::init called with an uninitialized VlcEngine");
         return false;
     }
-    libvlc_log_set(inst_, vlcLogCb, this);
-    diag::info(L"libVLC " + wideFromUtf8(libvlc_get_version()) + L" initialized");
     worker_ = std::thread(&VlcPlayer::workerLoop, this);
     started_ = true;
     return true;
@@ -315,7 +293,8 @@ void VlcPlayer::sampleStats() {
         snapshot_ = fs;
     }
     if (evtTarget_ && evtMsg_)
-        PostMessageW(evtTarget_, evtMsg_, static_cast<WPARAM>(PlayerEvent::Stats), 0);
+        PostMessageW(evtTarget_, evtMsg_,
+                     MAKEWPARAM(static_cast<WORD>(PlayerEvent::Stats), static_cast<WORD>(tag_)), 0);
 }
 
 FlowStats VlcPlayer::flowStats() const {
@@ -340,7 +319,8 @@ void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {
         default: return;
     }
     if (evtTarget_ && evtMsg_)
-        PostMessageW(evtTarget_, evtMsg_, static_cast<WPARAM>(ev), lp);
+        PostMessageW(evtTarget_, evtMsg_, MAKEWPARAM(static_cast<WORD>(ev), static_cast<WORD>(tag_)),
+                     lp);
 }
 
 bool VlcPlayer::play(const std::wstring& url, const std::wstring& userAgent,

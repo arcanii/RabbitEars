@@ -53,6 +53,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/MiniMeter.cpp
     ui/Dialogs.cpp
     ui/Splash.cpp
+    ui/VlcEngine.cpp
     ui/VlcPlayer.cpp
     audio/SpectrumTap.cpp
     platform/Log.cpp

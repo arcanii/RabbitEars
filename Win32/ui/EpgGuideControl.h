@@ -45,4 +45,9 @@ struct GuideCallbacks {
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
                   GuideCallbacks cb = {});
 
+// Hide the guide window if it is open. The window is kept alive (not destroyed), so a later
+// showEpgGuide re-reveals and repopulates it. Called when the host starts playing a channel
+// from the guide, so the picked show isn't left playing behind the guide window.
+void hideEpgGuide();
+
 }  // namespace rabbitears

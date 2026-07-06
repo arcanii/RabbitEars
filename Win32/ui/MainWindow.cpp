@@ -47,6 +47,8 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
+#include "ui/VideoGrid.h"
+#include "ui/VlcEngine.h"
 #include "ui/VlcPlayer.h"
 
 #include "audio/SpectrumTap.h"
@@ -70,6 +72,7 @@ constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
 constexpr UINT WM_APP_EPG_DONE = WM_APP + 3;  // EPG fetch/parse worker -> UI thread
+constexpr UINT WM_APP_EPG_PROGRESS = WM_APP + 4;  // EPG worker progress text (heap wstring*) -> loading box
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 
 // Shutdown safety-net: once teardown begins, guarantee the process exits within a
@@ -113,6 +116,9 @@ constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chro
 constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
 constexpr int ID_EPG_GUIDE = 2048;     // Settings → TV Guide (open the timeline guide window)
 constexpr int ID_SCHEDULES = 2070;     // Settings → Scheduled Recordings… (recording scheduler manager)
+constexpr int ID_VIEW_SINGLE = 2071;   // Settings → View: one pane (classic single-player)
+constexpr int ID_VIEW_SPLIT = 2072;    // Settings → View: 2×2 split (multiple simultaneous views)
+constexpr int ID_VIEW_PIP = 2073;      // Settings → View: picture-in-picture
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
@@ -137,7 +143,7 @@ int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 // receive->show latency the user trades for smoothness on flaky streams.
 constexpr int kBufMinMs = 500, kBufMaxMs = 8000, kBufStepMs = 250;
 
-enum class ViewKind { All, Favourites, Group, Country, Playlist };
+enum class ViewKind { All, Favourites, Group, Country, Playlist, Guide };
 struct ViewFilter {
     ViewKind     kind = ViewKind::All;
     std::wstring group;
@@ -186,11 +192,29 @@ struct EpgResult {
     std::vector<EpgFetch> fetches;
 };
 
+// One video pane: its own surface window + libVLC player (sharing AppState::engine) + the
+// channel currently in it. Split view / PIP hold several; Single holds one. Heap-allocated
+// because VlcPlayer owns a worker thread (so it isn't movable), and addressed by index —
+// the index lives in the video window's GWLP_USERDATA so VideoProc knows which pane it is.
+struct VideoPane {
+    HWND         hwnd = nullptr;   // video child window (kVideoClass)
+    VlcPlayer    player;           // borrows AppState::engine's shared libVLC instance
+    Channel      nowPlaying{};     // last channel played into this pane (for re-buffering)
+    long long    nowPlayingId = 0;
+    std::wstring nowPlayingName;
+};
+
 struct AppState {
     Database   db;
-    VlcPlayer  player;
+    VlcEngine  engine;  // owns the shared libVLC instance; must outlive the panes (below)
+    // The video panes. panes[0] is created in WM_CREATE and always exists; Split/PIP add
+    // more. `active` is the focused pane — it gets channel selection, audio, the transport
+    // strip, and the meters; the others play muted. ap() is the active pane.
+    std::vector<std::unique_ptr<VideoPane>> panes;
+    int        active = 0;
+    ViewMode   viewMode = ViewMode::Single;
+    VideoPane& ap() { return *panes[active]; }
     HWND       hwnd = nullptr;
-    HWND       video = nullptr;
     HWND       nav = nullptr;
     HWND       splitter = nullptr;
     HWND       grid = nullptr;
@@ -229,6 +253,7 @@ struct AppState {
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
+    HWND       loadingDlg = nullptr;    // modeless "please wait" box during an EPG fetch (null = idle)
     long long  activeScheduleId = 0;   // id of the schedule currently owning the recorder (0 = none)
     bool       schedulerReconciled = false;  // one-time startup reset of stale "Recording" rows
     std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv"
@@ -239,9 +264,6 @@ struct AppState {
     bool       showSignal = true;
     bool       showBitrate = false;
     bool       showFrames = false;
-    long long  nowPlayingId = 0;
-    std::wstring nowPlayingName;
-    Channel    nowPlaying;   // last channel passed to playChannel (for re-buffering)
     ViewFilter filter;
     std::vector<ViewFilter> navFilters;  // indexed by tree item lParam
     SpectrumTap spectrumTap;             // read-only WASAPI process-loopback → spectrum meter
@@ -255,6 +277,7 @@ struct AppState {
     HWND        gripNav = nullptr, gripVideo = nullptr, gripGrid = nullptr;
     HWND        dockOverlay = nullptr;      // layered highlight, created lazily
     RECT        panelRects[kPanelCount]{};  // last-laid-out rects, for drop hit-testing
+    RECT        paneBounds[4]{};             // last-laid-out video-pane rects (active-border paint)
     bool        panelDragActive = false;
     Panel       panelDragFrom = Panel::Nav;
     Panel       panelDropTo = Panel::Nav;
@@ -503,7 +526,16 @@ void layout(HWND hwnd, AppState* st) {
                        st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
                        st->meterFrames, st->gripNav, st->gripVideo, st->gripGrid})
             ShowWindow(h, SW_HIDE);
-        place(st->video, 0, 0, W, H);
+        // Show only the active pane, filling the client; hide the others.
+        for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
+            HWND h = st->panes[i]->hwnd;
+            if (!h || !dwp) continue;
+            if (i == st->active)
+                dwp = DeferWindowPos(dwp, h, nullptr, 0, 0, W, H, kSwp | SWP_SHOWWINDOW);
+            else
+                dwp = DeferWindowPos(dwp, h, nullptr, 0, 0, 0, 0,
+                                     kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
+        }
         if (dwp) EndDeferWindowPos(dwp);
         return;
     }
@@ -533,7 +565,28 @@ void layout(HWND hwnd, AppState* st) {
 
     const int vidW = static_cast<int>(vidR.right - vidR.left);
     const int videoAreaH = std::max(0, static_cast<int>(vidR.bottom - vidR.top) - sHt);
-    place(st->video, vidR.left, vidR.top, vidW, videoAreaH);
+    // Lay the video panes across the video area per the current view mode (Single fills it,
+    // Split tiles a grid, PIP floats insets over pane 0). Record each pane's rect for the
+    // active-border paint; SWP_SHOWWINDOW reveals every pane this mode uses (extra panes are
+    // created hidden). Surplus panes never occur here — applyViewMode keeps panes.size() == mode.
+    VideoGridOpts vgo;
+    vgo.gap = dp(3, st->dpi);
+    vgo.pipW = dp(220, st->dpi);
+    vgo.pipH = dp(124, st->dpi);
+    vgo.pipMargin = dp(12, st->dpi);
+    const auto boxes = computeVideoPanes(st->viewMode, static_cast<int>(st->panes.size()),
+                                         static_cast<int>(vidR.left), static_cast<int>(vidR.top),
+                                         vidW, videoAreaH, vgo);
+    for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
+        HWND h = st->panes[i]->hwnd;
+        const PaneBox& b = boxes[i];
+        if (i < 4) st->paneBounds[i] = RECT{b.x, b.y, b.x + b.w, b.y + b.h};
+        if (!h || !dwp) continue;
+        // PIP insets ride above pane 0; Single/Split panes don't overlap so z-order is free.
+        HWND after = (st->viewMode == ViewMode::Pip && i > 0) ? HWND_TOP : nullptr;
+        const UINT f = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_SHOWWINDOW | (after ? 0u : SWP_NOZORDER);
+        dwp = DeferWindowPos(dwp, h, after, b.x, b.y, std::max(0, b.w), std::max(0, b.h), f);
+    }
 
     // Remember panel rects (for drop hit-testing) + place the drag-to-redock grips in
     // each region's top-right corner, kept above the region's content.
@@ -854,10 +907,11 @@ void loadForFilter(AppState* st) {
         case ViewKind::Group: ch = st->db.channelsByGroup(st->filter.group); break;
         case ViewKind::Country: ch = st->db.channelsByCountry(st->filter.country); break;
         case ViewKind::Playlist: ch = st->db.channelsByPlaylist(st->filter.playlistId); break;
+        case ViewKind::Guide: break;  // action node (opens the TV Guide window); loads no grid channels
     }
     applyChannelFilters(st, ch);
     channelGridSetChannels(st->grid, std::move(ch));
-    channelGridSetNowPlaying(st->grid, st->nowPlayingId);
+    channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
     updateCounts(st);
 }
 
@@ -914,6 +968,8 @@ void refreshNav(AppState* st) {
     navInsert(st->nav, TVI_ROOT, L"All Channels", 0, false);
     st->navFilters.push_back({ViewKind::Favourites});
     navInsert(st->nav, TVI_ROOT, L"★ Favourites", 1, false);
+    st->navFilters.push_back({ViewKind::Guide});
+    navInsert(st->nav, TVI_ROOT, L"📺 TV Guide", 2, false);  // selecting it opens the guide window
 
     HTREEITEM groups = navInsert(st->nav, TVI_ROOT, L"Groups", -1, true);
     for (const std::wstring& g : st->db.listGroups()) {
@@ -944,10 +1000,10 @@ void resetStatMeters(AppState* st);  // defined below — clear the stat meters 
 void playChannel(AppState* st, const Channel& c) {
     diag::info(L"select channel #" + std::to_wstring(c.id) + L" \"" + c.name + L"\" ua=[" +
                c.userAgent + L"] ref=[" + c.referrer + L"]");
-    if (st->player.isReady()) st->player.play(c.streamUrl, c.userAgent, c.referrer);
-    st->nowPlayingId = c.id;
-    st->nowPlayingName = c.name;
-    st->nowPlaying = c;
+    if (st->ap().player.isReady()) st->ap().player.play(c.streamUrl, c.userAgent, c.referrer);
+    st->ap().nowPlayingId = c.id;
+    st->ap().nowPlayingName = c.name;
+    st->ap().nowPlaying = c;
     channelGridSetNowPlaying(st->grid, c.id);
     st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
     bufferMeterSetHealth(st->bufferMeter, 15);
@@ -967,11 +1023,11 @@ std::wstring bufLabelText(int ms) {
 // (optionally) re-buffer the current stream so the change takes effect immediately.
 void setBufferMs(AppState* st, int ms, bool replay) {
     ms = std::clamp((ms + kBufStepMs / 2) / kBufStepMs * kBufStepMs, kBufMinMs, kBufMaxMs);
-    st->player.setNetworkCaching(ms);
+    st->ap().player.setNetworkCaching(ms);
     st->db.setSetting(L"buffer_ms", std::to_wstring(ms));
     if (st->bufBar) SendMessageW(st->bufBar, TBM_SETPOS, TRUE, ms / kBufStepMs);
     if (st->bufLabel) SetWindowTextW(st->bufLabel, bufLabelText(ms).c_str());
-    if (replay && st->player.isPlaying() && st->nowPlaying.id != 0) playChannel(st, st->nowPlaying);
+    if (replay && st->ap().player.isPlaying() && st->ap().nowPlaying.id != 0) playChannel(st, st->ap().nowPlaying);
 }
 
 std::wstring nameFromSource(const std::wstring& src, bool isUrl) {
@@ -1120,19 +1176,32 @@ void onEpgRefresh(AppState* st) {
     }
     st->busy = true;
     setStatus(st, L"Downloading guide…");
+    st->loadingDlg =
+        showLoadingDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"Contacting guide source…");
     diag::info(L"EPG refresh start: " + std::to_wstring(targets.size()) + L" playlist(s)");
     HWND hwnd = st->hwnd;
     std::thread([hwnd, targets]() {
+        // Progress lines carry a heap wstring* the UI thread shows in the loading box, then frees.
+        auto post = [hwnd](const std::wstring& s) {
+            PostMessageW(hwnd, WM_APP_EPG_PROGRESS, 0, reinterpret_cast<LPARAM>(new std::wstring(s)));
+        };
+        const size_t n = targets.size();
         auto* res = new EpgResult();
-        for (const auto& t : targets) {
+        for (size_t i = 0; i < n; ++i) {
+            const EpgTarget& t = targets[i];
             EpgFetch f;
             f.playlistId = t.id;
             f.name = t.name;
+            const std::wstring tag =
+                n > 1 ? L" (" + std::to_wstring(i + 1) + L" of " + std::to_wstring(n) + L")" : L"";
             std::string bytes;
             std::wstring err;
+            post(L"Downloading " + t.name + L"…" + tag);
             if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60 s
                 f.error = err.empty() ? L"download failed" : err;
             } else {
+                post(L"Parsing " + t.name + L" (" + std::to_wstring(bytes.size() / 1024) + L" KB)…" +
+                     tag);
                 const std::string xml = gunzipIfNeeded(bytes);
                 if (xml.empty())
                     f.error = L"empty or invalid after decompression";
@@ -1147,6 +1216,8 @@ void onEpgRefresh(AppState* st) {
 
 void onEpgDone(AppState* st, EpgResult* res) {
     st->busy = false;
+    closeLoadingDialog(st->loadingDlg);  // dismiss the "please wait" box before the results dialog
+    st->loadingDlg = nullptr;
     const long long now = static_cast<long long>(time(nullptr));
     int okCount = 0, totalProg = 0;
     std::set<std::wstring> chans;
@@ -1176,8 +1247,9 @@ void onEpgDone(AppState* st, EpgResult* res) {
 }
 
 // Assemble the timeline guide from stored programmes (all enabled playlists) and open
-// the guide window. Programmes are joined to channel display names by tvg-id; rows with
-// no guide data are omitted. The whole loaded window scrolls client-side (no re-query).
+// the guide window. Programmes are joined to channels by tvg-id, and ONLY channels that
+// exist in a playlist are shown (so every entry is playable). The whole loaded window
+// scrolls client-side (no re-query).
 // Defined below (after the scheduler helpers) — declared here for onEpgGuide's callback.
 void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName,
                        const std::wstring& title, long long startUtc, long long stopUtc);
@@ -1196,30 +1268,39 @@ void onEpgGuide(AppState* st) {
             if (!c.tvgId.empty()) nameByTvg.emplace(c.tvgId, c.name);
         GuideRow cur;
         std::wstring curId;
-        bool have = false;
+        bool have = false;     // building a row for a channel that IS in this playlist?
+        bool started = false;  // entered any channel group yet? (have can no longer double as this)
         auto flush = [&] {
             if (have && !cur.programmes.empty()) rows.push_back(std::move(cur));
             cur = GuideRow{};
             have = false;
         };
         for (auto& p : progs) {
-            if (!have || p.channelId != curId) {
+            if (!started || p.channelId != curId) {
                 flush();
                 curId = p.channelId;
-                cur.channelId = curId;
+                started = true;
+                // Only surface channels that exist in the playlist — otherwise a row shows a
+                // programme whose channel has no stream to play (the "no ID found in playlist"
+                // report). nameByTvg mirrors channelByTvgId's scope, so every kept row IS playable.
                 auto it = nameByTvg.find(curId);
-                cur.channelName = (it != nameByTvg.end() && !it->second.empty()) ? it->second : curId;
-                have = true;
+                if (it != nameByTvg.end()) {
+                    cur.channelId = curId;
+                    cur.channelName = it->second.empty() ? curId : it->second;
+                    have = true;
+                }
             }
-            cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
+            if (have) cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
         }
         flush();
     }
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
     if (rows.empty()) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"No guide data yet",
-                       L"There is no stored programme data for your enabled playlists.\r\n\r\n"
-                       L"Run Settings ▸ Refresh Guide… first (a playlist must carry an x-tvg-url).");
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"No guide to show",
+                       L"No stored programmes match a channel in your playlists.\r\n\r\n"
+                       L"Either run Settings ▸ Refresh Guide… first, or the guide's channel IDs don't "
+                       L"match your playlist — point it at a guide whose tvg-ids line up (right-click a "
+                       L"playlist ▸ Set Guide URL…).");
         return;
     }
     std::sort(rows.begin(), rows.end(),
@@ -1232,10 +1313,49 @@ void onEpgGuide(AppState* st) {
     cb.onPlay = [st](const std::wstring& channelId, const std::wstring& channelName) {
         std::optional<Channel> ch;
         if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
-        if (ch) playChannel(st, *ch);
-        else setStatus(st, L"No playable channel found for \"" + channelName + L"\".");
+        if (ch) {
+            playChannel(st, *ch);
+            // Starting a show hides the guide (a big window over the viewer) and brings the main
+            // window forward, so the picked channel is actually visible instead of playing behind
+            // the guide. Reopen 📺 TV Guide to bring it back.
+            hideEpgGuide();
+            SetForegroundWindow(st->hwnd);
+        } else {
+            // setStatus lands in the status bar, which is behind the guide — the user never saw
+            // it. Say why loudly instead (almost always a tvg-id mismatch, per the guide caveat).
+            HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+            showInfoDialog(st->hwnd, hi, st->dpi, L"TV Guide", L"No matching channel",
+                           L"Couldn't find a channel for \"" + channelName +
+                               L"\" in your playlist.\r\n\r\nThe guide matches programmes to channels "
+                               L"by tvg-id — this programme's channel ID has no match. Point the "
+                               L"playlist at a guide whose IDs match it (right-click the playlist "
+                               L"▸ Set Guide URL…).");
+        }
     };
     showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
+}
+
+// Prompt for a playlist's XMLTV guide URL (seeded with its current one), save the override,
+// and offer to fetch it now. Shared by the playlist context menu and the TV Guide node menu.
+void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
+    std::wstring url;  // seed with the current URL (M3U x-tvg-url or a prior override)
+    for (const auto& pl : st->db.listPlaylists())
+        if (pl.id == pid) { url = pl.epgUrl; break; }
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+    if (!promptText(hwnd, hInst, st->dpi, L"Set Guide URL",
+                    L"XMLTV guide URL (.xml or .xml.gz; blank to clear):", url))
+        return;
+    st->db.setPlaylistEpgUrl(pid, url);
+    diag::info(L"set epg_url for playlist id=" + std::to_wstring(pid) +
+               (url.empty() ? L" (cleared)" : L" to \"" + url + L"\""));
+    if (url.empty()) {
+        setStatus(st, L"Guide URL cleared");
+    } else if (MessageBoxW(hwnd, L"Guide URL saved.\n\nDownload the guide now?", L"Set Guide URL",
+                           MB_YESNO | MB_ICONQUESTION) == IDYES) {
+        onEpgRefresh(st);  // fetches every enabled playlist that has a URL
+    } else {
+        setStatus(st, L"Guide URL saved — run Settings ▸ Refresh Guide to fetch it");
+    }
 }
 
 void toggleFullscreen(AppState* st) {
@@ -1254,7 +1374,7 @@ void toggleFullscreen(AppState* st) {
         SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
                      mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
                      SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-        SetFocus(st->video);
+        SetFocus(st->ap().hwnd);
     } else {
         SetWindowLongW(hwnd, GWL_STYLE, st->prevStyle);
         SetWindowPlacement(hwnd, &st->prevPlacement);
@@ -1276,7 +1396,71 @@ void toggleVideoOnly(AppState* st) {
     st->videoOnly = !st->videoOnly;
     layout(st->hwnd, st);
     InvalidateRect(st->hwnd, nullptr, TRUE);
-    if (st->videoOnly) SetFocus(st->video);  // so Esc reaches VideoProc while the chrome is hidden
+    if (st->videoOnly) SetFocus(st->ap().hwnd);  // so Esc reaches VideoProc while the chrome is hidden
+}
+
+// ---- multi-player panes (split view / PIP) ---------------------------------
+
+// Create video pane #index: a kVideoClass child window (its index stashed in GWLP_USERDATA
+// so VideoProc knows which pane it is) bound to a fresh VlcPlayer that borrows the shared
+// engine. Each pane posts events tagged with its index; only the active pane drives the
+// transport strip. Created hidden — layout() shows the panes the current mode uses.
+VideoPane* addPane(HWND hwnd, AppState* st, int index) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+    auto pane = std::make_unique<VideoPane>();
+    // Pane 0 is visible from creation (parity with the old single video window, which was
+    // WS_VISIBLE, in case the first layout() lands after the window is shown). Extra panes
+    // start hidden; applyViewMode() calls layout() right after adding them, which shows them.
+    const DWORD style = WS_CHILD | WS_CLIPSIBLINGS | (index == 0 ? WS_VISIBLE : 0u);
+    pane->hwnd = CreateWindowExW(0, kVideoClass, L"", style, 0, 0, 10, 10, hwnd, nullptr, hInst,
+                                 nullptr);
+    SetWindowLongPtrW(pane->hwnd, GWLP_USERDATA, static_cast<LONG_PTR>(index));
+    VideoPane* raw = pane.get();
+    st->panes.push_back(std::move(pane));
+    raw->player.init(st->engine);
+    raw->player.attach(raw->hwnd);
+    raw->player.setEventTarget(hwnd, WM_APP_VLC);
+    raw->player.setTag(index);
+    if (index != st->active) raw->player.setVolume(0);  // only the active pane is audible
+    return raw;
+}
+
+// Make pane `idx` the active one: route audio (others muted), the grid now-playing
+// highlight, the play/pause glyph, the meters, and the active-pane border to it. Safe if
+// out of range (no-op).
+void setActivePane(AppState* st, int idx) {
+    if (idx < 0 || idx >= static_cast<int>(st->panes.size())) return;
+    st->active = idx;
+    const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
+    for (int i = 0; i < static_cast<int>(st->panes.size()); ++i)
+        st->panes[i]->player.setVolume(i == idx ? vol : 0);  // active audible, others muted
+    channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
+    SetWindowTextW(st->btnPlay, st->ap().player.isPlaying() ? kGlyphPause : kGlyphPlay);
+    resetStatMeters(st);  // the previous pane's readings don't apply to the newly-active stream
+    setStatus(st, st->ap().nowPlayingName.empty()
+                      ? L"Active pane " + std::to_wstring(idx + 1)
+                      : L"Active: " + st->ap().nowPlayingName);
+    InvalidateRect(st->hwnd, nullptr, FALSE);  // repaint the active-pane border + meters
+}
+
+// Switch the view mode, creating/destroying panes to match: Single=1, Split=4 (2x2),
+// Pip=2 (main + a corner inset). Surplus panes are torn down (worker joined) highest-index
+// first; the shared engine stays up. Re-asserts audio routing + chrome for the active pane.
+void applyViewMode(AppState* st, ViewMode mode) {
+    const int want = mode == ViewMode::Split ? 4 : mode == ViewMode::Pip ? 2 : 1;
+    while (static_cast<int>(st->panes.size()) < want)
+        addPane(st->hwnd, st, static_cast<int>(st->panes.size()));
+    while (static_cast<int>(st->panes.size()) > want) {
+        auto& p = st->panes.back();
+        p->player.shutdown();  // join its worker + reaper threads before the window dies
+        if (p->hwnd) DestroyWindow(p->hwnd);
+        st->panes.pop_back();
+    }
+    st->viewMode = mode;
+    if (st->active >= static_cast<int>(st->panes.size())) st->active = 0;
+    setActivePane(st, st->active);
+    layout(st->hwnd, st);
+    InvalidateRect(st->hwnd, nullptr, TRUE);
 }
 
 std::wstring recordingsDir() {
@@ -1309,24 +1493,24 @@ void onToggleRecord(AppState* st) {
         setStatus(st, L"A scheduled recording is in progress — manage it in Scheduled Recordings.");
         return;
     }
-    if (st->player.isRecording()) {
-        const std::wstring file = st->player.recordingFile();
-        st->player.stopRecording();
+    if (st->ap().player.isRecording()) {
+        const std::wstring file = st->ap().player.recordingFile();
+        st->ap().player.stopRecording();
         SetWindowTextW(st->btnRec, kGlyphRecord);
         setStatus(st, L"Recording saved: " + file);
         return;
     }
-    if (st->nowPlaying.id == 0) {
+    if (st->ap().nowPlaying.id == 0) {
         setStatus(st, L"Play a channel first, then Record.");
         return;
     }
     const std::wstring ext = (st->recFormat == L"mkv") ? L".mkv" : L".ts";
     const std::string mux = (st->recFormat == L"mkv") ? "mkv" : "ts";
-    const std::wstring path = recordingPath(st->nowPlaying.name, ext);
-    if (st->player.startRecording(st->nowPlaying.streamUrl, st->nowPlaying.userAgent,
-                                  st->nowPlaying.referrer, path, mux)) {
+    const std::wstring path = recordingPath(st->ap().nowPlaying.name, ext);
+    if (st->ap().player.startRecording(st->ap().nowPlaying.streamUrl, st->ap().nowPlaying.userAgent,
+                                  st->ap().nowPlaying.referrer, path, mux)) {
         SetWindowTextW(st->btnRec, kGlyphStop);
-        setStatus(st, L"● Recording " + st->nowPlaying.name + L"  →  " + path);
+        setStatus(st, L"● Recording " + st->ap().nowPlaying.name + L"  →  " + path);
     }
 }
 
@@ -1352,11 +1536,11 @@ void onSchedulerTick(AppState* st) {
     }
     const long long now = static_cast<long long>(time(nullptr));
     // "Manual" recording = the recorder is busy but no schedule owns it.
-    const bool manualRecording = st->player.isRecording() && st->activeScheduleId == 0;
+    const bool manualRecording = st->ap().player.isRecording() && st->activeScheduleId == 0;
     const SchedulerPlan plan = planScheduler(schedules, now, manualRecording);
 
     for (long long id : plan.stop) {
-        st->player.stopRecording();
+        st->ap().player.stopRecording();
         st->db.updateScheduleStatus(id, ScheduleStatus::Done);
         if (st->activeScheduleId == id) st->activeScheduleId = 0;
         diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
@@ -1374,7 +1558,7 @@ void onSchedulerTick(AppState* st) {
         const std::wstring ext = (s->mux == L"mkv") ? L".mkv" : L".ts";
         const std::string mux = (s->mux == L"mkv") ? "mkv" : "ts";
         const std::wstring path = recordingPath(s->channelName, ext);
-        if (st->player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
+        if (st->ap().player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
             st->activeScheduleId = id;
             st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path);
             diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
@@ -1431,14 +1615,14 @@ void onManageSchedules(AppState* st) {
     cb.list = [st] { return st->db.listSchedules(); };
     cb.cancel = [st](long long id) {
         if (st->activeScheduleId == id) {
-            st->player.stopRecording();
+            st->ap().player.stopRecording();
             st->activeScheduleId = 0;
         }
         st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
     };
     cb.remove = [st](long long id) {
         if (st->activeScheduleId == id) {
-            st->player.stopRecording();
+            st->ap().player.stopRecording();
             st->activeScheduleId = 0;
         }
         st->db.deleteSchedule(id);
@@ -1612,6 +1796,15 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), ID_VIDEO_ONLY,
                 L"Video only\tCtrl+Shift+V");
 
+    HMENU viewMenu = CreatePopupMenu();
+    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Single ? MF_CHECKED : 0u),
+                ID_VIEW_SINGLE, L"Single");
+    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Split ? MF_CHECKED : 0u),
+                ID_VIEW_SPLIT, L"Split (2×2)");
+    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Pip ? MF_CHECKED : 0u),
+                ID_VIEW_PIP, L"Picture-in-picture");
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(viewMenu), L"View");
+
     HMENU layoutMenu = CreatePopupMenu();
     AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, L"Reset to default");
     AppendMenuW(layoutMenu, MF_SEPARATOR, 0, nullptr);
@@ -1707,6 +1900,15 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_VIDEO_ONLY:
             toggleVideoOnly(st);
             break;
+        case ID_VIEW_SINGLE:
+            applyViewMode(st, ViewMode::Single);
+            break;
+        case ID_VIEW_SPLIT:
+            applyViewMode(st, ViewMode::Split);
+            break;
+        case ID_VIEW_PIP:
+            applyViewMode(st, ViewMode::Pip);
+            break;
     }
 }
 
@@ -1781,7 +1983,7 @@ void drawTransportButton(AppState* st, const DRAWITEMSTRUCT* dis) {
     // The record button stays lit while a recording is live; any button lights on hover.
     // Play/pause isn't treated as "active" while playing — you almost always are, so the
     // live cue would never rest — it is reserved for recording.
-    const bool active = (dis->hwndItem == st->btnRec && st->player.isRecording());
+    const bool active = (dis->hwndItem == st->btnRec && st->ap().player.isRecording());
     const bool lit = (hover || active) && !disabled;
 
     // Flat into the strip band at rest; a muted-accent wash on press. Hover feedback is
@@ -1822,8 +2024,7 @@ void createChildren(HWND hwnd, AppState* st) {
     st->titleFont = themeFont(FontRole::Title, st->dpi);  // Segoe UI 16 semibold
     st->glyphFont = themeFont(FontRole::Glyph, st->dpi);  // Segoe MDL2 Assets 13
 
-    st->video = CreateWindowExW(0, kVideoClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 10,
-                                10, hwnd, nullptr, hInst, nullptr);
+    addPane(hwnd, st, 0);  // pane 0: the primary video surface + its player (always present)
 #ifdef RABBITEARS_THEME_ENGINE
     // GPU transport-strip underglow: windowless. The parent's WM_PAINT (+ a timer tick)
     // BitBlt it into the strip band behind the transport controls — WS_CLIPCHILDREN keeps
@@ -1891,11 +2092,11 @@ void createChildren(HWND hwnd, AppState* st) {
     SetWindowLongPtrW(st->gripGrid, GWLP_USERDATA, static_cast<LONG_PTR>(Panel::Grid));
 
     SendMessageW(st->volBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-    SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->player.volume());
+    SendMessageW(st->volBar, TBM_SETPOS, TRUE, st->ap().player.volume());
     SendMessageW(st->bufBar, TBM_SETRANGE, TRUE,
                  MAKELPARAM(kBufMinMs / kBufStepMs, kBufMaxMs / kBufStepMs));
-    SendMessageW(st->bufBar, TBM_SETPOS, TRUE, st->player.networkCaching() / kBufStepMs);
-    SetWindowTextW(st->bufLabel, bufLabelText(st->player.networkCaching()).c_str());
+    SendMessageW(st->bufBar, TBM_SETPOS, TRUE, st->ap().player.networkCaching() / kBufStepMs);
+    SetWindowTextW(st->bufLabel, bufLabelText(st->ap().player.networkCaching()).c_str());
 
     // Speaker glyph + a hover tooltip ("Volume: N%") so the slider self-explains.
     SetWindowTextW(st->volIcon, L"");
@@ -1961,10 +2162,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             st->dpi = GetDpiForWindow(hwnd);
             st->sidebarW = navWidth(st->dpi);
             applyDarkChrome(hwnd);
-            st->player.init();
-            createChildren(hwnd, st);
-            st->player.attach(st->video);
-            st->player.setEventTarget(hwnd, WM_APP_VLC);
+            st->engine.init();            // one shared libVLC instance backs every player
+            createChildren(hwnd, st);     // creates pane 0 (its window + player, bound to the engine)
             st->dock = DockLayout::makeDefault();  // valid tree even if the DB fails below
 
             const std::wstring dbPath = Database::defaultDbPath();
@@ -2062,7 +2261,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // Keep the video focused while the chrome is hidden, so Esc reaches VideoProc even
             // after the user Alt-Tabs away and back (video-only + fullscreen both rely on it).
             if (LOWORD(wParam) != WA_INACTIVE && (st->videoOnly || st->fullscreen))
-                SetFocus(st->video);
+                SetFocus(st->ap().hwnd);
             break;
         case WM_KEYDOWN:
             // Esc is also handled here, not only in VideoProc: after a resize the main window
@@ -2092,6 +2291,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #endif
                 if (gdiStrip) FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
                 paintGutters(st, hdc);  // dock dividers live in the gaps between panels
+                // Active-pane indicator (Split/PIP only): an accent frame in the gap around the
+                // active pane so it's clear which pane the transport + audio drive. Drawn in the
+                // parent's child-clipped DC, so it lands in the inter-pane gap, not over the
+                // libVLC surface. Single view has one pane, so no indicator is needed.
+                if (st->viewMode != ViewMode::Single && !st->panes.empty()) {
+                    RECT r = st->paneBounds[st->active];
+                    const int t = dp(2, st->dpi);
+                    InflateRect(&r, t, t);
+                    HBRUSH br = themeBrush(currentTheme().accent);
+                    for (int k = 0; k < t; ++k) {
+                        FrameRect(hdc, &r, br);
+                        InflateRect(&r, -1, -1);
+                    }
+                }
             }
             EndPaint(hwnd, &ps);
             return 0;
@@ -2298,7 +2511,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     std::vector<Channel> hits = st->db.searchChannels(q);
                     applyChannelFilters(st, hits);
                     channelGridSetChannels(st->grid, std::move(hits));
-                    channelGridSetNowPlaying(st->grid, st->nowPlayingId);
+                    channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
                     updateCounts(st);
                 }
                 return 0;
@@ -2309,10 +2522,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case ID_ABOUT:
                     showAbout(hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), st->dpi);
                     return 0;
-                case ID_BTN_PLAY: st->player.togglePause(); return 0;
+                case ID_BTN_PLAY: st->ap().player.togglePause(); return 0;
                 case ID_BTN_STOP:
-                    st->player.stop();
-                    st->nowPlayingId = 0;
+                    st->ap().player.stop();
+                    st->ap().nowPlayingId = 0;
                     channelGridSetNowPlaying(st->grid, 0);
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
@@ -2330,8 +2543,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 auto* di = reinterpret_cast<NMTTDISPINFOW*>(lParam);
                 di->hinst = nullptr;
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->bufferMeter)) {
-                    const FlowStats fs = st->player.flowStats();
-                    const double bufS = st->player.networkCaching() / 1000.0;
+                    const FlowStats fs = st->ap().player.flowStats();
+                    const double bufS = st->ap().player.networkCaching() / 1000.0;
                     static wchar_t buf[256];
                     if (fs.playing) {
                         const double cons = fs.demuxBytesPerSec * 8.0 / 1.0e6;
@@ -2360,7 +2573,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->bufBar)) {
                     static wchar_t buf[96];
                     swprintf_s(buf, L"Network buffer: %.1f s (receive->show delay)",
-                               st->player.networkCaching() / 1000.0);
+                               st->ap().player.networkCaching() / 1000.0);
                     di->lpszText = buf;
                     return 0;
                 }
@@ -2381,7 +2594,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnPlay)) {
-                    di->lpszText = const_cast<LPWSTR>(st->player.isPlaying() ? L"Pause" : L"Play");
+                    di->lpszText = const_cast<LPWSTR>(st->ap().player.isPlaying() ? L"Pause" : L"Play");
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnStop)) {
@@ -2389,7 +2602,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnRec)) {
-                    di->lpszText = const_cast<LPWSTR>(st->player.isRecording() ? L"Stop recording"
+                    di->lpszText = const_cast<LPWSTR>(st->ap().player.isRecording() ? L"Stop recording"
                                                                                : L"Record");
                     return 0;
                 }
@@ -2424,6 +2637,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         TreeView_SelectItem(st->nav, item);
                         HMENU menu = CreatePopupMenu();
                         AppendMenuW(menu, MF_STRING, 2, L"Rename…");
+                        AppendMenuW(menu, MF_STRING, 3, L"Set Guide URL…");
                         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                         AppendMenuW(menu, MF_STRING, 1, L"Delete Playlist");
                         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
@@ -2443,6 +2657,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                 refreshNav(st);
                                 setStatus(st, L"Playlist renamed to \"" + name + L"\"");
                             }
+                        } else if (cmd == 3) {  // Set Guide URL… — override this playlist's XMLTV URL
+                            promptSetGuideUrl(hwnd, st, pid);
                         } else if (cmd == 1) {  // Delete Playlist
                             const std::wstring m = L"Delete playlist \"" + std::wstring(label) +
                                                    L"\"?\n\nThis removes its channels from RabbitEars.";
@@ -2457,6 +2673,32 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                 setStatus(st, L"Playlist deleted");
                             }
                         }
+                    } else if (fi >= 0 && fi < static_cast<LPARAM>(st->navFilters.size()) &&
+                               st->navFilters[fi].kind == ViewKind::Guide) {
+                        // TV Guide node: EPG management — Refresh + a custom guide URL per playlist.
+                        // (Don't TreeView_SelectItem it: selecting the Guide node opens the window.)
+                        HMENU menu = CreatePopupMenu();
+                        AppendMenuW(menu, MF_STRING, 100, L"Refresh Guide");
+                        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                        const auto pls = st->db.listPlaylists();
+                        if (pls.empty()) {
+                            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Set Guide URL… (no playlists)");
+                        } else if (pls.size() == 1) {
+                            AppendMenuW(menu, MF_STRING, 200, L"Set Guide URL…");
+                        } else {
+                            HMENU sub = CreatePopupMenu();
+                            for (size_t i = 0; i < pls.size() && i < 64; ++i)
+                                AppendMenuW(sub, MF_STRING, 200 + static_cast<int>(i),
+                                            (pls[i].name + L"…").c_str());
+                            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), L"Set Guide URL");
+                        }
+                        const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
+                                                       scr.y, 0, hwnd, nullptr);
+                        DestroyMenu(menu);
+                        if (cmd == 100)
+                            onEpgRefresh(st);
+                        else if (cmd >= 200 && cmd < 200 + static_cast<int>(pls.size()))
+                            promptSetGuideUrl(hwnd, st, pls[cmd - 200].id);
                     }
                 }
                 return TRUE;
@@ -2465,8 +2707,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 auto* tv = reinterpret_cast<NMTREEVIEWW*>(lParam);
                 const LPARAM idx = tv->itemNew.lParam;
                 if (idx >= 0 && idx < static_cast<LPARAM>(st->navFilters.size())) {
-                    st->filter = st->navFilters[idx];
-                    loadForFilter(st);
+                    if (st->navFilters[idx].kind == ViewKind::Guide) {
+                        onEpgGuide(st);  // action node: open the TV Guide window (not a grid filter)
+                    } else {
+                        st->filter = st->navFilters[idx];
+                        loadForFilter(st);
+                    }
                 }
             }
             return 0;
@@ -2474,7 +2720,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_HSCROLL: {
             HWND ctl = reinterpret_cast<HWND>(lParam);
             if (ctl == st->volBar) {
-                st->player.setVolume(static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0)));
+                st->ap().player.setVolume(static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0)));
             } else if (ctl == st->bufBar) {
                 const int ms = static_cast<int>(SendMessageW(st->bufBar, TBM_GETPOS, 0, 0)) * kBufStepMs;
                 if (LOWORD(wParam) == TB_THUMBTRACK)
@@ -2485,37 +2731,41 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_APP_VLC:
-            switch (static_cast<PlayerEvent>(wParam)) {
+            // Events carry the posting pane's index in the HIWORD (LOWORD = the PlayerEvent).
+            // Only the active pane drives the shared transport strip + meters; inactive panes
+            // still play but must not flip the play/pause glyph or hijack the meters.
+            if (HIWORD(wParam) != st->active) break;
+            switch (static_cast<PlayerEvent>(LOWORD(wParam))) {
                 case PlayerEvent::Opening:
                     bufferMeterSetHealth(st->bufferMeter, 15);
-                    setStatus(st, L"Opening: " + st->nowPlayingName);
-                    diag::info(L"event: Opening — " + st->nowPlayingName);
+                    setStatus(st, L"Opening: " + st->ap().nowPlayingName);
+                    diag::info(L"event: Opening — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Buffering: {
                     const int pct = static_cast<int>(lParam);
                     bufferMeterSetHealth(st->bufferMeter, pct);
-                    setStatus(st, L"Buffering " + std::to_wstring(pct) + L"%  —  " + st->nowPlayingName);
+                    setStatus(st, L"Buffering " + std::to_wstring(pct) + L"%  —  " + st->ap().nowPlayingName);
                     break;
                 }
                 case PlayerEvent::Playing:
                     bufferMeterSetHealth(st->bufferMeter, 100);
                     SetWindowTextW(st->btnPlay, kGlyphPause);
-                    setStatus(st, L"Playing: " + st->nowPlayingName);
-                    diag::info(L"event: Playing — " + st->nowPlayingName);
-                    if (st->nowPlayingId) {
-                        st->db.setDeadStatus(st->nowPlayingId, DeadStatus::Alive,
+                    setStatus(st, L"Playing: " + st->ap().nowPlayingName);
+                    diag::info(L"event: Playing — " + st->ap().nowPlayingName);
+                    if (st->ap().nowPlayingId) {
+                        st->db.setDeadStatus(st->ap().nowPlayingId, DeadStatus::Alive,
                                              static_cast<long long>(time(nullptr)));
-                        channelGridSetDeadStatus(st->grid, st->nowPlayingId, DeadStatus::Alive);
+                        channelGridSetDeadStatus(st->grid, st->ap().nowPlayingId, DeadStatus::Alive);
                     }
                     break;
                 case PlayerEvent::Paused:
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, L"Paused: " + st->nowPlayingName);
-                    diag::info(L"event: Paused — " + st->nowPlayingName);
+                    setStatus(st, L"Paused: " + st->ap().nowPlayingName);
+                    diag::info(L"event: Paused — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Stats: {
                     // Turn real stream stats into honest meter signals.
-                    const FlowStats fs = st->player.flowStats();
+                    const FlowStats fs = st->ap().player.flowStats();
                     // Throughput -> 0..1 current speed. Exponential soft-knee so
                     // healthy bitrates saturate near 1 while a stall reads ~0;
                     // K ~= 768 kbps, tuned for typical IPTV (SD flows slower than HD).
@@ -2565,19 +2815,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     resetStatMeters(st);
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
                     setStatus(st, L"Stream ended");
-                    diag::info(L"event: EndReached — " + st->nowPlayingName);
+                    diag::info(L"event: EndReached — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, L"Unavailable (offline or geo-locked): " + st->nowPlayingName);
+                    setStatus(st, L"Unavailable (offline or geo-locked): " + st->ap().nowPlayingName);
                     diag::error(L"event: PLAYBACK ERROR (offline / geo-locked / codec) — " +
-                                st->nowPlayingName);
-                    if (st->nowPlayingId) {
-                        st->db.setDeadStatus(st->nowPlayingId, DeadStatus::Dead,
+                                st->ap().nowPlayingName);
+                    if (st->ap().nowPlayingId) {
+                        st->db.setDeadStatus(st->ap().nowPlayingId, DeadStatus::Dead,
                                              static_cast<long long>(time(nullptr)));
-                        channelGridSetDeadStatus(st->grid, st->nowPlayingId, DeadStatus::Dead);
+                        channelGridSetDeadStatus(st->grid, st->ap().nowPlayingId, DeadStatus::Dead);
                     }
                     break;
             }
@@ -2585,6 +2835,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_APP_PLAYLIST_DONE:
             onPlaylistDone(st, reinterpret_cast<PlaylistResult*>(lParam));
             return 0;
+        case WM_APP_EPG_PROGRESS: {
+            std::wstring* progress = reinterpret_cast<std::wstring*>(lParam);
+            if (progress) {
+                updateLoadingDialog(st->loadingDlg, *progress);
+                delete progress;
+            }
+            return 0;
+        }
         case WM_APP_EPG_DONE:
             onEpgDone(st, reinterpret_cast<EpgResult*>(lParam));
             return 0;
@@ -2607,7 +2865,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             st->skinStripOn = false;
 #endif
             st->spectrumTap.stop();  // join the capture thread before the meter HWNDs die
-            st->player.shutdown();   // join worker + reaper threads + release libVLC synchronously
+            for (auto& p : st->panes)
+                p->player.shutdown();  // join every pane's worker + reaper threads
+            st->engine.shutdown();     // then release the shared libVLC instance (all players are down)
             if (st->uiFont) DeleteObject(st->uiFont);
             if (st->titleFont) DeleteObject(st->titleFont);
             if (st->glyphFont) DeleteObject(st->glyphFont);
@@ -2640,7 +2900,13 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetCapture(hwnd);
                 return 0;
             }
-            break;  // normal mode: let libVLC / DefWindowProc handle the click
+            // Normal/split mode: a click makes this pane the active one (audio + transport +
+            // meters follow it), then falls through to libVLC / DefWindowProc for the click.
+            if (st && !st->videoOnly) {
+                const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                if (idx != st->active) setActivePane(st, idx);
+            }
+            break;
         }
         case WM_MOUSEMOVE: {
             AppState* st = stateOf(GetParent(hwnd));
@@ -2681,6 +2947,13 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HMENU pm = CreatePopupMenu();
             AppendMenuW(pm, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), 1, L"Video only");
             AppendMenuW(pm, MF_STRING | (st->fullscreen ? MF_CHECKED : 0u), 2, L"Fullscreen");
+            AppendMenuW(pm, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(pm, MF_STRING | (st->viewMode == ViewMode::Single ? MF_CHECKED : 0u), 3,
+                        L"Single view");
+            AppendMenuW(pm, MF_STRING | (st->viewMode == ViewMode::Split ? MF_CHECKED : 0u), 4,
+                        L"Split view (2×2)");
+            AppendMenuW(pm, MF_STRING | (st->viewMode == ViewMode::Pip ? MF_CHECKED : 0u), 5,
+                        L"Picture-in-picture");
             POINT pt;
             GetCursorPos(&pt);
             const int cmd = TrackPopupMenu(pm, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
@@ -2691,6 +2964,12 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             } else if (cmd == 2) {
                 if (st->videoOnly) toggleVideoOnly(st);  // the two modes are mutually exclusive
                 toggleFullscreen(st);
+            } else if (cmd == 3) {
+                applyViewMode(st, ViewMode::Single);
+            } else if (cmd == 4) {
+                applyViewMode(st, ViewMode::Split);
+            } else if (cmd == 5) {
+                applyViewMode(st, ViewMode::Pip);
             }
             return 0;
         }

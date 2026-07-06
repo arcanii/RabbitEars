@@ -912,6 +912,96 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
     DeleteObject(headFont);
 }
 
+// ---- Loading box (modeless "please wait" for async guide fetch) ------------
+namespace {
+constexpr int ID_LOADING_MSG = 1901;
+struct LoadingState {  // owned by the window; freed on WM_NCDESTROY
+    HFONT headFont = nullptr;
+    HFONT bodyFont = nullptr;
+};
+
+LRESULT CALLBACK LoadingProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+            return dialogCtlColor(msg, wParam);
+        case WM_CLOSE:
+            return 0;  // modeless progress box: closed programmatically when the work finishes
+        case WM_NCDESTROY: {
+            auto* ls = reinterpret_cast<LoadingState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+            if (ls) {
+                if (ls->headFont) DeleteObject(ls->headFont);
+                if (ls->bodyFont) DeleteObject(ls->bodyFont);
+                delete ls;
+            }
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            return 0;
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+}  // namespace
+
+HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
+                       const std::wstring& message) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = LoadingProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_APPSTARTING);  // arrow + busy spinner
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsLoading";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    const int W = dp(430, dpi), H = dp(150, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    // Topmost so it stays visible over the (large, non-topmost) TV Guide window during a fetch.
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, L"RabbitEarsLoading",
+                               title.empty() ? L"Loading" : title.c_str(), WS_POPUP | WS_CAPTION, x, y,
+                               W, H, parent, nullptr, hInst, nullptr);
+    if (!dlg) return nullptr;
+    auto* ls = new LoadingState();
+    ls->headFont = themeFont(FontRole::Body, dpi, 15, FW_SEMIBOLD);
+    ls->bodyFont = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(ls));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(24, dpi);
+    HWND head = CreateWindowExW(0, L"STATIC", L"Loading TV guide…",
+                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(22, dpi),
+                                cr.right - 2 * m, dp(24, dpi), dlg, nullptr, hInst, nullptr);
+    HWND body = CreateWindowExW(0, L"STATIC", message.c_str(),
+                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(58, dpi),
+                                cr.right - 2 * m, dp(48, dpi), dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_LOADING_MSG)), hInst,
+                                nullptr);
+    SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(ls->headFont), TRUE);
+    SendMessageW(body, WM_SETFONT, reinterpret_cast<WPARAM>(ls->bodyFont), TRUE);
+    applyDialogDarkMode(dlg);
+    ShowWindow(dlg, SW_SHOW);
+    UpdateWindow(dlg);
+    return dlg;
+}
+
+void updateLoadingDialog(HWND dlg, const std::wstring& message) {
+    if (dlg && IsWindow(dlg)) SetWindowTextW(GetDlgItem(dlg, ID_LOADING_MSG), message.c_str());
+}
+
+void closeLoadingDialog(HWND dlg) {
+    if (dlg && IsWindow(dlg)) DestroyWindow(dlg);
+}
+
 // ---- Programme popup (click a TV Guide entry) ------------------------------
 
 namespace {

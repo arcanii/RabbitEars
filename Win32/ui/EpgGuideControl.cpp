@@ -39,7 +39,9 @@ std::wstring hm(long long epoch) {
 }
 
 struct GuideState {
-    std::vector<GuideRow> rows;
+    std::vector<GuideRow> rows;     // the filtered view everything paints + hit-tests
+    std::vector<GuideRow> allRows;  // the full set; `rows` is this filtered by `filter`
+    std::wstring filter;            // channel-name search (type-to-filter; shown in the corner cell)
     long long originUtc = 0;  // left edge (earliest start floored to the hour)
     long long endUtc = 0;     // right edge (latest stop ceiled to the hour)
     long long nowUtc = 0;
@@ -71,6 +73,29 @@ void computeMetrics(GuideState* st) {
     st->headerH = dpx(st->dpi, 34);
     st->channelColW = dpx(st->dpi, 200);
     st->pxPerHour = dpx(st->dpi, 150);
+}
+
+// ASCII-lowercase (matches the toUpper style used elsewhere; no locale/include needed).
+std::wstring lowerCopy(const std::wstring& s) {
+    std::wstring o(s);
+    for (wchar_t& c : o)
+        if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + 32);
+    return o;
+}
+
+// Rebuild the visible `rows` from `allRows` by the current channel-name search. Everything
+// downstream (paint, hit-testing, scrollbars) iterates `rows`, so this is all search needs.
+void applyFilter(GuideState* st) {
+    if (st->filter.empty()) {
+        st->rows = st->allRows;
+    } else {
+        const std::wstring needle = lowerCopy(st->filter);
+        st->rows.clear();
+        for (const GuideRow& row : st->allRows)
+            if (lowerCopy(row.channelName).find(needle) != std::wstring::npos)
+                st->rows.push_back(row);
+    }
+    st->scrollY = 0;  // jump to the top of the filtered list
 }
 
 void releaseFormats(GuideState* st) {
@@ -253,8 +278,30 @@ void paint(HWND hwnd, GuideState* st) {
     }
     rt->PopAxisAlignedClip();
 
-    // ---- corner + frame separators
+    // ---- corner: a channel search field (type to filter), drawn as a real input box so it's
+    // obviously interactive — recessed fill + border + magnifier, accent-highlighted when active.
     fill(0, 0, colW, hdrH, th.panelElevBg);
+    {
+        const bool active = !st->filter.empty();
+        const float fm = static_cast<float>(dpx(st->dpi, 4));  // field inset within the corner cell
+        const auto rr = D2D1::RoundedRect(D2D1::RectF(fm, fm, colW - fm, hdrH - fm), 4.0f, 4.0f);
+        st->brush->SetColor(colorToD2D(th.panelBg));           // recessed field background
+        rt->FillRoundedRectangle(rr, st->brush);
+        st->brush->SetColor(colorToD2D(active ? th.accent : th.border));  // accent border while searching
+        rt->DrawRoundedRectangle(rr, st->brush, active ? 1.6f : 1.0f);
+        // magnifier: a small ring + handle on the left of the field.
+        const float mr = static_cast<float>(dpx(st->dpi, 5));
+        const float mcx = fm + static_cast<float>(dpx(st->dpi, 9)), mcy = hdrH * 0.5f;
+        st->brush->SetColor(colorToD2D(active ? th.accent : th.textSecondary));
+        rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(mcx, mcy), mr, mr), st->brush, 1.3f);
+        rt->DrawLine(D2D1::Point2F(mcx + mr * 0.75f, mcy + mr * 0.75f),
+                     D2D1::Point2F(mcx + mr * 1.7f, mcy + mr * 1.7f), st->brush, 1.5f);
+        // query text, or a dim placeholder when empty.
+        const float tx = mcx + mr + static_cast<float>(dpx(st->dpi, 6));
+        text(active ? st->filter : std::wstring(L"Search channels…"), st->fmtSub, tx,
+             static_cast<float>(dpx(st->dpi, 8)), (colW - fm) - tx, static_cast<float>(dpx(st->dpi, 18)),
+             active ? th.textPrimary : th.textSecondary);
+    }
     fill(colW - 1, 0, 1, ch, th.border);   // column divider
     fill(0, hdrH - 1, cw, 1, th.border);   // header divider
 
@@ -400,9 +447,33 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_LBUTTONDOWN:
             onClick(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             return 0;
+        case WM_CHAR: {
+            // Type-to-search: the corner cell shows the query; filtering rebuilds st->rows,
+            // which paint + hit-testing already iterate. Esc (in WM_KEYDOWN) clears, then closes.
+            const wchar_t c = static_cast<wchar_t>(wParam);
+            if (c == VK_BACK) {
+                if (st->filter.empty()) return 0;
+                st->filter.pop_back();
+            } else if (c >= L' ' && c != 0x7F) {
+                st->filter.push_back(c);
+            } else {
+                return 0;  // Enter/Tab/Esc and other control chars aren't search input
+            }
+            applyFilter(st);
+            updateScrollbars(hwnd, st);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {
-                DestroyWindow(hwnd);
+                if (!st->filter.empty()) {  // first Esc clears the search, second closes the guide
+                    st->filter.clear();
+                    applyFilter(st);
+                    updateScrollbars(hwnd, st);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                } else {
+                    DestroyWindow(hwnd);
+                }
                 return 0;
             }
             break;
@@ -450,11 +521,12 @@ void registerGuideClass(HINSTANCE hInst) {
 // Fold `rows` + `nowUtc` into `st`, deriving the visible time span. Empty rows / no
 // programmes degrade to a one-day window around "now" so the axis still renders.
 void applyData(GuideState* st, std::vector<GuideRow> rows, long long nowUtc) {
-    st->rows = std::move(rows);
+    st->allRows = std::move(rows);
+    st->filter.clear();  // fresh data -> fresh search
     st->nowUtc = nowUtc;
     long long lo = 0, hi = 0;
     bool any = false;
-    for (const auto& row : st->rows)
+    for (const auto& row : st->allRows)  // span from ALL rows so filtering never moves the axis
         for (const auto& p : row.programmes) {
             if (p.startUtc == 0) continue;
             // A missing/degenerate stop (stopUtc <= start) still contributes its start, so a
@@ -473,9 +545,14 @@ void applyData(GuideState* st, std::vector<GuideRow> rows, long long nowUtc) {
     if (st->endUtc <= st->originUtc) st->endUtc = st->originUtc + 24 * 3600;  // guarantee a span
     st->scrollX = 0;
     st->scrollY = 0;
+    applyFilter(st);  // populate st->rows from st->allRows (filter was just cleared)
 }
 
 }  // namespace
+
+void hideEpgGuide() {
+    if (g_guide && IsWindow(g_guide)) ShowWindow(g_guide, SW_HIDE);
+}
 
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
                   GuideCallbacks cb) {
@@ -491,6 +568,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
             InvalidateRect(g_guide, nullptr, FALSE);
         }
         applyDialogDarkMode(g_guide);  // re-theme the caption in case the skin changed
+        ShowWindow(g_guide, SW_SHOW);  // re-reveal if a play-from-guide had hidden it
         SetForegroundWindow(g_guide);
         return;
     }

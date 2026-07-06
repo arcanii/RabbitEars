@@ -14,7 +14,8 @@ add_library(RabbitEarsCore STATIC
   core/XmltvParser.cpp  # XMLTV EPG parser — unit-tested headlessly
   db/Database.cpp
   ui/DockLayout.cpp   # pure layout-tree logic (no HWNDs) — unit-tested headlessly
-  ui/Skin.cpp)        # shared skin model + codecs (theme engine) — unit-tested headlessly
+  ui/Skin.cpp         # shared skin model + codecs (theme engine) — unit-tested headlessly
+  ui/VideoGrid.cpp)   # pure multi-pane video layout (split/PIP) — unit-tested headlessly
 target_include_directories(RabbitEarsCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 # miniz is PRIVATE: only Gzip.cpp needs its header; consumers never see it.
 target_link_libraries(RabbitEarsCore PUBLIC sqlite3 PRIVATE miniz)
