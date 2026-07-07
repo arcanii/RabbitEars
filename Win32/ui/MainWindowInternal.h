@@ -8,6 +8,7 @@
 #pragma once
 
 #include <windows.h>
+#include <commctrl.h>  // HTREEITEM (navInsert)
 
 #include <memory>
 #include <set>
@@ -29,6 +30,8 @@ namespace mw {
 // ---- window classes / messages / timers -----------------------------------
 constexpr wchar_t kMainClass[] = L"RabbitEarsMain";
 constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
+constexpr wchar_t kGripClass[] = L"ReDockGrip";        // drag-to-redock grip child window
+constexpr wchar_t kOverlayClass[] = L"ReDropOverlay";  // drop-zone highlight popup
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
 constexpr UINT WM_APP_EPG_DONE = WM_APP + 3;  // EPG fetch/parse worker -> UI thread
@@ -231,6 +234,82 @@ struct AppState {
     DockSide    panelDropSide = DockSide::Left;
     bool        panelDropValid = false;
 };
+
+struct BtnRect {
+    RECT rc;
+    int  id;
+};
+
+// ---- cross-file function prototypes (defined across MainWindow*.cpp) ------
+int dp(int v, UINT dpi);
+AppState* stateOf(HWND h);
+void setStatus(AppState* st, const std::wstring& s);
+int cmdBarH(UINT dpi);
+int navWidth(UINT dpi);
+int stripH(UINT dpi);
+int capW(UINT dpi);
+int measureText(HWND hwnd, HFONT font, const std::wstring& s);
+void applyDarkChrome(HWND hwnd);
+RECT captionRect(HWND hwnd, AppState* st, int i);
+std::vector<BtnRect> cmdButtonRects(HWND hwnd, AppState* st);
+void drawCaptionGlyph(HDC dc, const RECT& r, int which, COLORREF color);
+void drawCmdBar(HWND hwnd, AppState* st, HDC target);
+void positionFloatingPip(AppState* st);
+void layout(HWND hwnd, AppState* st);
+const DockLayout::Gutter* gutterAt(AppState* st, POINT pt);
+void paintGutters(AppState* st, HDC hdc);
+void persistDock(AppState* st);
+void applyDockChange(HWND hwnd, AppState* st);
+void dockToEdge(AppState* st, Panel p, DockSide side);
+LRESULT CALLBACK DropOverlayProc(HWND h, UINT m, WPARAM w, LPARAM l);
+HWND ensureDropOverlay(HWND parent, AppState* st);
+void beginPanelDrag(HWND parent, AppState* st, Panel p);
+void updateDockTarget(HWND hwnd, AppState* st, POINT pt);
+void endPanelDrag(HWND hwnd, AppState* st, bool commit);
+LRESULT CALLBACK DockGripProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK VSplitterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void updateCounts(AppState* st);
+void applyChannelFilters(AppState* st, std::vector<Channel>& ch);
+void loadForFilter(AppState* st);
+HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM param, bool bold);
+std::wstring countryLabel(const std::wstring& code);
+void refreshNav(AppState* st);
+void playChannelInPane(AppState* st, const Channel& c, int idx);
+void playChannel(AppState* st, const Channel& c);
+std::wstring bufLabelText(int ms);
+void setBufferMs(AppState* st, int ms, bool replay);
+std::wstring nameFromSource(const std::wstring& src, bool isUrl);
+void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl, const std::wstring& name);
+void onAddUrl(AppState* st);
+void onOpenFile(AppState* st);
+void onPlaylistDone(AppState* st, PlaylistResult* res);
+void onEpgRefresh(AppState* st);
+void onEpgDone(AppState* st, EpgResult* res);
+void onEpgGuide(AppState* st);
+void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid);
+void toggleFullscreen(AppState* st);
+void toggleVideoOnly(AppState* st);
+VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating);
+void setActivePane(AppState* st, int idx);
+void applyViewMode(AppState* st, ViewMode mode);
+std::wstring recordingsDir();
+std::wstring recordingPath(const std::wstring& channelName, const std::wstring& ext);
+void onToggleRecord(AppState* st);
+void onSchedulerTick(AppState* st);
+void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName, const std::wstring& title, long long startUtc, long long stopUtc);
+void onManageSchedules(AppState* st);
+std::wstring joinCategories(const std::set<std::wstring>& s);
+std::set<std::wstring> splitCategories(const std::wstring& s);
+void onCategories(AppState* st);
+void syncSpectrumTap(AppState* st);
+void resetStatMeters(AppState* st);
+void onMeters(AppState* st);
+void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor);
+#ifdef RABBITEARS_THEME_ENGINE
+void remakeUiFonts(AppState* st);
+void applyActiveSkin(HWND hwnd, AppState* st, bool repaint);
+void setSkinSelection(HWND hwnd, AppState* st, const char* sel);
+#endif
 
 }  // namespace mw
 }  // namespace rabbitears
