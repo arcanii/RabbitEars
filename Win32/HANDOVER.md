@@ -31,9 +31,17 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.1 SHIPPED** (EPG/TV-Guide + multi-view Split/PIP) · macOS Phase-1
+## Current state — **v0.2.2 SHIPPED** (EPG @feed fix + clockwork icon + About/PIP polish) · **0.2.3 dev** · macOS Phase-1
 
-**Released:** **`v0.2.1`** (2026-07-06), tag `v0.2.1` @ `79ab12c`, full version `0.2.1.148`, signed
+**Released:** **`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
+**`RabbitEars-0.2.2-setup.exe`** (appcast @ `fcdac10`) — **the EPG `@feed` tvg-id matching fix** (iptv-org
+`CNN.us@SD` now matches XMLTV's `CNN.us`, so large guides populate — owner runtime-verified the TV Guide
+loads channels), **the artist's clockwork app icon + splash** (`art/clockwork_icon3.png`, trimmed to the
+rounded tile — the earlier `clockwork_icon`/`_icon2` inputs were deleted), **About artwork +25% with a
+clickable GitHub link** (owner-confirmed), and an **empty-PIP highlight** (accent frame + hint until a
+channel loads). **First release cut entirely on the owner's machine** — `gh` CLI + Inno Setup are BOTH
+present here now (not the old sandbox); only the EdDSA signing still happens on the Mac. Now on **0.2.3 dev**.
+Prior: **`v0.2.1`** (2026-07-06), tag `v0.2.1` @ `79ab12c`, full version `0.2.1.148`, signed
 **`RabbitEars-0.2.1-setup.exe`** (appcast @ `a361b99`) — **EPG/TV-Guide + Scheduled Recordings + the
 multi-view (Split 2×2 / floating PIP) engine + the clockwork icon** (see the sections below); owner
 runtime-verified Split + PIP live, and **auto-update `0.2.0 → 0.2.1` confirmed in the wild** (About ▸ Check
@@ -120,9 +128,9 @@ migration, and the pure scheduler); the **GUI is build-verified BOTH theme flags
   DateTimePickers (needs `ICC_DATE_CLASSES`, added to `InitCommonControlsEx`) — also for no-EPG channels.
   **v1 limits:** one recording at a time; **app-must-be-running** (Task-Scheduler wake is a later phase);
   concurrent recording ⇒ the multi-player roadmap.
-- **App icon → clockwork** (`packaging/app.ico` regenerated from `art/clockwork_icon.png`;
-  `scripts/make_ico.py` repointed at it — needs Pillow, absent here so the .ico was built via a
-  System.Drawing PowerShell one-off) + README badge; two more studies (`happy`/`style`) checked in.
+- **App icon → clockwork** (`packaging/app.ico` from `art/clockwork_icon3.png` as of 0.2.2 —
+  `scripts/make_ico.py` reads it; **Pillow is now installed**, so `python scripts/make_ico.py` works
+  directly) + README badge; two more studies (`happy`/`style`) checked in.
   Marketing **version bumped to 0.2.1** in the 4 places (AppVersion.cmake / installer.iss / RabbitEars.rc /
   app.manifest); mac keeps its 0.1.9 `APPLE` override.
 - Both big UI surfaces (the guide control + the schedule dialogs) passed an **adversarial review**; fixes
@@ -638,11 +646,14 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.2.1`; **v0.2.1 released @ `79ab12c`** (full `0.2.1.148`; appcast @ `a361b99`) — EPG/TV-Guide
-+ multi-view Split/PIP. **Sandbox release note:** `git push` works (cached credential) and
-`make-appcast.ps1` runs under Windows PowerShell, but there is **no `gh` CLI and no Inno Setup** here — so the
-0.2.1 GitHub release + asset upload went through the **GitHub REST API** (token via `git credential fill`,
-never printed), while the installer was built on the owner's env (Inno) and signed on the Mac. Prior: **v0.2.0
+Tags `v0.1.0`…`v0.2.2`; **v0.2.2 released @ `059b632`** (full `0.2.2.153`; appcast @ `fcdac10`) — EPG `@feed`
+fix + clockwork icon + About/PIP polish; now on **0.2.3 dev**. **Release-tooling note (0.2.2):** this machine now
+has **`gh` CLI (2.96) AND Inno Setup**, so the whole release ran locally: commit → push → build →
+`build-installer.cmd` (Inno) → `gh release create v0.2.2` + upload → `make-appcast.ps1` → commit/push
+`appcast.xml`. **Only EdDSA signing stays on the Mac** (`scripts/sign-release.sh` → `sign_update` + the key).
+The `raw.githubusercontent.com` feed caches ~5 min (`max-age=300`) — an installed app won't see the new appcast
+until that expires (looked like "0.2.1 doesn't detect the update" for a few min; not a bug). Prior: **v0.2.1 @
+`79ab12c`** (`0.2.1.148`). Earlier: **v0.2.0
 @ `343aa0e`** (`0.2.0.107`; appcast @ `7b3946a`), the theme engine, theme-ON by default. The `theme-engine`
 branch was **merged to `main` + deleted** (only
 `main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
@@ -655,20 +666,20 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-0. **⚠️ EPG tvg-id `@feed` matching fix — IN THE WORKING TREE, UNCOMMITTED.** Files: `Win32/ui/MainWindow.cpp`
-   (`onEpgGuide`) + a new `Win32/cli/RabbitEarsCli.cpp` `--tvgids` diagnostic. Root cause of "a big EPG matches
-   no channels": iptv-org tvg-ids carry an **`@feed` quality suffix** (`CNN.us@SD`) but XMLTV feeds key on the
-   base id (`CNN.us`) → **0 exact matches**. Fix: the guide matches on the base id (strip `@…`, case-fold)
-   while keeping the channel's FULL tvg-id as the row id so Play/Schedule still resolve. **Proven with real
-   data** — `RabbitEarsCli --tvgids https://iptv-epg.org/files/epg-us.xml.gz` → **324 matches** on `index.m3u`
-   (0 exact + 0 case-insensitive + 324 after `@`-strip); build-verified both flags, selftest green. **Owner
-   still to runtime-verify** (Set Guide URL on `index.m3u` → Refresh → the guide should show ~324 channels,
-   all playable), **then commit + cut 0.2.2** (same flow as 0.2.1: build-installer + sign-on-Mac + the REST-API
-   GitHub release + appcast). Nice-to-have alongside it: store only playlist-matched programmes (that US feed
-   is 525 MB / 1.1M rows — all stored, few shown). `uslg.m3u` has **no tvg-ids**, so it can't match any EPG.
-1. **0.2.1 is SHIPPED** (tag `v0.2.1` @ `79ab12c`, `0.2.1.148`, appcast @ `a361b99`) — auto-update
-   **`0.2.0 → 0.2.1` confirmed in the wild**. Watch the **`mac-core` CI on `main`** for the `common/`
-   additions (`VideoGrid`, the EPG-URL setter — standard C++20, written mac-safe).
+0. **🔨 MainWindow.cpp modularization — IN PROGRESS.** The 3283-line god-file is being split into a shared
+   `Win32/ui/MainWindowInternal.h` (AppState + the local structs + constants + inline helpers + prototypes) +
+   a named `rabbitears::mw` namespace (was anonymous, so functions link across TUs), then 5 `.cpp`: core
+   (`MainWindow.cpp` — WndProcs / `createChildren` / `registerClasses` / `runApp` / transport-button draw),
+   `MainWindowChrome.cpp` (cmd-bar + caption geometry/draw, `layout`, `positionFloatingPip`),
+   `MainWindowDock.cpp` (gutters, re-dock drag, the grip/overlay/splitter procs), `MainWindowData.cpp`
+   (nav/filters/counts, playlist worker, `playChannel`, buffer, meters sync), `MainWindowCommands.cpp` (menu
+   handlers, panes, skin, settings menu). **Behavior-preserving** — build BOTH theme flags + `RabbitEarsCli
+   --selftest` green after each extraction; add the new `.cpp` to the Win32 target in `CMakeLists.txt`. Full
+   plan + rationale in memory `mainwindow-modularization-plan`. (The EPG `@feed` fix + the icon/About/PIP work
+   all shipped in 0.2.2 — see the state header.)
+1. **0.2.2 is SHIPPED** (tag `v0.2.2` @ `059b632`, `0.2.2.153`, appcast @ `fcdac10`) — owner runtime-verified
+   the TV Guide loads channels + the About box; the appcast feed is live and detecting. **0.2.3 is the open
+   dev version.** Watch the **`mac-core` CI on `main`** for `common/` changes.
 2. **Multi-player polish** — the engine EXISTS now, so build on `VideoPane` / `common/ui/VideoGrid` / the
    shared `VlcEngine`, NOT the old one-`VlcPlayer` assumption (memory `rabbitears-feature-roadmap`). The big
    unlock is **concurrent recording** (each pane's player already carries its own recorder); also per-pane
@@ -690,8 +701,10 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the "🔲 Multi-view (Split/PIP) + TV Guide overhaul" + "🎨 Theme engine"
 > sections — plus the recalled memories.**
 >
-> **State:** last SHIPPED = **v0.2.1** (`79ab12c`, `0.2.1.148`, appcast @ `a361b99`; auto-update
-> `0.2.0 → 0.2.1` **confirmed in the wild**) — EPG/TV-Guide + Scheduled Recordings + the **multi-view engine**.
+> **State:** last SHIPPED = **v0.2.2** (`059b632`, `0.2.2.153`, appcast @ `fcdac10`) — the EPG `@feed` tvg-id
+> fix (large guides now populate), clockwork icon (`art/clockwork_icon3.png`), About artwork +25% + a GitHub
+> link, and an empty-PIP highlight; **now on 0.2.3 dev**. Built on **v0.2.1** — EPG/TV-Guide + Scheduled
+> Recordings + the **multi-view engine**.
 > `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = its own video HWND +
 > `VlcPlayer` + channel; `AppState` holds the vector + an `active` index + a `ViewMode`); **Split (2×2)** child
 > tiles + a **floating `WS_EX_TOPMOST` PIP popup** (top-level, owned by the main window — a child sibling is
@@ -700,14 +713,14 @@ Paste this verbatim to start a fresh session with working context restored:
 > per-playlist **custom EPG URL** (`Database::setPlaylistEpgUrl`), type-to-search, playable-only rows,
 > hide-on-play, a modeless loading box. Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
 >
-> **Immediate next (UNCOMMITTED, in the working tree):** an **EPG tvg-id `@feed` matching fix** — `onEpgGuide`
-> now matches the EPG base id against each channel's tvg-id with `@…` stripped + case-folded (iptv-org uses
-> `CNN.us@SD`; feeds key on `CNN.us`), keeping the full tvg-id for Play/Schedule. **Proven** via
-> `RabbitEarsCli --tvgids <epg>` (324 matches on `index.m3u`); build-verified, selftest green; **owner still to
-> runtime-verify → then commit + cut 0.2.2**. `uslg.m3u` has no tvg-ids so it can't match any EPG. The machine
-> now has `python` + `sqlite3` for DB/EPG debugging. **Roadmap** (memory `rabbitears-feature-roadmap`): the
-> multi-player engine is DONE; next is **concurrent recording** (each pane's player already has its own
-> recorder) + per-pane recording ownership + persisting the view mode.
+> **Immediate next:** **MainWindow.cpp modularization** (in progress) — split the 3283-line file into
+> `Win32/ui/MainWindowInternal.h` + a named `rabbitears::mw` namespace + 5 `.cpp` (core / chrome / dock / data
+> / commands); behavior-preserving, build BOTH flags + `--selftest` green per step, add the new `.cpp` to the
+> Win32 `CMakeLists.txt`. Plan: memory `mainwindow-modularization-plan`. Then **multi-player polish** (memory
+> `rabbitears-feature-roadmap`): **concurrent recording** (each pane's player already has its own recorder) +
+> per-pane recording ownership + persisting the view mode. This machine has `python` + `sqlite3` + **Pillow**
+> (DB/EPG/icon work) and **`gh` CLI + Inno Setup**, so a full release runs locally — only EdDSA signing is on
+> the Mac (`scripts/sign-release.sh`).
 >
 > **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
 > then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
