@@ -106,6 +106,10 @@ struct CmdBtn {
     const wchar_t* label;
     bool         accent;
 };
+constexpr CmdBtn kCmdBtns[] = {
+    {ID_ADD_URL, L"+  Add Playlist", true},
+    {ID_SETTINGS, L"Settings  ▾", false},
+};
 struct PlaylistResult {
     bool         ok = false;
     std::wstring error;
@@ -289,7 +293,7 @@ void onEpgGuide(AppState* st);
 void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid);
 void toggleFullscreen(AppState* st);
 void toggleVideoOnly(AppState* st);
-VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating);
+VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating = false);
 void setActivePane(AppState* st, int idx);
 void applyViewMode(AppState* st, ViewMode mode);
 std::wstring recordingsDir();

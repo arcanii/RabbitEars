@@ -47,6 +47,9 @@ if(RABBITEARS_BUILD_GUI)
   add_executable(RabbitEars WIN32
     WinMain.cpp
     ui/MainWindow.cpp
+    ui/MainWindowChrome.cpp
+    ui/MainWindowCommands.cpp
+    ui/MainWindowData.cpp
     ui/MainWindowDock.cpp
     ui/ChannelGridControl.cpp
     ui/EpgGuideControl.cpp
