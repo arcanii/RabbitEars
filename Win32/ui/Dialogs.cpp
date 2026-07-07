@@ -8,6 +8,7 @@
 
 #include <commctrl.h>  // ListView (the categories checklist)
 #include <commdlg.h>   // ChooseColor (the swatch colour picker)
+#include <shellapi.h>  // ShellExecuteW (open the GitHub link in the About box)
 #include <objbase.h>  // CreateStreamOnHGlobal (ole32)
 #include <objidl.h>   // IStream — required by gdiplus.h below
 // gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the
@@ -24,6 +25,7 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace rabbitears {
 namespace {
@@ -48,6 +50,10 @@ void clampToWorkArea(HWND parent, int W, int H, int& x, int& y) {
 
 constexpr int ID_CHECK_UPDATES = 1201;
 
+// The project's GitHub — shown as a clickable link in the About box.
+constexpr wchar_t kGithubUrl[] = L"https://github.com/arcanii/RabbitEars";
+constexpr wchar_t kGithubLabel[] = L"github.com/arcanii/RabbitEars";
+
 // ---- About box (renders the embedded RabbitEars.png via GDI+) --------------
 
 struct AboutState {
@@ -57,6 +63,7 @@ struct AboutState {
     IStream*        altStream = nullptr;
     bool            showAlt = false;     // click the artwork to toggle to BadAss_RabbitEars
     RECT            imgRect = {};         // where the artwork was last drawn (click hit-test)
+    RECT            linkRect = {};        // the GitHub link's drawn rect (click hit-test + hand cursor)
     HFONT           titleFont = nullptr;
     HFONT           bodyFont = nullptr;
     UINT            dpi = 96;
@@ -116,7 +123,7 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // Click the bunny to toggle the easter-egg artwork (BadAss_RabbitEars).
             Gdiplus::Image* cur = (st->showAlt && st->altImg) ? st->altImg : st->img;
             if (cur && cur->GetWidth() && cur->GetHeight()) {
-                const int boxW = dp(150, st->dpi), boxH = dp(244, st->dpi);
+                const int boxW = dp(188, st->dpi), boxH = dp(305, st->dpi);  // +25% over the original 150x244
                 const UINT iw = cur->GetWidth(), ih = cur->GetHeight();
                 const double s = std::min(double(boxW) / iw, double(boxH) / ih);
                 imgW = static_cast<int>(iw * s);
@@ -141,6 +148,16 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             RECT ar{tx, br.bottom + dp(10, st->dpi), rc.right - m, br.bottom + dp(58, st->dpi)};
             DrawTextW(mem, L"Plays media with libVLC (LGPL-2.1)\r\n© VideoLAN and the VLC contributors.",
                       -1, &ar, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            // Clickable link to the project on GitHub: accent-coloured + underlined, opened in
+            // WM_LBUTTONDOWN; a hand cursor shows over it (WM_SETCURSOR). linkRect is the hit-test.
+            SetTextColor(mem, th.accent);
+            SIZE lsz{};
+            GetTextExtentPoint32W(mem, kGithubLabel, lstrlenW(kGithubLabel), &lsz);
+            const int ly = ar.bottom + dp(8, st->dpi);
+            st->linkRect = {tx, ly, tx + lsz.cx, ly + lsz.cy};
+            DrawTextW(mem, kGithubLabel, -1, &st->linkRect, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            RECT ul{tx, ly + lsz.cy, tx + lsz.cx, ly + lsz.cy + dp(1, st->dpi)};
+            FillRect(mem, &ul, themeBrush(th.accent));
             // Full-width legal disclaimer below the artwork, above the buttons.
             const int discTop = m + dp(250, st->dpi);
             RECT sep{m, discTop - dp(12, st->dpi), rc.right - m, discTop - dp(11, st->dpi)};
@@ -160,10 +177,25 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_SETCURSOR:
+            if (st && LOWORD(lParam) == HTCLIENT) {
+                POINT cp;
+                GetCursorPos(&cp);
+                ScreenToClient(hwnd, &cp);
+                if (PtInRect(&st->linkRect, cp)) {  // hand cursor over the GitHub link
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
+                }
+            }
+            break;
         case WM_LBUTTONDOWN: {  // click the artwork to toggle the easter-egg image
             if (!st) break;
             const POINT pt{static_cast<LONG>(static_cast<short>(LOWORD(lParam))),
                            static_cast<LONG>(static_cast<short>(HIWORD(lParam)))};
+            if (PtInRect(&st->linkRect, pt)) {  // open the project on GitHub in the browser
+                ShellExecuteW(hwnd, L"open", kGithubUrl, nullptr, nullptr, SW_SHOWNORMAL);
+                return 0;
+            }
             if (PtInRect(&st->imgRect, pt)) {
                 if (!st->altImg) {  // lazy-load the easter egg on first click
                     HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
@@ -516,7 +548,10 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     st.titleFont = themeFont(FontRole::Title, dpi, 22, FW_SEMIBOLD);
     st.bodyFont = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
 
-    const int W = dp(470, dpi), H = dp(470, dpi);
+    // Wide enough that the right-column text clears the +25% artwork without wrapping: the
+    // longest line ("© VideoLAN and the VLC contributors.") is ~239px, and tx≈230 + m=22, so
+    // the client must reach ~500px — dp(530) leaves a comfortable margin.
+    const int W = dp(530, dpi), H = dp(470, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;

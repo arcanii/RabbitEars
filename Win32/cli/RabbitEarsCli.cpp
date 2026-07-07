@@ -643,6 +643,77 @@ int dumpFile(const std::wstring& path, int limit) {
     return 0;
 }
 
+// Diagnose EPG matching: list each playlist's tvg-ids, and (given an EPG url/file) report how many
+// match the EPG's channel ids exactly vs only case-insensitively. Markers: '=' exact, '~' case-only,
+// 'x' no match. Reads the REAL app DB (%LOCALAPPDATA%\RabbitEars).
+int tvgIds(const std::wstring& epgArg) {
+    auto lower = [](const std::wstring& s) {
+        std::wstring o = s;
+        for (auto& c : o)
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+        return o;
+    };
+    std::wstring err;
+    Database db;
+    if (!db.open(Database::defaultDbPath(), &err)) { line(L"DB open failed: " + err); return 1; }
+
+    std::set<std::wstring> epgIds, epgLc;
+    if (!epgArg.empty()) {
+        std::string bytes;
+        if (epgArg.rfind(L"http", 0) == 0) {
+            line(L"Fetching EPG " + epgArg);
+            if (!httpGet(epgArg, bytes, err, 90000)) { line(L"EPG download failed: " + err); return 1; }
+        } else {
+            std::ifstream f(epgArg, std::ios::binary);
+            if (!f) { line(L"Cannot open " + epgArg); return 1; }
+            bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
+        const XmltvDocument epg = parseXmltv(gunzipIfNeeded(bytes));
+        for (const auto& p : epg.programmes) { epgIds.insert(p.channelId); epgLc.insert(lower(p.channelId)); }
+        line(L"EPG: " + std::to_wstring(epg.programmes.size()) + L" programmes, " +
+             std::to_wstring(epgIds.size()) + L" distinct channel ids");
+    }
+
+    for (const auto& pl : db.listPlaylists()) {
+        const auto chans = db.channelsByPlaylist(pl.id);
+        int withId = 0, exact = 0, ci = 0, base = 0;
+        for (const auto& c : chans) {
+            if (c.tvgId.empty()) continue;
+            ++withId;
+            if (epgIds.empty()) continue;
+            if (epgIds.count(c.tvgId)) ++exact;
+            else if (epgLc.count(lower(c.tvgId))) ++ci;
+            else {
+                const std::wstring b = c.tvgId.substr(0, c.tvgId.find(L'@'));  // strip iptv-org @feed
+                if (b != c.tvgId && (epgIds.count(b) || epgLc.count(lower(b)))) ++base;
+            }
+        }
+        line(L"");
+        std::wstring hdr = L"Playlist #" + std::to_wstring(pl.id) + L"  \"" + pl.name + L"\"  " +
+                           std::to_wstring(chans.size()) + L" ch, " + std::to_wstring(withId) + L" w/ tvg-id";
+        if (!epgIds.empty())
+            hdr += L"  -> EPG match: " + std::to_wstring(exact) + L" exact + " + std::to_wstring(ci) +
+                   L" case-insensitive + " + std::to_wstring(base) + L" after @-strip";
+        line(hdr);
+        int shown = 0;
+        for (const auto& c : chans) {
+            if (c.tvgId.empty()) continue;
+            if (shown++ >= 20) break;
+            std::wstring mark = L"   ";
+            if (!epgIds.empty()) {
+                if (epgIds.count(c.tvgId)) mark = L" = ";
+                else if (epgLc.count(lower(c.tvgId))) mark = L" ~ ";
+                else {
+                    const std::wstring b = c.tvgId.substr(0, c.tvgId.find(L'@'));
+                    mark = (b != c.tvgId && (epgIds.count(b) || epgLc.count(lower(b)))) ? L" @ " : L" x ";
+                }
+            }
+            line(mark + c.tvgId + L"   <=   " + c.name.substr(0, 40));
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int fetch(const std::wstring& url) {
@@ -749,6 +820,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc >= 3 && std::wstring(argv[1]) == L"--fetch") return fetch(argv[2]);
     if (argc >= 3 && std::wstring(argv[1]) == L"--import") return importSource(argv[2]);
     if (argc >= 3 && std::wstring(argv[1]) == L"--epg") return epgTool(argv[2]);
+    if (argc >= 2 && std::wstring(argv[1]) == L"--tvgids")
+        return tvgIds(argc >= 3 ? std::wstring(argv[2]) : std::wstring());
     if (argc >= 2) {
         int limit = 20;
         for (int i = 2; i < argc - 1; ++i)

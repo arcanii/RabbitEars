@@ -1305,9 +1305,19 @@ void onEpgGuide(AppState* st) {
         if (!pl.enabled) continue;
         auto progs = st->db.programmesInWindow(pl.id, winStart, winEnd);  // ordered channel_id, start
         if (progs.empty()) continue;
-        std::unordered_map<std::wstring, std::wstring> nameByTvg;
+        // Index channels by their EPG id: iptv-org tvg-ids carry an "@feed" quality suffix
+        // (e.g. "CNN.us@SD") while XMLTV feeds key on the base id ("CNN.us"), so match on the base,
+        // case-insensitively (`normId`). Keep the FIRST channel per base — its FULL tvg-id becomes the
+        // row's channelId, which Play/Schedule resolve via channelByTvgId, so every row stays playable.
+        auto normId = [](const std::wstring& s) {
+            std::wstring b = s.substr(0, s.find(L'@'));
+            for (auto& ch : b)
+                if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+            return b;
+        };
+        std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> byBase;  // base -> (name, full tvg-id)
         for (const auto& c : st->db.channelsByPlaylist(pl.id))
-            if (!c.tvgId.empty()) nameByTvg.emplace(c.tvgId, c.name);
+            if (!c.tvgId.empty()) byBase.emplace(normId(c.tvgId), std::make_pair(c.name, c.tvgId));
         GuideRow cur;
         std::wstring curId;
         bool have = false;     // building a row for a channel that IS in this playlist?
@@ -1322,13 +1332,10 @@ void onEpgGuide(AppState* st) {
                 flush();
                 curId = p.channelId;
                 started = true;
-                // Only surface channels that exist in the playlist — otherwise a row shows a
-                // programme whose channel has no stream to play (the "no ID found in playlist"
-                // report). nameByTvg mirrors channelByTvgId's scope, so every kept row IS playable.
-                auto it = nameByTvg.find(curId);
-                if (it != nameByTvg.end()) {
-                    cur.channelId = curId;
-                    cur.channelName = it->second.empty() ? curId : it->second;
+                auto it = byBase.find(normId(curId));  // programme.channelId is the EPG base id
+                if (it != byBase.end()) {
+                    cur.channelId = it->second.second;  // the channel's FULL tvg-id (Play/Schedule use it)
+                    cur.channelName = it->second.first.empty() ? curId : it->second.first;
                     have = true;
                 }
             }
@@ -2956,7 +2963,36 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_ERASEBKGND: {
             RECT rc;
             GetClientRect(hwnd, &rc);
-            FillRect(reinterpret_cast<HDC>(wParam), &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            FillRect(dc, &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            // An empty floating PIP is a small black popup that's easy to miss. Until a channel
+            // is played into it (nowPlayingId != 0, after which libVLC's surface covers this),
+            // highlight it: an accent frame + a centred hint so it's obvious where the PIP is and
+            // how to fill it. Only the floating PIP pane gets this — tiles are laid out in the grid.
+            AppState* st = stateOf(GetParent(hwnd));
+            const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+            if (st && idx >= 0 && idx < static_cast<int>(st->panes.size()) &&
+                st->panes[idx]->floating && st->panes[idx]->nowPlayingId == 0) {
+                const Theme& th = currentTheme();
+                HBRUSH ab = themeBrush(th.accent);
+                RECT fr = rc;
+                const int t = dp(3, st->dpi);
+                for (int k = 0; k < t; ++k) {  // a bold accent frame just inside the edge
+                    FrameRect(dc, &fr, ab);
+                    InflateRect(&fr, -1, -1);
+                }
+                SetBkMode(dc, TRANSPARENT);
+                SetTextColor(dc, th.textSecondary);
+                HGDIOBJ of = SelectObject(dc, st->uiFont);
+                const wchar_t* hint = L"Picture-in-Picture\r\nRight-click a channel ▸ Play in PIP";
+                RECT tr = rc;
+                InflateRect(&tr, -dp(10, st->dpi), 0);
+                RECT calc = tr;
+                DrawTextW(dc, hint, -1, &calc, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
+                tr.top = rc.top + ((rc.bottom - rc.top) - (calc.bottom - calc.top)) / 2;
+                DrawTextW(dc, hint, -1, &tr, DT_CENTER | DT_WORDBREAK);
+                SelectObject(dc, of);
+            }
             return 1;
         }
         case WM_LBUTTONDOWN: {

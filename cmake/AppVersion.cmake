@@ -5,7 +5,7 @@
 # computed separately in each; only this dotted version is shared.
 #
 # Bump on release (the git tag + appcast still gate the actual rollout).
-set(APP_VERSION "0.2.1")
+set(APP_VERSION "0.2.2")
 
 # macOS deliberately trails Windows: the mac port doesn't yet have the 0.2.0 skin /
 # theme engine, so it ships as 0.1.9. This is the one intentional exception to the
