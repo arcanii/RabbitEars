@@ -666,20 +666,20 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-0. **🔨 MainWindow.cpp modularization — IN PROGRESS.** The 3283-line god-file is being split into a shared
-   `Win32/ui/MainWindowInternal.h` (AppState + the local structs + constants + inline helpers + prototypes) +
-   a named `rabbitears::mw` namespace (was anonymous, so functions link across TUs), then 5 `.cpp`: core
-   (`MainWindow.cpp` — WndProcs / `createChildren` / `registerClasses` / `runApp` / transport-button draw),
-   `MainWindowChrome.cpp` (cmd-bar + caption geometry/draw, `layout`, `positionFloatingPip`),
-   `MainWindowDock.cpp` (gutters, re-dock drag, the grip/overlay/splitter procs), `MainWindowData.cpp`
-   (nav/filters/counts, playlist worker, `playChannel`, buffer, meters sync), `MainWindowCommands.cpp` (menu
-   handlers, panes, skin, settings menu). **Behavior-preserving** — build BOTH theme flags + `RabbitEarsCli
-   --selftest` green after each extraction; add the new `.cpp` to the Win32 target in `CMakeLists.txt`. Full
-   plan + rationale in memory `mainwindow-modularization-plan`. (The EPG `@feed` fix + the icon/About/PIP work
-   all shipped in 0.2.2 — see the state header.)
+0. **✅ MainWindow.cpp modularization — DONE** (2026-07-08, commits `7656750`→`92e2eb5`→`a2c0118`). The
+   3283-line god-file is now `Win32/ui/MainWindowInternal.h` (AppState + structs + ids/constants + all
+   cross-file prototypes) + a named `rabbitears::mw` namespace + 5 `.cpp`: **`MainWindow.cpp`** (~1425 lines:
+   WndProcs / `createChildren` / `registerClasses` / `runApp` / transport-button draw / helpers / skin fns),
+   **`MainWindowChrome.cpp`** (cmd-bar + caption + `layout` + `positionFloatingPip`), **`MainWindowDock.cpp`**
+   (gutters + re-dock + grip/overlay/splitter procs), **`MainWindowData.cpp`** (nav/filters/playlist/buffer/
+   meters), **`MainWindowCommands.cpp`** (~925 lines: menu handlers + panes + settings menu). Behavior-
+   preserving; both flags + selftest green. File map in memory `mainwindow-modularization-plan`. Next natural
+   cut (optional): carve `MainProc`'s WM_COMMAND switch into per-handler dispatch to shrink the ~700-line proc.
 1. **0.2.2 is SHIPPED** (tag `v0.2.2` @ `059b632`, `0.2.2.153`, appcast @ `fcdac10`) — owner runtime-verified
    the TV Guide loads channels + the About box; the appcast feed is live and detecting. **0.2.3 is the open
-   dev version.** Watch the **`mac-core` CI on `main`** for `common/` changes.
+   dev version.** Watch the **`mac-core` CI on `main`** for `common/` changes. **Next feature work:**
+   multi-player polish — **concurrent recording** (each pane's player already has its own recorder), per-pane
+   recording ownership, and persisting the view mode across launches (memory `rabbitears-feature-roadmap`).
 2. **Multi-player polish** — the engine EXISTS now, so build on `VideoPane` / `common/ui/VideoGrid` / the
    shared `VlcEngine`, NOT the old one-`VlcPlayer` assumption (memory `rabbitears-feature-roadmap`). The big
    unlock is **concurrent recording** (each pane's player already carries its own recorder); also per-pane
