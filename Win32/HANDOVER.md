@@ -102,11 +102,13 @@ migration, and the pure scheduler); the **GUI is build-verified BOTH theme flags
   - `Settings ▸ TV Guide` — a **new modeless Direct2D control** `Win32/ui/EpgGuideControl` (channels×time,
     frozen channel column + hour axis, "now" line, 2-D scroll; borrows `ChannelGridControl`'s D2D scaffolding).
     Click an entry → a **Play channel / Schedule… / Close** popup (`programmeDialog`, `Dialogs.cpp`).
-  - CLI: `--epg <url|file>` (fetch → gunzip → parse → summary). **EPG-source caveat (important):** the guide
-    only shows channels the *feed* covers. iptv-org's `index.m3u` (13,069 channels) declares
-    `x-tvg-url=…worker-9dd4.onrender.com/guide.xml.gz`, which is a **2-channel / 114-programme stub** — so the
-    guide shows ~2 rows. **Not a bug.** **Follow-up:** a per-playlist or global **custom EPG-URL override**
-    (today the x-tvg-url is used as-is, no override UI).
+  - CLI: `--epg <url|file>` (fetch → gunzip → parse → summary) + `--tvgids [epg]` (per-playlist tvg-id ↔ EPG
+    match report: exact / case-insensitive / `@`-stripped). **EPG matching caveat (important):** the guide
+    joins programmes to channels by tvg-id. iptv-org's own `x-tvg-url` is a tiny stub, but the real gotcha is
+    that iptv-org tvg-ids carry an **`@feed` quality suffix** (`CNN.us@SD`) while XMLTV feeds key on the base
+    (`CNN.us`) — so 0.2.x (post-0.2.1 fix, see "Immediate next steps") matches on the base id, `@…` stripped +
+    case-folded; a playlist with **no tvg-ids** (`uslg.m3u`) can never match. The **custom EPG-URL override**
+    (once a follow-up) shipped in 0.2.1.
 - **Scheduled recordings:** **schema v4** (`scheduled_recordings` — self-contained rows: stream URL/UA/
   referrer captured at schedule time, standalone/not playlist-scoped) + DAO + `channelByTvgId`; a **pure,
   unit-tested `common/core/RecordingScheduler::planScheduler(schedules, now, busy)`** decision core applied
@@ -398,12 +400,16 @@ macOS, released, appcast live. Changes:
 The engine + full GUI are complete and proven end-to-end. **Auto-update is confirmed
 working** (About → Check for Updates reports "up to date" against the live appcast).
 
-> **Sandbox note:** this dev environment **cannot launch the GUI exe**
-> (`Start-Process` hangs even with `dangerouslyDisableSandbox`; `cmd start` →
-> "Access is denied"). All GUI work is **build-verified + reasoned**, and the owner
-> does the real runtime/visual verification. The CLI (`RabbitEarsCli`) *does* run
-> here and is the way to exercise the core headlessly. The owner runs on the same
-> machine (real DB at `%LOCALAPPDATA%\RabbitEars\`, ~12,905 channels from iptv-org).
+> **Sandbox note:** this dev environment **cannot launch the GUI exe** (`Start-Process` hangs even with
+> `dangerouslyDisableSandbox`; `cmd start` → "Access is denied"). All GUI work is **build-verified +
+> reasoned**; the owner does the real runtime/visual verification. Handy pattern used across 0.2.1: kick off a
+> **background wait-loop** that polls for `RabbitEars.exe` to exit, then rebuilds — the owner just closes the
+> app and the relink + verify happens hands-off. The CLI (`RabbitEarsCli`) *does* run here to exercise the
+> core headlessly. **As of the 0.2.1 EPG work the machine also has `python` + `sqlite3`** — so you can query
+> the real DB directly for EPG/tvg-id debugging
+> (`sqlite3 %LOCALAPPDATA%\RabbitEars\rabbitears.db "SELECT tvg_id,name FROM channels LIMIT 20"`), alongside
+> the `RabbitEarsCli --tvgids` diagnostic. Owner runs on the same machine (real DB at
+> `%LOCALAPPDATA%\RabbitEars\`, ~13k iptv-org channels in `index.m3u` + a 444-channel `uslg.m3u`).
 
 ### Shipped in 0.1.2 (committed @ `8c99254`, tag `v0.1.2`)
 All `/W4` clean; committed + released. (These were the working-tree batch; now on `main`.)
@@ -649,10 +655,20 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **0.2.1 is SHIPPED** (tag `v0.2.1` @ `79ab12c`, `0.2.1.148`, appcast @ `a361b99`) — nothing to cut.
-   Post-ship: confirm auto-update **`0.2.0 → 0.2.1`** in the wild (About ▸ Check for Updates on an older
-   install; `raw.githubusercontent` caches the feed ~5 min so give it a moment) and watch the **`mac-core` CI
-   on `main`** for the `common/` additions (`VideoGrid`, the EPG-URL setter — standard C++20, written mac-safe).
+0. **⚠️ EPG tvg-id `@feed` matching fix — IN THE WORKING TREE, UNCOMMITTED.** Files: `Win32/ui/MainWindow.cpp`
+   (`onEpgGuide`) + a new `Win32/cli/RabbitEarsCli.cpp` `--tvgids` diagnostic. Root cause of "a big EPG matches
+   no channels": iptv-org tvg-ids carry an **`@feed` quality suffix** (`CNN.us@SD`) but XMLTV feeds key on the
+   base id (`CNN.us`) → **0 exact matches**. Fix: the guide matches on the base id (strip `@…`, case-fold)
+   while keeping the channel's FULL tvg-id as the row id so Play/Schedule still resolve. **Proven with real
+   data** — `RabbitEarsCli --tvgids https://iptv-epg.org/files/epg-us.xml.gz` → **324 matches** on `index.m3u`
+   (0 exact + 0 case-insensitive + 324 after `@`-strip); build-verified both flags, selftest green. **Owner
+   still to runtime-verify** (Set Guide URL on `index.m3u` → Refresh → the guide should show ~324 channels,
+   all playable), **then commit + cut 0.2.2** (same flow as 0.2.1: build-installer + sign-on-Mac + the REST-API
+   GitHub release + appcast). Nice-to-have alongside it: store only playlist-matched programmes (that US feed
+   is 525 MB / 1.1M rows — all stored, few shown). `uslg.m3u` has **no tvg-ids**, so it can't match any EPG.
+1. **0.2.1 is SHIPPED** (tag `v0.2.1` @ `79ab12c`, `0.2.1.148`, appcast @ `a361b99`) — auto-update
+   **`0.2.0 → 0.2.1` confirmed in the wild**. Watch the **`mac-core` CI on `main`** for the `common/`
+   additions (`VideoGrid`, the EPG-URL setter — standard C++20, written mac-safe).
 2. **Multi-player polish** — the engine EXISTS now, so build on `VideoPane` / `common/ui/VideoGrid` / the
    shared `VlcEngine`, NOT the old one-`VlcPlayer` assumption (memory `rabbitears-feature-roadmap`). The big
    unlock is **concurrent recording** (each pane's player already carries its own recorder); also per-pane
@@ -671,27 +687,27 @@ Paste this verbatim to start a fresh session with working context restored:
 > You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC 3.0.23**
 > with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome (coral
 > `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps vendored/NuGet.
-> **Read `Win32/HANDOVER.md` first — the "📺 EPG + ⏺ Scheduled Recordings" + "🎨 Theme engine" sections —
-> plus the recalled memories.**
+> **Read `Win32/HANDOVER.md` first — the "🔲 Multi-view (Split/PIP) + TV Guide overhaul" + "🎨 Theme engine"
+> sections — plus the recalled memories.**
 >
-> **State:** last SHIPPED = **v0.2.0** (theme engine, theme-ON by default). **0.2.1 = MERGED to `main` @
-> `85c7ec6`** (the `epg-xmltv` branch is deleted): the **EPG** (XMLTV — vendored
-> miniz gunzip + `common/core/XmltvParser` + schema v3 `epg_programmes`; a Direct2D **TV Guide** window
-> `Win32/ui/EpgGuideControl` + `Settings ▸ Refresh Guide`; click an entry → Play/Schedule popup) and
-> **Scheduled recordings** (schema v4 `scheduled_recordings` + a **pure, unit-tested**
-> `common/core/RecordingScheduler::planScheduler` applied by a ~30s `kSchedulerTimer` tick;
-> `Settings ▸ Scheduled Recordings…` manager + a manual `scheduleDialog`; **one-at-a-time,
-> app-must-be-running**). Plus the **clockwork app icon** (`packaging/app.ico`) and the **0.2.1** version
-> bump (4 places; mac keeps 0.1.9). Core is headless-tested (`RabbitEarsCli --selftest`, 42 assertions incl.
-> the v2→v4 migration + planScheduler); the **GUI is build-verified both theme flags but NOT
-> runtime-verified** — the owner's runtime pass (+ the `main` `mac-core` CI on the `common/` additions) is
-> still to confirm. Both big UI surfaces were adversarially reviewed.
+> **State:** last SHIPPED = **v0.2.1** (`79ab12c`, `0.2.1.148`, appcast @ `a361b99`; auto-update
+> `0.2.0 → 0.2.1` **confirmed in the wild**) — EPG/TV-Guide + Scheduled Recordings + the **multi-view engine**.
+> `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = its own video HWND +
+> `VlcPlayer` + channel; `AppState` holds the vector + an `active` index + a `ViewMode`); **Split (2×2)** child
+> tiles + a **floating `WS_EX_TOPMOST` PIP popup** (top-level, owned by the main window — a child sibling is
+> occluded by the libVLC D3D surface; draggable; right-click a channel ▸ **Play in PIP**). Pane geometry is
+> pure, headless-tested `common/ui/VideoGrid` (shared with mac). TV Guide: a 📺 sidebar node (`ViewKind::Guide`),
+> per-playlist **custom EPG URL** (`Database::setPlaylistEpgUrl`), type-to-search, playable-only rows,
+> hide-on-play, a modeless loading box. Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
 >
-> **Immediate next:** owner runtime-verifies the GUI (+ watch `mac-core` CI on `main`) → cut **0.2.1**
-> (bump done; build → sign-on-mac → appcast per `docs/RELEASING.md`). **EPG caveat:** the guide shows only
-> channels the *feed* covers — iptv-org's index.m3u ships a 2-channel stub EPG; a **custom EPG-URL override**
-> is a good follow-up. **Roadmap** (memory `rabbitears-feature-roadmap`): the **multi-player engine** is the
-> keystone that unlocks split-view / PIP / concurrent recording.
+> **Immediate next (UNCOMMITTED, in the working tree):** an **EPG tvg-id `@feed` matching fix** — `onEpgGuide`
+> now matches the EPG base id against each channel's tvg-id with `@…` stripped + case-folded (iptv-org uses
+> `CNN.us@SD`; feeds key on `CNN.us`), keeping the full tvg-id for Play/Schedule. **Proven** via
+> `RabbitEarsCli --tvgids <epg>` (324 matches on `index.m3u`); build-verified, selftest green; **owner still to
+> runtime-verify → then commit + cut 0.2.2**. `uslg.m3u` has no tvg-ids so it can't match any EPG. The machine
+> now has `python` + `sqlite3` for DB/EPG debugging. **Roadmap** (memory `rabbitears-feature-roadmap`): the
+> multi-player engine is DONE; next is **concurrent recording** (each pane's player already has its own
+> recorder) + per-pane recording ownership + persisting the view mode.
 >
 > **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
 > then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
