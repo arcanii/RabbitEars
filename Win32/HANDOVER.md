@@ -38,7 +38,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 audio** (only the active tile is audible, via `libvlc_audio_set_track(mp,-1)` — holds through HLS quality
 switches where a volume mute leaked), the **mode-switch AppHang fix** (async pane + recorder teardown),
 **video-only/fullscreen 2×2 grid + clickable tile focus**, **single-collapse keeps the selected stream**, and
-the active-pane highlight. Owner-runtime-verified; auto-updates from 0.2.2. Prior:
+the active-pane highlight. Owner-runtime-verified; **auto-update `0.2.2 → 0.2.3` confirmed in the wild.** Prior:
 **`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
 **`RabbitEars-0.2.2-setup.exe`** (appcast @ `fcdac10`) — **the EPG `@feed` tvg-id matching fix** (iptv-org
 `CNN.us@SD` now matches XMLTV's `CNN.us`, so large guides populate — owner runtime-verified the TV Guide
