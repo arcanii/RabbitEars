@@ -200,6 +200,12 @@ void playChannelInPane(AppState* st, const Channel& c, int idx) {
     diag::info(L"play pane " + std::to_wstring(idx) + L" #" + std::to_wstring(c.id) + L" \"" + c.name +
                L"\" ua=[" + c.userAgent + L"] ref=[" + c.referrer + L"]");
     if (p.player.isReady()) p.player.play(c.streamUrl, c.userAgent, c.referrer);
+    // Only the active pane is audible: a background/non-active tile plays with its audio track
+    // deselected (setMuted) so it stays silent even across adaptive quality switches; the active
+    // tile keeps its track and gets the slider volume.
+    const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
+    p.player.setMuted(idx != st->active);
+    if (idx == st->active) p.player.setVolume(vol);
     p.nowPlayingId = c.id;
     p.nowPlayingName = c.name;
     p.nowPlaying = c;

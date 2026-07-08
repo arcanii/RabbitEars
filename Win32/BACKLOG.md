@@ -49,6 +49,34 @@ shared skin-model boundary to the macOS team** before any engine code lands (the
 
 ---
 
+## 🖥️ Native ARM64 build (Windows-on-ARM)
+
+**Owner-directed (backlogged 2026-07-08).** Today the app is **x64-only** (`scripts/build.cmd` →
+`vcvars64.bat`, `/machine:x64`; `cmake/LibVlc.cmake:31` hardcodes `build/x64`). It runs fine on
+Windows-on-ARM via the OS's **x64 emulation** (owner runs it on ARM Windows, "works well") — but a
+**native ARM64 build** would give native speed + better battery, no emulation.
+
+**Design (owner's idea): one x64 launcher that self-selects the native binaries.** Ship a small
+**x86-64 launcher** (runs everywhere — natively on x64, emulated on ARM). At startup it detects the
+**native** machine arch (`IsWow64Process2` → `NativeMachine == IMAGE_FILE_MACHINE_ARM64`, or
+`GetNativeSystemInfo`) and launches the matching binary set — **ARM64 binaries on ARM**, x64
+otherwise. One distributable, native on both. (Alternative: an arch-specific installer per download,
+simpler but two artifacts.)
+
+**Dependency status (checked 2026-07-08):**
+- ✅ **libVLC 3.0.23** — the NuGet already unpacks `build/arm64` (full `libvlc.dll` + `libvlccore.dll`
+  + `plugins/`). Usually *the* WoA blocker; already solved.
+- ✅ **SQLite, miniz** — vendored C source, compile for any target.
+- ❌ **WinSparkle** — `third_party/winsparkle/lib` has only an x64 `WinSparkle.lib`; need an ARM64
+  build (upstream ships ARM64 in recent releases) — vendor it alongside.
+- ⚙️ **Toolchain / CMake** — add an ARM64 configure (ARM64 MSVC cross-tools, e.g.
+  `vcvarsamd64_arm64.bat`) + make `LibVlc.cmake`'s `build/x64` arch-conditional (`build/arm64`).
+  Installer (`packaging/installer.iss`) + `build-installer.cmd` bundle both binary sets + the launcher.
+
+**Scope:** self-contained, not blocking any feature work. Own point release when picked up.
+
+---
+
 ## Deferred epics
 
 - **JSON profiles** (deferred since 0.1.5): per-profile settings + playlist sources, channel cache

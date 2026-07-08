@@ -53,6 +53,13 @@ public:
     // player down first). Called from WM_DESTROY so the worker/reaper threads are joined
     // before the message loop exits — a lingering process would block the auto-update installer.
     void shutdown();
+
+    // Begin an ASYNCHRONOUS teardown (for a multi-view mode switch): hand the blocking
+    // libVLC stop()/release() to a reaper thread and join only the now-free worker, so the
+    // UI thread never blocks on a stuck stream. Poll teardownComplete(); once true, shutdown()
+    // joins the finished reaper instantly. Idempotent; safe to still call shutdown() later.
+    void beginTeardown();
+    bool teardownComplete();  // true once every async-stop reaper has finished (UI-thread poll)
     VlcPlayer(const VlcPlayer&) = delete;
     VlcPlayer& operator=(const VlcPlayer&) = delete;
 
@@ -73,8 +80,13 @@ public:
               const std::wstring& referrer = {});
     void togglePause();
     void stop();
-    void setVolume(int volume);            // 0..100
+    void setVolume(int volume);            // 0..100 (the active pane's level)
     int volume() const { return volume_.load(); }
+    // Multi-view mute: true deselects this player's audio track (silent, and survives libVLC
+    // recreating the audio output on a quality switch); false restores it. Only the active pane
+    // is unmuted. Applied on the worker + re-asserted when the stream starts playing.
+    void setMuted(bool muted);
+    bool isMuted() const { return muted_.load(); }
     // Network buffer depth in ms (libVLC network-caching) — the receive->show
     // latency. Applied to the next stream opened (re-play to apply immediately).
     void setNetworkCaching(int ms);
@@ -101,7 +113,7 @@ public:
 
 private:
     struct Cmd {
-        enum Type { Play, Stop, Pause, Volume, Aspect, Quit, RecordStart, RecordStop } type;
+        enum Type { Play, Stop, Pause, Volume, Aspect, Mute, Quit, RecordStart, RecordStop } type;
         std::wstring url, userAgent, referrer, recPath;
         int          ivalue = 0;
         std::string  svalue;
@@ -111,8 +123,9 @@ private:
     void doPlay(const Cmd& c);
     void doStop(bool async);  // async=true tears the old player down off-thread
     void reapAsyncStops();    // join+drop finished reaper threads (worker-thread only)
-    void doRecordStart(const Cmd& c);  // worker-thread only
-    void doRecordStop();               // worker-thread only
+    void applyAudioState();   // worker: (un)select the audio track + volume per muted_ (see .cpp)
+    void doRecordStart(const Cmd& c);      // worker-thread only
+    void doRecordStop(bool async = false); // async=true offloads the recorder stop to a reaper
     void sampleStats();         // worker-thread only: read libVLC stats -> snapshot_
     bool hasNewerPlayOrStop();  // for coalescing rapid channel switches
 
@@ -125,6 +138,13 @@ private:
     UINT                   evtMsg_ = 0;
     int                    tag_ = 0;   // pane index echoed to the event target (HIWORD of wParam)
     std::atomic<int>       volume_{80};
+    // Multi-view mute: a background (non-active) pane is silenced by DESELECTING its audio track
+    // (libvlc_audio_set_track(mp, -1)), not by volume=0 — libVLC resets a player's volume to 100%
+    // whenever it recreates the audio output (e.g. an HLS low->high quality switch, no event fired),
+    // so a volume-based mute leaks/pulses on adaptive feeds. A pane with no audio track selected has
+    // no audio output to reset. savedAudioTrack_ remembers the track to restore on unmute.
+    std::atomic<bool>      muted_{false};
+    int                    savedAudioTrack_ = -1;  // worker-only: track id to restore on unmute
     std::atomic<int>       cachingMs_{1500};  // network-caching applied at media open
     std::atomic<bool>      playing_{false};
     std::atomic<bool>      recording_{false};
@@ -147,11 +167,13 @@ private:
     bool                     quit_ = false;
     bool                     started_ = false;
     bool                     shutDown_ = false;  // shutdown() ran (idempotent guard)
+    bool                     teardownStarted_ = false;  // beginTeardown() ran (idempotent guard)
 
     // Async teardown of superseded players: libVLC 3.x stop()/release() block until
     // a stream tears down (seconds on a stuck feed), which would wedge the worker and
-    // the next channel switch. doStop(async) offloads them here; the worker prunes
-    // finished ones, and the destructor drains all before libvlc_release(inst_).
+    // the next channel switch. doStop(async) (playback) and doRecordStop(async) (recorder,
+    // on a mode-switch teardown) offload them here; the worker prunes finished ones, and
+    // the destructor drains all before libvlc_release(inst_).
     struct Reaper { std::thread th; std::shared_ptr<std::atomic<bool>> done; };
     std::vector<Reaper>      reapers_;  // worker-thread only (+ destructor after join)
 };

@@ -427,7 +427,7 @@ VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating) {  // defa
     raw->player.attach(raw->hwnd);
     raw->player.setEventTarget(hwnd, WM_APP_VLC);
     raw->player.setTag(index);
-    if (index != st->active) raw->player.setVolume(0);  // only the active pane is audible
+    if (index != st->active) raw->player.setMuted(true);  // only the active pane is audible
     return raw;
 }
 
@@ -436,28 +436,66 @@ VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating) {  // defa
 // out of range (no-op).
 void setActivePane(AppState* st, int idx) {
     if (idx < 0 || idx >= static_cast<int>(st->panes.size())) return;
+    diag::info(L"active pane -> " + std::to_wstring(idx) + L" (of " +
+               std::to_wstring(st->panes.size()) + L")");
     st->active = idx;
     const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
-    for (int i = 0; i < static_cast<int>(st->panes.size()); ++i)
-        st->panes[i]->player.setVolume(i == idx ? vol : 0);  // active audible, others muted
+    for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
+        st->panes[i]->player.setMuted(i != idx);         // only the active pane keeps its audio track
+        if (i == idx) st->panes[i]->player.setVolume(vol);
+    }
     channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
     SetWindowTextW(st->btnPlay, st->ap().player.isPlaying() ? kGlyphPause : kGlyphPlay);
     resetStatMeters(st);  // the previous pane's readings don't apply to the newly-active stream
     setStatus(st, st->ap().nowPlayingName.empty()
                       ? L"Active pane " + std::to_wstring(idx + 1)
                       : L"Active: " + st->ap().nowPlayingName);
-    InvalidateRect(st->hwnd, nullptr, FALSE);  // repaint the active-pane border + meters
+    // erase=TRUE: the active-pane accent border is drawn in the inter-pane gap, so the PREVIOUS
+    // active pane's border must be cleared (windowBg fill via WM_ERASEBKGND) — otherwise borders
+    // accumulate and every tile ends up looking "active". WS_CLIPCHILDREN keeps the fill off the
+    // video surfaces, so only the gaps repaint (no video flicker).
+    InvalidateRect(st->hwnd, nullptr, TRUE);  // repaint the active-pane border (clearing the old one)
 }
 
 // Switch the view mode. Every pane except pane 0 is torn down and recreated for the target mode,
 // because their window TYPE differs — Split tiles are child windows, the PIP pane is a floating
 // top-level popup. Pane 0 (the primary child surface) always persists and keeps playing.
+// Reap panes torn down by a mode switch once their async stop has finished (or force at exit).
+// Runtime-safe: a pane whose reaper is still stopping a stuck stream is left for the next pass, so
+// the UI thread never blocks. force=true (WM_DESTROY) drains everything synchronously — the exit
+// watchdog covers a truly wedged feed.
+void reapDyingPanes(AppState* st, bool force) {
+    for (auto it = st->dyingPanes.begin(); it != st->dyingPanes.end();) {
+        VideoPane* p = it->get();
+        if (force || p->player.teardownComplete()) {
+            p->player.shutdown();                 // joins the now-finished reaper instantly
+            if (p->hwnd) DestroyWindow(p->hwnd);  // UI thread — safe now (the pane's vout is gone)
+            it = st->dyingPanes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void applyViewMode(AppState* st, ViewMode mode) {
+    reapDyingPanes(st, /*force=*/false);  // clear any finished leftovers from a previous switch
+    // Carry the SELECTED pane's stream across the collapse. Pane 0 (the primary child surface)
+    // always persists, but only pane 0's HWND survives — not necessarily its channel. If a
+    // NON-pane-0 tile is active (e.g. you picked the bottom-right of a 2x2), remember what it was
+    // playing and replay it into pane 0 below, so leaving Split/PIP keeps what you were watching
+    // instead of snapping back to the top-left tile.
+    const bool carryStream = st->active != 0 && st->ap().nowPlayingId != 0;
+    const Channel carry = carryStream ? st->ap().nowPlaying : Channel{};
+    // Tear the extra panes down ASYNCHRONOUSLY. libVLC 3.x stop()/release() block for seconds on a
+    // stuck IPTV feed; doing that synchronously here (player.shutdown()) froze the UI thread — an
+    // AppHang — when entering/leaving 2x2 or PIP with flaky streams. beginTeardown() hands the
+    // blocking stop to a reaper thread and the pane parks (hidden) in dyingPanes until reaped.
     while (static_cast<int>(st->panes.size()) > 1) {
-        auto& p = st->panes.back();
-        p->player.shutdown();  // join its worker + reaper threads before the window dies
-        if (p->hwnd) DestroyWindow(p->hwnd);
+        auto p = std::move(st->panes.back());
         st->panes.pop_back();
+        p->player.beginTeardown();                  // non-blocking; the blocking stop runs off-thread
+        if (p->hwnd) ShowWindow(p->hwnd, SW_HIDE);   // hide until its vout is gone + we DestroyWindow it
+        st->dyingPanes.push_back(std::move(p));
     }
     st->active = 0;
     st->viewMode = mode;
@@ -466,6 +504,10 @@ void applyViewMode(AppState* st, ViewMode mode) {
         for (int i = 1; i < 4; ++i) addPane(st->hwnd, st, i);        // three more tiles -> 2x2
     else if (mode == ViewMode::Pip)
         addPane(st->hwnd, st, 1, /*floating=*/true);                 // the floating PIP popup
+    // Replay the carried selection into pane 0 (st->active is 0 now, so it plays audible) unless
+    // pane 0 already has it. This is what makes "the selected stream survives" true.
+    if (carryStream && st->panes[0]->nowPlayingId != carry.id)
+        playChannelInPane(st, carry, 0);
     setActivePane(st, 0);
     layout(st->hwnd, st);
     InvalidateRect(st->hwnd, nullptr, TRUE);
@@ -527,6 +569,7 @@ void onToggleRecord(AppState* st) {
 // only while the app is open (a schedule whose window passed while closed is marked
 // Missed on the next tick). Guards against the manual Record button via activeScheduleId.
 void onSchedulerTick(AppState* st) {
+    reapDyingPanes(st, /*force=*/false);  // backstop: reap finished mode-switch panes (~30s tick)
     auto schedules = st->db.listSchedules();
     if (schedules.empty()) return;
     // One-time startup reconcile: a schedule still marked Recording is stale (a prior

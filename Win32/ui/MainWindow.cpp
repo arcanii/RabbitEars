@@ -569,20 +569,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #endif
                 if (gdiStrip) FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
                 paintGutters(st, hdc);  // dock dividers live in the gaps between panels
-                // Active-pane indicator (Split/PIP only): an accent frame in the gap around the
-                // active pane so it's clear which pane the transport + audio drive. Drawn in the
-                // parent's child-clipped DC, so it lands in the inter-pane gap, not over the
-                // libVLC surface. Single view has one pane, so no indicator is needed.
-                if (st->viewMode != ViewMode::Single && !st->panes.empty() &&
-                    !st->panes[st->active]->floating) {
-                    RECT r = st->paneBounds[st->active];
-                    const int t = dp(2, st->dpi);
-                    InflateRect(&r, t, t);
-                    HBRUSH br = themeBrush(currentTheme().accent);
-                    for (int k = 0; k < t; ++k) {
-                        FrameRect(hdc, &r, br);
-                        InflateRect(&r, -1, -1);
-                    }
+            }
+            // Active-pane indicator (Split/PIP) — drawn in ALL modes, including fullscreen /
+            // video-only where the panes tile the whole client, so it's clear which tile drives
+            // the transport + audio. In the parent's child-clipped DC, so it lands in the inter-
+            // pane gap, not over a libVLC surface. Single view has one pane, so no indicator.
+            if (st->viewMode != ViewMode::Single && !st->panes.empty() &&
+                !st->panes[st->active]->floating) {
+                RECT r = st->paneBounds[st->active];
+                const int t = dp(2, st->dpi);
+                InflateRect(&r, t, t);
+                HBRUSH br = themeBrush(currentTheme().accent);
+                for (int k = 0; k < t; ++k) {
+                    FrameRect(hdc, &r, br);
+                    InflateRect(&r, -1, -1);
                 }
             }
             EndPaint(hwnd, &ps);
@@ -1144,6 +1144,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             st->skinStripOn = false;
 #endif
             st->spectrumTap.stop();  // join the capture thread before the meter HWNDs die
+            reapDyingPanes(st, /*force=*/true);  // drain async mode-switch teardowns first (their
+                                                 // players still borrow the shared instance)
             for (auto& p : st->panes)
                 p->player.shutdown();  // join every pane's worker + reaper threads
             st->engine.shutdown();     // then release the shared libVLC instance (all players are down)
@@ -1215,6 +1217,12 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
             if (st->videoOnly) {
+                // Video-only now tiles the 2x2 grid too, so a click must be able to switch the
+                // active tile — not only drag the borderless window. Activate the clicked pane
+                // first (a no-op in single-pane video-only), then arm the window drag; a real
+                // drag past the dead zone still moves the window.
+                if (idx >= 0 && idx < static_cast<int>(st->panes.size()) && idx != st->active)
+                    setActivePane(st, idx);
                 RECT wr;
                 GetWindowRect(GetParent(hwnd), &wr);
                 GetCursorPos(&st->videoDragStart);

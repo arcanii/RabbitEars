@@ -165,6 +165,10 @@ struct AppState {
     int        active = 0;
     ViewMode   viewMode = ViewMode::Single;
     VideoPane& ap() { return *panes[active]; }
+    // Panes torn down by a mode switch, stopping ASYNCHRONOUSLY in the background so the UI
+    // thread never blocks on a stuck stream's libVLC stop(). Reaped (join + DestroyWindow) once
+    // each player's async stop finishes; force-drained at WM_DESTROY. See reapDyingPanes().
+    std::vector<std::unique_ptr<VideoPane>> dyingPanes;
     HWND       hwnd = nullptr;
     HWND       nav = nullptr;
     HWND       splitter = nullptr;
@@ -296,6 +300,7 @@ void toggleVideoOnly(AppState* st);
 VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating = false);
 void setActivePane(AppState* st, int idx);
 void applyViewMode(AppState* st, ViewMode mode);
+void reapDyingPanes(AppState* st, bool force);  // reap async-torn-down panes (force at exit)
 std::wstring recordingsDir();
 std::wstring recordingPath(const std::wstring& channelName, const std::wstring& ext);
 void onToggleRecord(AppState* st);

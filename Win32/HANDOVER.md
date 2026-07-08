@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.2 SHIPPED** · **0.2.3 HELD** (MainWindow split committed; multi-view fixes UNCOMMITTED) · macOS Phase-1
+## Current state — **v0.2.3 (cutting release)** · **v0.2.2 SHIPPED** · macOS Phase-1
 
 **Released:** **`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
 **`RabbitEars-0.2.2-setup.exe`** (appcast @ `fcdac10`) — **the EPG `@feed` tvg-id matching fix** (iptv-org
@@ -666,25 +666,49 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-0. **⚠️ 0.2.3 is HELD in the working tree — UNCOMMITTED multi-view fixes (7 files).** `main` is clean at
-   `ebd933d`; the fixes below are **uncommitted** in `Win32/ui/`: `VlcPlayer.{h,cpp}`, `MainWindowInternal.h`,
-   `MainWindow.cpp`, `MainWindowChrome.cpp`, `MainWindowCommands.cpp`, `MainWindowData.cpp`. All build BOTH
-   theme flags + selftest green. **Owner is holding 0.2.3 to batch fixes — runtime-verify each, then commit +
-   cut 0.2.3** (version already bumped; build-installer here → sign on the Mac → `gh release` + appcast):
+0. **✅ 0.2.3 — multi-view fix batch (being cut as a release).** The fixes below (in `Win32/ui/`:
+   `VlcPlayer.{h,cpp}`, `MainWindowInternal.h`, `MainWindow.cpp`, `MainWindowChrome.cpp`,
+   `MainWindowCommands.cpp`, `MainWindowData.cpp`) all build BOTH theme flags + selftest green and are
+   **owner-runtime-verified**. Version bumped in all 4 spots; release path = build-installer here → sign on the
+   Mac → `gh release` + appcast. **Finalize this section to "SHIPPED @ <tag>" once the appcast is live.**
    - **Multi-view mode-switch HANG — FIXED + owner-verified.** `applyViewMode` tore panes down with a blocking
      `player.shutdown()` on the UI thread → a stuck stream's libVLC `stop()` froze the UI (Windows `AppHangB1`).
      Now async: `VlcPlayer::beginTeardown()` hands the blocking stop to a reaper + joins only the worker; the
      pane parks in `AppState::dyingPanes`, and `reapDyingPanes()` reaps it once its stop finishes (each mode
      switch, the ~30 s scheduler tick, force-drained at WM_DESTROY before `engine.shutdown()`).
-   - **Video-only / fullscreen shows the 2×2 grid** (was collapsing to the active pane). `layout()`'s
+   - **Recorder teardown no longer blocks the mode switch — review-caught, FIXED (runtime-verify).** The hang fix
+     above offloaded only the *playback* stop; the *recorder* (`rec_`) was still stopped **synchronously** on the
+     joined worker (`Cmd::Quit → doRecordStop()`), so recording a stuck feed into a **background split tile** and
+     then switching modes re-froze the UI — a residual hole in the "UI never blocks on a mode switch" invariant (not
+     a regression vs 0.2.2, which blocked on both). `doRecordStop(bool async)` now hands the recorder's blocking
+     `stop()/release()` to the same reaper vector, symmetric with `doStop(async)`; `beginTeardown()` enqueues an
+     async recorder-stop (a `Cmd::RecordStop` with `ivalue=1`) between the playback stop and the quit;
+     `teardownComplete()`/`shutdown()` already drain the whole reaper vector, so no lifecycle change. Manual
+     stop + shutdown stay synchronous. Built BOTH theme flags + selftest green. **Verify at runtime:** Split →
+     record into a *background* (non-active) tile → switch view modes → no hang, the `.ts` finalizes cleanly.
+   - **Video-only / fullscreen shows the 2×2 grid + clickable tile focus — owner-verified.** `layout()`'s
      fullscreen/video-only branch (`MainWindowChrome.cpp`) tiles the panes per view mode across the whole client;
-     the active-pane border now also paints in these modes. **Verify on the 0.2.3 build** (`build\Win32\RabbitEars.exe`,
-     NOT the installed 0.2.2 — a tester "one screen" report was the *shipped* 0.2.2, before this fix).
-   - **Multi-view audio → only the active pane.** `setActivePane` already muted non-active panes;
-     `playChannelInPane` now also applies the pane's mute to a freshly-started stream. **Verify at runtime.**
-   - **Active-pane highlight → only the active pane.** `setActivePane` used `InvalidateRect(…, FALSE)`, so the
-     border (drawn in the inter-pane gap) never erased → borders accumulated on every tile ("all highlighted").
-     Now `TRUE` (WS_CLIPCHILDREN keeps the gap-fill off the video, no flicker). **Verify at runtime.**
+     the active-pane border paints in these modes; and a click on a tile in video-only now **activates** it
+     (`VideoProc` previously only armed the window-drag and never called `setActivePane`; a real drag still moves
+     the window). Owner: "video only and full screen work perfectly."
+   - **Multi-view audio → only the active pane — TRACK-BASED mute, owner-verified.** First tried `volume=0` for
+     background panes, but libVLC 3.x **resets a player's output volume to 100% whenever it recreates the audio
+     output** (an HLS low→high quality switch, no event fired), so a volume mute leaked and *pulsed* ("jumpy") on
+     adaptive feeds — every command returned `rc=0` yet audio leaked. Fixed by **deselecting a background pane's
+     audio track** (`libvlc_audio_set_track(mp,-1)`): a pane with no audio ES has no aout to reset.
+     `VlcPlayer::setMuted`/`applyAudioState` (worker) apply it on the Playing transition + re-assert each 250 ms
+     poll; the saved track id is validated against the live stream and reset on `doPlay`, so a channel change
+     can't strand a pane silent. Callers (`addPane`/`playChannelInPane`/`setActivePane`) mute via
+     `setMuted(i!=active)`; the active pane keeps its track + volume slider. A 4-lens adversarial review caught +
+     fixed two edge bugs pre-ship (force-selecting the first track over libVLC's preferred audio language; a stale
+     track id silencing a pane). Owner-verified: audio follows the active tile through quality ramps. (Known edge:
+     one channel's quirky audio ES needed a channel re-select — stream-specific, self-heals.)
+   - **Single-collapse keeps the selected stream — owner-verified.** Leaving Split/PIP no longer snaps to the
+     top-left tile: `applyViewMode` captures the active pane's channel before teardown and replays it into the
+     persistent pane 0 (log-confirmed).
+   - **Active-pane highlight → only the active pane — owner-verified.** `setActivePane` now `InvalidateRect(…,
+     TRUE)` so the gap-drawn border erases before the new one paints (WS_CLIPCHILDREN keeps the gap-fill off the
+     video, no flicker).
 1. **⬜ 0.2.4 — "VLC (Direct3D11 output)" window on rapid channel-surf (pre-existing, NOT a 0.2.3 regression).**
    Rapid single-pane switching reuses the pane HWND while the old stream's D3D11 vout (async reaper) still owns
    it → libVLC spawns its own output window (the 0.1.3 "two vouts share the HWND" note). Agreed fix: **per-pane

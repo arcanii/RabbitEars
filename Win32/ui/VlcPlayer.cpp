@@ -17,7 +17,8 @@ namespace {
 constexpr int kStatsPollMs = 250;
 
 // C thunk registered with libVLC; forwards to the instance. Runs on a libVLC
-// thread — only touches atomics + PostMessage (thread-safe), never mp_.
+// thread — only touches atomics, PostMessage, and the command queue (all
+// thread-safe); never mp_ directly (that's worker-thread-owned).
 void vlcEventThunk(const libvlc_event_t* e, void* opaque) {
     static_cast<VlcPlayer*>(opaque)->handleVlcEvent(e);
 }
@@ -45,6 +46,33 @@ void VlcPlayer::shutdown() {
     // further libVLC work runs; the engine releases the instance once every player
     // built on it has been shut down.
     inst_ = nullptr;
+}
+
+void VlcPlayer::beginTeardown() {
+    if (shutDown_ || teardownStarted_) return;
+    teardownStarted_ = true;
+    if (started_) {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            queue_.push_back({Cmd::Stop});  // doStop(async): the blocking playback stop/release runs on a reaper
+            Cmd rec{Cmd::RecordStop};
+            rec.ivalue = 1;  // async: a recording pane's stop/release ALSO runs on a reaper, so the
+            queue_.push_back(std::move(rec));  // worker join below can't block the UI on a stuck recorder feed
+            quit_ = true;
+            queue_.push_back({Cmd::Quit});  // then quit the worker (its own doStop/doRecordStop are no-ops now)
+        }
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();  // FAST: both stops were handed to reapers, not the worker
+    }
+    // reapers_ is ours now (worker joined). Do NOT join it here — the reaper runs the blocking
+    // stop in the background so the UI thread stays responsive; teardownComplete() polls its done
+    // flag and shutdown() (called once complete) joins the finished thread instantly.
+}
+
+bool VlcPlayer::teardownComplete() {
+    for (auto& r : reapers_)
+        if (!r.done->load()) return false;
+    return true;
 }
 
 VlcPlayer::~VlcPlayer() { shutdown(); }
@@ -101,6 +129,21 @@ void VlcPlayer::workerLoop() {
             }
         }
         if (!haveCmd) {
+            // Backstop the multi-view mute each poll: if an adaptive quality switch re-selected a
+            // muted pane's audio track (recreating its output), deselect it again; keep the active
+            // pane's volume applied. Guarded by get_track so we only touch it on an actual change
+            // (no repeated set_track glitch). Cheap; keeps only the active pane audible.
+            if (mp_) {
+                if (muted_.load()) {
+                    const int cur = libvlc_audio_get_track(mp_);
+                    if (cur != -1) {  // a quality switch re-selected the track -> remember + redeselect
+                        savedAudioTrack_ = cur;
+                        libvlc_audio_set_track(mp_, -1);
+                    }
+                } else {
+                    libvlc_audio_set_volume(mp_, volume_.load());
+                }
+            }
             sampleStats();  // periodic wake while playing
             continue;
         }
@@ -124,6 +167,9 @@ void VlcPlayer::workerLoop() {
             case Cmd::Volume:
                 if (mp_) libvlc_audio_set_volume(mp_, c.ivalue);
                 break;
+            case Cmd::Mute:
+                applyAudioState();
+                break;
             case Cmd::Aspect:
                 if (mp_) libvlc_video_set_aspect_ratio(mp_, c.svalue.empty() ? nullptr : c.svalue.c_str());
                 break;
@@ -131,7 +177,7 @@ void VlcPlayer::workerLoop() {
                 doRecordStart(c);
                 break;
             case Cmd::RecordStop:
-                doRecordStop();
+                doRecordStop(/*async=*/c.ivalue != 0);  // async on a teardown; sync on a manual stop
                 break;
         }
     }
@@ -225,6 +271,7 @@ void VlcPlayer::doPlay(const Cmd& c) {
     prevReadBytes_ = prevDemuxBytes_ = 0;
     prevCorrupted_ = prevDiscontinuity_ = prevLostPictures_ = 0;
     prevDisplayedPictures_ = 0;
+    savedAudioTrack_ = -1;  // fresh stream: the previous channel's audio-track id no longer applies
 
     if (video_) {
         libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
@@ -311,7 +358,14 @@ void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {
             ev = PlayerEvent::Buffering;
             lp = static_cast<LPARAM>(e->u.media_player_buffering.new_cache);
             break;
-        case libvlc_MediaPlayerPlaying: ev = PlayerEvent::Playing; playing_.store(true); break;
+        case libvlc_MediaPlayerPlaying:
+            ev = PlayerEvent::Playing;
+            playing_.store(true);
+            // The audio track list exists now — apply this pane's mute/volume (deselect the audio
+            // track for a background pane, or select + set volume for the active one). Thread-safe
+            // from the event thread (enqueues; the worker touches mp_).
+            enqueue({Cmd::Mute});
+            break;
         case libvlc_MediaPlayerPaused: ev = PlayerEvent::Paused; break;
         case libvlc_MediaPlayerStopped: ev = PlayerEvent::Stopped; playing_.store(false); break;
         case libvlc_MediaPlayerEndReached: ev = PlayerEvent::EndReached; playing_.store(false); break;
@@ -344,6 +398,51 @@ void VlcPlayer::setVolume(int volume) {
     Cmd c{Cmd::Volume};
     c.ivalue = volume;
     enqueue(std::move(c));
+}
+
+void VlcPlayer::setMuted(bool muted) {
+    muted_.store(muted);
+    enqueue({Cmd::Mute});  // applyAudioState() on the worker (un)selects the audio track
+}
+
+// Worker-thread only. Silence a background pane by DESELECTING its audio track rather than
+// zeroing its volume: libVLC 3.x resets a player's output volume to 100% whenever it recreates
+// the audio output (an HLS low->high quality switch, with NO event fired), so a volume-based mute
+// leaks and pulses on adaptive feeds. A player with no audio track selected has no audio output at
+// all, so there is nothing to reset. The active pane re-selects its track and applies its volume.
+void VlcPlayer::applyAudioState() {
+    if (!mp_) return;
+    if (muted_.load()) {
+        const int cur = libvlc_audio_get_track(mp_);
+        if (cur != -1) {  // audio currently on -> remember which track, then deselect it
+            savedAudioTrack_ = cur;
+            libvlc_audio_set_track(mp_, -1);  // no audio ES selected -> no aout to leak/reset
+            diag::info(L"pane " + std::to_wstring(tag_) + L" mute: audio track -1 (saved " +
+                       std::to_wstring(savedAudioTrack_) + L")");
+        }
+    } else {
+        // Only (re)select a track if audio is actually OFF, i.e. WE deselected it. If a track is
+        // already selected, leave libVLC's choice alone — never override the user's preferred audio
+        // language, and never touch track selection during ordinary (single-pane) playback.
+        if (libvlc_audio_get_track(mp_) == -1) {
+            int t = -1, first = -1;  // validate savedAudioTrack_ against THIS stream's tracks
+            if (libvlc_track_description_t* d = libvlc_audio_get_track_description(mp_)) {
+                for (auto* it = d; it; it = it->p_next) {
+                    if (it->i_id == -1) continue;
+                    if (first < 0) first = it->i_id;
+                    if (it->i_id == savedAudioTrack_) t = savedAudioTrack_;  // saved track still present
+                }
+                libvlc_track_description_list_release(d);
+            }
+            if (t < 0) t = first;  // saved id absent (channel changed) -> first real audio track
+            if (t >= 0) {
+                libvlc_audio_set_track(mp_, t);
+                diag::info(L"pane " + std::to_wstring(tag_) + L" unmute: audio track " +
+                           std::to_wstring(t));
+            }
+        }
+        libvlc_audio_set_volume(mp_, volume_.load());
+    }
 }
 
 void VlcPlayer::setNetworkCaching(int ms) {
@@ -404,11 +503,29 @@ void VlcPlayer::doRecordStart(const Cmd& c) {
     diag::info(L"recording started -> " + c.recPath);
 }
 
-void VlcPlayer::doRecordStop() {
+void VlcPlayer::doRecordStop(bool async) {
     if (rec_) {
-        libvlc_media_player_stop(rec_);  // flushes + finalizes the .ts (TS needs no trailer)
-        libvlc_media_player_release(rec_);
-        rec_ = nullptr;
+        if (async) {
+            // Hand the (blocking) recorder stop()/release() to a reaper thread, exactly like
+            // doStop(async) does for playback, so a mode-switch teardown's worker join can't
+            // block the UI thread on a stuck recording feed. recording_ is cleared right away;
+            // the .ts is finalized when the reaper's stop() returns (TS needs no trailer, so a
+            // late finalize is safe). No media ref to release — doRecordStart drops it at open.
+            libvlc_media_player_t* old = rec_;
+            rec_ = nullptr;
+            reapAsyncStops();  // drop any that have already finished
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            reapers_.push_back({std::thread([old, done] {
+                                    libvlc_media_player_stop(old);
+                                    libvlc_media_player_release(old);
+                                    done->store(true);
+                                }),
+                                done});
+        } else {
+            libvlc_media_player_stop(rec_);  // synchronous: flushes + finalizes the .ts (TS needs no trailer)
+            libvlc_media_player_release(rec_);
+            rec_ = nullptr;
+        }
         diag::info(L"recording stopped");
     }
     recording_.store(false);

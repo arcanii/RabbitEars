@@ -243,19 +243,26 @@ void layout(HWND hwnd, AppState* st) {
                        st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
                        st->meterFrames, st->gripNav, st->gripVideo, st->gripGrid})
             ShowWindow(h, SW_HIDE);
-        // Show the active tile full (or pane 0 if the active pane is the floating PIP); hide the
-        // rest, including the floating PIP (a separate top-level window, not in this child batch).
-        const int showIdx = st->panes[st->active]->floating ? 0 : st->active;
+        // Tile the panes per the CURRENT view mode across the whole client (no chrome/strip), so
+        // Split stays a 2x2 grid and Single/PIP fill it with the main pane — rather than collapsing
+        // to just the active tile. The floating PIP is a separate top-level window, hidden in these
+        // modes by positionFloatingPip().
+        VideoGridOpts vgoF;
+        vgoF.gap = dp(3, st->dpi);
+        vgoF.pipW = dp(220, st->dpi);
+        vgoF.pipH = dp(124, st->dpi);
+        vgoF.pipMargin = dp(12, st->dpi);
+        const auto boxesF = computeVideoPanes(st->viewMode, static_cast<int>(st->panes.size()),
+                                              0, 0, W, H, vgoF);
         for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
+            const PaneBox& b = boxesF[i];
+            if (i < 4) st->paneBounds[i] = RECT{b.x, b.y, b.x + b.w, b.y + b.h};
             HWND h = st->panes[i]->hwnd;
             if (!h) continue;
             if (st->panes[i]->floating) { ShowWindow(h, SW_HIDE); continue; }
             if (!dwp) continue;
-            if (i == showIdx)
-                dwp = DeferWindowPos(dwp, h, nullptr, 0, 0, W, H, kSwp | SWP_SHOWWINDOW);
-            else
-                dwp = DeferWindowPos(dwp, h, nullptr, 0, 0, 0, 0,
-                                     kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
+            dwp = DeferWindowPos(dwp, h, nullptr, b.x, b.y, std::max(0, b.w), std::max(0, b.h),
+                                 kSwp | SWP_SHOWWINDOW);
         }
         if (dwp) EndDeferWindowPos(dwp);
         return;
