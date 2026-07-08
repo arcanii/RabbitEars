@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.2 SHIPPED** (EPG @feed fix + clockwork icon + About/PIP polish) · **0.2.3 dev** · macOS Phase-1
+## Current state — **v0.2.2 SHIPPED** · **0.2.3 HELD** (MainWindow split committed; multi-view fixes UNCOMMITTED) · macOS Phase-1
 
 **Released:** **`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
 **`RabbitEars-0.2.2-setup.exe`** (appcast @ `fcdac10`) — **the EPG `@feed` tvg-id matching fix** (iptv-org
@@ -666,20 +666,36 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-0. **✅ MainWindow.cpp modularization — DONE** (2026-07-08, commits `7656750`→`92e2eb5`→`a2c0118`). The
-   3283-line god-file is now `Win32/ui/MainWindowInternal.h` (AppState + structs + ids/constants + all
-   cross-file prototypes) + a named `rabbitears::mw` namespace + 5 `.cpp`: **`MainWindow.cpp`** (~1425 lines:
-   WndProcs / `createChildren` / `registerClasses` / `runApp` / transport-button draw / helpers / skin fns),
-   **`MainWindowChrome.cpp`** (cmd-bar + caption + `layout` + `positionFloatingPip`), **`MainWindowDock.cpp`**
-   (gutters + re-dock + grip/overlay/splitter procs), **`MainWindowData.cpp`** (nav/filters/playlist/buffer/
-   meters), **`MainWindowCommands.cpp`** (~925 lines: menu handlers + panes + settings menu). Behavior-
-   preserving; both flags + selftest green. File map in memory `mainwindow-modularization-plan`. Next natural
-   cut (optional): carve `MainProc`'s WM_COMMAND switch into per-handler dispatch to shrink the ~700-line proc.
-1. **0.2.2 is SHIPPED** (tag `v0.2.2` @ `059b632`, `0.2.2.153`, appcast @ `fcdac10`) — owner runtime-verified
-   the TV Guide loads channels + the About box; the appcast feed is live and detecting. **0.2.3 is the open
-   dev version.** Watch the **`mac-core` CI on `main`** for `common/` changes. **Next feature work:**
-   multi-player polish — **concurrent recording** (each pane's player already has its own recorder), per-pane
-   recording ownership, and persisting the view mode across launches (memory `rabbitears-feature-roadmap`).
+0. **⚠️ 0.2.3 is HELD in the working tree — UNCOMMITTED multi-view fixes (7 files).** `main` is clean at
+   `ebd933d`; the fixes below are **uncommitted** in `Win32/ui/`: `VlcPlayer.{h,cpp}`, `MainWindowInternal.h`,
+   `MainWindow.cpp`, `MainWindowChrome.cpp`, `MainWindowCommands.cpp`, `MainWindowData.cpp`. All build BOTH
+   theme flags + selftest green. **Owner is holding 0.2.3 to batch fixes — runtime-verify each, then commit +
+   cut 0.2.3** (version already bumped; build-installer here → sign on the Mac → `gh release` + appcast):
+   - **Multi-view mode-switch HANG — FIXED + owner-verified.** `applyViewMode` tore panes down with a blocking
+     `player.shutdown()` on the UI thread → a stuck stream's libVLC `stop()` froze the UI (Windows `AppHangB1`).
+     Now async: `VlcPlayer::beginTeardown()` hands the blocking stop to a reaper + joins only the worker; the
+     pane parks in `AppState::dyingPanes`, and `reapDyingPanes()` reaps it once its stop finishes (each mode
+     switch, the ~30 s scheduler tick, force-drained at WM_DESTROY before `engine.shutdown()`).
+   - **Video-only / fullscreen shows the 2×2 grid** (was collapsing to the active pane). `layout()`'s
+     fullscreen/video-only branch (`MainWindowChrome.cpp`) tiles the panes per view mode across the whole client;
+     the active-pane border now also paints in these modes. **Verify on the 0.2.3 build** (`build\Win32\RabbitEars.exe`,
+     NOT the installed 0.2.2 — a tester "one screen" report was the *shipped* 0.2.2, before this fix).
+   - **Multi-view audio → only the active pane.** `setActivePane` already muted non-active panes;
+     `playChannelInPane` now also applies the pane's mute to a freshly-started stream. **Verify at runtime.**
+   - **Active-pane highlight → only the active pane.** `setActivePane` used `InvalidateRect(…, FALSE)`, so the
+     border (drawn in the inter-pane gap) never erased → borders accumulated on every tile ("all highlighted").
+     Now `TRUE` (WS_CLIPCHILDREN keeps the gap-fill off the video, no flicker). **Verify at runtime.**
+1. **⬜ 0.2.4 — "VLC (Direct3D11 output)" window on rapid channel-surf (pre-existing, NOT a 0.2.3 regression).**
+   Rapid single-pane switching reuses the pane HWND while the old stream's D3D11 vout (async reaper) still owns
+   it → libVLC spawns its own output window (the 0.1.3 "two vouts share the HWND" note). Agreed fix: **per-pane
+   double-buffered vout child windows** — ping-pong so a new swapchain never lands on an occupied HWND; keeps
+   fast switching (a sync stop would risk wedging the worker). Core channel-switch path → hard surf-testing.
+   `doPlay` = `VlcPlayer.cpp:223` (`set_hwnd` at 253 is skipped when `video_==0` → the fallback window).
+2. **MainWindow.cpp split — DONE** (`7656750`→`a2c0118`, both flags green): header + `rabbitears::mw` + 5 `.cpp`
+   (core / chrome / dock / data / commands); 3283→~1425-line core. File map: memory
+   `mainwindow-modularization-plan`. **0.2.2 SHIPPED** (`v0.2.2` @ `059b632`, `0.2.2.153`, appcast `fcdac10`;
+   feed live + auto-updating). Next feature work after 0.2.3/0.2.4: multi-player polish — **concurrent recording**
+   (each pane already has its own recorder), per-pane recording ownership, persist the view mode.
 2. **Multi-player polish** — the engine EXISTS now, so build on `VideoPane` / `common/ui/VideoGrid` / the
    shared `VlcEngine`, NOT the old one-`VlcPlayer` assumption (memory `rabbitears-feature-roadmap`). The big
    unlock is **concurrent recording** (each pane's player already carries its own recorder); also per-pane
@@ -701,10 +717,13 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the "🔲 Multi-view (Split/PIP) + TV Guide overhaul" + "🎨 Theme engine"
 > sections — plus the recalled memories.**
 >
-> **State:** last SHIPPED = **v0.2.2** (`059b632`, `0.2.2.153`, appcast @ `fcdac10`) — the EPG `@feed` tvg-id
-> fix (large guides now populate), clockwork icon (`art/clockwork_icon3.png`), About artwork +25% + a GitHub
-> link, and an empty-PIP highlight; **now on 0.2.3 dev**. Built on **v0.2.1** — EPG/TV-Guide + Scheduled
-> Recordings + the **multi-view engine**.
+> **State:** last SHIPPED = **v0.2.2** (`059b632`, `0.2.2.153`, appcast @ `fcdac10`; feed live). **`main` is at
+> `ebd933d`** — the MainWindow.cpp split is committed. **0.2.3 is HELD: 7 UNCOMMITTED multi-view fixes in the
+> working tree** (`Win32/ui/VlcPlayer.{h,cpp}`, `MainWindowInternal.h`, `MainWindow.cpp`,
+> `MainWindow{Chrome,Commands,Data}.cpp`) — the mode-switch **hang** (async pane teardown, owner-verified),
+> **video-only shows the 2×2 grid**, and multi-view **audio + active-pane highlight** follow only the selected
+> pane. All build BOTH flags + selftest green; runtime-verify each on `build\Win32\RabbitEars.exe`, then commit +
+> cut 0.2.3. Built on **v0.2.1** — EPG/TV-Guide + Scheduled Recordings + the **multi-view engine**.
 > `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = its own video HWND +
 > `VlcPlayer` + channel; `AppState` holds the vector + an `active` index + a `ViewMode`); **Split (2×2)** child
 > tiles + a **floating `WS_EX_TOPMOST` PIP popup** (top-level, owned by the main window — a child sibling is
@@ -713,14 +732,17 @@ Paste this verbatim to start a fresh session with working context restored:
 > per-playlist **custom EPG URL** (`Database::setPlaylistEpgUrl`), type-to-search, playable-only rows,
 > hide-on-play, a modeless loading box. Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
 >
-> **Immediate next:** **MainWindow.cpp modularization** (in progress) — split the 3283-line file into
-> `Win32/ui/MainWindowInternal.h` + a named `rabbitears::mw` namespace + 5 `.cpp` (core / chrome / dock / data
-> / commands); behavior-preserving, build BOTH flags + `--selftest` green per step, add the new `.cpp` to the
-> Win32 `CMakeLists.txt`. Plan: memory `mainwindow-modularization-plan`. Then **multi-player polish** (memory
-> `rabbitears-feature-roadmap`): **concurrent recording** (each pane's player already has its own recorder) +
-> per-pane recording ownership + persisting the view mode. This machine has `python` + `sqlite3` + **Pillow**
-> (DB/EPG/icon work) and **`gh` CLI + Inno Setup**, so a full release runs locally — only EdDSA signing is on
-> the Mac (`scripts/sign-release.sh`).
+> **Immediate next:** **land the held 0.2.3 fixes** — runtime-verify each on `build\Win32\RabbitEars.exe` (NOT
+> the installed 0.2.2), then commit + release 0.2.3: (a) mode-switch hang — DONE + owner-verified; (b) video-only
+> shows the 2×2 grid + active-pane border; (c) audio only from the active pane (`setActivePane` mutes others +
+> `playChannelInPane` applies the mute); (d) only the active pane highlighted (`setActivePane` now
+> `InvalidateRect(TRUE)` to clear stale gap-borders). Then **0.2.4:** the **"VLC (Direct3D11 output)" window on
+> rapid channel-surf** — pre-existing vout contention (old stream's D3D11 vout still owns the pane HWND when the
+> new one grabs it); agreed fix = per-pane **double-buffered vout child windows** (ping-pong), `doPlay` at
+> `VlcPlayer.cpp:223`. Then multi-player polish (memory `rabbitears-feature-roadmap`): concurrent recording +
+> per-pane ownership + persist view mode. MainWindow.cpp is now a header + `rabbitears::mw` + 5 `.cpp` (memory
+> `mainwindow-modularization-plan`). This machine has `python`+`sqlite3`+**Pillow** and **`gh` CLI + Inno Setup**,
+> so a full release runs locally — only EdDSA signing is on the Mac (`scripts/sign-release.sh`).
 >
 > **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
 > then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
