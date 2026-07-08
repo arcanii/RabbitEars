@@ -31,9 +31,15 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.3 (cutting release)** · **v0.2.2 SHIPPED** · macOS Phase-1
+## Current state — **v0.2.3 SHIPPED** · macOS Phase-1
 
-**Released:** **`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
+**Released:** **`v0.2.3`** (2026-07-08), tag `v0.2.3` @ `d6ad80a`, full version `0.2.3.162`, signed
+**`RabbitEars-0.2.3-setup.exe`** (appcast @ `ca7b682`) — **the multi-view fix batch**: **track-based per-pane
+audio** (only the active tile is audible, via `libvlc_audio_set_track(mp,-1)` — holds through HLS quality
+switches where a volume mute leaked), the **mode-switch AppHang fix** (async pane + recorder teardown),
+**video-only/fullscreen 2×2 grid + clickable tile focus**, **single-collapse keeps the selected stream**, and
+the active-pane highlight. Owner-runtime-verified; auto-updates from 0.2.2. Prior:
+**`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
 **`RabbitEars-0.2.2-setup.exe`** (appcast @ `fcdac10`) — **the EPG `@feed` tvg-id matching fix** (iptv-org
 `CNN.us@SD` now matches XMLTV's `CNN.us`, so large guides populate — owner runtime-verified the TV Guide
 loads channels), **the artist's clockwork app icon + splash** (`art/clockwork_icon3.png`, trimmed to the
@@ -666,11 +672,11 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-0. **✅ 0.2.3 — multi-view fix batch (being cut as a release).** The fixes below (in `Win32/ui/`:
-   `VlcPlayer.{h,cpp}`, `MainWindowInternal.h`, `MainWindow.cpp`, `MainWindowChrome.cpp`,
-   `MainWindowCommands.cpp`, `MainWindowData.cpp`) all build BOTH theme flags + selftest green and are
-   **owner-runtime-verified**. Version bumped in all 4 spots; release path = build-installer here → sign on the
-   Mac → `gh release` + appcast. **Finalize this section to "SHIPPED @ <tag>" once the appcast is live.**
+0. **✅ 0.2.3 SHIPPED** (2026-07-08) — tag `v0.2.3` @ `d6ad80a`, `0.2.3.162`, appcast @ `ca7b682`, auto-updating
+   from 0.2.2. The multi-view fix batch below is live and owner-runtime-verified (audio follows the active tile;
+   video-only/fullscreen + focus; single-collapse keeps the selection; no mode-switch hang). **Next up: 0.2.4
+   (item 1) — the "VLC (Direct3D11 output)" popout on rapid channel-surf.** The bullets below are the 0.2.3
+   changelog.
    - **Multi-view mode-switch HANG — FIXED + owner-verified.** `applyViewMode` tore panes down with a blocking
      `player.shutdown()` on the UI thread → a stuck stream's libVLC `stop()` froze the UI (Windows `AppHangB1`).
      Now async: `VlcPlayer::beginTeardown()` hands the blocking stop to a reaper + joins only the worker; the
