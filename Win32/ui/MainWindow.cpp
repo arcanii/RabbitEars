@@ -982,12 +982,42 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 return TRUE;
             }
+            if (nh->idFrom == ID_NAV && nh->code == NM_CLICK) {
+                // Reopen the 📺 TV Guide when its node is clicked while ALREADY selected. Playing a
+                // channel from the guide hides the guide window (hideEpgGuide) but leaves this node
+                // selected, so a plain re-click fires no TVN_SELCHANGEDW (below) — the guide could
+                // never be brought back. Handle the already-selected case here (SELCHANGEDW still
+                // covers a fresh select / keyboard nav). onEpgGuide re-reveals a hidden guide.
+                const DWORD mp = GetMessagePos();
+                POINT cli{GET_X_LPARAM(mp), GET_Y_LPARAM(mp)};
+                ScreenToClient(st->nav, &cli);
+                TVHITTESTINFO ht{};
+                ht.pt = cli;
+                HTREEITEM item = TreeView_HitTest(st->nav, &ht);
+                if (item && item == TreeView_GetSelection(st->nav)) {
+                    TVITEMW ti{};
+                    ti.mask = TVIF_PARAM;
+                    ti.hItem = item;
+                    if (TreeView_GetItem(st->nav, &ti)) {
+                        const LPARAM fi = ti.lParam;
+                        if (fi >= 0 && fi < static_cast<LPARAM>(st->navFilters.size()) &&
+                            st->navFilters[fi].kind == ViewKind::Guide) {
+                            if (epgGuideOpen()) revealEpgGuide(time(nullptr));  // instant reopen, no DB rebuild
+                            else onEpgGuide(st);
+                        }
+                    }
+                }
+                return 0;
+            }
             if (nh->idFrom == ID_NAV && nh->code == TVN_SELCHANGEDW) {
                 auto* tv = reinterpret_cast<NMTREEVIEWW*>(lParam);
                 const LPARAM idx = tv->itemNew.lParam;
                 if (idx >= 0 && idx < static_cast<LPARAM>(st->navFilters.size())) {
                     if (st->navFilters[idx].kind == ViewKind::Guide) {
-                        onEpgGuide(st);  // action node: open the TV Guide window (not a grid filter)
+                        // Action node: open the TV Guide window (not a grid filter). Instant reopen
+                        // if it's already built — only the first open pays the DB rebuild.
+                        if (epgGuideOpen()) revealEpgGuide(time(nullptr));
+                        else onEpgGuide(st);
                     } else {
                         st->filter = st->navFilters[idx];
                         loadForFilter(st);
@@ -1009,12 +1039,24 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
-        case WM_APP_VLC:
+        case WM_APP_VLC: {
             // Events carry the posting pane's index in the HIWORD (LOWORD = the PlayerEvent).
+            const int paneIdx = HIWORD(wParam);
+            const PlayerEvent pe = static_cast<PlayerEvent>(LOWORD(wParam));
+            // Vout-host swap runs for the POSTING pane regardless of which pane is active: the moment
+            // its new stream is Playing, show that pane's live vout host and hide the rest. Deferring
+            // this until Playing (rather than at set_hwnd time) keeps the OLD host visible through
+            // Opening/Buffering, so a channel switch has no black gap.
+            if (pe == PlayerEvent::Playing && paneIdx >= 0 &&
+                paneIdx < static_cast<int>(st->panes.size())) {
+                const HWND cur = st->panes[paneIdx]->player.currentHost();
+                for (HWND h : st->panes[paneIdx]->voutHosts)
+                    if (IsWindow(h)) ShowWindow(h, h == cur ? SW_SHOW : SW_HIDE);
+            }
             // Only the active pane drives the shared transport strip + meters; inactive panes
             // still play but must not flip the play/pause glyph or hijack the meters.
-            if (HIWORD(wParam) != st->active) break;
-            switch (static_cast<PlayerEvent>(LOWORD(wParam))) {
+            if (paneIdx != st->active) break;
+            switch (pe) {
                 case PlayerEvent::Opening:
                     bufferMeterSetHealth(st->bufferMeter, 15);
                     setStatus(st, L"Opening: " + st->ap().nowPlayingName);
@@ -1111,6 +1153,18 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     break;
             }
             return 0;
+        }
+        case WM_APP_MAKE_VOUT_HOST: {
+            // A VlcPlayer worker ran out of free vout hosts and asked us (the UI thread, which owns
+            // window creation) to grow its pane's pool. wParam = the pane HWND (== the player's
+            // video_), lParam = the pane index. Validate the pane still matches — a stale request
+            // from a worker torn down by a mode switch must not create an orphan host — then create,
+            // size + register the host and hand its HWND back as the SendMessageTimeout result.
+            const int paneIdx = static_cast<int>(lParam);
+            if (paneIdx < 0 || paneIdx >= static_cast<int>(st->panes.size())) return 0;
+            if (st->panes[paneIdx]->hwnd != reinterpret_cast<HWND>(wParam)) return 0;
+            return reinterpret_cast<LRESULT>(makeVoutHost(st, paneIdx));
+        }
         case WM_APP_PLAYLIST_DONE:
             onPlaylistDone(st, reinterpret_cast<PlaylistResult*>(lParam));
             return 0;
@@ -1333,6 +1387,48 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// Per-pane vout-host child window. libVLC renders into one of these (never the pane HWND directly),
+// so a superseded stream's Direct3D vout can drain on its own host while the next stream attaches to
+// a different, free one — instead of libVLC spawning a top-level "VLC (Direct3D11 output)" window.
+// The host fills the pane, and (because mouse/key input is disabled on the player, so libVLC routes
+// input to GetParent(vout) == this host) it forwards the clicks/keys it receives up to the pane's
+// VideoProc, which owns activate/drag/dblclick-fullscreen/right-menu. Client coords match 1:1
+// because the host fills the pane; a forwarded WM_LBUTTONDOWN does SetCapture(pane), so the ensuing
+// move/up route straight to the pane.
+LRESULT CALLBACK VoutHostProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONUP:
+        case WM_KEYDOWN:
+            if (HWND pane = GetParent(hwnd)) return SendMessageW(pane, msg, wParam, lParam);
+            break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// UI thread only: create one vout host inside pane `paneIdx`, hidden and sized to the pane's client
+// rect, register it in the pane's voutHosts, and return its HWND. Shared by addPane (pre-creating a
+// steady-state pool) and the WM_APP_MAKE_VOUT_HOST handler (on-demand growth from a player worker).
+// Returns null on a bad index or a dead pane window.
+HWND makeVoutHost(AppState* st, int paneIdx) {
+    if (!st || paneIdx < 0 || paneIdx >= static_cast<int>(st->panes.size())) return nullptr;
+    HWND pane = st->panes[paneIdx]->hwnd;
+    if (!IsWindow(pane)) return nullptr;
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(pane, GWLP_HINSTANCE));
+    RECT rc{};
+    GetClientRect(pane, &rc);
+    // WS_CLIPSIBLINGS so one host's black erase can't paint over another while they briefly overlap
+    // on a switch. Created HIDDEN (no WS_VISIBLE): layout() keeps it sized to the pane and
+    // PlayerEvent::Playing shows it once its stream is live.
+    HWND host = CreateWindowExW(0, kVoutHostClass, L"", WS_CHILD | WS_CLIPSIBLINGS, 0, 0, rc.right,
+                                rc.bottom, pane, nullptr, hInst, nullptr);
+    if (!host) return nullptr;
+    st->panes[paneIdx]->voutHosts.push_back(host);
+    return host;
+}
+
 void registerClasses(HINSTANCE hInst) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -1357,6 +1453,16 @@ void registerClasses(HINSTANCE hInst) {
     vc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     vc.lpszClassName = kVideoClass;
     RegisterClassExW(&vc);
+
+    WNDCLASSEXW hc{};  // per-pane vout host: libVLC's Direct3D render target (see VoutHostProc)
+    hc.cbSize = sizeof(hc);
+    hc.style = CS_DBLCLKS;  // forward double-clicks to the pane (fullscreen toggle)
+    hc.lpfnWndProc = VoutHostProc;
+    hc.hInstance = hInst;
+    hc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    hc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    hc.lpszClassName = kVoutHostClass;
+    RegisterClassExW(&hc);
 
     WNDCLASSEXW sc{};
     sc.cbSize = sizeof(sc);

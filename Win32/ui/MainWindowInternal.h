@@ -30,12 +30,17 @@ namespace mw {
 // ---- window classes / messages / timers -----------------------------------
 constexpr wchar_t kMainClass[] = L"RabbitEarsMain";
 constexpr wchar_t kVideoClass[] = L"ReVideoSurface";
+constexpr wchar_t kVoutHostClass[] = L"ReVoutHost";    // per-pane vout-host child (libVLC renders here)
 constexpr wchar_t kGripClass[] = L"ReDockGrip";        // drag-to-redock grip child window
 constexpr wchar_t kOverlayClass[] = L"ReDropOverlay";  // drop-zone highlight popup
 constexpr UINT WM_APP_VLC = WM_APP + 1;
 constexpr UINT WM_APP_PLAYLIST_DONE = WM_APP + 2;
 constexpr UINT WM_APP_EPG_DONE = WM_APP + 3;  // EPG fetch/parse worker -> UI thread
 constexpr UINT WM_APP_EPG_PROGRESS = WM_APP + 4;  // EPG worker progress text (heap wstring*) -> loading box
+// A VlcPlayer worker (off the UI thread) that ran out of free vout hosts asks the UI thread to
+// create one via SendMessageTimeout(WM_APP_MAKE_VOUT_HOST, wParam=pane HWND, lParam=pane index);
+// the handler returns the new host HWND. Window create/size lives on the UI thread (Win32 affinity).
+constexpr UINT WM_APP_MAKE_VOUT_HOST = WM_APP + 5;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 
 // ---- command ids ----------------------------------------------------------
@@ -153,6 +158,11 @@ struct VideoPane {
     std::wstring nowPlayingName;
     bool         floating = false;  // PIP: a top-level owned popup that composites OVER the big
                                     // pane's libVLC surface (a child sibling gets occluded by it).
+    // Pool of kVoutHostClass child windows (all filling the pane, all hidden except the live one)
+    // that libVLC renders into — never the pane HWND directly. See VlcPlayer's vout-host pool: a
+    // new stream attaches to a proven-free host so the old vout can drain without a Direct3D popout.
+    // Created/sized/shown/hidden on the UI thread only; the player selects which one is live.
+    std::vector<HWND> voutHosts;
 };
 
 struct AppState {
@@ -298,6 +308,7 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid);
 void toggleFullscreen(AppState* st);
 void toggleVideoOnly(AppState* st);
 VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating = false);
+HWND makeVoutHost(AppState* st, int paneIdx);  // UI thread: create + register one pane vout host
 void setActivePane(AppState* st, int idx);
 void applyViewMode(AppState* st, ViewMode mode);
 void reapDyingPanes(AppState* st, bool force);  // reap async-torn-down panes (force at exit)

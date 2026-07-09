@@ -50,4 +50,11 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
 // from the guide, so the picked show isn't left playing behind the guide window.
 void hideEpgGuide();
 
+bool epgGuideOpen();  // true if the guide window exists (open or hidden)
+// Re-reveal an already-built guide WITHOUT re-querying the DB — instant reopen after a
+// play-from-guide hid it. Only moves the "now" line + airing highlight to `nowUtc` (the stored
+// programmes don't change); a full rebuild (showEpgGuide via onEpgGuide) is only needed the first
+// time or on an explicit Refresh. No-op if the guide isn't open.
+void revealEpgGuide(long long nowUtc);
+
 }  // namespace rabbitears

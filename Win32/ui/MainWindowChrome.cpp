@@ -198,6 +198,9 @@ void positionFloatingPip(AppState* st) {
         // non-topmost popup did not beat that surface).
         SetWindowPos(p->hwnd, HWND_TOPMOST, tl.x, tl.y, w, h,
                      SWP_NOACTIVATE | (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+        // The PIP's vout hosts are children of this popup — keep them filling its client rect.
+        for (HWND vh : p->voutHosts)
+            if (vh) SetWindowPos(vh, nullptr, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
 
@@ -263,6 +266,10 @@ void layout(HWND hwnd, AppState* st) {
             if (!dwp) continue;
             dwp = DeferWindowPos(dwp, h, nullptr, b.x, b.y, std::max(0, b.w), std::max(0, b.h),
                                  kSwp | SWP_SHOWWINDOW);
+            // Keep every vout host filling its pane (children of the pane -> pane-client coords).
+            for (HWND vh : st->panes[i]->voutHosts)
+                if (vh) SetWindowPos(vh, nullptr, 0, 0, std::max(0, b.w), std::max(0, b.h),
+                                     SWP_NOZORDER | SWP_NOACTIVATE);
         }
         if (dwp) EndDeferWindowPos(dwp);
         return;
@@ -310,10 +317,15 @@ void layout(HWND hwnd, AppState* st) {
         if (i < 4) st->paneBounds[i] = RECT{b.x, b.y, b.x + b.w, b.y + b.h};
         HWND h = st->panes[i]->hwnd;
         // Floating (PIP) panes aren't children of this window — positionFloatingPip() places them
-        // in screen coords after the deferred child batch.
+        // (and their vout hosts) in screen coords after the deferred child batch.
         if (!h || st->panes[i]->floating || !dwp) continue;
         const UINT f = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_SHOWWINDOW | SWP_NOZORDER;
         dwp = DeferWindowPos(dwp, h, nullptr, b.x, b.y, std::max(0, b.w), std::max(0, b.h), f);
+        // Keep every vout host filling its pane (children of the pane -> pane-client coords). Hidden
+        // hosts are sized too, so they're correct the instant PlayerEvent::Playing reveals one.
+        for (HWND vh : st->panes[i]->voutHosts)
+            if (vh) SetWindowPos(vh, nullptr, 0, 0, std::max(0, b.w), std::max(0, b.h),
+                                 SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
     // Remember panel rects (for drop hit-testing) + place the drag-to-redock grips in

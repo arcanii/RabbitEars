@@ -554,6 +554,25 @@ void hideEpgGuide() {
     if (g_guide && IsWindow(g_guide)) ShowWindow(g_guide, SW_HIDE);
 }
 
+bool epgGuideOpen() { return g_guide && IsWindow(g_guide); }
+
+void revealEpgGuide(long long nowUtc) {
+    if (!g_guide || !IsWindow(g_guide)) return;
+    if (GuideState* st = stateOf(g_guide)) {
+        // Move the "now" marker + airing highlight to the current time and re-centre on it. No
+        // applyData() — the stored programmes are unchanged, so this skips the (costly) DB rebuild
+        // that made reopen laggy. The visible span was built for ~24h from the first open, so a
+        // reopen within that window keeps "now" on-screen.
+        st->nowUtc = nowUtc;
+        st->scrollX = std::max(0, timeToContentX(st, nowUtc) - dpx(st->dpi, 80));
+        updateScrollbars(g_guide, st);
+        InvalidateRect(g_guide, nullptr, FALSE);
+    }
+    applyDialogDarkMode(g_guide);  // re-theme the caption in case the skin changed while hidden
+    ShowWindow(g_guide, SW_SHOW);
+    SetForegroundWindow(g_guide);
+}
+
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
                   GuideCallbacks cb) {
     registerGuideClass(hInst);

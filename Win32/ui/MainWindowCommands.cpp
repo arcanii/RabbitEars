@@ -387,7 +387,10 @@ void toggleFullscreen(AppState* st) {
 // already hides every child + fills the client with the video), minus the window-style
 // change. A no-op while actually fullscreen — that mode already shows only the video.
 void toggleVideoOnly(AppState* st) {
-    if (st->fullscreen) return;
+    // Entering video-only from fullscreen: drop fullscreen first (the two are mutually exclusive),
+    // so "Video only" from the fullscreen right-click menu lands in windowed video-only instead of
+    // doing nothing. toggleFullscreen clears st->fullscreen, so the toggle below then proceeds.
+    if (st->fullscreen) toggleFullscreen(st);
     st->videoOnly = !st->videoOnly;
     layout(st->hwnd, st);
     InvalidateRect(st->hwnd, nullptr, TRUE);
@@ -424,9 +427,16 @@ VideoPane* addPane(HWND hwnd, AppState* st, int index, bool floating) {  // defa
     VideoPane* raw = pane.get();
     st->panes.push_back(std::move(pane));
     raw->player.init(st->engine);
-    raw->player.attach(raw->hwnd);
+    raw->player.attach(raw->hwnd);  // the pane HWND — the pool's fallback, never a set_hwnd target
     raw->player.setEventTarget(hwnd, WM_APP_VLC);
     raw->player.setTag(index);
+    raw->player.setVoutHostMsg(WM_APP_MAKE_VOUT_HOST);  // lets the worker grow the host pool on demand
+    // Pre-create a small pool of vout hosts for this pane (hidden). libVLC renders into a host, never
+    // the pane HWND directly: a new stream attaches to a proven-free host so the previous stream's
+    // vout can drain without spawning the "VLC (Direct3D11 output)" popout on rapid channel-surf. Two
+    // covers steady-state ping-pong; the worker grows the pool (WM_APP_MAKE_VOUT_HOST) under churn.
+    for (int i = 0; i < 2; ++i)
+        if (HWND h = makeVoutHost(st, index)) raw->player.registerVoutHost(h);
     if (index != st->active) raw->player.setMuted(true);  // only the active pane is audible
     return raw;
 }

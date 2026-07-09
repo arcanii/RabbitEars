@@ -2,6 +2,7 @@
 #include "ui/VlcPlayer.h"
 
 #include <algorithm>
+#include <climits>  // ULLONG_MAX (least-recently-busied host fallback)
 
 #include <vlc/vlc.h>
 
@@ -179,6 +180,12 @@ void VlcPlayer::workerLoop() {
             case Cmd::RecordStop:
                 doRecordStop(/*async=*/c.ivalue != 0);  // async on a teardown; sync on a manual stop
                 break;
+            case Cmd::AddHost:
+                // A vout host the UI thread pre-created inside this player's pane. hosts_ is
+                // worker-only, so it joins the pool here (never on the UI thread) — no race.
+                if (c.pvalue)
+                    hosts_.push_back({static_cast<HWND>(c.pvalue), false, 0});
+                break;
         }
     }
 }
@@ -187,11 +194,46 @@ void VlcPlayer::reapAsyncStops() {
     for (auto it = reapers_.begin(); it != reapers_.end();) {
         if (it->done->load()) {
             if (it->th.joinable()) it->th.join();
+            const HWND freed = it->host;  // the dying player's vout host is now released
             it = reapers_.erase(it);
+            if (freed)  // return it to the free set (a recorder reaper has none)
+                for (auto& h : hosts_)
+                    if (h.hwnd == freed) { h.busy = false; break; }
         } else {
             ++it;
         }
     }
+}
+
+// Worker-thread only. Pick a vout host for a new stream: reuse a free one (a just-drained host
+// whose reaper has finished is legitimately free), else ask the UI thread to grow the pool, else
+// (shutdown edge only) fall back to the least-recently-busied host. Never blocks forever — the
+// growth request uses SendMessageTimeout(SMTO_ABORTIFHUNG) so shutdown()'s worker_.join() can't
+// deadlock against a UI thread that's parked in that join.
+HWND VlcPlayer::pickVoutHost() {
+    for (auto& h : hosts_)
+        if (!h.busy && IsWindow(h.hwnd)) return h.hwnd;  // a proven-free host
+    // None free: ask the UI thread to create one (window affinity). Bounded 1s timeout: in normal
+    // operation the UI is pumping and returns fast; only on the shutdown edge does it time out.
+    if (voutHostMsg_ && evtTarget_ && IsWindow(evtTarget_)) {
+        DWORD_PTR res = 0;
+        const LRESULT ok = SendMessageTimeoutW(evtTarget_, voutHostMsg_,
+                                               reinterpret_cast<WPARAM>(video_),
+                                               static_cast<LPARAM>(tag_), SMTO_ABORTIFHUNG, 1000,
+                                               &res);
+        if (ok && res) {
+            HWND nh = reinterpret_cast<HWND>(res);
+            hosts_.push_back({nh, false, 0});  // worker owns hosts_ — safe to add here
+            return nh;
+        }
+    }
+    // Fallback (timeout/failure): reuse the host that was busied longest ago (its reaper is the
+    // most likely to have finished). Never hang. Only reachable while the UI is in worker_.join().
+    HWND best = nullptr;
+    unsigned long long oldest = ULLONG_MAX;
+    for (auto& h : hosts_)
+        if (IsWindow(h.hwnd) && h.busySeq <= oldest) { oldest = h.busySeq; best = h.hwnd; }
+    return best;  // nullptr only if the pool is somehow empty (doPlay then falls back to video_)
 }
 
 void VlcPlayer::doStop(bool async) {
@@ -205,6 +247,14 @@ void VlcPlayer::doStop(bool async) {
             libvlc_media_t* oldMedia = media_;
             mp_ = nullptr;
             media_ = nullptr;
+            // The vout host this dying player renders into stays BUSY until its reaper finishes
+            // releasing it (its D3D vout still owns that surface); only then is it reusable. The
+            // next stream must therefore pick a DIFFERENT free host — reusing this one now is
+            // exactly the popout bug. currentHost_ goes null so the pick can't land back on it.
+            const HWND oldHost = currentHost_.load();
+            for (auto& h : hosts_)
+                if (h.hwnd == oldHost) { h.busy = true; h.busySeq = ++hostBusyCounter_; break; }
+            currentHost_.store(nullptr);
             // Detach our callbacks so this dying player can't post stale events (e.g.
             // a Stopped/Error for the channel we just switched away from).
             if (auto* em = libvlc_media_player_event_manager(old))
@@ -221,7 +271,7 @@ void VlcPlayer::doStop(bool async) {
                                     if (oldMedia) libvlc_media_release(oldMedia);
                                     done->store(true);
                                 }),
-                                done});
+                                done, oldHost});
         } else {
             libvlc_media_player_stop(mp_);  // synchronous (shutdown/explicit stop)
             libvlc_media_player_release(mp_);
@@ -230,6 +280,10 @@ void VlcPlayer::doStop(bool async) {
                 libvlc_media_release(media_);
                 media_ = nullptr;
             }
+            const HWND oldHost = currentHost_.load();  // released synchronously -> host free now
+            for (auto& h : hosts_)
+                if (h.hwnd == oldHost) { h.busy = false; break; }
+            currentHost_.store(nullptr);
         }
     } else if (media_) {
         libvlc_media_release(media_);
@@ -273,12 +327,22 @@ void VlcPlayer::doPlay(const Cmd& c) {
     prevDisplayedPictures_ = 0;
     savedAudioTrack_ = -1;  // fresh stream: the previous channel's audio-track id no longer applies
 
-    if (video_) {
-        libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
+    // Attach to a proven-FREE vout host, never the pane HWND directly: reusing a surface whose
+    // previous vout hasn't been released is what makes libVLC spawn its "VLC (Direct3D11 output)"
+    // top-level window on rapid channel-surf. pickVoutHost() reuses a drained host or grows the
+    // pool; it's guaranteed non-null in normal operation (the pane pre-creates two). video_ (the
+    // pane HWND) is only a pathological last resort so a pool miss degrades to the old behaviour
+    // rather than crashing.
+    reapAsyncStops();  // return any hosts whose reaper just finished to the free set
+    HWND host = pickVoutHost();
+    if (!host) host = video_;
+    if (host && IsWindow(host)) {
+        currentHost_.store(host);  // the UI reads this on PlayerEvent::Playing to show this host
+        libvlc_media_player_set_hwnd(mp_, static_cast<void*>(host));
         // Don't let libVLC's video window swallow mouse/keyboard input. We host our own
         // interactions over the surface (double-click fullscreen, and in video-only mode the
-        // drag-to-move + right-click menu + Esc). Without this the vout child consumes those
-        // events while a stream is playing, so they only worked when nothing was on-screen.
+        // drag-to-move + right-click menu + Esc). The vout host's window proc forwards the clicks
+        // it does receive to the pane's VideoProc, so the pane still gets them.
         libvlc_video_set_mouse_input(mp_, 0);
         libvlc_video_set_key_input(mp_, 0);
     }
@@ -390,6 +454,13 @@ bool VlcPlayer::play(const std::wstring& url, const std::wstring& userAgent,
 
 void VlcPlayer::togglePause() { enqueue({Cmd::Pause}); }
 void VlcPlayer::stop() { enqueue({Cmd::Stop}); }
+
+void VlcPlayer::registerVoutHost(HWND host) {
+    if (!host) return;
+    Cmd c{Cmd::AddHost};
+    c.pvalue = host;  // the worker adds it to hosts_ (worker-only) when it drains the queue
+    enqueue(std::move(c));
+}
 
 void VlcPlayer::setVolume(int volume) {
     if (volume < 0) volume = 0;

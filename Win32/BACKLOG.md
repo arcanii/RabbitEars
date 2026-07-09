@@ -77,6 +77,34 @@ simpler but two artifacts.)
 
 ---
 
+## ⏱️ Slow first startup — ship a pre-generated libVLC `plugins.dat`
+
+**Diagnosed 2026-07-09 (owner reported "first startup is very slow").** libVLC scans all **323 plugin
+DLLs** at startup because there is **no `plugins.dat` cache**. Log evidence: the whole delay is inside
+libVLC init (session-start → "libVLC initialized"), and it is **cold-cache-bound** — ~10.6 s right after a
+rebuild re-copies the plugins (cold on disk) vs ~0.8 s once the DLLs are warm in the OS file cache. The DB
+open right after is fast (0.2 s / 13 k channels), so it is neither the DB nor the playlist.
+
+**Worse for installed users:** `packaging/installer.iss` ships plugins into `{app}\plugins` (Program Files,
+**read-only** for a standard user), so libVLC can never write a cache there and **rescans all 323 plugins on
+every launch** — first launch (cold) is the ~10 s worst case.
+
+**Fix:** ship a pre-generated **`plugins.dat`** next to the plugins. With it present libVLC loads the cache
+instead of scanning → fast startup everywhere (dev + installed, cold or warm).
+- Generate it with libVLC's **`vlc-cache-gen`** as a post-plugin-copy build step (`cmake/LibVlc.cmake`) →
+  writes `build/Win32/plugins/plugins.dat`; the installer's `plugins\*` glob then ships it automatically.
+- **Blocker:** `vlc-cache-gen.exe` is NOT in the `VideoLAN.LibVLC.Windows` NuGet (it ships no tools) — source
+  the one matching libVLC **3.0.23** from the VLC Windows build and vendor it (small binary). Must match the
+  libvlccore ABI exactly or the cache is rejected and libVLC silently rescans.
+- Secondary lever: **trim** the plugin set (RabbitEars only needs HTTP/HLS access, common demuxers/codecs,
+  the Direct3D11 vout, mmdevice aout) — shrinks the scan but doesn't eliminate it; risky (removing a needed
+  plugin breaks playback), so cache-gen is the primary fix.
+
+**Scope:** own point release (candidate 0.2.5). `VlcEngine::init` args (`Win32/ui/VlcEngine.cpp:37`) don't
+disable caching, so no code change there — purely a build/packaging change.
+
+---
+
 ## Deferred epics
 
 - **JSON profiles** (deferred since 0.1.5): per-profile settings + playlist sources, channel cache

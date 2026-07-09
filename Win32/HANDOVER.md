@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.3 SHIPPED** · macOS Phase-1
+## Current state — **v0.2.4 (cutting release)** · **v0.2.3 SHIPPED** · macOS Phase-1
 
 **Released:** **`v0.2.3`** (2026-07-08), tag `v0.2.3` @ `d6ad80a`, full version `0.2.3.162`, signed
 **`RabbitEars-0.2.3-setup.exe`** (appcast @ `ca7b682`) — **the multi-view fix batch**: **track-based per-pane
@@ -715,12 +715,22 @@ commit messages with the Co-Authored-By trailer.
    - **Active-pane highlight → only the active pane — owner-verified.** `setActivePane` now `InvalidateRect(…,
      TRUE)` so the gap-drawn border erases before the new one paints (WS_CLIPCHILDREN keeps the gap-fill off the
      video, no flicker).
-1. **⬜ 0.2.4 — "VLC (Direct3D11 output)" window on rapid channel-surf (pre-existing, NOT a 0.2.3 regression).**
-   Rapid single-pane switching reuses the pane HWND while the old stream's D3D11 vout (async reaper) still owns
-   it → libVLC spawns its own output window (the 0.1.3 "two vouts share the HWND" note). Agreed fix: **per-pane
-   double-buffered vout child windows** — ping-pong so a new swapchain never lands on an occupied HWND; keeps
-   fast switching (a sync stop would risk wedging the worker). Core channel-switch path → hard surf-testing.
-   `doPlay` = `VlcPlayer.cpp:223` (`set_hwnd` at 253 is skipped when `video_==0` → the fallback window).
+1. **✅ 0.2.4 — "VLC (Direct3D11 output)" popout FIXED (cutting release), owner-surf-verified.** Rapid
+   channel-surf reused the pane HWND while the old stream's D3D11 vout (async reaper) still owned it → libVLC
+   spawned its own output window (the 0.1.3 "two vouts share the HWND" note). Fixed with a **per-pane self-cleaning
+   pool of vout-host child windows** (`kVoutHostClass`): libVLC renders into a host, never the pane HWND; a new
+   stream attaches to a **proven-free** host (selected by the reaper's done-flag, NOT parity — an initial design
+   review showed a fixed 2-slot ping-pong still recurs under ≥2 stuck reapers), the old stream keeps its host until
+   its reaper releases it, then it returns to the free set. `VlcPlayer` owns the pool + `Reaper.host` association +
+   `currentHost_`; hosts are created/sized/shown/hidden on the UI thread (`makeVoutHost`, `WM_APP_MAKE_VOUT_HOST`),
+   grown on demand via `SendMessageTimeout` (deadlock-safe vs `worker_.join()`); `VoutHostProc` forwards clicks to
+   the pane so activate/drag/dblclick/menu still work; the host is shown on `PlayerEvent::Playing` (no black gap).
+   Also in 0.2.4: **TV Guide reopen** (an `NM_CLICK` handler reopens the guide when its already-selected node is
+   re-clicked — `TVN_SELCHANGEDW` misses that) + **instant reopen** (`revealEpgGuide` re-reveals the built guide
+   without a DB rebuild); **"Video only" from fullscreen** now drops into windowed video-only instead of no-op.
+   Both flags + selftest green, adversarial review clean, owner-surf-verified (no popout on healthy + dead-feed
+   surfing). **Backlogged from the surf-testing:** the slow first startup (libVLC rescans 323 plugins — ship a
+   `plugins.dat`) → `Win32/BACKLOG.md`.
 2. **MainWindow.cpp split — DONE** (`7656750`→`a2c0118`, both flags green): header + `rabbitears::mw` + 5 `.cpp`
    (core / chrome / dock / data / commands); 3283→~1425-line core. File map: memory
    `mainwindow-modularization-plan`. **0.2.2 SHIPPED** (`v0.2.2` @ `059b632`, `0.2.2.153`, appcast `fcdac10`;
