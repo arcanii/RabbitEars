@@ -42,9 +42,11 @@ installers — **`RabbitEars-0.2.5-setup.exe`** (x64), **`RabbitEars-0.2.5-arm64
 readout, and an ARM64 "which build?" update chooser — see "Immediate next steps". **Build-number note:** shipped as
 `0.2.5.168` (the commit count when built + signed); the tag commit `fbebcc7` is count 175 after rebasing onto the
 mac team's concurrent v0.1.10 pushes — cosmetic drift (installer + appcast + the app's self-report all agree on
-`0.2.5.168`, cleanly `> 0.2.4.166`), the same concurrent-push behaviour the handover has long noted. **Owner still
-to runtime-verify** on the ARM device: the native build's About-box arch line, the Check-for-Updates chooser, and a
-live 0.2.4→0.2.5 auto-update.
+`0.2.5.168`, cleanly `> 0.2.4.166`), the same concurrent-push behaviour the handover has long noted. **✅ Universal
+installer owner-verified in the wild** — running `RabbitEars-0.2.5-universal-setup.exe` on the ARM device installed
+the **native ARM64** build and it runs (confirms the install-time `ProcessorArchitecture = paArm64` Check). **Still
+to runtime-verify:** the About-box arch line reads `ARM64`, the Check-for-Updates chooser, and a live 0.2.4→0.2.5
+auto-update.
 
 **Released:** **`v0.2.4`** (2026-07-09), tag `v0.2.4` @ `f30fcc2`, full version `0.2.4.166`, signed
 **`RabbitEars-0.2.4-setup.exe`** (appcast @ `6e2b4ae`) — the **per-pane vout-host pool** that ends the "VLC
@@ -694,9 +696,10 @@ commit messages with the Co-Authored-By trailer.
 ✅ **0.2.5 SHIPPED** (2026-07-09) — tag `v0.2.5` @ `fbebcc7`, `0.2.5.168`, three signed installers on GitHub release
 `v0.2.5`, two appcasts LIVE @ `5c7073e`. The code landed in one commit (`d9b0840`, rebased to `fbebcc7` onto the mac
 team's v0.1.10), the appcasts in a follow-up (`5c7073e`); both pushed. The 0.2.5 feature set below is the changelog.
-**Owner's runtime pass still owed** (sandbox can't launch the GUI): on the ARM device, confirm the native build's
-About-box arch line reads `ARM64`, the Check-for-Updates chooser appears + points at the right feed, and a live
-`0.2.4 → 0.2.5` auto-update lands (x64 and/or ARM64).
+**✅ Universal installer owner-verified in the wild** — `RabbitEars-0.2.5-universal-setup.exe` on the ARM device
+installed the **native ARM64** build and it runs (the install-time `ProcessorArchitecture = paArm64` Check works).
+**Runtime pass still owed** (sandbox can't launch the GUI): the native build's About-box arch line reads `ARM64`, the
+Check-for-Updates chooser appears + points at the right feed, and a live `0.2.4 → 0.2.5` auto-update lands.
 
 - **✅ Favourite-a-channel from the TV Guide — DONE, owner-verified.** Right-click a channel row in the guide
   → "★ Add to Favourites" / "Remove from Favourites". `GuideCallbacks` gained `onToggleFavourite` + `isFavourite`;
