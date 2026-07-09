@@ -44,8 +44,9 @@ readout, and an ARM64 "which build?" update chooser — see "Immediate next step
 mac team's concurrent v0.1.10 pushes — cosmetic drift (installer + appcast + the app's self-report all agree on
 `0.2.5.168`, cleanly `> 0.2.4.166`), the same concurrent-push behaviour the handover has long noted. **✅ Universal
 installer owner-verified in the wild** — running `RabbitEars-0.2.5-universal-setup.exe` on the ARM device installed
-the **native ARM64** build and it runs (confirms the install-time `ProcessorArchitecture = paArm64` Check). **Still
-to runtime-verify:** the About-box arch line reads `ARM64`, the Check-for-Updates chooser, and a live 0.2.4→0.2.5
+the **native ARM64** build and it runs (confirms the install-time `ProcessorArchitecture = paArm64` Check), and the
+**About-box arch line reads `ARM64`** (owner-confirmed on-device). **Still to runtime-verify:** the Check-for-Updates
+chooser, and a live 0.2.4→0.2.5
 auto-update.
 
 **Released:** **`v0.2.4`** (2026-07-09), tag `v0.2.4` @ `f30fcc2`, full version `0.2.4.166`, signed
@@ -696,9 +697,10 @@ commit messages with the Co-Authored-By trailer.
 ✅ **0.2.5 SHIPPED** (2026-07-09) — tag `v0.2.5` @ `fbebcc7`, `0.2.5.168`, three signed installers on GitHub release
 `v0.2.5`, two appcasts LIVE @ `5c7073e`. The code landed in one commit (`d9b0840`, rebased to `fbebcc7` onto the mac
 team's v0.1.10), the appcasts in a follow-up (`5c7073e`); both pushed. The 0.2.5 feature set below is the changelog.
-**✅ Universal installer owner-verified in the wild** — `RabbitEars-0.2.5-universal-setup.exe` on the ARM device
-installed the **native ARM64** build and it runs (the install-time `ProcessorArchitecture = paArm64` Check works).
-**Runtime pass still owed** (sandbox can't launch the GUI): the native build's About-box arch line reads `ARM64`, the
+**✅ Universal installer + About-box arch readout owner-verified in the wild** —
+`RabbitEars-0.2.5-universal-setup.exe` on the ARM device installed the **native ARM64** build, it runs, and its
+**About box reads `ARM64`** (so the install-time `ProcessorArchitecture = paArm64` Check + the `IsWow64Process2`
+arch readout both work on real hardware). **Runtime pass still owed** (sandbox can't launch the GUI): the
 Check-for-Updates chooser appears + points at the right feed, and a live `0.2.4 → 0.2.5` auto-update lands.
 
 - **✅ Favourite-a-channel from the TV Guide — DONE, owner-verified.** Right-click a channel row in the guide
