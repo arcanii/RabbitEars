@@ -12,8 +12,10 @@
 #include <string>
 #include <vector>
 
+#include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "models/Channel.h"
 #include "platform/Encoding.h"
@@ -36,6 +38,7 @@
 #import "PlaylistsDialog.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
+#import "TvGuideWindowController.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -126,6 +129,8 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
+    uint64_t                      _epgToken;               // only the newest guide refresh's result applies
+    id                            _guideWC;                // TvGuideWindowController (lazily created; app-lifetime)
     CGFloat                       _gridWidth;              // channel-grid width; the video pane fills the rest
     int                           _preMuteVolume;          // volume to restore when un-muting
 }
@@ -704,7 +709,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             isUrl:(bool)isUrl {
     if (!_db) { [self setStatus:@"Database unavailable — cannot save playlist."]; return; }
     const long long now = (long long)time(nullptr);
-    const long long pid = _db->addPlaylist(name, source, isUrl, now);
+    // Pass doc.epgUrl (the M3U x-tvg-url) through so the playlist carries its XMLTV guide
+    // source — without it, Refresh Guide has nothing to fetch (the Win32 peer at
+    // MainWindowCommands.cpp:108 does the same).
+    const long long pid = _db->addPlaylist(name, source, isUrl, now, doc.epgUrl);
     if (pid == 0) {
         [self setStatus:@"Add playlist failed: could not save to the database."];
         [self showResults:@"Could not import the playlist"
@@ -740,6 +748,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     a.informativeText = info;
     [a addButtonWithTitle:@"OK"];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse __unused r) {}];
+    [a autorelease];  // MRC: the sheet retains it for its lifetime; balance the alloc +1
 }
 
 - (void)filterChanged:(id)__unused sender { [self refreshChannels]; }
@@ -921,6 +930,9 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Manage Playlists…" action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
+    [[m addItemWithTitle:@"TV Guide" action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Refresh Guide…" action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
+    [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Meters…" action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
@@ -983,6 +995,100 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self refreshChannels];
     if (!_currentPid && lastEnabled == 0 && !playlists.empty())
         [self setStatus:@"All playlists are disabled — enable one to see channels."];
+}
+
+// ---- TV Guide (EPG) ----------------------------------------------------------
+// Peer of the Win32 onEpgRefresh/onEpgDone (MainWindowCommands.cpp): download + gunzip
+// + parse the XMLTV guide for every enabled playlist that carries a guide URL, off the
+// main queue, then store the parsed programmes on the main thread. Newest refresh wins.
+
+- (void)refreshGuide:(id)__unused sender {
+    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    struct Target { long long id; std::wstring name; std::wstring url; };
+    auto targets = std::make_shared<std::vector<Target>>();
+    for (const auto& pl : _db->listPlaylists())
+        if (pl.enabled && !pl.epgUrl.empty()) targets->push_back({pl.id, pl.name, pl.epgUrl});
+    if (targets->empty()) {
+        [self showResults:@"No guide source found"
+                     info:@"None of your enabled playlists carry an XMLTV guide URL (the x-tvg-url in "
+                          @"the #EXTM3U header).\n\nAdd a playlist that includes one, or set one per "
+                          @"playlist in Manage Playlists ▸ 📅 Set Guide URL, then try again."];
+        return;
+    }
+    [self setStatus:@"Downloading guide…"];
+    const uint64_t token = ++_epgToken;  // newest refresh wins (an in-flight one is superseded)
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        // Each fetch's outcome: parsed programmes, or an error string.
+        struct Fetch { long long id; std::wstring name; std::wstring error; std::vector<Programme> progs; };
+        auto results = std::make_shared<std::vector<Fetch>>();
+        for (const auto& t : *targets) {
+            Fetch f; f.id = t.id; f.name = t.name;
+            std::string bytes; std::wstring err;
+            if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60s
+                f.error = err.empty() ? L"download failed" : err;
+            } else {
+                const std::string xml = gunzipIfNeeded(bytes);  // .xml.gz bodies arrive still-compressed
+                if (xml.empty()) f.error = L"empty or invalid after decompression";
+                else f.progs = parseXmltv(xml).programmes;
+            }
+            results->push_back(std::move(f));
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (token != self->_epgToken || !self->_db) return;  // a newer refresh superseded this one
+            const long long now = (long long)time(nullptr);  // stamp at store-time (peer of Win32 onEpgDone)
+            int okCount = 0, totalProg = 0;
+            std::set<std::wstring> chans;
+            NSMutableString* detail = [NSMutableString string];
+            for (auto& f : *results) {
+                if (!f.error.empty()) {
+                    [detail appendFormat:@"%@:  %@\n", ns(f.name), ns(f.error)];
+                    continue;
+                }
+                const int stored = self->_db->bulkInsertProgrammes(f.id, f.progs, now);
+                ++okCount; totalProg += stored;
+                for (const auto& p : f.progs) chans.insert(p.channelId);
+                [detail appendFormat:@"%@:  %d programmes\n", ns(f.name), stored];
+            }
+            NSString* summary = okCount > 0
+                ? [NSString stringWithFormat:@"Stored %d programmes across %lu channels",
+                   totalProg, (unsigned long)chans.size()]
+                : @"Could not refresh the guide";
+            [self setStatus:summary];
+            [self showResults:summary info:detail];
+        });
+    });
+}
+
+// Open (or re-reveal) the channels×time guide window. The window controller queries the
+// DB and lays the grid out; a picked programme calls back to -playFromGuide:name:.
+- (void)showGuide:(id)__unused sender {
+    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    if (!_guideWC) _guideWC = [[TvGuideWindowController alloc] initWithDatabase:_db.get()];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    [(TvGuideWindowController*)_guideWC presentRelativeTo:_window
+                                                  onPlay:^(NSString* tvgId, NSString* name) {
+        [me playFromGuide:tvgId name:name];
+    }];
+}
+
+// Resolve a guide row's tvg-id back to a playable channel and play it (peer of the Win32
+// onEpgGuide onPlay callback); hide the guide so the picked channel is actually visible.
+- (void)playFromGuide:(NSString*)tvgId name:(NSString*)name {
+    if (!_db) return;
+    std::optional<Channel> ch;
+    if (tvgId.length) ch = _db->channelByTvgId(ws(tvgId));
+    if (ch) {
+        [self playChannel:*ch];
+        [(TvGuideWindowController*)_guideWC hide];  // don't leave the show playing behind the guide
+        [_window makeKeyAndOrderFront:nil];
+    } else {
+        [self showResults:@"No matching channel"
+                     info:[NSString stringWithFormat:
+                           @"Couldn't find a channel for “%@” in your playlists.\n\nThe guide matches "
+                           @"programmes to channels by tvg-id; this programme's ID has no match. Point "
+                           @"the playlist at a guide whose IDs line up (Manage Playlists ▸ 📅 Set Guide "
+                           @"URL).", name]];
+    }
 }
 
 - (void)showAbout:(id)sender { [(AppDelegate*)NSApp.delegate showAboutPanel:sender]; }
@@ -1064,7 +1170,12 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)playRow:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_channels.size()) return;
-    const Channel& c = _channels[(size_t)row];
+    [self playChannel:_channels[(size_t)row]];
+}
+
+// The shared "start playing this channel" path — used by the grid (playRow:) and the
+// TV Guide (playFromGuide:name:).
+- (void)playChannel:(const Channel&)c {
     _player->play(c.streamUrl, c.userAgent, c.referrer);
     _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in

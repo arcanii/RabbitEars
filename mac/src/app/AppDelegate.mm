@@ -102,6 +102,13 @@ using namespace rabbitears;
     vidOnly.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     vidOnly.target = self;
 
+    // TV Guide (EPG) — open the channels×time guide (⌘G) + download the guide data.
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    [[viewMenu addItemWithTitle:@"TV Guide"
+                         action:@selector(showGuide:) keyEquivalent:@"g"] setTarget:self];
+    [[viewMenu addItemWithTitle:@"Refresh Guide…"
+                         action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
+
     [viewMenu addItem:[NSMenuItem separatorItem]];
     [[viewMenu addItemWithTitle:@"Meters…"
                          action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
@@ -125,6 +132,8 @@ using namespace rabbitears;
 - (void)openFile:(id)sender { [_mainController openFile:sender]; }
 - (void)showPlaylists:(id)sender { [_mainController showPlaylists:sender]; }
 - (void)showMeters:(id)sender { [_mainController showMeters:sender]; }
+- (void)showGuide:(id)sender { [_mainController showGuide:sender]; }
+- (void)refreshGuide:(id)sender { [_mainController refreshGuide:sender]; }
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {

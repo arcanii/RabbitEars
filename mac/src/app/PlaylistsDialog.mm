@@ -164,6 +164,8 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
 
     NSButton* refresh = [self iconButton:@"arrow.clockwise" tip:@"Re-download / re-read from source"
                                   action:@selector(refreshPlaylist:) pid:p.id];
+    NSButton* guide = [self iconButton:@"calendar" tip:@"Set the XMLTV guide (EPG) URL"
+                                action:@selector(setGuideUrl:) pid:p.id];
     NSButton* rename = [self iconButton:@"pencil" tip:@"Rename"
                                  action:@selector(renamePlaylist:) pid:p.id];
 
@@ -172,7 +174,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     [del setContentHuggingPriority:NSLayoutPriorityRequired
                     forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    NSStackView* row = [NSStackView stackViewWithViews:@[ en, info, spacer, refresh, rename, del ]];
+    NSStackView* row = [NSStackView stackViewWithViews:@[ en, info, spacer, refresh, guide, rename, del ]];
     row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     row.spacing = 8;
     row.alignment = NSLayoutAttributeCenterY;
@@ -251,6 +253,37 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
         if (_db) _db->renamePlaylist(pid, ws(name));
         if (_onChange) _onChange();
         [self reloadRows];
+    }];
+}
+
+// Set/clear a playlist's XMLTV guide (EPG) URL — seeded with its current one (the M3U
+// x-tvg-url or a prior override). The View ▸ Refresh Guide command downloads it. Peer of
+// the Win32 promptSetGuideUrl.
+- (void)setGuideUrl:(NSButton*)sender {
+    const long long pid = (long long)sender.tag;
+    NSString* current = @"";
+    for (const auto& p : _playlists) if (p.id == pid) current = ns(p.epgUrl);
+
+    NSAlert* a = [[NSAlert alloc] init];
+    a.messageText = @"Set Guide URL";
+    a.informativeText = @"XMLTV guide URL (.xml or .xml.gz). Leave blank to clear it. Then use "
+                        @"“Refresh Guide” (the View menu or the ⚙ menu) to download it.";
+    [a addButtonWithTitle:@"Save"];
+    NSButton* cancel = [a addButtonWithTitle:@"Cancel"];
+    cancel.keyEquivalent = @"\033";  // Esc cancels
+    NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 24)];
+    input.stringValue = current;
+    input.placeholderString = @"https://…/guide.xml.gz";
+    a.accessoryView = input;
+    [a.window setInitialFirstResponder:input];
+
+    [a beginSheetModalForWindow:_panel completionHandler:^(NSModalResponse resp) {
+        if (resp != NSAlertFirstButtonReturn) return;  // Save is the first button
+        NSString* url = [input.stringValue
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (_db) _db->setPlaylistEpgUrl(pid, ws(url));  // empty clears the override
+        if (_onChange) _onChange();
+        [self reloadRows];  // refresh the (unchanged) list; keeps the panel in sync
     }];
 }
 

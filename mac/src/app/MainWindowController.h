@@ -29,4 +29,9 @@
 - (void)openFile:(id)sender;
 - (void)showPlaylists:(id)sender;
 - (void)showMeters:(id)sender;
+
+// TV Guide (EPG). refreshGuide: downloads + stores the XMLTV guide for every enabled
+// playlist that carries a guide URL; showGuide: opens the channels×time guide window.
+- (void)refreshGuide:(id)sender;
+- (void)showGuide:(id)sender;
 @end
