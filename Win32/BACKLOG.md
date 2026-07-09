@@ -49,31 +49,31 @@ shared skin-model boundary to the macOS team** before any engine code lands (the
 
 ---
 
-## 🖥️ Native ARM64 build (Windows-on-ARM)
+## 🖥️ Native ARM64 build (Windows-on-ARM) — ✅ DONE in 0.2.5 (pending release)
 
-**Owner-directed (backlogged 2026-07-08).** Today the app is **x64-only** (`scripts/build.cmd` →
-`vcvars64.bat`, `/machine:x64`; `cmake/LibVlc.cmake:31` hardcodes `build/x64`). It runs fine on
-Windows-on-ARM via the OS's **x64 emulation** (owner runs it on ARM Windows, "works well") — but a
-**native ARM64 build** would give native speed + better battery, no emulation.
+**Owner-directed (backlogged 2026-07-08); implemented 2026-07-09.** The app now has a **native ARM64
+build** with **auto-update** — see `Win32/HANDOVER.md` "Immediate next steps → 0.2.5" for the full
+wiring. Perf-verified: native cold-start **~4×** the emulated x64 and playback **~4.4×** lighter CPU.
 
-**Design (owner's idea): one x64 launcher that self-selects the native binaries.** Ship a small
-**x86-64 launcher** (runs everywhere — natively on x64, emulated on ARM). At startup it detects the
-**native** machine arch (`IsWow64Process2` → `NativeMachine == IMAGE_FILE_MACHINE_ARM64`, or
-`GetNativeSystemInfo`) and launches the matching binary set — **ARM64 binaries on ARM**, x64
-otherwise. One distributable, native on both. (Alternative: an arch-specific installer per download,
-simpler but two artifacts.)
+**Delivery — Option B (per-arch installers), chosen over the earlier launcher sketch.** The original
+idea was one x64 launcher that detects arch (`IsWow64Process2` → `IMAGE_FILE_MACHINE_ARM64`) and runs
+the native set — one download, but a **doubled** installer (both libVLC plugin trees) + a new component
++ relaunch wiring. Owner chose **B**: two lean per-arch installers + **two appcast feeds** (x64 keeps
+`appcast.xml`, arm64 reads `appcast-arm64.xml`; the build selects its feed via `_M_ARM64` in
+`Updater.cpp`). Keeps x64 users byte-for-byte unchanged; each arch auto-updates natively.
 
-**Dependency status (checked 2026-07-08):**
-- ✅ **libVLC 3.0.23** — the NuGet already unpacks `build/arm64` (full `libvlc.dll` + `libvlccore.dll`
-  + `plugins/`). Usually *the* WoA blocker; already solved.
+**Dependency status (all resolved):**
+- ✅ **libVLC 3.0.23** — NuGet unpacks `build/arm64` (full DLLs + `plugins/`); `LibVlc.cmake` picks it by
+  `CMAKE_CXX_COMPILER_ARCHITECTURE_ID`.
 - ✅ **SQLite, miniz** — vendored C source, compile for any target.
-- ❌ **WinSparkle** — `third_party/winsparkle/lib` has only an x64 `WinSparkle.lib`; need an ARM64
-  build (upstream ships ARM64 in recent releases) — vendor it alongside.
-- ⚙️ **Toolchain / CMake** — add an ARM64 configure (ARM64 MSVC cross-tools, e.g.
-  `vcvarsamd64_arm64.bat`) + make `LibVlc.cmake`'s `build/x64` arch-conditional (`build/arm64`).
-  Installer (`packaging/installer.iss`) + `build-installer.cmd` bundle both binary sets + the launcher.
+- ✅ **WinSparkle** — **0.9.3 vendored for both arches** (`third_party/winsparkle/{lib,bin}/{x64,arm64}`);
+  CMake selects the slice by target arch. Auto-update linked into the ARM64 exe (dumpbin-confirmed).
+- ✅ **Toolchain / CMake / packaging** — `scripts/build-arm64.cmd` (native `vcvarsarm64`);
+  `packaging/installer.iss` arch-parameterized; `scripts/build-installer.cmd [arm64]` builds either;
+  `scripts/make-appcast.ps1 -Arch arm64` writes the arm64 feed; two-arch flow in `docs/RELEASING.md`.
 
-**Scope:** self-contained, not blocking any feature work. Own point release when picked up.
+**Remaining:** just cut 0.2.5 for both arches (build both installers → sign both on the Mac → one release,
+two assets, populate both appcasts). Optional: an ARM64 `plugins.dat` (now low value — native scan ~3 s).
 
 ---
 

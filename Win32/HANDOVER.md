@@ -31,7 +31,23 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.4 SHIPPED** · macOS Phase-1
+## Current state — **v0.2.5 SHIPPED (native ARM64)** · macOS Phase-1
+
+**Released:** **`v0.2.5`** (2026-07-09), tag `v0.2.5` @ `fbebcc7`, full version **`0.2.5.168`**, signed **three**
+installers — **`RabbitEars-0.2.5-setup.exe`** (x64), **`RabbitEars-0.2.5-arm64-setup.exe`** (native ARM64), and
+**`RabbitEars-0.2.5-universal-setup.exe`** (bundles both, installs the native arch) — on GitHub release `v0.2.5`;
+**two appcasts** (`appcast.xml` x64 + `appcast-arm64.xml` ARM64, both `0.2.5.168`) committed @ `5c7073e` and LIVE
+(raw feeds serve 0.2.5.168; all three enclosures return HTTP 200). **The 0.2.5 headline = the NATIVE ARM64 build**
+(owner-measured ~4× faster than emulated x64) with per-arch auto-update, a universal installer, an About-box arch
+readout, and an ARM64 "which build?" update chooser — see "Immediate next steps". **Build-number note:** shipped as
+`0.2.5.168` (the commit count when built + signed); the tag commit `fbebcc7` is count 175 after rebasing onto the
+mac team's concurrent v0.1.10 pushes — cosmetic drift (installer + appcast + the app's self-report all agree on
+`0.2.5.168`, cleanly `> 0.2.4.166`), the same concurrent-push behaviour the handover has long noted. **✅ Universal
+installer owner-verified in the wild** — running `RabbitEars-0.2.5-universal-setup.exe` on the ARM device installed
+the **native ARM64** build and it runs (confirms the install-time `ProcessorArchitecture = paArm64` Check), and the
+**About-box arch line reads `ARM64`** (owner-confirmed on-device). **Still to runtime-verify:** the Check-for-Updates
+chooser, and a live 0.2.4→0.2.5
+auto-update.
 
 **Released:** **`v0.2.4`** (2026-07-09), tag `v0.2.4` @ `f30fcc2`, full version `0.2.4.166`, signed
 **`RabbitEars-0.2.4-setup.exe`** (appcast @ `6e2b4ae`) — the **per-pane vout-host pool** that ends the "VLC
@@ -678,6 +694,62 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
+✅ **0.2.5 SHIPPED** (2026-07-09) — tag `v0.2.5` @ `fbebcc7`, `0.2.5.168`, three signed installers on GitHub release
+`v0.2.5`, two appcasts LIVE @ `5c7073e`. The code landed in one commit (`d9b0840`, rebased to `fbebcc7` onto the mac
+team's v0.1.10), the appcasts in a follow-up (`5c7073e`); both pushed. The 0.2.5 feature set below is the changelog.
+**✅ Universal installer + About-box arch readout owner-verified in the wild** —
+`RabbitEars-0.2.5-universal-setup.exe` on the ARM device installed the **native ARM64** build, it runs, and its
+**About box reads `ARM64`** (so the install-time `ProcessorArchitecture = paArm64` Check + the `IsWow64Process2`
+arch readout both work on real hardware). **Runtime pass still owed** (sandbox can't launch the GUI): the
+Check-for-Updates chooser appears + points at the right feed, and a live `0.2.4 → 0.2.5` auto-update lands.
+
+- **✅ Favourite-a-channel from the TV Guide — DONE, owner-verified.** Right-click a channel row in the guide
+  → "★ Add to Favourites" / "Remove from Favourites". `GuideCallbacks` gained `onToggleFavourite` + `isFavourite`;
+  `EpgGuideControl`'s `onGuideContextMenu` (new `WM_RBUTTONUP`) builds the menu; `onEpgGuide` wires it
+  (`Database::channelByTvgId` → `toggleFavourite` → `loadForFilter` to refresh the grid). Rows with no tvg-id can't
+  be favourited.
+- **✅ Native ARM64 build SHIP-READY — perf-verified + auto-update wired + installer builds clean (0.2.5).** The
+  owner runs Windows-on-ARM. `scripts/build-arm64.cmd` (native `vcvarsarm64`, output in `build-arm64/`) builds a
+  genuine **PE32+ ARM64** exe with **WinSparkle auto-update LINKED** (dumpbin confirms the import; not stubbed).
+  **Perf (owner-run, this session):** native cold-start **~3.4 s vs ~13 s emulated (~4×)** and playback **~6% of one
+  core vs ~28% emulated (~4.4×)** on the same HLS stream — decisive; owner: "arm build works perfectly."
+  **Auto-update wiring:** WinSparkle **0.9.3 vendored for BOTH arches** (`third_party/winsparkle/{lib,bin}/{x64,arm64}`
+  — the old flat `lib/WinSparkle.lib`+`bin/WinSparkle.dll` were moved into `x64/`); `Win32/CMakeLists.txt` picks the
+  slice by **`CMAKE_CXX_COMPILER_ARCHITECTURE_ID`** (mirrors `cmake/LibVlc.cmake`, which picks `build/arm64` vs
+  `build/x64` the same way — **NOT `CMAKE_SYSTEM_PROCESSOR`**, the HOST, `ARM64` even for the x64 build). `RABBITEARS_UPDATER`
+  now defaults **ON for both** (`Updater.cpp` still stubs under `#ifdef RABBITEARS_HAVE_WINSPARKLE` if forced OFF).
+  **Packaging = Option B (per-arch installers, owner-chosen):** `packaging/installer.iss` is arch-parameterized
+  (`/DSrcDir /DOutSuffix /DArchAllowed`, x64 defaults byte-identical to before); `scripts/build-installer.cmd [arm64]`
+  builds either — **both build clean** (`RabbitEars-0.2.5-setup.exe` x64 35 MB + `RabbitEars-0.2.5-arm64-setup.exe`
+  30 MB, ISCC 6.7.3, arm64 sourced from `build-arm64/`). Per-arch auto-update: the arm64 build reads
+  **`appcast-arm64.xml`** (`Updater.cpp` keys on `_M_ARM64`), x64 keeps `appcast.xml` — an ARM user always gets the
+  native build; x64 users' feed is untouched. `scripts/make-appcast.ps1 -Arch arm64` writes the arm64 feed; the
+  two-arch release flow is in `docs/RELEASING.md`. **REMAINING to ship:** cut 0.2.5 for both arches (build both
+  installers → sign both on the Mac → one GitHub release with two assets → populate both appcasts). Optional/minor:
+  an ARM64 `plugins.dat` (native scan is already ~3 s, so low value now). After editing shared CMake, **always
+  re-verify the x64 build BOTH flags** (arch bugs only show at link). **Gotcha fixed:** `scripts/build-arm64.cmd`
+  had **LF-only line endings** → cmd.exe mis-parsed it (`REM` stopped suppressing comments, a `(`-led comment turned
+  fatal); rewrote it CRLF. **Keep `.cmd` scripts CRLF** — now enforced in `.gitattributes` (`*.cmd/*.bat text eol=crlf`,
+  a review-caught durable fix so git checkouts don't re-introduce LF).
+- **✅ Universal installer + About-box arch readout + ARM64 update chooser (0.2.5, owner-requested).**
+  (1) **Universal installer** — `scripts/build-installer.cmd universal` (`/DUniversal` in `installer.iss`) bundles BOTH
+  binary sets and installs only the NATIVE arch at install time (Inno `[Code] ProcessorArchitecture = paArm64` Check);
+  the on-disk result matches a per-arch install, so it **reuses the per-arch feeds with no extra appcast/launcher**
+  (`RabbitEars-0.2.5-universal-setup.exe`, ~63 MB). (2) **About box** shows the running architecture — `ARM64` / `x64`,
+  and `x64 (emulated on ARM64)` — via `IsWow64Process2` (`Win32/ui/Dialogs.cpp` `runningArchLabel()`). (3) **Check for
+  Updates on ARM64 hardware** pops a TaskDialog (native ARM64 recommended / x64 emulated) and points WinSparkle at the
+  chosen arch's feed (`Win32/platform/Updater.cpp` `chooseUpdateArch`/`machineIsArm64`); the feed reverts to the build's
+  native default after each check via the did-find/did-not-find/cancelled callbacks (review-caught, so the per-check
+  choice can't leak into a later check). NB: WinSparkle compares by VERSION, so the chooser selects the update *channel*
+  — it doesn't force a same-version arch swap. All three build clean on both arches, both theme flags, selftest green;
+  adversarially reviewed (0 confirmed, 2 plausible both fixed).
+- **⏳ Slow first startup (`plugins.dat`) — DIAGNOSED, DEFERRED → `BACKLOG.md`.** libVLC never auto-writes
+  `plugins.dat`; it rescans all 323 plugins each launch; "fast vs slow" is OS-file-cache warmth. The fix
+  (`vlc-cache-gen`) is blocked from this ARM-emulated agent context — the x64 `vlc-cache-gen` under emulation makes
+  an EMPTY 24-byte cache (even for VLC's own plugins), which must NEVER ship (libVLC would read 0 plugins → no
+  playback). Needs a **native x64 env / CI** (or the ARM64-native path) to generate + verify. `vlc-cache-gen.exe`
+  (3.0.23, byte-matching our NuGet `libvlccore`) is in the session scratchpad, not vendored.
+
 0. **✅ 0.2.3 SHIPPED** (2026-07-08) — tag `v0.2.3` @ `d6ad80a`, `0.2.3.162`, appcast @ `ca7b682`, auto-updating
    from 0.2.2. The multi-view fix batch below is live and owner-runtime-verified (audio follows the active tile;
    video-only/fullscreen + focus; single-collapse keeps the selection; no mode-switch hang). **Next up: 0.2.4
@@ -764,32 +836,32 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the "🔲 Multi-view (Split/PIP) + TV Guide overhaul" + "🎨 Theme engine"
 > sections — plus the recalled memories.**
 >
-> **State:** last SHIPPED = **v0.2.2** (`059b632`, `0.2.2.153`, appcast @ `fcdac10`; feed live). **`main` is at
-> `ebd933d`** — the MainWindow.cpp split is committed. **0.2.3 is HELD: 7 UNCOMMITTED multi-view fixes in the
-> working tree** (`Win32/ui/VlcPlayer.{h,cpp}`, `MainWindowInternal.h`, `MainWindow.cpp`,
-> `MainWindow{Chrome,Commands,Data}.cpp`) — the mode-switch **hang** (async pane teardown, owner-verified),
-> **video-only shows the 2×2 grid**, and multi-view **audio + active-pane highlight** follow only the selected
-> pane. All build BOTH flags + selftest green; runtime-verify each on `build\Win32\RabbitEars.exe`, then commit +
-> cut 0.2.3. Built on **v0.2.1** — EPG/TV-Guide + Scheduled Recordings + the **multi-view engine**.
-> `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = its own video HWND +
-> `VlcPlayer` + channel; `AppState` holds the vector + an `active` index + a `ViewMode`); **Split (2×2)** child
-> tiles + a **floating `WS_EX_TOPMOST` PIP popup** (top-level, owned by the main window — a child sibling is
-> occluded by the libVLC D3D surface; draggable; right-click a channel ▸ **Play in PIP**). Pane geometry is
-> pure, headless-tested `common/ui/VideoGrid` (shared with mac). TV Guide: a 📺 sidebar node (`ViewKind::Guide`),
-> per-playlist **custom EPG URL** (`Database::setPlaylistEpgUrl`), type-to-search, playable-only rows,
-> hide-on-play, a modeless loading box. Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
+> **State:** last SHIPPED = **v0.2.4** (`f30fcc2`, `0.2.4.166`, appcast @ `6e2b4ae`; auto-updating from 0.2.3).
+> `main` carries 0.2.3 + 0.2.4. **0.2.5 IS IN PROGRESS, UNCOMMITTED** in the working tree (version already bumped
+> to 0.2.5): **favourite-a-channel from the TV Guide** (right-click a guide row → Add/Remove Favourites) is DONE +
+> owner-verified; a **native ARM64 build** compiles + links clean (`scripts\build-arm64.cmd` →
+> `build-arm64\Win32\RabbitEars.exe`, a real PE32+ ARM64 exe; `-DRABBITEARS_UPDATER=OFF` stubs WinSparkle) and
+> awaits the owner's runtime perf test; the **slow-startup `plugins.dat`** fix is diagnosed + backlogged. **Read
+> "Immediate next steps → ⚠️ 0.2.5 IN PROGRESS" for the uncommitted file list + full details.** The app:
+> `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each a video HWND + `VlcPlayer` +
+> channel; `AppState` holds the vector + `active` + `ViewMode`); Split (2×2) child tiles + a floating
+> `WS_EX_TOPMOST` PIP popup. Each pane hosts a **self-cleaning pool of vout-host child windows** (0.2.4 — libVLC
+> renders into a proven-free host, never the reused pane HWND, killing the "VLC (Direct3D11 output)" popout).
+> Multi-view audio = TRACK-based mute (active pane keeps its audio track; others deselect via
+> `libvlc_audio_set_track(mp,-1)`). TV Guide = a 📺 sidebar node (`ViewKind::Guide`), per-playlist custom EPG URL,
+> type-to-search, playable-only rows, hide-on-play, instant reopen (`revealEpgGuide`), right-click favourite.
+> Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
 >
-> **Immediate next:** **land the held 0.2.3 fixes** — runtime-verify each on `build\Win32\RabbitEars.exe` (NOT
-> the installed 0.2.2), then commit + release 0.2.3: (a) mode-switch hang — DONE + owner-verified; (b) video-only
-> shows the 2×2 grid + active-pane border; (c) audio only from the active pane (`setActivePane` mutes others +
-> `playChannelInPane` applies the mute); (d) only the active pane highlighted (`setActivePane` now
-> `InvalidateRect(TRUE)` to clear stale gap-borders). Then **0.2.4:** the **"VLC (Direct3D11 output)" window on
-> rapid channel-surf** — pre-existing vout contention (old stream's D3D11 vout still owns the pane HWND when the
-> new one grabs it); agreed fix = per-pane **double-buffered vout child windows** (ping-pong), `doPlay` at
-> `VlcPlayer.cpp:223`. Then multi-player polish (memory `rabbitears-feature-roadmap`): concurrent recording +
-> per-pane ownership + persist view mode. MainWindow.cpp is now a header + `rabbitears::mw` + 5 `.cpp` (memory
-> `mainwindow-modularization-plan`). This machine has `python`+`sqlite3`+**Pillow** and **`gh` CLI + Inno Setup**,
-> so a full release runs locally — only EdDSA signing is on the Mac (`scripts/sign-release.sh`).
+> **Immediate next:** finish **0.2.5**. Owner still owes a **native-ARM64 perf test** — run
+> `build-arm64\Win32\RabbitEars.exe` (native) vs the emulated x64 `build\Win32\RabbitEars.exe`, compare cold-start
+> + playback. Then decide the ARM64 release path (needs an **ARM64 WinSparkle** for auto-update + an ARM64
+> `plugins.dat` + the x64-launcher-detects-and-hands-off packaging — all in `Win32/BACKLOG.md`). The **`plugins.dat`**
+> startup fix needs a **native-x64 env / CI** to generate + verify with `vlc-cache-gen` (an EMPTY cache must NEVER
+> ship — libVLC would read 0 plugins → no playback). When the owner says go, **commit the 0.2.5 WIP + cut 0.2.5**
+> (build-installer here → sign on the Mac → `gh release` + appcast). Further backlog: TV-Guide "Show in Guide" from
+> a channel; multi-player polish (concurrent recording, per-pane ownership, persist view mode). MainWindow.cpp is
+> a header + `rabbitears::mw` + 5 `.cpp` (memory `mainwindow-modularization-plan`). This machine has `gh` CLI +
+> Inno Setup, so a full release runs locally — only EdDSA signing is on the Mac (`scripts/sign-release.sh`).
 >
 > **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
 > then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
@@ -797,8 +869,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > a running RabbitEars.exe locks the exe** → `Stop-Process -Name RabbitEars -Force`, rebuild; ⚠️ build with
 > `-DRABBITEARS_THEME_ENGINE=ON` explicitly (build dirs cache the flag); static CRT (`/MT`, no redist); the
 > sandbox **can't launch the GUI** — build-verify + reason, owner runtime-verifies; `common/` stays mac-safe
-> (`mac-core` CI compiles it on clang). Commit only when asked; stage **specific paths** (never `git add -A` —
-> the owner adds `art/*.png`); end commits with the `Co-Authored-By` trailer; branch off `main`, PR back.
+> (`mac-core` CI compiles it on clang). **ARM64 (0.2.5):** `scripts\build-arm64.cmd` (native `vcvarsarm64`, output
+> in `build-arm64\`, `-DRABBITEARS_UPDATER=OFF`); `cmake/LibVlc.cmake` picks the libVLC arch by
+> `CMAKE_CXX_COMPILER_ARCHITECTURE_ID` (the MSVC **TARGET**) — NOT `CMAKE_SYSTEM_PROCESSOR` (the HOST = `ARM64`
+> here even for the x64 build). **After any shared-CMake edit, re-verify the x64 build BOTH flags** — the arch bug
+> only surfaced at link. Commit only when asked; stage **specific paths** (never `git add -A` — the owner adds
+> `art/*.png`); end commits with the `Co-Authored-By` trailer.
 >
 > ---
 > *The prior theme-engine-era seed prompt follows (still-useful build gotchas + the 0.2.0 phase history):*

@@ -351,6 +351,23 @@ void onClick(HWND hwnd, GuideState* st, int x, int y) {
         st->cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
 }
 
+// Right-click a channel row -> a "favourite" toggle for that channel. x,y are client coords.
+void onGuideContextMenu(HWND hwnd, GuideState* st, int x, int y) {
+    if (!st->cb.onToggleFavourite) return;
+    const int r = rowAtY(hwnd, st, y);
+    if (r < 0 || r >= static_cast<int>(st->rows.size())) return;
+    const std::wstring channelId = st->rows[r].channelId, channelName = st->rows[r].channelName;
+    if (channelId.empty()) return;  // no tvg-id -> not a resolvable channel to favourite
+    const bool fav = st->cb.isFavourite && st->cb.isFavourite(channelId);
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, 1, fav ? L"Remove from Favourites" : L"★  Add to Favourites");
+    POINT pt{x, y};
+    ClientToScreen(hwnd, &pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd == 1) st->cb.onToggleFavourite(channelId, channelName);
+}
+
 LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_NCCREATE) {
         auto* st = new GuideState();
@@ -446,6 +463,9 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_LBUTTONDOWN:
             onClick(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return 0;
+        case WM_RBUTTONUP:
+            onGuideContextMenu(hwnd, st, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
             return 0;
         case WM_CHAR: {
             // Type-to-search: the corner cell shows the query; filtering rebuilds st->rows,

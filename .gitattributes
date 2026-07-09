@@ -1,3 +1,9 @@
 # Shell scripts must keep LF endings so they run on macOS/Linux after checkout on
 # Windows (CRLF would break the shebang / bash parsing).
 *.sh text eol=lf
+
+# Windows batch scripts MUST be checked out CRLF: cmd.exe mis-parses LF-only .cmd/.bat
+# (REM stops suppressing comments; multi-line if()/^ continuations break). Enforcing it
+# here means every checkout gets CRLF regardless of the cloner's core.autocrlf.
+*.cmd text eol=crlf
+*.bat text eol=crlf

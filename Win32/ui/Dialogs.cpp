@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <cwctype>
+#include <string>
 
 #include <commctrl.h>  // ListView (the categories checklist)
 #include <commdlg.h>   // ChooseColor (the swatch colour picker)
@@ -53,6 +54,34 @@ constexpr int ID_CHECK_UPDATES = 1201;
 // The project's GitHub — shown as a clickable link in the About box.
 constexpr wchar_t kGithubUrl[] = L"https://github.com/arcanii/RabbitEars";
 constexpr wchar_t kGithubLabel[] = L"github.com/arcanii/RabbitEars";
+
+// The architecture this build actually runs as, for the About box — distinguishes the native
+// ARM64 build from the x64 build, and flags an x64 build running under emulation on an ARM64
+// machine. IsWow64Process2 (Win10 1709+) reports the emulated image machine
+// (IMAGE_FILE_MACHINE_UNKNOWN when running natively) plus the real CPU; resolved via
+// GetProcAddress so the app still loads on the (older) Windows that lack it.
+std::wstring runningArchLabel() {
+#if defined(_M_ARM64)
+    const wchar_t* proc = L"ARM64";
+#elif defined(_M_X64)
+    const wchar_t* proc = L"x64";
+#elif defined(_M_IX86)
+    const wchar_t* proc = L"x86";
+#else
+    const wchar_t* proc = L"unknown";
+#endif
+    using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
+    if (auto fn = reinterpret_cast<IsWow64Process2Fn>(
+            GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2"))) {
+        USHORT procMach = 0, nativeMach = 0;
+        if (fn(GetCurrentProcess(), &procMach, &nativeMach) &&
+            procMach != IMAGE_FILE_MACHINE_UNKNOWN) {  // != UNKNOWN => running emulated
+            return std::wstring(proc) +
+                   (nativeMach == IMAGE_FILE_MACHINE_ARM64 ? L" (emulated on ARM64)" : L" (emulated)");
+        }
+    }
+    return proc;  // native (or pre-1709 Windows, where we can't tell — show the build arch)
+}
 
 // ---- About box (renders the embedded RabbitEars.png via GDI+) --------------
 
@@ -142,8 +171,9 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SelectObject(mem, st->bodyFont);
             SetTextColor(mem, th.textSecondary);
             RECT br{tx, tr.bottom + dp(6, st->dpi), rc.right - m, tr.bottom + dp(80, st->dpi)};
-            DrawTextW(mem, L"A simple IPTV viewer for Windows.\r\nVersion " RE_VERSION_DISPLAY_W, -1,
-                      &br, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            const std::wstring verLine = L"A simple IPTV viewer for Windows.\r\nVersion "
+                                         RE_VERSION_DISPLAY_W L"  ·  " + runningArchLabel();
+            DrawTextW(mem, verLine.c_str(), -1, &br, DT_LEFT | DT_TOP | DT_WORDBREAK);
             SetTextColor(mem, th.textMuted);
             RECT ar{tx, br.bottom + dp(10, st->dpi), rc.right - m, br.bottom + dp(58, st->dpi)};
             DrawTextW(mem, L"Plays media with libVLC (LGPL-2.1)\r\n© VideoLAN and the VLC contributors.",
