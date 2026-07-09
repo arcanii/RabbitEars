@@ -12,9 +12,18 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
 `main` carries **both platforms at decoupled versions**: **Windows 0.2.4** (theme engine + EPG/TV Guide,
-scheduled recordings, multi-view Split/PIP — the Windows team ships from `main`) and **mac 0.1.10**. The
-version split lives in `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac).
+scheduled recordings, multi-view Split/PIP — the Windows team ships from `main`) and **mac 0.2.0** (the
+parity line; `main` still has the shipped 0.1.10 until the branch below merges). The version split lives in
+`cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac).
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
+
+> **In flight — branch `mac-multiview-tvguide` (7 commits, NOT merged).** Opens the mac **0.2.0** line and
+> lands the three Windows-parity features: **TV Guide (EPG)**, **multi-view Split/2×2**, and
+> **Picture-in-Picture** — plus the unified app icon. All three are built, adversarially reviewed, and
+> **validated on real hardware** (incl. 4 simultaneous HLS streams in 2×2). See the sections below.
+> **Key discovery: this was wiring, not porting** — every shared core it needs (`VideoGrid`, `XmltvParser`,
+> `Gzip`, `Programme`, the `Database` EPG methods) **already compiled into the mac binary**; the branch
+> touches **no `common/` file at all**, so there is zero Windows risk.
 
 ## Current state — v0.1.10-mac SHIPPED (everything merged to main)
 
@@ -64,6 +73,54 @@ run the modal (via `-initWithVersion:`, which shows the version in the header). 
 version + continues; **Decline** quits. Every other launch is silent. Same `tos_accepted` key + full-version
 scheme as Win32. On-device-validated. **To re-trigger for testing:**
 `sqlite3 "$HOME/Library/Application Support/RabbitEars/rabbitears.db" "DELETE FROM settings WHERE key='tos_accepted'"` then relaunch.
+
+## TV Guide / EPG (branch `mac-multiview-tvguide`, 0.2.0)
+
+The whole data pipeline was **already compiled in** — this is wiring, not porting. **No `common/` edits.**
+- **Refresh** — `MainWindowController -refreshGuide:` (View ▸ Refresh Guide, or the ⚙ menu): for every
+  *enabled* playlist with a non-empty `epgUrl`, off the main queue → `httpGet(url,…,60000)` →
+  `gunzipIfNeeded` (XMLTV is usually served as `.xml.gz`) → `parseXmltv(...).programmes` → back on the main
+  queue → `Database::bulkInsertProgrammes`. Newest-refresh-wins via `_epgToken`. **DB is main-thread only.**
+- **Guide window** — `TvGuideWindowController` (own modeless `NSWindow`) assembles rows from
+  `programmesInWindow(pid, now-6h, now+72h)`, grouping consecutive same-`channelId` programmes and joining to
+  channels by the **lowercased base tvg-id** (`normId` strips iptv-org's `@feed` suffix: `CNN.us@SD` → `cnn.us`).
+  Channels absent from the playlist are skipped, so **every row is playable**. `EpgGuideView` is a *flipped*
+  custom `NSView` drawing 4 clipped regions (programme blocks + now-line, frozen channel column, frozen hour
+  axis, corner) with its own scroll offsets — the AppKit peer of Win32's Direct2D three-clip control.
+  Clicking a programme opens details + **Play Channel** (`channelByTvgId` → play → hide the guide).
+- **Guide URL** — parsed from the M3U `x-tvg-url`, or set per playlist via **Manage Playlists ▸ 📅**
+  (`setPlaylistEpgUrl`). *(A real bug fixed here: `importDoc` used to drop `doc.epgUrl`, so Refresh Guide
+  had nothing to fetch.)*
+- **Gotchas:** hour-axis ticks are aligned to **local** hour boundaries via `NSCalendar` (raw UTC stepping
+  mislabels fractional-hour zones like UTC+5:30). All programme text goes through the `Encoding.h` UTF seam —
+  **never** the naive `widen`/`narrow` byte-cast (titles are routinely non-ASCII).
+
+## Multi-view — Split / 2×2 + Picture-in-Picture (branch `mac-multiview-tvguide`, 0.2.0)
+
+- **`VlcEngineMac`** owns the ONE `libvlc_instance_t` (`libvlc_new` loads ~325 plugins — once per process).
+  Every `VlcPlayerMac` borrows it via `init(engine)`; an Nth pane is now cheap. **Destroy all players before
+  the engine.**
+- **Pane model** — `MacVideoPane { NSView* view; unique_ptr<VlcPlayerMac> player; Channel channel; long long
+  channelId; }` in `_panes`. `_player` / `_videoView` are **raw ALIASES to the active pane**, so all the
+  pre-existing playback/meter/stats code kept working untouched. Single view = exactly one pane.
+- **Layout** — `-applyVideoPaneLayout` feeds the shared `common/ui/VideoGrid::computeVideoPanes` and
+  **y-flips** each box (`VideoGrid` is top-down; AppKit is bottom-up): `y = ich - b.y - b.h`, flipping against
+  the *same integer* height passed in. Split(4) ⇒ 2×2; Pip(2) ⇒ full backdrop + draggable bottom-right inset.
+- **Single-audio active pane** — only the active pane is audible; background panes are muted by
+  **audio-track deselect** (`libvlc_audio_set_track(mp,-1)`), NOT volume=0 (libVLC resets volume to 100% when
+  it recreates the aout on an HLS quality switch). `tickStats` **re-asserts** the mute every 250ms because the
+  track may not exist yet at `play()` time. Clicking a pane activates it (accent `CALayer` border).
+- **Async teardown (do NOT regress this)** — `stop()` is synchronous and blocks on a stuck stream. On collapse,
+  panes are torn down on a GCD background queue. The pane's **`NSView` is retained across the async stop and
+  released back on the main thread**: libVLC holds it via `set_nsobject` and its vout renders into it until the
+  player is released. `applyViewMode` also re-points `_player`/`_videoView` at a **surviving** pane *before*
+  any teardown. Collapsing carries the active stream into pane 0 (`carryStreamFromPane`, skipped when it's
+  already the same channel); `Stop` clears `channelId` so a stopped stream is not resurrected by that carry.
+- **Triggers** — View ▸ Single (⌃⌘1) / Split 2×2 (⌃⌘2) / Picture-in-Picture (⌃⌘3), with checkmarks; row
+  context menu ▸ **Play in PiP** (plays the inset, backdrop stays active + audible — Win32 parity).
+- **mac is SIMPLER than Win32 here:** no vout-host pool. That whole Win32 apparatus exists only to dodge a
+  Direct3D11 "VLC (Direct3D11 output)" popout; AVFoundation composites sibling `NSView`s fine (validated with
+  4 live streams). Persisting view mode is deliberately NOT done (Win32 doesn't either).
 
 ## Meters — full Win32-parity meter system (SHIPPED in v0.1.9)
 
@@ -155,8 +212,12 @@ build-mac*/sparkle/bin/sign_update --account SQLTerminal <dmg>   # prints edSign
 mac/CMakeLists.txt                     # mac targets; rpath; Sparkle embed; icon; per-file -fobjc-arc list
 mac/cmake/Mac.cmake                    # libVLC + Sparkle provisioning (-DLIBVLC_MAC_PREFIX overrides VLC.app)
 mac/src/app/AppDelegate.mm             # lifecycle + menu bar (App/File/Edit/View) + custom About + Updates
-mac/src/app/MainWindowController.mm    # the UI: top bar, grid, split, playback, meters glue, ToU gate
-mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper + sampleStats()->FlowStats
+mac/src/app/MainWindowController.mm    # the UI: top bar, grid, split, playback, meters glue, ToU gate,
+                                       #   video PANE model (Single/Split-2×2/PiP) + EPG orchestration
+mac/src/app/VlcEngineMac.{h,mm}        # the ONE shared libvlc_instance_t; players borrow handle()
+mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper: init(engine), setMuted (track-deselect), sampleStats()
+mac/src/app/EpgGuideView.{h,mm}        # TV Guide renderer: flipped NSView, channels×time grid (ARC)
+mac/src/app/TvGuideWindowController.{h,mm}  # guide window; DB->rows (normId @feed join), play-from-guide (ARC)
 mac/src/app/TermsDialog.{h,mm}         # first-launch / version-change Terms-of-Use gate (ARC)
 mac/src/app/PlaylistsDialog.{h,mm}     # Settings > Manage Playlists (enable/disable/rename/refresh/delete)
 mac/src/app/MetersDialog.{h,mm}        # Settings > Meters (Show/Style/Colours/Tuning + live preview)
@@ -168,6 +229,8 @@ mac/packaging/{Info.plist.in, appcast-mac.xml, RabbitEars.icns, RabbitEars.entit
 scripts/{build-mac.sh, package-mac.sh, make-icns.py}         # build / bundle+sign+notarize / icon
 cmake/AppVersion.cmake                 # per-platform version (Windows APP_VERSION + APPLE override)
 common/models/FlowStats.h              # shared stream-health snapshot (Win32 + mac)
+common/ui/VideoGrid.{h,cpp}            # SHARED pane geometry (Single/Split/Pip) — mac y-flips the boxes
+common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already compiled into mac; called as-is)
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 
@@ -176,6 +239,17 @@ common/models/FlowStats.h              # shared stream-health snapshot (Win32 + 
 - **Can't test GUI/audio headlessly** — real Mac testing is required for anything visual or audible (drive it
   with the computer-use MCP: `open` the app + screenshot; that's how the "can't paste" / meter / list-anchor
   bugs surfaced).
+- **On-device testing recipe.** Launch the dev binary with an isolated DB so you never touch the user's data:
+  `RABBITEARS_DATA_DIR=/tmp/redb build-mac/mac/RabbitEars.app/Contents/MacOS/RabbitEars &` (`defaultDbPath()`
+  honors it). A local `python3 -m http.server` serving a hand-made `.m3u` + XMLTV fixture makes the whole
+  import→refresh→guide→playback path deterministic and offline; use **`http://127.0.0.1:…`** (the loopback IP
+  literal is ATS-exempt, so `NSURLSession` won't block cleartext HTTP). Public HLS streams that work for
+  multi-view testing: `test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`, Apple's `bipbop_4x3_variant.m3u8`.
+- **Dev builds must be native arm64.** `build-mac/CMakeCache.txt` can hold a stale
+  `CMAKE_OSX_ARCHITECTURES=arm64;x86_64` from a release build; a stock VLC.app is arm64-only, so the x86_64
+  slice fails to link libvlc. Pass `-DCMAKE_OSX_ARCHITECTURES=arm64` to `scripts/build-mac.sh --app`.
+- The **ToU gate is keyed on the FULL version incl. build number**, so every rebuild after a commit re-prompts
+  in dev. That's expected, not a bug.
 - **Branch off `main`, PR back**; CI validates both platforms. Keep any shared‑file (`common/`) edit
   behavior‑preserving on Windows.
 - Run an **adversarial review on new ObjC++** (ARC/threading/Cocoa) before merging — it has repeatedly caught
@@ -190,7 +264,8 @@ common/models/FlowStats.h              # shared stream-health snapshot (Win32 + 
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions: Windows 0.2.4 (theme engine + EPG/TV Guide,
-scheduled recordings, multi-view Split/PIP) and mac 0.1.10 — the split lives in cmake/AppVersion.cmake
+scheduled recordings, multi-view Split/PIP) and mac 0.2.0 (the parity line, on branch
+mac-multiview-tvguide; main still carries the shipped 0.1.10) — the split lives in cmake/AppVersion.cmake
 (APP_VERSION = Windows; an if(APPLE) override = mac). The mac app is SHIPPED + auto-updating (v0.1.10-mac,
 universal, notarized, self-contained; Sparkle path proven end-to-end). App min macOS 26 (LSMinimumSystemVersion
 only; deployment target unpinned so CI's older SDK builds; macOS 26 is Apple-Silicon-only). Build:
@@ -200,8 +275,10 @@ mac-release-deployment memory (Dev ID 386M76FV3K, notary profile SQLTerminal-not
 '--' in a comment broke the feed once; land the appcast on main via `gh api` PUT because git push hangs).
 GUI/audio can't be verified headlessly — real Mac testing required (computer-use MCP: open + screenshot).
 Branch off main, PR back; keep common/ edits Windows-safe. mac .mm are MRC-style (app-lifetime leaks OK);
--fobjc-arc per-file only (MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/TermsDialog). Run an
-adversarial ObjC++ review before merging.
+-fobjc-arc per-file only (MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/TermsDialog/EpgGuideView/
+TvGuideWindowController). Run an adversarial ObjC++ review before merging. Dev testing: launch with
+RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a local m3u/XMLTV fixture over http://127.0.0.1
+(ATS-exempt loopback), and build with -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only).
 
 SHIPPED + MERGED to main (all mac features live): the METER system (unified MeterView, 4 kinds
 Spectrum/Signal/Bitrate/Frames × 4 styles LED/LCD/Tube/Scope from a mac-local MeterModel; SpectrumTap =
@@ -215,5 +292,25 @@ BACKLOG (not blocking): on-device fine-tuning of the Tube glow / Scope trace / k
 strokeScope in MeterView.mm); E3 = promote MeterModel -> common/ui under a neutral rabbitears::meter ns,
 owned by the Win32 team. NOTE: the Windows team added shared common/ code (XmltvParser, RecordingScheduler,
 Gzip, VideoGrid, miniz, Database schema v3/v4) — the mac build compiles + migrates cleanly against it.
+
+IN FLIGHT on branch mac-multiview-tvguide (7 commits, NOT merged, tree clean): the mac 0.2.0 PARITY LINE —
+(1) unified app icon (icns now built from art/clockwork_icon3.png, same art as the Windows .ico);
+(2) TV GUIDE / EPG — refreshGuide: (httpGet->gunzipIfNeeded->parseXmltv->bulkInsertProgrammes, GCD,
+newest-wins) + EpgGuideView (flipped custom NSView: frozen channel column + hour axis, programme blocks,
+now-line, airing highlight, hit-test) + TvGuideWindowController (DB->rows, normId strips the @feed tvg-id
+suffix, play-from-guide) + Set Guide URL per playlist + View menu TV Guide (Cmd-G) / Refresh Guide;
+FIXED a real bug: importDoc dropped doc.epgUrl so Refresh Guide had nothing to fetch;
+(3) MULTI-VIEW — new VlcEngineMac (ONE libvlc_instance; players borrow it via init(engine)), a MacVideoPane
+collection with _player/_videoView as raw ALIASES to the active pane, layout via the SHARED
+common/ui/VideoGrid computeVideoPanes (y-flipped for AppKit), single-audio active pane (background panes
+muted by audio-TRACK DESELECT, re-asserted each 250ms tick), accent focus border, click-to-activate,
+ASYNC GCD teardown (the pane's NSView is RETAINED across the async player stop — libVLC's vout still renders
+into it — and released back on main), carryStream on collapse, View menu Single/Split-2x2/PiP (Ctrl-Cmd-1/2/3);
+(4) PiP — full-bleed backdrop + draggable bottom-right inset, row menu "Play in PiP" (backdrop stays active
+and audible, Win32 parity). NO common/ FILE IS TOUCHED — this was wiring, not porting; all the shared cores
+already compiled into the mac binary. Adversarially reviewed twice (13 confirmed findings, all fixed; nothing
+critical/high) and validated on-device incl. 4 SIMULTANEOUS HLS STREAMS in 2x2 with no popout windows (mac
+needs no Win32-style vout-host pool). NOT yet verified by ear: that background panes are truly silent.
+NEXT: open the PR to main, then consider a v0.2.0-mac release (bump nothing — AppVersion already says 0.2.0).
 ```
 ```
