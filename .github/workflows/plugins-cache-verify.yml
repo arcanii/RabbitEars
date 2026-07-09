@@ -1,0 +1,58 @@
+# Proves the vendored vlc-cache-gen.exe (third_party/vlc-tools/x64) produces a VALID, non-empty
+# libVLC plugin cache against the exact NuGet plugin set we ship — on a NATIVE x64 runner, the
+# one environment where it's safe to run (under x64-emulation on ARM it silently writes an empty
+# cache => libVLC loads 0 plugins => no playback; that's why this can't be tested on the ARM dev
+# box and why the installer gates on IsX64Native). Run it after bumping the libVLC NuGet or
+# re-vendoring the tool. See third_party/vlc-tools/README.md.
+name: plugins-cache-verify
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "third_party/vlc-tools/**"
+      - ".github/workflows/plugins-cache-verify.yml"
+
+jobs:
+  verify-x64:
+    runs-on: windows-latest # native x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download + extract the libVLC NuGet (3.0.23.1)
+        shell: pwsh
+        run: |
+          $url = "https://api.nuget.org/v3-flatcontainer/videolan.libvlc.windows/3.0.23.1/videolan.libvlc.windows.3.0.23.1.nupkg"
+          Invoke-WebRequest -Uri $url -OutFile libvlc.nupkg
+          Expand-Archive libvlc.nupkg -DestinationPath nuget
+
+      - name: Rehearse the installed layout ({app} = exe + DLLs + plugins)
+        shell: pwsh
+        run: |
+          # The installer puts vlc-cache-gen.exe next to libvlc.dll/libvlccore.dll and runs it
+          # against {app}\plugins — mirror that exactly.
+          Copy-Item third_party/vlc-tools/x64/vlc-cache-gen.exe nuget/build/x64/
+          Push-Location nuget/build/x64
+          & .\vlc-cache-gen.exe plugins
+          if ($LASTEXITCODE -ne 0) { throw "vlc-cache-gen failed with exit code $LASTEXITCODE" }
+          Pop-Location
+
+      - name: Verify the cache is real (never trust an empty cache)
+        shell: pwsh
+        run: |
+          $f = "nuget/build/x64/plugins/plugins.dat"
+          if (-not (Test-Path $f)) { throw "plugins.dat was not produced" }
+          $len = (Get-Item $f).Length
+          Write-Host "plugins.dat: $len bytes"
+          if ($len -lt 100000) { throw "plugins.dat is suspiciously small ($len B) - this is the empty-cache failure mode" }
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($f))
+          $count = ([regex]::Matches($text, "_plugin")).Count
+          Write-Host "plugin-name occurrences: $count"
+          if ($count -lt 250) { throw "too few plugin entries ($count) - expected ~323" }
+          Write-Host "OK: cache looks valid."
+
+      # Inspection only — the installer regenerates the cache on the user's machine.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugins-dat-x64-3.0.23
+          path: nuget/build/x64/plugins/plugins.dat

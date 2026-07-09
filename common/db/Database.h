@@ -73,6 +73,9 @@ public:
     // First enabled channel carrying this tvg-id (the EPG join key); nullopt if none.
     // Used to resolve a guide programme back to a recordable stream.
     std::optional<Channel> channelByTvgId(const std::wstring& tvgId);
+    // The channel row by primary key (enabled playlists only); nullopt if it no longer
+    // exists — e.g. a persisted last_channel_id whose playlist was deleted.
+    std::optional<Channel> channelById(long long id);
 
     std::vector<std::wstring> listGroups();
     // Distinct ISO country codes (lowercase) derived from tvg-id suffixes

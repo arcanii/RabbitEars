@@ -408,6 +408,7 @@ void createChildren(HWND hwnd, AppState* st) {
         HMENU m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, 1, L"Play");
         AppendMenuW(m, MF_STRING, 2, L"Play in PIP");
+        AppendMenuW(m, MF_STRING, 3, L"Show in TV Guide");
         const int cmd =
             TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, st->hwnd, nullptr);
         DestroyMenu(m);
@@ -416,6 +417,15 @@ void createChildren(HWND hwnd, AppState* st) {
         } else if (cmd == 2) {
             if (st->viewMode != ViewMode::Pip) applyViewMode(st, ViewMode::Pip);  // ensure a PIP exists
             playChannelInPane(st, c, 1);  // pane 1 is the PIP — plays muted; click the PIP to hear it
+        } else if (cmd == 3) {
+            // Jump to this channel's row in the guide. Build the guide first if needed —
+            // onEpgGuide is synchronous but may early-return without creating the window
+            // (no EPG data), in which case the scroll below reports false and we explain.
+            if (!epgGuideOpen()) onEpgGuide(st);
+            if (!epgGuideShowChannel(c.tvgId, static_cast<long long>(time(nullptr))))
+                setStatus(st, c.tvgId.empty()
+                                  ? L"This channel has no tvg-id — the guide can't match it."
+                                  : L"No guide row for " + c.name + L" — try Refresh Guide…");
         }
     };
     channelGridSetCallbacks(st->grid, cb);
@@ -448,8 +458,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     bufferMeterSetHidden(st->bufferMeter, true);
                 if (auto bm = st->db.getSetting(L"buffer_ms"); bm && !bm->empty())
                     setBufferMs(st, _wtoi(bm->c_str()), /*replay=*/false);
-                if (auto rf = st->db.getSetting(L"rec_format"); rf && (*rf == L"ts" || *rf == L"mkv"))
+                if (auto rf = st->db.getSetting(L"rec_format");
+                    rf && (*rf == L"ts" || *rf == L"mkv" || *rf == L"mp4"))
                     st->recFormat = *rf;
+                if (auto rl = st->db.getSetting(L"resume_last")) st->resumeLast = (*rl == L"1");
                 if (auto hd = st->db.getSetting(L"hide_dead"); hd && *hd == L"1") st->hideDead = true;
                 if (auto cf = st->db.getSetting(L"category_filter"); cf && !cf->empty()) {
                     st->categories = splitCategories(*cf);
@@ -476,6 +488,29 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 if (auto dl = st->db.getSetting(L"dock_layout"); dl && !dl->empty())
                     st->dock = DockLayout::parse(*dl);
+                // Restore the view mode (persisted by applyViewMode). Pane 0 already exists
+                // (createChildren above), so the switch is safe pre-show; the PIP size loads
+                // first (layout() inside applyViewMode reads it), the PIP position after —
+                // applyViewMode resets pipMoved, so setting it earlier would be discarded.
+                if (auto ps = st->db.getSetting(L"pip_size"); ps && !ps->empty()) {
+                    if (const size_t x = ps->find(L'x'); x != std::wstring::npos) {
+                        st->pipW = _wtoi(ps->substr(0, x).c_str());
+                        st->pipH = _wtoi(ps->substr(x + 1).c_str());
+                    }
+                }
+                if (auto vm = st->db.getSetting(L"view_mode"); vm && !vm->empty()) {
+                    const int m = _wtoi(vm->c_str());
+                    if (m == static_cast<int>(ViewMode::Split) ||
+                        m == static_cast<int>(ViewMode::Pip))
+                        applyViewMode(st, static_cast<ViewMode>(m));
+                }
+                if (auto pp = st->db.getSetting(L"pip_pos"); pp && !pp->empty()) {
+                    if (const size_t c = pp->find(L','); c != std::wstring::npos) {
+                        st->pipPos.x = _wtoi(pp->substr(0, c).c_str());
+                        st->pipPos.y = _wtoi(pp->substr(c + 1).c_str());
+                        st->pipMoved = true;  // positionFloatingPip clamps a stale/off-window pos
+                    }
+                }
 #ifdef RABBITEARS_THEME_ENGINE
                 if (auto sk = st->db.getSetting(wideFromUtf8(skinSettingKey())); sk && !sk->empty())
                     activeSkinSelection() = utf8FromWide(*sk);
@@ -489,6 +524,16 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 channelGridGetCounts(st->grid, nullptr, &total);
                 if (total == 0) setStatus(st, L"No channels yet — click “+ Add Playlist”.");
                 diag::info(L"db opened: " + dbPath + L" (" + std::to_wstring(total) + L" channels)");
+                // Resume the last-watched channel (Settings → Resume last channel, default on).
+                // channelById returns nullopt if the channel/playlist was deleted — just skip.
+                if (st->resumeLast) {
+                    if (auto lc = st->db.getSetting(L"last_channel_id"); lc && !lc->empty()) {
+                        if (auto ch = st->db.channelById(_wtoi64(lc->c_str()))) {
+                            diag::info(L"resuming last channel: " + ch->name);
+                            playChannel(st, *ch);
+                        }
+                    }
+                }
             } else {
                 setStatus(st, L"Database error: " + err);
                 diag::error(L"db open FAILED: " + dbPath + L" — " + err);
@@ -1260,6 +1305,25 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 idx >= 0 && idx < static_cast<int>(st->panes.size()) && st->panes[idx]->floating;
             if (isPip) {
                 if (idx != st->active) setActivePane(st, idx);  // clicking the PIP activates it too
+                // Bottom-right corner = RESIZE drag (dp(18) square); anywhere else = MOVE drag.
+                // Hit-test via GetCursorPos, not lParam: while a stream plays the click arrives
+                // forwarded from the covering vout host, whose lParam is in ITS client space.
+                {
+                    RECT cr;
+                    GetClientRect(hwnd, &cr);
+                    POINT sp;
+                    GetCursorPos(&sp);
+                    POINT lp = sp;
+                    ScreenToClient(hwnd, &lp);
+                    const int grip = dp(18, st->dpi);
+                    if (lp.x >= cr.right - grip && lp.y >= cr.bottom - grip) {
+                        st->resizingPip = true;
+                        st->pipResizeStart = sp;
+                        st->pipResizeOrigin = {cr.right, cr.bottom};
+                        SetCapture(hwnd);
+                        return 0;
+                    }
+                }
                 RECT wr;
                 GetWindowRect(hwnd, &wr);  // drag THIS window (the PIP), not the parent
                 GetCursorPos(&st->videoDragStart);
@@ -1292,6 +1356,16 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_MOUSEMOVE: {
             AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->resizingPip && (wParam & MK_LBUTTON)) {
+                POINT c;
+                GetCursorPos(&c);
+                // Route the new size through layout(): applyUserPipSize clamps it, and the
+                // normal path re-places the popup, its vout hosts, and paneBounds together.
+                st->pipW = static_cast<int>(st->pipResizeOrigin.cx) + (c.x - st->pipResizeStart.x);
+                st->pipH = static_cast<int>(st->pipResizeOrigin.cy) + (c.y - st->pipResizeStart.y);
+                layout(st->hwnd, st);
+                return 0;
+            }
             if (st && st->videoDragging && (wParam & MK_LBUTTON)) {
                 POINT c;
                 GetCursorPos(&c);
@@ -1321,18 +1395,67 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_LBUTTONUP: {
             AppState* st = stateOf(GetParent(hwnd));
+            if (st && st->resizingPip) {
+                st->resizingPip = false;
+                ReleaseCapture();
+                // Persist the EFFECTIVE (clamped) size: paneBounds holds what layout() actually
+                // granted, so a wild drag doesn't store an out-of-range value.
+                const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                if (idx >= 0 && idx < 4 && idx < static_cast<int>(st->panes.size())) {
+                    const RECT& b = st->paneBounds[idx];
+                    st->pipW = static_cast<int>(b.right - b.left);
+                    st->pipH = static_cast<int>(b.bottom - b.top);
+                }
+                st->db.setSetting(L"pip_size", std::to_wstring(st->pipW) + L"x" +
+                                                   std::to_wstring(st->pipH));
+                return 0;
+            }
             if (st && st->videoDragging) {
+                // Persist the PIP position once, on release (mirrors persistDock — never per
+                // mouse-move); only after a real drag, so a shaky click doesn't write the DB.
+                const bool droppedPip = st->draggingPip && st->videoDragMoved;
                 st->videoDragging = false;
                 st->draggingPip = false;
                 ReleaseCapture();
+                if (droppedPip)
+                    st->db.setSetting(L"pip_pos", std::to_wstring(st->pipPos.x) + L"," +
+                                                      std::to_wstring(st->pipPos.y));
                 return 0;
             }
             break;
         }
         case WM_CAPTURECHANGED: {
             AppState* st = stateOf(GetParent(hwnd));
-            if (st) { st->videoDragging = false; st->draggingPip = false; }  // capture lost -> end drag
+            if (st) {  // capture lost -> end any drag/resize cleanly
+                st->videoDragging = false;
+                st->draggingPip = false;
+                st->resizingPip = false;
+            }
             return 0;
+        }
+        case WM_SETCURSOR: {
+            // Resize-cursor feedback over the PIP's bottom-right grip corner. Only works while
+            // no vout host covers the pane (i.e. the empty-PIP hint is showing) — the host
+            // doesn't forward WM_SETCURSOR — but the resize DRAG itself always works (the
+            // forwarded WM_LBUTTONDOWN hit-tests the same corner via GetCursorPos).
+            AppState* st = stateOf(GetParent(hwnd));
+            if (st && LOWORD(lParam) == HTCLIENT) {
+                const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                if (idx >= 0 && idx < static_cast<int>(st->panes.size()) &&
+                    st->panes[idx]->floating) {
+                    RECT cr;
+                    GetClientRect(hwnd, &cr);
+                    POINT cp;
+                    GetCursorPos(&cp);
+                    ScreenToClient(hwnd, &cp);
+                    const int grip = dp(18, st->dpi);
+                    if (cp.x >= cr.right - grip && cp.y >= cr.bottom - grip) {
+                        SetCursor(LoadCursorW(nullptr, IDC_SIZENWSE));
+                        return TRUE;
+                    }
+                }
+            }
+            break;
         }
         case WM_RBUTTONUP: {
             // A focus-independent view menu: Esc can be lost to the libVLC surface after a

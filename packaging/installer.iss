@@ -7,7 +7,7 @@
 ; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.2.5"
+#define MyVer "0.2.6"
 
 ; Build-variant selection (see docs/RELEASING.md + scripts\build-installer.cmd):
 ;   (defaults)   -> x64 installer from build\Win32\  (byte-identical to the original script)
@@ -76,6 +76,15 @@ Source: "{#SrcDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcDir}\plugins\*"; DestDir: "{app}\plugins"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
+#if ArchAllowed != "arm64"
+; libVLC plugin-cache generator (third_party/vlc-tools/README.md): shipped + run post-install on
+; NATIVE x64 machines only, so libVLC loads plugins.dat instead of rescanning 323 DLLs each launch
+; (~10s cold start fixed). Same install-time approach as VLC's own installer — the cache's
+; path/mtime/size records then exactly match the installed files. Never run under ARM emulation
+; (empty-cache danger, see the README) — hence the IsX64Native gate.
+Source: "..\third_party\vlc-tools\x64\vlc-cache-gen.exe"; DestDir: "{app}"; \
+  Check: IsX64Native; Flags: ignoreversion
+#endif
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
@@ -83,16 +92,33 @@ Name: "{group}\RabbitEars"; Filename: "{app}\RabbitEars.exe"
 Name: "{group}\Uninstall RabbitEars"; Filename: "{uninstallexe}"
 
 [Run]
+#if ArchAllowed != "arm64"
+; Generate the libVLC plugin cache in the (elevated, hence writable) install context — runs on
+; EVERY install/update, incl. WinSparkle silent updates, so a refreshed plugins\ tree always gets
+; a fresh cache. Native-x64 machines only (see the [Files] note).
+Filename: "{app}\vlc-cache-gen.exe"; Parameters: """{app}\plugins"""; \
+  Check: IsX64Native; StatusMsg: "Optimizing playback engine startup..."; Flags: runhidden
+#endif
 Filename: "{app}\RabbitEars.exe"; Description: "Launch RabbitEars"; \
   Flags: nowait postinstall skipifsilent
 
-#ifdef Universal
+[UninstallDelete]
+; plugins.dat is GENERATED post-install (not in [Files]), so the uninstaller wouldn't remove it
+; and would leave {app}\plugins behind. Delete it explicitly so the uninstall is clean.
+Type: files; Name: "{app}\plugins\plugins.dat"
+
 [Code]
-{ Universal installer: lay down the binaries matching the machine's NATIVE CPU. ProcessorArchitecture
-  reports the true architecture (paArm64 on Windows-on-ARM, even though Setup itself runs as an x64
-  process there), so on ARM we install the native ARM64 build and on x64 the x64 build — never both. }
+{ ProcessorArchitecture reports the machine's TRUE architecture (paArm64 on Windows-on-ARM even
+  though Setup itself runs as an x64 process there). IsArm64Native steers the universal installer's
+  per-arch [Files] split; IsX64Native gates vlc-cache-gen (see below) to machines where running it
+  is safe — under x64-EMULATION on ARM it silently writes an EMPTY cache, which libVLC would trust
+  and load 0 plugins -> no playback. }
 function IsArm64Native: Boolean;
 begin
   Result := ProcessorArchitecture = paArm64;
 end;
-#endif
+
+function IsX64Native: Boolean;
+begin
+  Result := ProcessorArchitecture = paX64;
+end;

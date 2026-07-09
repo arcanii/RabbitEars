@@ -49,7 +49,7 @@ shared skin-model boundary to the macOS team** before any engine code lands (the
 
 ---
 
-## 🖥️ Native ARM64 build (Windows-on-ARM) — ✅ DONE in 0.2.5 (pending release)
+## 🖥️ Native ARM64 build (Windows-on-ARM) — ✅ SHIPPED in v0.2.5
 
 **Owner-directed (backlogged 2026-07-08); implemented 2026-07-09.** The app now has a **native ARM64
 build** with **auto-update** — see `Win32/HANDOVER.md` "Immediate next steps → 0.2.5" for the full
@@ -72,54 +72,36 @@ the native set — one download, but a **doubled** installer (both libVLC plugin
   `packaging/installer.iss` arch-parameterized; `scripts/build-installer.cmd [arm64]` builds either;
   `scripts/make-appcast.ps1 -Arch arm64` writes the arm64 feed; two-arch flow in `docs/RELEASING.md`.
 
-**Remaining:** just cut 0.2.5 for both arches (build both installers → sign both on the Mac → one release,
-two assets, populate both appcasts). Optional: an ARM64 `plugins.dat` (now low value — native scan ~3 s).
+**Shipped 2026-07-09** (v0.2.5 @ `fbebcc7`, three installers incl. universal, two live appcasts;
+universal + About-arch owner-verified on the ARM device). Only remnant: an ARM64 `plugins.dat`
+(low value — native scan ~3 s; no ARM64 `vlc-cache-gen` exists, would need building the tiny tool
+against the NuGet's arm64 `libvlccore`).
 
 ---
 
-## ⏱️ Slow first startup — ship a pre-generated libVLC `plugins.dat`
+## ⏱️ Slow first startup — ✅ FIXED for x64 installs (0.2.6 batch, install-time `vlc-cache-gen`)
 
-**Diagnosed 2026-07-09 (owner reported "first startup is very slow").** libVLC scans all **323 plugin
-DLLs** at startup because there is **no `plugins.dat` cache**. Log evidence: the whole delay is inside
-libVLC init (session-start → "libVLC initialized"), and it is **cold-cache-bound** — ~10.6 s right after a
-rebuild re-copies the plugins (cold on disk) vs ~0.8 s once the DLLs are warm in the OS file cache. The DB
-open right after is fast (0.2 s / 13 k channels), so it is neither the DB nor the playlist.
-
-**Worse for installed users:** `packaging/installer.iss` ships plugins into `{app}\plugins` (Program Files,
-**read-only** for a standard user), so libVLC can never write a cache there and **rescans all 323 plugins on
-every launch** — first launch (cold) is the ~10 s worst case.
-
-**Fix:** ship a pre-generated **`plugins.dat`** next to the plugins. With it present libVLC loads the cache
-instead of scanning → fast startup everywhere (dev + installed, cold or warm).
-- Generate it with libVLC's **`vlc-cache-gen`** as a post-plugin-copy build step (`cmake/LibVlc.cmake`) →
-  writes `build/Win32/plugins/plugins.dat`; the installer's `plugins\*` glob then ships it automatically.
-- **Blocker:** `vlc-cache-gen.exe` is NOT in the `VideoLAN.LibVLC.Windows` NuGet (it ships no tools) — source
-  the one matching libVLC **3.0.23** from the VLC Windows build and vendor it (small binary). Must match the
-  libvlccore ABI exactly or the cache is rejected and libVLC silently rescans.
-- Secondary lever: **trim** the plugin set (RabbitEars only needs HTTP/HLS access, common demuxers/codecs,
-  the Direct3D11 vout, mmdevice aout) — shrinks the scan but doesn't eliminate it; risky (removing a needed
-  plugin breaks playback), so cache-gen is the primary fix.
-
-**Scope:** own point release (candidate 0.2.5). `VlcEngine::init` args (`Win32/ui/VlcEngine.cpp:37`) don't
-disable caching, so no code change there — purely a build/packaging change.
+libVLC rescanned all 323 plugins each launch (no writable `plugins.dat` under Program Files); ~10 s
+cold. **Fix (0.2.6):** vendored `third_party/vlc-tools/x64/vlc-cache-gen.exe` (3.0.23, byte-identical
+`libvlccore` to our NuGet — provenance in the README there), shipped + run by `installer.iss`
+post-install **on native-x64 machines only** (`IsX64Native` gate — NEVER under ARM emulation, which
+silently writes an EMPTY cache ⇒ libVLC loads 0 plugins ⇒ no playback); `[UninstallDelete]` cleans the
+generated `plugins.dat`. This is VLC's own installer approach — install-time generation keeps the
+cache's per-plugin path/mtime/size records exact, where a CI-pre-generated file would go stale
+(zip-extraction mtime/timezone skew). CI verifier: `.github/workflows/plugins-cache-verify.yml`
+(native-x64 runner, fails hard on the empty-cache mode; auto-runs when the vendored tool changes).
+Remnants: the ARM64 cache (see the ARM64 section; low value) and the optional plugin-set trim
+(risky, low value now). Dev builds still scan (only the installer generates) — the owner dev-runs
+the native ARM64 build (~3 s scan), so that's moot.
 
 ---
 
-## 📺 TV Guide ↔ channel enhancements (owner-requested 2026-07-09)
+## 📺 TV Guide ↔ channel enhancements — ✅ BOTH DONE
 
-Two follow-ups off the 0.2.4 TV-Guide polish:
-- **Favourite a channel from the guide.** Right-click a guide row → **"Add to Favourites"** (toggle), so you
-  can star channels without leaving the guide. The guide already carries each row's full tvg-id
-  (`GuideRow::channelId`) → resolve to the `Channel` (`Database::channelByTvgId`) and toggle its favourite flag
-  (same one the grid's `COL_FAV` uses). Add the action to `EpgGuideControl`'s right-click menu, next to the
-  existing Play / Schedule (`GuideCallbacks`).
-- **"Show in TV Guide" from a channel.** Right-click a channel in the grid → jump to that channel's row in the
-  guide: open/reveal the guide (reuse `revealEpgGuide`) and scroll it to that channel (vertical to the row,
-  horizontal to "now"). Hook the channel grid's context menu (`ChannelGridCallbacks::onContextMenu`) → a new
-  `EpgGuideControl` "scroll to channel <tvg-id>" entry point.
-
-**Scope:** small UX features in the guide + channel-grid context menus; no schema change. Bundle into a
-TV-Guide polish point release.
+- **Favourite a channel from the guide** — SHIPPED in v0.2.5 (right-click a guide row).
+- **"Show in TV Guide" from a channel** — in the 0.2.6 batch: grid right-click →
+  `epgGuideShowChannel(tvgId, now)` (normalised-tvg-id row match, filter cleared, row top-aligned,
+  time axis re-centred on "now"; builds the guide first when needed).
 
 ---
 

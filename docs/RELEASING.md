@@ -91,8 +91,25 @@ Installed apps pick it up via the About box's **Check for Updates…** and
 WinSparkle's periodic check.
 
 ## Not yet covered
-- **Authenticode signing** of the exe + installer is not set up. Without it,
-  SmartScreen may warn on first download/run. (The EdDSA signature above is the
-  *update-integrity* signature WinSparkle verifies; it is separate from
-  Authenticode.)
+- **Authenticode signing** of the exe + installer is not set up. Without it, SmartScreen
+  may warn on first download/run. (The EdDSA signature above is the *update-integrity*
+  signature WinSparkle verifies; it is separate from Authenticode.) **Owner-gated — needs a
+  code-signing certificate purchase.** When one exists, the wiring is:
+  1. Buy an **OV code-signing cert** (EV clears SmartScreen fastest; OV builds reputation
+     over downloads). Modern CA rules require the key in hardware (USB token) or a cloud
+     signer — **Azure Trusted Signing** is the low-friction option and works headless.
+  2. Sign the **exe before packaging**, then the **installer** (both, so the installed
+     binary and the download are trusted):
+     ```cmd
+     signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
+              /n "<cert subject>" build\Win32\RabbitEars.exe
+     scripts\build-installer.cmd            (re-pack with the signed exe)
+     signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
+              /n "<cert subject>" build\installer\RabbitEars-<ver>-setup.exe
+     ```
+     (with Azure Trusted Signing, swap `/n` for the `/dlib`+`/dmdf` metadata flags.)
+     Slot these between steps 3 and 4 of "Per release" — Authenticode FIRST, then the
+     EdDSA `sign_update` signature (which covers the final signed bytes).
+  3. Always **timestamp** (`/tr`) so signatures outlive the cert's validity.
+  4. `signtool` ships in the Windows SDK (already present — the build uses `fxc` from it).
 - Keep the Ed25519 **private key out of the repo**.

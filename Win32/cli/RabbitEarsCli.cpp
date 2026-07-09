@@ -19,6 +19,7 @@
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/M3uWriter.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
@@ -133,6 +134,43 @@ int selftest() {
         expect(d.streamUrl == L"http://bare/d.m3u8", "bare-URL stream captured");
     }
 
+    out("== M3U writer (round-trip) ==\n");
+    {
+        // Everything the parser produced must survive write -> re-parse unchanged —
+        // this is the favourites-export contract.
+        const M3uDocument rt = parseM3u(writeM3u(doc));
+        expect(rt.epgUrl == doc.epgUrl, "x-tvg-url round-trips");
+        expect(rt.channels.size() == doc.channels.size(),
+               "channel count round-trips (got " + std::to_string(rt.channels.size()) + ")");
+        if (rt.channels.size() == doc.channels.size()) {
+            bool all = true;
+            for (size_t i = 0; i < rt.channels.size(); ++i) {
+                const auto& x = doc.channels[i];
+                const auto& y = rt.channels[i];
+                all = all && x.name == y.name && x.streamUrl == y.streamUrl &&
+                      x.logoUrl == y.logoUrl && x.groupTitle == y.groupTitle &&
+                      x.tvgId == y.tvgId && x.tvgName == y.tvgName && x.chno == y.chno &&
+                      x.userAgent == y.userAgent && x.referrer == y.referrer;
+            }
+            expect(all, "every field of every channel round-trips");
+            expect(rt.channels[0].name == L"Channel, One",
+                   "comma-in-name survives (quoted attrs shield the split)");
+        }
+        // A quote inside an attribute value can't be represented — it degrades to an
+        // apostrophe but must still re-parse as ONE channel with the other fields intact.
+        M3uDocument tricky;
+        ParsedChannel t;
+        t.name = L"Quote \"Show\"";
+        t.groupTitle = L"Say \"Hi\"";
+        t.streamUrl = L"http://s/q.m3u8";
+        tricky.channels.push_back(t);
+        const M3uDocument rq = parseM3u(writeM3u(tricky));
+        expect(rq.channels.size() == 1 && rq.channels[0].groupTitle == L"Say 'Hi'" &&
+                   rq.channels[0].streamUrl == L"http://s/q.m3u8",
+               "embedded quotes degrade to apostrophes, entry still parses");
+        expect(writeM3u(M3uDocument{}) == "#EXTM3U\r\n", "empty document -> bare header");
+    }
+
     out("== EPG parser (XMLTV) ==\n");
     {
         const std::string xml =
@@ -205,6 +243,12 @@ int selftest() {
 
     auto byLcn = db.channelByLcn(12);
     expect(byLcn && byLcn->name == L"Bee TV", "channelByLcn(12) -> Bee TV");
+
+    if (byLcn) {
+        auto byId = db.channelById(byLcn->id);
+        expect(byId && byId->name == L"Bee TV", "channelById round-trips the primary key");
+    }
+    expect(!db.channelById(999999), "channelById(unknown) -> nullopt");
 
     expect(hasChannelNamed(db.searchChannels(L"bee"), L"Bee TV"), "searchChannels('bee') finds Bee TV");
 

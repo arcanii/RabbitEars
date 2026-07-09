@@ -62,4 +62,12 @@ bool epgGuideOpen();  // true if the guide window exists (open or hidden)
 // time or on an explicit Refresh. No-op if the guide isn't open.
 void revealEpgGuide(long long nowUtc);
 
+// Reveal the guide scrolled to a channel's row ("Show in TV Guide" from the channel grid):
+// clears any type-to-search filter, top-aligns the row matching `tvgId` (matched on the
+// normalised base id — '@feed' suffix stripped, case-folded — like the guide's own row
+// join), and re-centres the time axis on `nowUtc`. Returns false (without revealing) when
+// the guide isn't built yet or the channel has no guide row — the caller decides what to
+// tell the user. Build the guide first via the epgGuideOpen()/onEpgGuide pattern.
+bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc);
+
 }  // namespace rabbitears

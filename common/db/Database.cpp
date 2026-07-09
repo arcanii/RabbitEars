@@ -521,6 +521,15 @@ std::optional<Channel> Database::channelByTvgId(const std::wstring& tvgId) {
     return rows.front();
 }
 
+std::optional<Channel> Database::channelById(long long id) {
+    auto rows = runChannelQuery(db_,
+                                std::string("SELECT ") + kChannelCols +
+                                    " FROM channels WHERE id=? AND " + kEnabledOnly + " LIMIT 1",
+                                nullptr, id);
+    if (rows.empty()) return std::nullopt;
+    return rows.front();
+}
+
 std::vector<std::wstring> Database::listGroups() {
     std::vector<std::wstring> out;
     Stmt q(db_, (std::string("SELECT DISTINCT group_title FROM channels WHERE group_title IS NOT NULL "
