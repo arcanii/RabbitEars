@@ -133,6 +133,20 @@ A **Settings ▸ Manage Playlists…** sheet (`PlaylistsDialog`, ARC) lists ever
   delegate and forward to `MainWindowController` (its action selectors are now in the header), matching the
   existing View-toggle pattern (the controller isn't in the responder chain). The in-window bar stays for now.
 
+## Terms of Use gate (branch `mac-terms-of-use`, off main — for the next release)
+
+A modal **`TermsDialog`** (ARC) shown once on **first launch and after any version change**,
+mirroring the Win32 gate (`Win32/ui` `showTerms`) with the **verbatim terms text**. In
+`MainWindowController -showWindow`, right after the DB opens: if `tos_accepted` ≠ the current full
+version (`RE_VERSION_FULL_W`, marketing.build) → run the modal. **Accept** persists the version +
+continues; **Decline** quits (`[NSApp terminate:]`). Every other launch is silent. Same `tos_accepted`
+key + full-version scheme as Win32 (so a build-number bump re-prompts too). The dialog header shows the
+version being accepted (`RE_VERSION_W`); this branch also bumps the mac version to **0.1.10** (the next
+release). Passed an adversarial
+ObjC++ review — clean (one fix applied: activate the app before the modal so it's frontmost on
+login-item / `open -a` launches). **Needs on-device validation** (modal at launch + terms rendering)
+before it ships.
+
 ## Releasing (v0.1.7-mac shipped this way — full recipe in the `mac-release-deployment` memory)
 
 **Version:** the mac marketing version is now **decoupled from Windows** — `cmake/AppVersion.cmake` keeps

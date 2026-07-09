@@ -20,11 +20,22 @@
 #include "platform/Log.h"
 #include "platform/Updater.h"
 
+#if __has_include("generated/version.h")
+#include "generated/version.h"
+#endif
+#ifndef RE_VERSION_FULL_W
+#define RE_VERSION_FULL_W L"dev"  // fallback when the generated header is absent
+#endif
+#ifndef RE_VERSION_W
+#define RE_VERSION_W L"dev"       // marketing version shown in the Terms dialog
+#endif
+
 #import "AppDelegate.h"
 #import "MeterView.h"
 #import "MetersDialog.h"
 #import "PlaylistsDialog.h"
 #import "SpectrumTap.h"
+#import "TermsDialog.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -188,6 +199,29 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         diag::error(L"DB open failed: " + err);
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
+
+    // Terms-of-Use gate (peer of the Win32 gate): the user must accept before the app is
+    // usable, and must RE-ACCEPT on every version change (fresh install OR update).
+    // `tos_accepted` stores the full version it was last accepted for, so any bump
+    // re-prompts; every other launch is silent. Runs before the window is shown; declining
+    // quits the app.
+    if (_db) {
+        const std::wstring tosVer = RE_VERSION_FULL_W;
+        const auto accepted = _db->getSetting(L"tos_accepted");
+        if (!accepted || *accepted != tosVer) {
+            TermsDialog* terms = [[TermsDialog alloc] initWithVersion:ns(RE_VERSION_W)];
+            const BOOL ok = [terms runModal];
+            [terms release];  // MRC: balance the alloc (runModal has returned)
+            if (!ok) {
+                diag::info(L"Terms declined — exiting");
+                [NSApp terminate:nil];
+                return;
+            }
+            _db->setSetting(L"tos_accepted", tosVer);
+            diag::info(L"Terms accepted for " + tosVer);
+        }
+    }
+
     [self loadMeterConfig];  // per-kind enable/style/colours from settings
 
     // ---- top bar (one row): [+ Add Playlist] [⚙] … [search] [filter] [Stop]

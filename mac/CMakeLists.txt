@@ -56,6 +56,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/MeterView.mm
     src/app/MetersDialog.mm
     src/app/PlaylistsDialog.mm
+    src/app/TermsDialog.mm
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm
@@ -66,7 +67,7 @@ if(RABBITEARS_BUILD_MAC)
   # rest of the app is MRC-style.
   set_source_files_properties(
     src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
-    src/app/PlaylistsDialog.mm
+    src/app/PlaylistsDialog.mm src/app/TermsDialog.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
