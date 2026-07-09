@@ -695,7 +695,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [_table reloadData];
     [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
                      q.empty() ? @"" : @" (search)"]];
-    _emptyHint.hidden = !_channels.empty();
+    [self updateEmptyHint];
+}
+
+// The "no channels yet" hint is a subview of pane 0, so it is only meaningful in Single view
+// (in Split it would sit in the top-left quadrant; in PiP it hides behind the inset).
+- (void)updateEmptyHint {
+    _emptyHint.hidden = !_channels.empty() || _viewMode != ViewMode::Single;
 }
 
 // ---- actions ----
@@ -807,6 +813,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)stop:(id)__unused sender {
     _player->stop();
+    // Clear the pane's "now playing" so a later mode collapse can't resurrect the stream
+    // the user explicitly stopped (carryStreamFromPane keys off channelId). Peer of the
+    // Win32 Stop handler zeroing st->ap().nowPlayingId.
+    if (MacVideoPane* p = [self activePane]) { p->channel = Channel{}; p->channelId = 0; }
     for (MeterView* m : _meters) [m reset];
     [self stopSpectrumTap];  // free the tap's RT thread (no spinning on silence)
     _window.title = @"RabbitEars";
@@ -965,21 +975,23 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // y-flipped for AppKit's bottom-left origin). A zero-area box hides a surplus pane.
 - (void)applyVideoPaneLayout {
     if (!_videoContainer || _panes.empty()) return;
-    const CGFloat cw = _videoContainer.bounds.size.width, ch = _videoContainer.bounds.size.height;
+    // Flip against the SAME integer height fed to computeVideoPanes, else the container's
+    // fractional height leaks in as a sub-pixel gap along the bottom edge.
+    const int icw = (int)_videoContainer.bounds.size.width;
+    const int ich = (int)_videoContainer.bounds.size.height;
     rabbitears::VideoGridOpts opts;
     opts.gap = 3; opts.pipW = 240; opts.pipH = 135; opts.pipMargin = 14;
-    auto boxes = rabbitears::computeVideoPanes(_viewMode, (int)_panes.size(),
-                                               0, 0, (int)cw, (int)ch, opts);
+    auto boxes = rabbitears::computeVideoPanes(_viewMode, (int)_panes.size(), 0, 0, icw, ich, opts);
     for (size_t i = 0; i < _panes.size() && i < boxes.size(); ++i) {
         NSView* v = _panes[i]->view;
         const auto& b = boxes[i];
         if (b.w <= 0 || b.h <= 0) { v.hidden = YES; continue; }
         v.hidden = NO;
-        NSRect fr = NSMakeRect(b.x, ch - b.y - b.h, b.w, b.h);  // top-down box → bottom-up frame
+        NSRect fr = NSMakeRect(b.x, ich - b.y - b.h, b.w, b.h);  // top-down box → bottom-up frame
         // A PiP inset the user dragged keeps its position (as a fraction) across relayout.
         if (_viewMode == ViewMode::Pip && i > 0 && _pipMoved) {
-            fr.origin.x = _pipPosX * std::max<CGFloat>(0, cw - fr.size.width);
-            fr.origin.y = _pipPosY * std::max<CGFloat>(0, ch - fr.size.height);
+            fr.origin.x = _pipPosX * std::max<CGFloat>(0, icw - fr.size.width);
+            fr.origin.y = _pipPosY * std::max<CGFloat>(0, ich - fr.size.height);
         }
         v.frame = fr;
     }
@@ -1053,7 +1065,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         from >= (int)_panes.size() || to >= (int)_panes.size()) return;
     MacVideoPane* src = _panes[(size_t)from].get();
     MacVideoPane* dst = _panes[(size_t)to].get();
-    if (src->channelId == 0) return;  // nothing playing to carry
+    if (src->channelId == 0) return;                 // nothing playing to carry
+    if (dst->channelId == src->channelId) {          // already the same stream — don't re-buffer
+        dst->channel = src->channel;
+        return;
+    }
     dst->player->play(src->channel.streamUrl, src->channel.userAgent, src->channel.referrer);
     dst->player->setVolume((int)_volume.doubleValue);
     dst->channel = src->channel;
@@ -1086,6 +1102,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (mode == ViewMode::Single) count = 1;
     if (count < 1) count = 1;
     _viewMode = mode;
+    _pipMoved = NO;  // a freshly-entered PiP starts in the default corner (Win32 parity)
 
     while ((int)_panes.size() < count) [self makePane];   // grow
 
@@ -1106,6 +1123,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [self applyVideoPaneLayout];
     [self setActivePane:_activePane];
+    [self updateEmptyHint];
     switch (_viewMode) {
         case ViewMode::Split:
             [self setStatus:@"Split view (2×2) — click a pane to make it active, then pick a channel."];
@@ -1123,15 +1141,16 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)setViewSplit:(id)__unused sender  { [self applyViewMode:ViewMode::Split  paneCount:4]; }
 - (void)setViewPip:(id)__unused sender    { [self applyViewMode:ViewMode::Pip    paneCount:2]; }
 
-// Row context menu ▸ "Play in PiP": force PiP mode and play the clicked channel into the inset
-// (the backdrop keeps playing), mirroring the Win32 "Play in PIP" command.
+// Row context menu ▸ "Play in PiP": force PiP mode and play the clicked channel into the
+// INSET, leaving the backdrop (pane 0) active and audible — mirroring the Win32 "Play in
+// PIP" command. Click the inset to make it the active/audible pane.
 - (void)playInPip:(id)__unused sender {
     const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
     if (row < 0 || row >= (NSInteger)_channels.size()) return;
     const Channel c = _channels[(size_t)row];  // copy — the pane switch may reload the grid
     if (_viewMode != ViewMode::Pip) [self applyViewMode:ViewMode::Pip paneCount:2];
-    [self setActivePane:1];  // the inset
-    [self playChannel:c];
+    if (_panes.size() < 2) return;  // PiP must have an inset
+    [self playChannel:c intoPane:1];
 }
 
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
@@ -1435,17 +1454,31 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self playChannel:_channels[(size_t)row]];
 }
 
-// The shared "start playing this channel" path — used by the grid (playRow:) and the
-// TV Guide (playFromGuide:name:).
-- (void)playChannel:(const Channel&)c {
-    _player->play(c.streamUrl, c.userAgent, c.referrer);
-    _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
-    if (MacVideoPane* p = [self activePane]) { p->channel = c; p->channelId = c.id; }  // remember per pane
+// Play `c` into a SPECIFIC pane. Only the active pane is audible and owns the title/status/
+// meters/resume-state; a background pane (e.g. the PiP inset) starts muted. The 250ms tick
+// re-asserts that mute once the audio track actually shows up.
+- (void)playChannel:(const Channel&)c intoPane:(int)idx {
+    if (idx < 0 || idx >= (int)_panes.size()) return;
+    MacVideoPane* p = _panes[(size_t)idx].get();
+    p->player->play(c.streamUrl, c.userAgent, c.referrer);
+    p->player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
+    p->player->setMuted(idx != _activePane);         // single-audio: only the active pane
+    p->channel = c;
+    p->channelId = c.id;
+    if (idx != _activePane) {
+        [self setStatus:[NSString stringWithFormat:@"Playing in %@: %@",
+                         (_viewMode == ViewMode::Pip ? @"PiP" : @"background pane"), ns(c.name)]];
+        return;
+    }
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
 }
+
+// The shared "start playing this channel" path — used by the grid (playRow:) and the
+// TV Guide (playFromGuide:name:). Always targets the active pane.
+- (void)playChannel:(const Channel&)c { [self playChannel:c intoPane:_activePane]; }
 
 // ---- NSTableView data source / delegate ----
 

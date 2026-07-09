@@ -125,9 +125,14 @@ void VlcPlayerMac::setMuted(bool muted) {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return;
     if (muted) {
+        // Only act when a track is actually selected. The host re-asserts mute on every
+        // stats tick (to survive an aout recreation), and re-issuing set_track(-1) on an
+        // already-silent player is needless churn — Win32 guards this the same way.
         const int cur = libvlc_audio_get_track(impl_->player);
-        if (cur != -1) impl_->savedAudioTrack = cur;      // remember the real track
-        libvlc_audio_set_track(impl_->player, -1);         // -1 == "Disable" => silent
+        if (cur != -1) {
+            impl_->savedAudioTrack = cur;                  // remember the real track
+            libvlc_audio_set_track(impl_->player, -1);     // -1 == "Disable" => silent
+        }
     } else {
         int restore = impl_->savedAudioTrack;
         if (restore == -1) {  // nothing saved yet — pick the first real audio track, if any
