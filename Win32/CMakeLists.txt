@@ -35,14 +35,26 @@ if(RABBITEARS_BUILD_GUI)
     message(FATAL_ERROR "RABBITEARS_BUILD_GUI is ON but libVLC could not be provisioned.")
   endif()
 
-  # WinSparkle (auto-update) — vendored prebuilt DLL/lib/header (copied from the
-  # sibling app). Same appcast/EdDSA scheme; see Win32/platform/Updater.cpp.
-  set(WS_DIR "${CMAKE_SOURCE_DIR}/third_party/winsparkle")
-  add_library(WinSparkle SHARED IMPORTED)
-  set_target_properties(WinSparkle PROPERTIES
-    IMPORTED_IMPLIB "${WS_DIR}/lib/WinSparkle.lib"
-    IMPORTED_LOCATION "${WS_DIR}/bin/WinSparkle.dll"
-    INTERFACE_INCLUDE_DIRECTORIES "${WS_DIR}/include")
+  # WinSparkle (auto-update) — vendored prebuilt DLL/lib/header (WinSparkle 0.9.3,
+  # official release binaries). Same appcast/EdDSA scheme; see Win32/platform/Updater.cpp.
+  # Vendored for BOTH x64 and ARM64 under third_party/winsparkle/{lib,bin}/{x64,arm64};
+  # the slice is picked by the compiler TARGET arch, mirroring LibVlc.cmake — key on
+  # CMAKE_CXX_COMPILER_ARCHITECTURE_ID, NOT CMAKE_SYSTEM_PROCESSOR (the HOST, which is
+  # ARM64 even for an emulated x64 build). Default ON — every release ships auto-update.
+  option(RABBITEARS_UPDATER "Build with WinSparkle auto-update (x64 + ARM64 vendored)" ON)
+  if(RABBITEARS_UPDATER)
+    if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+      set(_ws_arch "arm64")
+    else()
+      set(_ws_arch "x64")
+    endif()
+    set(WS_DIR "${CMAKE_SOURCE_DIR}/third_party/winsparkle")
+    add_library(WinSparkle SHARED IMPORTED)
+    set_target_properties(WinSparkle PROPERTIES
+      IMPORTED_IMPLIB "${WS_DIR}/lib/${_ws_arch}/WinSparkle.lib"
+      IMPORTED_LOCATION "${WS_DIR}/bin/${_ws_arch}/WinSparkle.dll"
+      INTERFACE_INCLUDE_DIRECTORIES "${WS_DIR}/include")
+  endif()
 
   add_executable(RabbitEars WIN32
     WinMain.cpp
@@ -72,8 +84,12 @@ if(RABBITEARS_BUILD_GUI)
     ${LIBVLC_INCLUDE_DIR}
     "${CMAKE_BINARY_DIR}/generated")     # version.h
   target_link_directories(RabbitEars PRIVATE ${LIBVLC_LIB_DIR})
+  if(RABBITEARS_UPDATER)
+    target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_WINSPARKLE)
+  endif()
   target_link_libraries(RabbitEars PRIVATE
-    RabbitEarsCore RabbitEarsPlatformWin ${LIBVLC_LIBS} WinSparkle
+    RabbitEarsCore RabbitEarsPlatformWin ${LIBVLC_LIBS}
+    $<$<BOOL:${RABBITEARS_UPDATER}>:WinSparkle>
     comctl32 comdlg32 dwmapi uxtheme gdi32 gdiplus shell32 user32 kernel32 ole32 version
     d2d1 dwrite windowscodecs winhttp mmdevapi)
   if(MSVC)
@@ -137,8 +153,10 @@ if(RABBITEARS_BUILD_GUI)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${LIBVLC_PLUGINS_DIR}" "$<TARGET_FILE_DIR:RabbitEars>/plugins"
     COMMENT "Copying libVLC plugins/ next to RabbitEars.exe")
-  add_custom_command(TARGET RabbitEars POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WS_DIR}/bin/WinSparkle.dll" "$<TARGET_FILE_DIR:RabbitEars>"
-    COMMENT "Copying WinSparkle.dll next to RabbitEars.exe")
+  if(RABBITEARS_UPDATER)
+    add_custom_command(TARGET RabbitEars POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${WS_DIR}/bin/${_ws_arch}/WinSparkle.dll" "$<TARGET_FILE_DIR:RabbitEars>"
+      COMMENT "Copying WinSparkle.dll (${_ws_arch}) next to RabbitEars.exe")
+  endif()
 endif()

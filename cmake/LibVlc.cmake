@@ -28,7 +28,15 @@ set(LIBVLC_NUGET_VERSION "3.0.23.1" CACHE STRING "VideoLAN.LibVLC.Windows NuGet 
 function(rabbitears_provision_libvlc)
   set(LIBVLC_FOUND FALSE PARENT_SCOPE)
   set(_pkg_id "videolan.libvlc.windows")
-  set(_rel "build/x64")   # x64 build; build/x86 + build/arm64 also exist in the package
+  # Match the libVLC binaries to the compiler TARGET arch (the NuGet ships build/x64, build/x86 AND
+  # build/arm64). Use CMAKE_CXX_COMPILER_ARCHITECTURE_ID — the MSVC TARGET ("x64"/"ARM64"/"X86") —
+  # NOT CMAKE_SYSTEM_PROCESSOR, which is the HOST: on a Windows-on-ARM box the host is ARM64 even
+  # for an x64 (emulated) build, so keying on it would wrongly hand the x64 link the arm64 lib.
+  if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+    set(_rel "build/arm64")
+  else()
+    set(_rel "build/x64")   # x64 (default) — also the x86 fallback; ARM64 handled above
+  endif()
 
   # -------------------------------------------------------------------------
   # 1. Locate the package: machine NuGet cache first, else download + extract.

@@ -327,6 +327,18 @@ void onEpgGuide(AppState* st) {
                                L"▸ Set Guide URL…).");
         }
     };
+    cb.isFavourite = [st](const std::wstring& channelId) {
+        const auto ch = st->db.channelByTvgId(channelId);
+        return ch && ch->favourite;
+    };
+    cb.onToggleFavourite = [st](const std::wstring& channelId, const std::wstring& channelName) {
+        const auto ch = st->db.channelByTvgId(channelId);
+        if (!ch) return;
+        st->db.toggleFavourite(ch->id);        // ch->favourite is the pre-toggle state
+        loadForFilter(st);                     // refresh the grid's favourite column / Favourites view
+        setStatus(st, (ch->favourite ? L"Removed from Favourites: " : L"Added to Favourites: ") +
+                          channelName);
+    };
     showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
 }
 

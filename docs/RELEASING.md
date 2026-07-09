@@ -9,8 +9,22 @@ packages** and signing is done **on macOS** with Sparkle's `sign_update`.
 (To isolate RabbitEars, generate a dedicated key pair and paste its public key
 into `Updater.cpp` instead — everything else is unchanged.)
 
-- Feed: `https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml`
-- Installers: GitHub Release assets.
+- Feeds — **one per architecture** (WinSparkle can't pick an enclosure by arch, so each
+  build reads its own feed and downloads its own installer; an ARM user always gets the
+  native build, never the x64 one). The build selects its feed at compile time in
+  `Win32/platform/Updater.cpp` (`#ifdef _M_ARM64`):
+  - x64:   `https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml`
+  - ARM64: `https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast-arm64.xml`
+- Installers: GitHub Release assets — `RabbitEars-<ver>-setup.exe` (x64) and, when shipping
+  the native build, `RabbitEars-<ver>-arm64-setup.exe` (ARM64). The two arches can release
+  independently: if a version ships x64-only, just skip the ARM64 track and its appcast keeps
+  pointing at the last ARM64 build.
+- Optional **universal** first-download — `RabbitEars-<ver>-universal-setup.exe` bundles BOTH
+  binary sets and installs the NATIVE arch at install time (Inno `ProcessorArchitecture` Check),
+  so a user who doesn't know their arch gets the right build. It needs **no appcast of its own**:
+  the installed result is byte-identical to a per-arch install, so it auto-updates through the
+  same per-arch feed. Sign it too (WinSparkle never downloads it, but a signature is cheap
+  insurance); it does not appear in any appcast enclosure.
 
 The running app reports its version as `APP_VERSION.BUILD` (e.g. `0.1.1.14`, from
 `RE_VERSION_FULL`); WinSparkle offers an update when the appcast's
@@ -40,28 +54,38 @@ portable zip for people who prefer it; those users update manually).
    `packaging/app.manifest`. The build number (git commit count) is automatic.
 2. **Commit** everything first — the build number is baked at CMake configure time,
    so the version stamp only matches `HEAD` after a build that follows the commit.
-3. **Build**:
+3. **Build both arches** (skip the ARM64 lines for an x64-only release):
    ```cmd
-   scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON
-   scripts\build-installer.cmd
+   scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON            :: x64   -> build\Win32\
+   scripts\build-installer.cmd                            :: x64 installer
+   scripts\build-arm64.cmd -DRABBITEARS_THEME_ENGINE=ON   :: ARM64 -> build-arm64\Win32\
+   scripts\build-installer.cmd arm64                      :: ARM64 installer
+   scripts\build-installer.cmd universal                  :: universal (needs BOTH build dirs)
    ```
-   → `build\installer\RabbitEars-<ver>-setup.exe` (bundles the exe, libVLC DLLs +
-   the whole `plugins\` tree, WinSparkle, and LICENSE).
-4. **Sign the installer** with the private key and copy the printed
-   `sparkle:edSignature`:
+   → `build\installer\RabbitEars-<ver>-setup.exe`, `RabbitEars-<ver>-arm64-setup.exe`, and
+   `RabbitEars-<ver>-universal-setup.exe` (each per-arch installer bundles that arch's exe, libVLC
+   DLLs + the whole `plugins\` tree, WinSparkle, LICENSE; the universal one bundles both sets).
+   The ARM64 installer sources from `build-arm64\` and is `ArchitecturesAllowed=arm64` (native
+   only); the x64 one stays `x64compatible` (runs on x64 and, emulated, on ARM); the universal one
+   allows both and picks the native set at install time.
+4. **Sign each installer** with the private key and copy the printed `sparkle:edSignature`
+   (one signature per file):
    - macOS (copy the installer over first): `scripts/sign-release.sh RabbitEars-<ver>-setup.exe`
      — wraps Sparkle's `sign_update` (login-Keychain key) and prints just the signature.
    - Windows (if the key is there): `sign_update.exe build\installer\RabbitEars-<ver>-setup.exe`
-5. **Generate the appcast** (writes `appcast.xml` at the repo root):
+5. **Generate the appcast(s)** at the repo root — one per arch you built:
    ```cmd
-   pwsh scripts\make-appcast.ps1 -Version 0.1.1.<build> ^
-        -SetupExe build\installer\RabbitEars-0.1.1-setup.exe -Signature <sig>
+   pwsh scripts\make-appcast.ps1 -Version <ver.build> ^
+        -SetupExe build\installer\RabbitEars-<ver>-setup.exe -Signature <sig-x64>
+   pwsh scripts\make-appcast.ps1 -Arch arm64 -Version <ver.build> ^
+        -SetupExe build\installer\RabbitEars-<ver>-arm64-setup.exe -Signature <sig-arm64>
    ```
-   (`-Version` must equal `RE_VERSION_FULL` of that build, i.e. `APP_VERSION.BUILD`.)
-6. **Publish on GitHub**: create a Release tagged `v0.1.1` (or `v<ver>`), upload the
-   setup `.exe` as an asset (the appcast enclosure URL points there).
-7. **Commit & push `appcast.xml`** on `main` — `raw.githubusercontent.com` serves it
-   at the feed URL.
+   (`-Version` must equal `RE_VERSION_FULL` of that build, i.e. `APP_VERSION.BUILD`; the plain
+   form writes `appcast.xml`, `-Arch arm64` writes `appcast-arm64.xml`.)
+6. **Publish on GitHub**: create a Release tagged `v<ver>`, upload **both** setup `.exe`s as
+   assets (each appcast's enclosure URL points at its own file in this release).
+7. **Commit & push** the appcast(s) you regenerated (`appcast.xml` and/or `appcast-arm64.xml`)
+   on `main` — `raw.githubusercontent.com` serves them at the feed URLs.
 
 Installed apps pick it up via the About box's **Check for Updates…** and
 WinSparkle's periodic check.

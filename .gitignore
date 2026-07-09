@@ -1,5 +1,6 @@
 # Build output
 /build/
+/build-arm64/
 /out/
 /build-mac/
 /build-mac-universal/
