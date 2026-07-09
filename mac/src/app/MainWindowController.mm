@@ -19,6 +19,7 @@
 #include "db/Database.h"
 #include "models/Channel.h"
 #include "platform/Encoding.h"
+#include "ui/VideoGrid.h"  // computeVideoPanes + ViewMode — multi-view pane geometry
 #include "platform/Log.h"
 #include "platform/Updater.h"
 
@@ -86,6 +87,16 @@ using namespace rabbitears::mac;  // MeterKind / MeterStyle / MeterConfig + the 
 - (void)mouseUp:(NSEvent*)__unused e { if (_onMoved) _onMoved(); }
 @end
 
+// One video pane in the multi-view area: a video surface (a child of the video container)
+// + its libVLC player + what it's currently playing. Single view uses one pane; Split/2×2
+// and PiP use several. The pane OWNS its player; its view is owned by the container (super).
+struct MacVideoPane {
+    NSView*                                view = nil;
+    std::unique_ptr<rabbitears::VlcPlayerMac> player;
+    rabbitears::Channel                    channel;      // currently playing (empty when idle)
+    long long                              channelId = 0;
+};
+
 // Filter popup tags.
 enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
 
@@ -121,7 +132,11 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
 
     std::unique_ptr<Database>     _db;
     std::unique_ptr<VlcEngineMac> _engine;   // shared libVLC instance; every player borrows it
-    std::unique_ptr<VlcPlayerMac> _player;
+    std::vector<std::unique_ptr<MacVideoPane>> _panes;  // 1 pane (Single) or N (Split/2×2/PiP)
+    int                           _activePane;      // index into _panes: drives audio/meters/volume
+    ViewMode                      _viewMode;        // Single / Split / Pip
+    NSView*                       _videoContainer;  // the split's right pane; holds the pane views + meter bar
+    VlcPlayerMac*                 _player;          // alias → the active pane's player (panes own them)
     NSTimer*                      _statsTimer;   // 250ms libVLC-stats poll → _statMeter
     double                        _bitrateMax;   // rolling throughput peak for the meter scale
     SpectrumTap*                  _spectrumTap;      // Core Audio process tap → the Spectrum meter
@@ -142,8 +157,15 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
         _db = std::make_unique<Database>();
         _engine = std::make_unique<VlcEngineMac>();
         _engine->init();  // create the shared libVLC instance once (loads the plugins)
-        _player = std::make_unique<VlcPlayerMac>();
-        _player->init(*_engine);
+        _viewMode = ViewMode::Single;
+        _activePane = 0;
+        // Pane 0 (the active pane). Its player is created now so early -showWindow calls
+        // (e.g. setVolume) work; its video surface is built in -showWindow with the window.
+        auto pane = std::make_unique<MacVideoPane>();
+        pane->player = std::make_unique<VlcPlayerMac>();
+        pane->player->init(*_engine);
+        _panes.push_back(std::move(pane));
+        _player = _panes[0]->player.get();  // alias to the active pane's player
     }
     return self;
 }
@@ -350,11 +372,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // right when enabled. Each is a fixed kMeterW wide — they do NOT stretch with the
     // window; the video fills the space above. -applyMeterLayout positions them.
     NSView* videoPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    _videoContainer = videoPane;  // holds the video panes + the floating meter bar
     _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, kMeterH, 600, 100 - kMeterH)];
     _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [videoPane addSubview:_videoView];
+    _panes[0]->view = _videoView;  // pane 0's surface is the active video view (aliased above)
     NSClickGestureRecognizer* dbl =
         [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(videoDoubleClicked:)];
     dbl.numberOfClicksRequired = 2;
@@ -407,6 +431,16 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [_window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
+}
+
+// ---- multi-view pane accessors ----
+- (MacVideoPane*)activePane {
+    if (_activePane < 0 || _activePane >= (int)_panes.size()) return nullptr;
+    return _panes[(size_t)_activePane].get();
+}
+- (VlcPlayerMac*)activePlayer {
+    MacVideoPane* p = [self activePane];
+    return p ? p->player.get() : nullptr;
 }
 
 - (void)addColumn:(NSString*)ident title:(NSString*)title width:(CGFloat)w {
