@@ -6,13 +6,13 @@
     <description>Most recent updates to RabbitEars for Windows</description>
     <language>en</language>
     <item>
-      <title>Version 0.2.5.168</title>
-      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.5</sparkle:releaseNotesLink>
-      <pubDate>Thu, 09 Jul 2026 10:29:45 +0000</pubDate>
-      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.2.5/RabbitEars-0.2.5-setup.exe"
-                 sparkle:version="0.2.5.168"
-                 sparkle:edSignature="H+wtuM3+AMgGtOzsewQ43bs4GZDqbi8iAz3K4Ia1kdDjLaheaS3hHxVKk/vYy1luhu1/POH4Ri/KAdZsgO/kAQ=="
-                 length="35168723"
+      <title>Version 0.2.6.180</title>
+      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.6</sparkle:releaseNotesLink>
+      <pubDate>Thu, 09 Jul 2026 21:44:09 +0000</pubDate>
+      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.2.6/RabbitEars-0.2.6-setup.exe"
+                 sparkle:version="0.2.6.180"
+                 sparkle:edSignature="TwemNmJP18CQ+CKYCgwTjCDVwr5ZhBakNu/i9wWZmMvg41j3Cu5KRmOoIe81i0YbJoZBQUpb9xn7BNp+T57/DA=="
+                 length="35250510"
                  type="application/octet-stream"/>
     </item>
   </channel>
