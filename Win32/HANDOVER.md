@@ -31,7 +31,19 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.5 SHIPPED (native ARM64)** · macOS Phase-1
+## Current state — **v0.2.6 SHIPPED** · macOS Phase-1
+
+**Released:** **`v0.2.6`** (2026-07-10), tag `v0.2.6` @ `4382395`, full version **`0.2.6.180`** (tag count ==
+shipped build number this time — `main` was level with origin, no rebase drift), three signed installers on
+GitHub release `v0.2.6` (x64 / native ARM64 / universal), **two appcasts** (`0.2.6.180`) committed @ `b2b7180`
+and LIVE (raw feeds serve 0.2.6.180; all three enclosures HTTP 200). The **owner-directed "do all of these"**
+batch: concurrent per-pane recording, MP4, PIP resize + view-mode/PIP persistence, TV-Guide "Show in Guide",
+resume-last-channel, named saved layouts, import/export favourites, and the x64 install-time `plugins.dat` fix
+— all built green (x64 BOTH theme flags + selftest ALL PASS + native ARM64), adversarially reviewed (3 confirmed
+recording regressions + 1 export nit fixed pre-ship). See the 0.2.6 block under "Immediate next steps" for the
+full feature map. **Owner runtime pass wanted** (sandbox can't launch the GUI): record in two panes at once +
+switch panes mid-record; MP4 plays back; PIP resize/position/mode survive a restart; resume-last; Show-in-Guide;
+saved layouts; favourites export→import; and the faster x64 cold start from the installed cache.
 
 **Released:** **`v0.2.5`** (2026-07-09), tag `v0.2.5` @ `fbebcc7`, full version **`0.2.5.168`**, signed **three**
 installers — **`RabbitEars-0.2.5-setup.exe`** (x64), **`RabbitEars-0.2.5-arm64-setup.exe`** (native ARM64), and
@@ -694,10 +706,13 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-⚠️ **0.2.6 IS IN PROGRESS — UNCOMMITTED in the working tree** (version bumped to 0.2.6 in all 4 spots).
-The owner-directed "do all of these" batch — every feature below is CODE-COMPLETE, built green on x64 BOTH
-theme flags + selftest ALL PASS + native ARM64, all three 0.2.6 installers compile, and the batch was
-**adversarially reviewed**: 3 CONFIRMED regressions in the per-pane recording change + 1 plausible export
+✅ **0.2.6 SHIPPED** (2026-07-10) — tag `v0.2.6` @ `4382395`, `0.2.6.180`, three signed installers on GitHub
+release `v0.2.6`, two appcasts LIVE @ `b2b7180`. Code landed in one commit (`4382395`, count 180 == the tag,
+no rebase drift), appcasts in a follow-up (`b2b7180`); both pushed. **This time the shipped build number matches
+the tag's commit count** (`main` was level with origin at cut time). The owner-directed "do all of these" batch —
+every feature below built green on x64 BOTH theme flags + selftest ALL PASS + native ARM64, all three installers
+compile, and the batch was **adversarially reviewed**: 3 CONFIRMED regressions in the per-pane recording change +
+1 plausible export
 nit, **all four fixed** — (1) the Scheduled-Recordings manager's Cancel/Delete stopped the ACTIVE pane's
 recorder instead of the pinned pane's (could cut a user's manual recording and leave the scheduled one
 running unowned) → shared `stopScheduledRecorder(st)` helper (tick + manager); (2) the Record glyph read
@@ -707,8 +722,8 @@ would silently START a recording → glyph forced to Record when the stopped rec
 gone pinned pane now stops nothing (fallback only for pin-less pre-0.2.6 rows); (4) favourites export now
 flushes + checks before the success dialog (close() swallows flush failures). NB: the review's UI lens +
 one verifier died on a subagent spend limit — that lens was re-covered by a careful inline pass (restore
-ordering, PIP resize state machine, id math, guide scroll; nothing further found). Awaiting the owner's
-runtime pass. **Commit only when the owner asks.**
+ordering, PIP resize state machine, id math, guide scroll; nothing further found). **Owner runtime pass still
+owed** (see the current-state header for the checklist).
 
 - **✅ Concurrent per-pane recording.** The engine was already per-pane (each pane's `VlcPlayer` owns its own
   `rec_`); the UI now matches: the Record button toggles the **ACTIVE pane's** recorder (glyph follows pane
