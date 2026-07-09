@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>RabbitEars (Win32) Updates</title>
@@ -6,13 +6,13 @@
     <description>Most recent updates to RabbitEars for Windows</description>
     <language>en</language>
     <item>
-      <title>Version 0.2.0.107</title>
-      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.0</sparkle:releaseNotesLink>
-      <pubDate>Sat, 04 Jul 2026 03:15:59 +0000</pubDate>
-      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.2.0/RabbitEars-0.2.0-setup.exe"
-                 sparkle:version="0.2.0.107"
-                 sparkle:edSignature="NC+eYqUHmBpnaWxFm90LhR+cvZeI0k9pNlnyIZaU3dDQ2CEg7lJd2hwGvO05w679CrYvAllTFCM7L2Fp4jJzCg=="
-                 length="34708994"
+      <title>Version 0.2.4.166</title>
+      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.4</sparkle:releaseNotesLink>
+      <pubDate>Thu, 09 Jul 2026 06:11:26 +0000</pubDate>
+      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.2.4/RabbitEars-0.2.4-setup.exe"
+                 sparkle:version="0.2.4.166"
+                 sparkle:edSignature="mqnKHKehk9m0sKh0lS24GF6yacjh5WXJDRpnOcix/DkPD5J/PekyoXqQuOqxVZh73NG3gEHXQiXUo21Nf7XKAQ=="
+                 length="35164957"
                  type="application/octet-stream"/>
     </item>
   </channel>

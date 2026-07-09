@@ -2,11 +2,11 @@
 #include "ui/VlcPlayer.h"
 
 #include <algorithm>
-#include <cstdarg>
-#include <cstdio>
+#include <climits>  // ULLONG_MAX (least-recently-busied host fallback)
 
 #include <vlc/vlc.h>
 
+#include "ui/VlcEngine.h"
 #include "platform/Encoding.h"
 #include "platform/Log.h"
 
@@ -18,22 +18,10 @@ namespace {
 constexpr int kStatsPollMs = 250;
 
 // C thunk registered with libVLC; forwards to the instance. Runs on a libVLC
-// thread — only touches atomics + PostMessage (thread-safe), never mp_.
+// thread — only touches atomics, PostMessage, and the command queue (all
+// thread-safe); never mp_ directly (that's worker-thread-owned).
 void vlcEventThunk(const libvlc_event_t* e, void* opaque) {
     static_cast<VlcPlayer*>(opaque)->handleVlcEvent(e);
-}
-
-// libVLC's own log, routed into our diagnostic file (warnings + errors only, so
-// it stays small). Runs on libVLC threads — diag::write is thread-safe. This is
-// the payload for diagnosing why a stream won't play on a tester's machine.
-void vlcLogCb(void*, int level, const libvlc_log_t*, const char* fmt, va_list args) {
-    if (level < LIBVLC_WARNING) return;
-    char buf[1024];
-    va_list ap;
-    va_copy(ap, args);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    diag::write(level >= LIBVLC_ERROR ? L"VLC-ERR" : L"VLC-WARN", wideFromUtf8(buf));
 }
 
 }  // namespace
@@ -55,32 +43,51 @@ void VlcPlayer::shutdown() {
     for (auto& r : reapers_)
         if (r.th.joinable()) r.th.join();
     reapers_.clear();
-    if (inst_) {
-        libvlc_log_unset(inst_);
-        libvlc_release(inst_);
-        inst_ = nullptr;
+    // The libVLC instance is owned by VlcEngine — just drop our borrowed handle so no
+    // further libVLC work runs; the engine releases the instance once every player
+    // built on it has been shut down.
+    inst_ = nullptr;
+}
+
+void VlcPlayer::beginTeardown() {
+    if (shutDown_ || teardownStarted_) return;
+    teardownStarted_ = true;
+    if (started_) {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            queue_.push_back({Cmd::Stop});  // doStop(async): the blocking playback stop/release runs on a reaper
+            Cmd rec{Cmd::RecordStop};
+            rec.ivalue = 1;  // async: a recording pane's stop/release ALSO runs on a reaper, so the
+            queue_.push_back(std::move(rec));  // worker join below can't block the UI on a stuck recorder feed
+            quit_ = true;
+            queue_.push_back({Cmd::Quit});  // then quit the worker (its own doStop/doRecordStop are no-ops now)
+        }
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();  // FAST: both stops were handed to reapers, not the worker
     }
+    // reapers_ is ours now (worker joined). Do NOT join it here — the reaper runs the blocking
+    // stop in the background so the UI thread stays responsive; teardownComplete() polls its done
+    // flag and shutdown() (called once complete) joins the finished thread instantly.
+}
+
+bool VlcPlayer::teardownComplete() {
+    for (auto& r : reapers_)
+        if (!r.done->load()) return false;
+    return true;
 }
 
 VlcPlayer::~VlcPlayer() { shutdown(); }
 
-bool VlcPlayer::init() {
+bool VlcPlayer::init(VlcEngine& engine) {
     if (inst_) return true;
-    // NB: stats collection is left ENABLED (no "--no-stats") so we can sample
-    // real throughput + packet health per media and drive the buffer meter.
-    // "--quiet" is dropped so libVLC emits its warning/error log, which we route
-    // to the diagnostic file via libvlc_log_set (invaluable for stream triage).
-    const char* args[] = {
-        "--intf=dummy",       "--no-video-title-show", "--no-osd",
-        "--network-caching=1000", "--http-reconnect",
-    };
-    inst_ = libvlc_new(static_cast<int>(sizeof(args) / sizeof(args[0])), args);
+    // Borrow the shared libVLC instance — VlcEngine owns it (one libvlc_new per
+    // process; that single instance backs every player). All we spin up here is this
+    // player's own worker thread.
+    inst_ = engine.handle();
     if (!inst_) {
-        diag::error(L"libVLC init failed (libvlc_new returned null)");
+        diag::error(L"VlcPlayer::init called with an uninitialized VlcEngine");
         return false;
     }
-    libvlc_log_set(inst_, vlcLogCb, this);
-    diag::info(L"libVLC " + wideFromUtf8(libvlc_get_version()) + L" initialized");
     worker_ = std::thread(&VlcPlayer::workerLoop, this);
     started_ = true;
     return true;
@@ -123,6 +130,21 @@ void VlcPlayer::workerLoop() {
             }
         }
         if (!haveCmd) {
+            // Backstop the multi-view mute each poll: if an adaptive quality switch re-selected a
+            // muted pane's audio track (recreating its output), deselect it again; keep the active
+            // pane's volume applied. Guarded by get_track so we only touch it on an actual change
+            // (no repeated set_track glitch). Cheap; keeps only the active pane audible.
+            if (mp_) {
+                if (muted_.load()) {
+                    const int cur = libvlc_audio_get_track(mp_);
+                    if (cur != -1) {  // a quality switch re-selected the track -> remember + redeselect
+                        savedAudioTrack_ = cur;
+                        libvlc_audio_set_track(mp_, -1);
+                    }
+                } else {
+                    libvlc_audio_set_volume(mp_, volume_.load());
+                }
+            }
             sampleStats();  // periodic wake while playing
             continue;
         }
@@ -146,6 +168,9 @@ void VlcPlayer::workerLoop() {
             case Cmd::Volume:
                 if (mp_) libvlc_audio_set_volume(mp_, c.ivalue);
                 break;
+            case Cmd::Mute:
+                applyAudioState();
+                break;
             case Cmd::Aspect:
                 if (mp_) libvlc_video_set_aspect_ratio(mp_, c.svalue.empty() ? nullptr : c.svalue.c_str());
                 break;
@@ -153,7 +178,13 @@ void VlcPlayer::workerLoop() {
                 doRecordStart(c);
                 break;
             case Cmd::RecordStop:
-                doRecordStop();
+                doRecordStop(/*async=*/c.ivalue != 0);  // async on a teardown; sync on a manual stop
+                break;
+            case Cmd::AddHost:
+                // A vout host the UI thread pre-created inside this player's pane. hosts_ is
+                // worker-only, so it joins the pool here (never on the UI thread) — no race.
+                if (c.pvalue)
+                    hosts_.push_back({static_cast<HWND>(c.pvalue), false, 0});
                 break;
         }
     }
@@ -163,11 +194,46 @@ void VlcPlayer::reapAsyncStops() {
     for (auto it = reapers_.begin(); it != reapers_.end();) {
         if (it->done->load()) {
             if (it->th.joinable()) it->th.join();
+            const HWND freed = it->host;  // the dying player's vout host is now released
             it = reapers_.erase(it);
+            if (freed)  // return it to the free set (a recorder reaper has none)
+                for (auto& h : hosts_)
+                    if (h.hwnd == freed) { h.busy = false; break; }
         } else {
             ++it;
         }
     }
+}
+
+// Worker-thread only. Pick a vout host for a new stream: reuse a free one (a just-drained host
+// whose reaper has finished is legitimately free), else ask the UI thread to grow the pool, else
+// (shutdown edge only) fall back to the least-recently-busied host. Never blocks forever — the
+// growth request uses SendMessageTimeout(SMTO_ABORTIFHUNG) so shutdown()'s worker_.join() can't
+// deadlock against a UI thread that's parked in that join.
+HWND VlcPlayer::pickVoutHost() {
+    for (auto& h : hosts_)
+        if (!h.busy && IsWindow(h.hwnd)) return h.hwnd;  // a proven-free host
+    // None free: ask the UI thread to create one (window affinity). Bounded 1s timeout: in normal
+    // operation the UI is pumping and returns fast; only on the shutdown edge does it time out.
+    if (voutHostMsg_ && evtTarget_ && IsWindow(evtTarget_)) {
+        DWORD_PTR res = 0;
+        const LRESULT ok = SendMessageTimeoutW(evtTarget_, voutHostMsg_,
+                                               reinterpret_cast<WPARAM>(video_),
+                                               static_cast<LPARAM>(tag_), SMTO_ABORTIFHUNG, 1000,
+                                               &res);
+        if (ok && res) {
+            HWND nh = reinterpret_cast<HWND>(res);
+            hosts_.push_back({nh, false, 0});  // worker owns hosts_ — safe to add here
+            return nh;
+        }
+    }
+    // Fallback (timeout/failure): reuse the host that was busied longest ago (its reaper is the
+    // most likely to have finished). Never hang. Only reachable while the UI is in worker_.join().
+    HWND best = nullptr;
+    unsigned long long oldest = ULLONG_MAX;
+    for (auto& h : hosts_)
+        if (IsWindow(h.hwnd) && h.busySeq <= oldest) { oldest = h.busySeq; best = h.hwnd; }
+    return best;  // nullptr only if the pool is somehow empty (doPlay then falls back to video_)
 }
 
 void VlcPlayer::doStop(bool async) {
@@ -181,6 +247,14 @@ void VlcPlayer::doStop(bool async) {
             libvlc_media_t* oldMedia = media_;
             mp_ = nullptr;
             media_ = nullptr;
+            // The vout host this dying player renders into stays BUSY until its reaper finishes
+            // releasing it (its D3D vout still owns that surface); only then is it reusable. The
+            // next stream must therefore pick a DIFFERENT free host — reusing this one now is
+            // exactly the popout bug. currentHost_ goes null so the pick can't land back on it.
+            const HWND oldHost = currentHost_.load();
+            for (auto& h : hosts_)
+                if (h.hwnd == oldHost) { h.busy = true; h.busySeq = ++hostBusyCounter_; break; }
+            currentHost_.store(nullptr);
             // Detach our callbacks so this dying player can't post stale events (e.g.
             // a Stopped/Error for the channel we just switched away from).
             if (auto* em = libvlc_media_player_event_manager(old))
@@ -197,7 +271,7 @@ void VlcPlayer::doStop(bool async) {
                                     if (oldMedia) libvlc_media_release(oldMedia);
                                     done->store(true);
                                 }),
-                                done});
+                                done, oldHost});
         } else {
             libvlc_media_player_stop(mp_);  // synchronous (shutdown/explicit stop)
             libvlc_media_player_release(mp_);
@@ -206,6 +280,10 @@ void VlcPlayer::doStop(bool async) {
                 libvlc_media_release(media_);
                 media_ = nullptr;
             }
+            const HWND oldHost = currentHost_.load();  // released synchronously -> host free now
+            for (auto& h : hosts_)
+                if (h.hwnd == oldHost) { h.busy = false; break; }
+            currentHost_.store(nullptr);
         }
     } else if (media_) {
         libvlc_media_release(media_);
@@ -247,13 +325,24 @@ void VlcPlayer::doPlay(const Cmd& c) {
     prevReadBytes_ = prevDemuxBytes_ = 0;
     prevCorrupted_ = prevDiscontinuity_ = prevLostPictures_ = 0;
     prevDisplayedPictures_ = 0;
+    savedAudioTrack_ = -1;  // fresh stream: the previous channel's audio-track id no longer applies
 
-    if (video_) {
-        libvlc_media_player_set_hwnd(mp_, static_cast<void*>(video_));
+    // Attach to a proven-FREE vout host, never the pane HWND directly: reusing a surface whose
+    // previous vout hasn't been released is what makes libVLC spawn its "VLC (Direct3D11 output)"
+    // top-level window on rapid channel-surf. pickVoutHost() reuses a drained host or grows the
+    // pool; it's guaranteed non-null in normal operation (the pane pre-creates two). video_ (the
+    // pane HWND) is only a pathological last resort so a pool miss degrades to the old behaviour
+    // rather than crashing.
+    reapAsyncStops();  // return any hosts whose reaper just finished to the free set
+    HWND host = pickVoutHost();
+    if (!host) host = video_;
+    if (host && IsWindow(host)) {
+        currentHost_.store(host);  // the UI reads this on PlayerEvent::Playing to show this host
+        libvlc_media_player_set_hwnd(mp_, static_cast<void*>(host));
         // Don't let libVLC's video window swallow mouse/keyboard input. We host our own
         // interactions over the surface (double-click fullscreen, and in video-only mode the
-        // drag-to-move + right-click menu + Esc). Without this the vout child consumes those
-        // events while a stream is playing, so they only worked when nothing was on-screen.
+        // drag-to-move + right-click menu + Esc). The vout host's window proc forwards the clicks
+        // it does receive to the pane's VideoProc, so the pane still gets them.
         libvlc_video_set_mouse_input(mp_, 0);
         libvlc_video_set_key_input(mp_, 0);
     }
@@ -315,7 +404,8 @@ void VlcPlayer::sampleStats() {
         snapshot_ = fs;
     }
     if (evtTarget_ && evtMsg_)
-        PostMessageW(evtTarget_, evtMsg_, static_cast<WPARAM>(PlayerEvent::Stats), 0);
+        PostMessageW(evtTarget_, evtMsg_,
+                     MAKEWPARAM(static_cast<WORD>(PlayerEvent::Stats), static_cast<WORD>(tag_)), 0);
 }
 
 FlowStats VlcPlayer::flowStats() const {
@@ -332,7 +422,14 @@ void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {
             ev = PlayerEvent::Buffering;
             lp = static_cast<LPARAM>(e->u.media_player_buffering.new_cache);
             break;
-        case libvlc_MediaPlayerPlaying: ev = PlayerEvent::Playing; playing_.store(true); break;
+        case libvlc_MediaPlayerPlaying:
+            ev = PlayerEvent::Playing;
+            playing_.store(true);
+            // The audio track list exists now — apply this pane's mute/volume (deselect the audio
+            // track for a background pane, or select + set volume for the active one). Thread-safe
+            // from the event thread (enqueues; the worker touches mp_).
+            enqueue({Cmd::Mute});
+            break;
         case libvlc_MediaPlayerPaused: ev = PlayerEvent::Paused; break;
         case libvlc_MediaPlayerStopped: ev = PlayerEvent::Stopped; playing_.store(false); break;
         case libvlc_MediaPlayerEndReached: ev = PlayerEvent::EndReached; playing_.store(false); break;
@@ -340,7 +437,8 @@ void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {
         default: return;
     }
     if (evtTarget_ && evtMsg_)
-        PostMessageW(evtTarget_, evtMsg_, static_cast<WPARAM>(ev), lp);
+        PostMessageW(evtTarget_, evtMsg_, MAKEWPARAM(static_cast<WORD>(ev), static_cast<WORD>(tag_)),
+                     lp);
 }
 
 bool VlcPlayer::play(const std::wstring& url, const std::wstring& userAgent,
@@ -357,6 +455,13 @@ bool VlcPlayer::play(const std::wstring& url, const std::wstring& userAgent,
 void VlcPlayer::togglePause() { enqueue({Cmd::Pause}); }
 void VlcPlayer::stop() { enqueue({Cmd::Stop}); }
 
+void VlcPlayer::registerVoutHost(HWND host) {
+    if (!host) return;
+    Cmd c{Cmd::AddHost};
+    c.pvalue = host;  // the worker adds it to hosts_ (worker-only) when it drains the queue
+    enqueue(std::move(c));
+}
+
 void VlcPlayer::setVolume(int volume) {
     if (volume < 0) volume = 0;
     if (volume > 100) volume = 100;
@@ -364,6 +469,51 @@ void VlcPlayer::setVolume(int volume) {
     Cmd c{Cmd::Volume};
     c.ivalue = volume;
     enqueue(std::move(c));
+}
+
+void VlcPlayer::setMuted(bool muted) {
+    muted_.store(muted);
+    enqueue({Cmd::Mute});  // applyAudioState() on the worker (un)selects the audio track
+}
+
+// Worker-thread only. Silence a background pane by DESELECTING its audio track rather than
+// zeroing its volume: libVLC 3.x resets a player's output volume to 100% whenever it recreates
+// the audio output (an HLS low->high quality switch, with NO event fired), so a volume-based mute
+// leaks and pulses on adaptive feeds. A player with no audio track selected has no audio output at
+// all, so there is nothing to reset. The active pane re-selects its track and applies its volume.
+void VlcPlayer::applyAudioState() {
+    if (!mp_) return;
+    if (muted_.load()) {
+        const int cur = libvlc_audio_get_track(mp_);
+        if (cur != -1) {  // audio currently on -> remember which track, then deselect it
+            savedAudioTrack_ = cur;
+            libvlc_audio_set_track(mp_, -1);  // no audio ES selected -> no aout to leak/reset
+            diag::info(L"pane " + std::to_wstring(tag_) + L" mute: audio track -1 (saved " +
+                       std::to_wstring(savedAudioTrack_) + L")");
+        }
+    } else {
+        // Only (re)select a track if audio is actually OFF, i.e. WE deselected it. If a track is
+        // already selected, leave libVLC's choice alone — never override the user's preferred audio
+        // language, and never touch track selection during ordinary (single-pane) playback.
+        if (libvlc_audio_get_track(mp_) == -1) {
+            int t = -1, first = -1;  // validate savedAudioTrack_ against THIS stream's tracks
+            if (libvlc_track_description_t* d = libvlc_audio_get_track_description(mp_)) {
+                for (auto* it = d; it; it = it->p_next) {
+                    if (it->i_id == -1) continue;
+                    if (first < 0) first = it->i_id;
+                    if (it->i_id == savedAudioTrack_) t = savedAudioTrack_;  // saved track still present
+                }
+                libvlc_track_description_list_release(d);
+            }
+            if (t < 0) t = first;  // saved id absent (channel changed) -> first real audio track
+            if (t >= 0) {
+                libvlc_audio_set_track(mp_, t);
+                diag::info(L"pane " + std::to_wstring(tag_) + L" unmute: audio track " +
+                           std::to_wstring(t));
+            }
+        }
+        libvlc_audio_set_volume(mp_, volume_.load());
+    }
 }
 
 void VlcPlayer::setNetworkCaching(int ms) {
@@ -424,11 +574,29 @@ void VlcPlayer::doRecordStart(const Cmd& c) {
     diag::info(L"recording started -> " + c.recPath);
 }
 
-void VlcPlayer::doRecordStop() {
+void VlcPlayer::doRecordStop(bool async) {
     if (rec_) {
-        libvlc_media_player_stop(rec_);  // flushes + finalizes the .ts (TS needs no trailer)
-        libvlc_media_player_release(rec_);
-        rec_ = nullptr;
+        if (async) {
+            // Hand the (blocking) recorder stop()/release() to a reaper thread, exactly like
+            // doStop(async) does for playback, so a mode-switch teardown's worker join can't
+            // block the UI thread on a stuck recording feed. recording_ is cleared right away;
+            // the .ts is finalized when the reaper's stop() returns (TS needs no trailer, so a
+            // late finalize is safe). No media ref to release — doRecordStart drops it at open.
+            libvlc_media_player_t* old = rec_;
+            rec_ = nullptr;
+            reapAsyncStops();  // drop any that have already finished
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            reapers_.push_back({std::thread([old, done] {
+                                    libvlc_media_player_stop(old);
+                                    libvlc_media_player_release(old);
+                                    done->store(true);
+                                }),
+                                done});
+        } else {
+            libvlc_media_player_stop(rec_);  // synchronous: flushes + finalizes the .ts (TS needs no trailer)
+            libvlc_media_player_release(rec_);
+            rec_ = nullptr;
+        }
         diag::info(L"recording stopped");
     }
     recording_.store(false);

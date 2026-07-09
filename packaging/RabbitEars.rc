@@ -11,8 +11,8 @@ IDR_ABOUT_PNG RCDATA "../art/RabbitEars3.png"
 // About-box click easter egg (swapped in when the user clicks the bunny).
 IDR_ABOUT_ALT_PNG RCDATA "../art/BadAss_RabbitEars.png"
 
-// Startup splash artwork (the branded logo), embedded as raw PNG bytes.
-IDR_SPLASH_PNG RCDATA "../art/RabbitEars_logo.png"
+// Startup splash artwork (the clockwork app icon, artist-trimmed to the tile), embedded as raw PNG bytes.
+IDR_SPLASH_PNG RCDATA "../art/clockwork_icon3.png"
 
 // Application manifest (per-monitor-v2 DPI, Common Controls v6, UTF-8).
 // CREATEPROCESS_MANIFEST_RESOURCE_ID (1) / RT_MANIFEST (24). Path relative to
@@ -23,8 +23,8 @@ IDR_SPLASH_PNG RCDATA "../art/RabbitEars_logo.png"
 // sync with APP_VERSION (CMakeLists.txt), packaging/app.manifest, and
 // packaging/installer.iss on each release — see docs/RELEASING.md.
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,2,0,0
- PRODUCTVERSION 0,2,0,0
+ FILEVERSION 0,2,4,0
+ PRODUCTVERSION 0,2,4,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS VOS_NT_WINDOWS32
@@ -37,12 +37,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "RabbitEars"
             VALUE "FileDescription", "RabbitEars - native IPTV player"
-            VALUE "FileVersion", "0.2.0.0"
+            VALUE "FileVersion", "0.2.4.0"
             VALUE "InternalName", "RabbitEars"
             VALUE "LegalCopyright", "Copyright (C) 2026 - GPL-3.0-or-later"
             VALUE "OriginalFilename", "RabbitEars.exe"
             VALUE "ProductName", "RabbitEars"
-            VALUE "ProductVersion", "0.2.0.0"
+            VALUE "ProductVersion", "0.2.4.0"
         END
     END
     BLOCK "VarFileInfo"

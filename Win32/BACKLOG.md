@@ -49,6 +49,80 @@ shared skin-model boundary to the macOS team** before any engine code lands (the
 
 ---
 
+## 🖥️ Native ARM64 build (Windows-on-ARM)
+
+**Owner-directed (backlogged 2026-07-08).** Today the app is **x64-only** (`scripts/build.cmd` →
+`vcvars64.bat`, `/machine:x64`; `cmake/LibVlc.cmake:31` hardcodes `build/x64`). It runs fine on
+Windows-on-ARM via the OS's **x64 emulation** (owner runs it on ARM Windows, "works well") — but a
+**native ARM64 build** would give native speed + better battery, no emulation.
+
+**Design (owner's idea): one x64 launcher that self-selects the native binaries.** Ship a small
+**x86-64 launcher** (runs everywhere — natively on x64, emulated on ARM). At startup it detects the
+**native** machine arch (`IsWow64Process2` → `NativeMachine == IMAGE_FILE_MACHINE_ARM64`, or
+`GetNativeSystemInfo`) and launches the matching binary set — **ARM64 binaries on ARM**, x64
+otherwise. One distributable, native on both. (Alternative: an arch-specific installer per download,
+simpler but two artifacts.)
+
+**Dependency status (checked 2026-07-08):**
+- ✅ **libVLC 3.0.23** — the NuGet already unpacks `build/arm64` (full `libvlc.dll` + `libvlccore.dll`
+  + `plugins/`). Usually *the* WoA blocker; already solved.
+- ✅ **SQLite, miniz** — vendored C source, compile for any target.
+- ❌ **WinSparkle** — `third_party/winsparkle/lib` has only an x64 `WinSparkle.lib`; need an ARM64
+  build (upstream ships ARM64 in recent releases) — vendor it alongside.
+- ⚙️ **Toolchain / CMake** — add an ARM64 configure (ARM64 MSVC cross-tools, e.g.
+  `vcvarsamd64_arm64.bat`) + make `LibVlc.cmake`'s `build/x64` arch-conditional (`build/arm64`).
+  Installer (`packaging/installer.iss`) + `build-installer.cmd` bundle both binary sets + the launcher.
+
+**Scope:** self-contained, not blocking any feature work. Own point release when picked up.
+
+---
+
+## ⏱️ Slow first startup — ship a pre-generated libVLC `plugins.dat`
+
+**Diagnosed 2026-07-09 (owner reported "first startup is very slow").** libVLC scans all **323 plugin
+DLLs** at startup because there is **no `plugins.dat` cache**. Log evidence: the whole delay is inside
+libVLC init (session-start → "libVLC initialized"), and it is **cold-cache-bound** — ~10.6 s right after a
+rebuild re-copies the plugins (cold on disk) vs ~0.8 s once the DLLs are warm in the OS file cache. The DB
+open right after is fast (0.2 s / 13 k channels), so it is neither the DB nor the playlist.
+
+**Worse for installed users:** `packaging/installer.iss` ships plugins into `{app}\plugins` (Program Files,
+**read-only** for a standard user), so libVLC can never write a cache there and **rescans all 323 plugins on
+every launch** — first launch (cold) is the ~10 s worst case.
+
+**Fix:** ship a pre-generated **`plugins.dat`** next to the plugins. With it present libVLC loads the cache
+instead of scanning → fast startup everywhere (dev + installed, cold or warm).
+- Generate it with libVLC's **`vlc-cache-gen`** as a post-plugin-copy build step (`cmake/LibVlc.cmake`) →
+  writes `build/Win32/plugins/plugins.dat`; the installer's `plugins\*` glob then ships it automatically.
+- **Blocker:** `vlc-cache-gen.exe` is NOT in the `VideoLAN.LibVLC.Windows` NuGet (it ships no tools) — source
+  the one matching libVLC **3.0.23** from the VLC Windows build and vendor it (small binary). Must match the
+  libvlccore ABI exactly or the cache is rejected and libVLC silently rescans.
+- Secondary lever: **trim** the plugin set (RabbitEars only needs HTTP/HLS access, common demuxers/codecs,
+  the Direct3D11 vout, mmdevice aout) — shrinks the scan but doesn't eliminate it; risky (removing a needed
+  plugin breaks playback), so cache-gen is the primary fix.
+
+**Scope:** own point release (candidate 0.2.5). `VlcEngine::init` args (`Win32/ui/VlcEngine.cpp:37`) don't
+disable caching, so no code change there — purely a build/packaging change.
+
+---
+
+## 📺 TV Guide ↔ channel enhancements (owner-requested 2026-07-09)
+
+Two follow-ups off the 0.2.4 TV-Guide polish:
+- **Favourite a channel from the guide.** Right-click a guide row → **"Add to Favourites"** (toggle), so you
+  can star channels without leaving the guide. The guide already carries each row's full tvg-id
+  (`GuideRow::channelId`) → resolve to the `Channel` (`Database::channelByTvgId`) and toggle its favourite flag
+  (same one the grid's `COL_FAV` uses). Add the action to `EpgGuideControl`'s right-click menu, next to the
+  existing Play / Schedule (`GuideCallbacks`).
+- **"Show in TV Guide" from a channel.** Right-click a channel in the grid → jump to that channel's row in the
+  guide: open/reveal the guide (reuse `revealEpgGuide`) and scroll it to that channel (vertical to the row,
+  horizontal to "now"). Hook the channel grid's context menu (`ChannelGridCallbacks::onContextMenu`) → a new
+  `EpgGuideControl` "scroll to channel <tvg-id>" entry point.
+
+**Scope:** small UX features in the guide + channel-grid context menus; no schema change. Bundle into a
+TV-Guide polish point release.
+
+---
+
 ## Deferred epics
 
 - **JSON profiles** (deferred since 0.1.5): per-profile settings + playlist sources, channel cache

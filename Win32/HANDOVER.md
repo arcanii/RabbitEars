@@ -31,9 +31,35 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — v0.2.0 SHIPPED (the theme engine, theme-ON by default) · macOS Phase-1 in progress
+## Current state — **v0.2.4 SHIPPED** · macOS Phase-1
 
-**Released:** **`v0.2.0`** (2026-07-04), tag `v0.2.0` @ `343aa0e`, full version `0.2.0.107`, signed
+**Released:** **`v0.2.4`** (2026-07-09), tag `v0.2.4` @ `f30fcc2`, full version `0.2.4.166`, signed
+**`RabbitEars-0.2.4-setup.exe`** (appcast @ `6e2b4ae`) — the **per-pane vout-host pool** that ends the "VLC
+(Direct3D11 output)" popout on rapid channel-surf (libVLC renders into a proven-free host child window, never
+the reused pane HWND; hosts freed by the reaper done-flag, grown deadlock-safe via SendMessageTimeout), plus
+**TV Guide reopen + instant reopen** (`NM_CLICK` + `revealEpgGuide`) and **"Video only" from fullscreen** now
+dropping into windowed video-only. Owner-surf-verified; auto-updates from 0.2.3. Prior:
+**`v0.2.3`** (2026-07-08), tag `v0.2.3` @ `d6ad80a`, full version `0.2.3.162`, signed
+**`RabbitEars-0.2.3-setup.exe`** (appcast @ `ca7b682`) — **the multi-view fix batch**: **track-based per-pane
+audio** (only the active tile is audible, via `libvlc_audio_set_track(mp,-1)` — holds through HLS quality
+switches where a volume mute leaked), the **mode-switch AppHang fix** (async pane + recorder teardown),
+**video-only/fullscreen 2×2 grid + clickable tile focus**, **single-collapse keeps the selected stream**, and
+the active-pane highlight. Owner-runtime-verified; **auto-update `0.2.2 → 0.2.3` confirmed in the wild.** Prior:
+**`v0.2.2`** (2026-07-07), tag `v0.2.2` @ `059b632`, full version `0.2.2.153`, signed
+**`RabbitEars-0.2.2-setup.exe`** (appcast @ `fcdac10`) — **the EPG `@feed` tvg-id matching fix** (iptv-org
+`CNN.us@SD` now matches XMLTV's `CNN.us`, so large guides populate — owner runtime-verified the TV Guide
+loads channels), **the artist's clockwork app icon + splash** (`art/clockwork_icon3.png`, trimmed to the
+rounded tile — the earlier `clockwork_icon`/`_icon2` inputs were deleted), **About artwork +25% with a
+clickable GitHub link** (owner-confirmed), and an **empty-PIP highlight** (accent frame + hint until a
+channel loads). **First release cut entirely on the owner's machine** — `gh` CLI + Inno Setup are BOTH
+present here now (not the old sandbox); only the EdDSA signing still happens on the Mac. Now on **0.2.3 dev**.
+Prior: **`v0.2.1`** (2026-07-06), tag `v0.2.1` @ `79ab12c`, full version `0.2.1.148`, signed
+**`RabbitEars-0.2.1-setup.exe`** (appcast @ `a361b99`) — **EPG/TV-Guide + Scheduled Recordings + the
+multi-view (Split 2×2 / floating PIP) engine + the clockwork icon** (see the sections below); owner
+runtime-verified Split + PIP live, and **auto-update `0.2.0 → 0.2.1` confirmed in the wild** (About ▸ Check
+for Updates). The GitHub release was created via the **REST API** (no `gh` CLI in the
+sandbox — a cached git credential authenticated it); the appcast points 0.1.1–0.2.0 users at it. Prior:
+**`v0.2.0`** (2026-07-04), tag `v0.2.0` @ `343aa0e`, full version `0.2.0.107`, signed
 **`RabbitEars-0.2.0-setup.exe`** (appcast @ `7b3946a`) — **the theme engine** (see the section below);
 **auto-update `0.1.7 → 0.2.0` verified in the wild.** Prior: `v0.1.7` (2026-07-03), tag `v0.1.7` @
 `de8c571`, signed **`RabbitEars-0.1.7-setup.exe`** (full `0.1.7.52`, appcast @ `12be931`). Earlier: `v0.1.6` (`5d06958`,
@@ -48,6 +74,82 @@ M3uParser, Database, DockLayout, models, platform *contracts*), **`Win32/`** (th
 Windows exe/DLLs/plugins now build to `build\Win32\`** (not `build\`) — `installer.iss` +
 `build-installer.cmd` were fixed to match (0.1.7). The macOS team is moving fast on `main`: Phase-1
 (playback + native channel grid + Sparkle + CI `.app` build) is in progress.
+
+### 🔲 Multi-view (Split 2×2 / floating PIP) + TV Guide overhaul (0.2.1 — **shipped**)
+
+The session after the EPG/recordings merge added the **multi-player engine** (the roadmap keystone) and
+overhauled the TV Guide — all shipped in **0.2.1** (commits `27fac06` engine+guide, `79ab12c` floating PIP):
+
+- **Multi-player engine.** `Win32/ui/VlcEngine` owns the ONE shared libVLC instance (a single `libvlc_new`);
+  `VlcPlayer::init(engine)` borrows it, so N players are cheap. A **`VideoPane`** = its own video HWND +
+  `VlcPlayer` + channel, held in an `AppState` vector with an `active` index + a `ViewMode`. Players tag
+  events with their pane index (HIWORD of `wParam`) so only the active pane drives the transport/meters. The
+  pane geometry is a pure, headless-tested **`common/ui/VideoGrid`** (shared with mac; new `--selftest` cases).
+- **Split (2×2)** — child-window tiles; click one to make it active (audio + channel selection + transport
+  follow it, accent border). **Settings ▸ View** and the video right-click menu switch modes.
+- **Picture-in-picture** — a **top-level `WS_EX_TOPMOST` popup OWNED by the main window**, NOT a child: a
+  child sibling composites UNDER the big pane's libVLC D3D surface and is invisible (this bit us first — the
+  fix was topmost + top-level). `positionFloatingPip()` places it in screen coords and tracks the main window
+  on move/resize; **drag it** to reposition (kept in `pipPos`); **right-click a channel ▸ Play in PIP** pushes
+  it to the corner muted (`playChannelInPane`, via `ChannelGridCallbacks::onContextMenu`). Owner-verified live.
+- **TV Guide overhaul.** A **📺 TV Guide** sidebar node (`ViewKind::Guide`) opens the guide; right-click it
+  for Refresh / Set Guide URL. **Per-playlist custom EPG-URL override** (`Database::setPlaylistEpgUrl`;
+  right-click a playlist ▸ Set Guide URL…). The guide shows **only channels present in a playlist** (every
+  row is playable). **Type-to-search** filters channels (a highlighted corner field). Clicking **Play**
+  surfaces the viewer + **hides the guide** (`hideEpgGuide`; it played hidden behind the big guide window
+  before). A **modeless "Loading TV guide…" box** shows live download/parse progress (the fetch was silent).
+
+Build-verified BOTH theme flags; nothing here is theme-gated. **Carry-forward gotcha:** a floating/overlay
+window over libVLC playback must be a **top-level** window (child siblings lose to the D3D vout — same root
+cause as the 0.1.3 grip-occlusion note).
+
+### 📺 EPG + ⏺ Scheduled Recordings (0.2.1 — **shipped**; merged @ `85c7ec6`)
+
+The 0.2.1 feature pair, **merged to `main` @ `85c7ec6`** (the `epg-xmltv` branch — 11 commits + the merge —
+is deleted; it branched off `main` @ `bc74015`). All new **core** lands in `common/` and is
+**headless-tested** via `RabbitEarsCli --selftest` (42 assertions incl. gzip, XMLTV parse, the v2→v4
+migration, and the pure scheduler); the **GUI is build-verified BOTH theme flags but NOT runtime-verified**
+(sandbox can't launch it) — the owner's runtime pass, and the `mac-core` CI check on `main` for the
+`common/` additions, are still to confirm (the direct merge skipped the pre-merge CI gate).
+
+- **EPG (XMLTV):** vendored **miniz** (`third_party/miniz`, a `miniz` static lib in the root CMake) +
+  `common/core/Gzip` gunzip `.xml.gz` (WinHTTP/NSURLSession only auto-decompress *transfer*-encoded gzip);
+  a hand-rolled `common/core/XmltvParser` (+ `common/models/Programme`) mirroring `M3uParser`; **schema
+  v3** (`playlists.epg_url` + a playlist-scoped `epg_programmes` table, `ON DELETE CASCADE`) via the
+  `migrate()` step-wise pattern + DAO (`bulkInsertProgrammes`, `nowNext`, `programmesInWindow`). The M3U
+  `x-tvg-url` is now **persisted** (was parsed then dropped).
+  - `Settings ▸ Refresh Guide…` — off-thread fetch → gunzip → parse → store (mirrors `startPlaylistWorker`).
+  - `Settings ▸ TV Guide` — a **new modeless Direct2D control** `Win32/ui/EpgGuideControl` (channels×time,
+    frozen channel column + hour axis, "now" line, 2-D scroll; borrows `ChannelGridControl`'s D2D scaffolding).
+    Click an entry → a **Play channel / Schedule… / Close** popup (`programmeDialog`, `Dialogs.cpp`).
+  - CLI: `--epg <url|file>` (fetch → gunzip → parse → summary) + `--tvgids [epg]` (per-playlist tvg-id ↔ EPG
+    match report: exact / case-insensitive / `@`-stripped). **EPG matching caveat (important):** the guide
+    joins programmes to channels by tvg-id. iptv-org's own `x-tvg-url` is a tiny stub, but the real gotcha is
+    that iptv-org tvg-ids carry an **`@feed` quality suffix** (`CNN.us@SD`) while XMLTV feeds key on the base
+    (`CNN.us`) — so 0.2.x (post-0.2.1 fix, see "Immediate next steps") matches on the base id, `@…` stripped +
+    case-folded; a playlist with **no tvg-ids** (`uslg.m3u`) can never match. The **custom EPG-URL override**
+    (once a follow-up) shipped in 0.2.1.
+- **Scheduled recordings:** **schema v4** (`scheduled_recordings` — self-contained rows: stream URL/UA/
+  referrer captured at schedule time, standalone/not playlist-scoped) + DAO + `channelByTvgId`; a **pure,
+  unit-tested `common/core/RecordingScheduler::planScheduler(schedules, now, busy)`** decision core applied
+  by a ~30s `kSchedulerTimer=0xA2` tick in `MainWindow` (this **ungated the theme-gated `WM_TIMER`** — keep
+  the scheduler case outside the `#ifdef`). `AppState::activeScheduleId` gives the single shared `rec_`
+  recorder explicit ownership so the manual Record button + the scheduler never stomp; a one-time startup
+  reconcile resets stale `Recording` rows. `Settings ▸ Scheduled Recordings…` = a manager (list +
+  New/Cancel/Delete); the *New…* `scheduleDialog` is a type-ahead channel combo + start/stop
+  DateTimePickers (needs `ICC_DATE_CLASSES`, added to `InitCommonControlsEx`) — also for no-EPG channels.
+  **v1 limits:** one recording at a time; **app-must-be-running** (Task-Scheduler wake is a later phase);
+  concurrent recording ⇒ the multi-player roadmap.
+- **App icon → clockwork** (`packaging/app.ico` from `art/clockwork_icon3.png` as of 0.2.2 —
+  `scripts/make_ico.py` reads it; **Pillow is now installed**, so `python scripts/make_ico.py` works
+  directly) + README badge; two more studies (`happy`/`style`) checked in.
+  Marketing **version bumped to 0.2.1** in the 4 places (AppVersion.cmake / installer.iss / RabbitEars.rc /
+  app.manifest); mac keeps its 0.1.9 `APPLE` override.
+- Both big UI surfaces (the guide control + the schedule dialogs) passed an **adversarial review**; fixes
+  applied — notably a `scheduleDialog` OK-path **read-after-destroy** (it read its controls after IDOK
+  destroyed the window; now captured in the Proc) and the **WM_QUIT-under-modal** use-after-free (the new
+  modal loops + `showInfoDialog` now `DestroyWindow` + re-post the quit). Run the same adversarial pass on
+  any new Win32/D2D UI — it keeps catching real bugs.
 
 ### 🎨 Theme engine (0.2.x epic) — SHIPPED in v0.2.0 (merged to `main`; theme-ON by default)
 
@@ -318,12 +420,16 @@ macOS, released, appcast live. Changes:
 The engine + full GUI are complete and proven end-to-end. **Auto-update is confirmed
 working** (About → Check for Updates reports "up to date" against the live appcast).
 
-> **Sandbox note:** this dev environment **cannot launch the GUI exe**
-> (`Start-Process` hangs even with `dangerouslyDisableSandbox`; `cmd start` →
-> "Access is denied"). All GUI work is **build-verified + reasoned**, and the owner
-> does the real runtime/visual verification. The CLI (`RabbitEarsCli`) *does* run
-> here and is the way to exercise the core headlessly. The owner runs on the same
-> machine (real DB at `%LOCALAPPDATA%\RabbitEars\`, ~12,905 channels from iptv-org).
+> **Sandbox note:** this dev environment **cannot launch the GUI exe** (`Start-Process` hangs even with
+> `dangerouslyDisableSandbox`; `cmd start` → "Access is denied"). All GUI work is **build-verified +
+> reasoned**; the owner does the real runtime/visual verification. Handy pattern used across 0.2.1: kick off a
+> **background wait-loop** that polls for `RabbitEars.exe` to exit, then rebuilds — the owner just closes the
+> app and the relink + verify happens hands-off. The CLI (`RabbitEarsCli`) *does* run here to exercise the
+> core headlessly. **As of the 0.2.1 EPG work the machine also has `python` + `sqlite3`** — so you can query
+> the real DB directly for EPG/tvg-id debugging
+> (`sqlite3 %LOCALAPPDATA%\RabbitEars\rabbitears.db "SELECT tvg_id,name FROM channels LIMIT 20"`), alongside
+> the `RabbitEarsCli --tvgids` diagnostic. Owner runs on the same machine (real DB at
+> `%LOCALAPPDATA%\RabbitEars\`, ~13k iptv-org channels in `index.m3u` + a 444-channel `uslg.m3u`).
 
 ### Shipped in 0.1.2 (committed @ `8c99254`, tag `v0.1.2`)
 All `/W4` clean; committed + released. (These were the working-tree batch; now on `main`.)
@@ -552,8 +658,16 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.2.0`; **v0.2.0 released @ `343aa0e`** (full `0.2.0.107`; appcast @ `7b3946a`) — the
-theme engine, theme-ON by default. The `theme-engine` branch was **merged to `main` + deleted** (only
+Tags `v0.1.0`…`v0.2.2`; **v0.2.2 released @ `059b632`** (full `0.2.2.153`; appcast @ `fcdac10`) — EPG `@feed`
+fix + clockwork icon + About/PIP polish; now on **0.2.3 dev**. **Release-tooling note (0.2.2):** this machine now
+has **`gh` CLI (2.96) AND Inno Setup**, so the whole release ran locally: commit → push → build →
+`build-installer.cmd` (Inno) → `gh release create v0.2.2` + upload → `make-appcast.ps1` → commit/push
+`appcast.xml`. **Only EdDSA signing stays on the Mac** (`scripts/sign-release.sh` → `sign_update` + the key).
+The `raw.githubusercontent.com` feed caches ~5 min (`max-age=300`) — an installed app won't see the new appcast
+until that expires (looked like "0.2.1 doesn't detect the update" for a few min; not a bug). Prior: **v0.2.1 @
+`79ab12c`** (`0.2.1.148`). Earlier: **v0.2.0
+@ `343aa0e`** (`0.2.0.107`; appcast @ `7b3946a`), the theme engine, theme-ON by default. The `theme-engine`
+branch was **merged to `main` + deleted** (only
 `main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
 **`git fetch` + rebase before a release** — the 0.2.0 push integrated a concurrent mac commit mid-flight
 (the first push was rejected until re-fetched). Working tree otherwise clean (the owner's
@@ -564,25 +678,131 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-1. **The THEME ENGINE SHIPPED in v0.2.0** — merged to `main`, theme-ON by default, branches consolidated
-   (only `main` remains). See the "🎨 Theme engine" section for the commit-by-commit history. ⚠️ **Always
-   build the GUI with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the flag default is ON, but build dirs
-   cache it, and a stale theme-OFF cache once shipped a Theme-menu-less exe during the 0.2.0 live pass.
-   **On `main` for 0.2.1:** the **macOS app-icon** swap (`packaging/app.ico`, owner-verified). **Next:** cut
-   **0.2.1** (bump the version + build → sign-on-mac → appcast per `docs/RELEASING.md`); optional per-skin
-   glow/heat-haze *tuning* (`SkinGpu` in `common/ui/Skin.cpp` + `underglow.hlsl`); Steampunk palette/serif
-   polish; extend `SkinGpu` to the button glow; refresh the About/Splash logo art; or reskin a new surface.
-2. **macOS Phase-1** continues on `main` (macOS team: native grid, playback, Sparkle, CI `.app`).
-   Windows side: keep `common/` green (the `mac-core` CI is the drift alarm), review their PRs, and
-   **`git fetch`/rebase before every release** — `main` is shared now (0.1.7's build count jumped
-   39→52 mid-cut because of concurrent mac pushes).
-3. **Easy point-release candidates** from the backlog: the dialog work-area clamp + shared
-   `runModalLoop`, resume-last-channel, DPI-change relayout — small, ship as 0.1.x.
+0. **✅ 0.2.3 SHIPPED** (2026-07-08) — tag `v0.2.3` @ `d6ad80a`, `0.2.3.162`, appcast @ `ca7b682`, auto-updating
+   from 0.2.2. The multi-view fix batch below is live and owner-runtime-verified (audio follows the active tile;
+   video-only/fullscreen + focus; single-collapse keeps the selection; no mode-switch hang). **Next up: 0.2.4
+   (item 1) — the "VLC (Direct3D11 output)" popout on rapid channel-surf.** The bullets below are the 0.2.3
+   changelog.
+   - **Multi-view mode-switch HANG — FIXED + owner-verified.** `applyViewMode` tore panes down with a blocking
+     `player.shutdown()` on the UI thread → a stuck stream's libVLC `stop()` froze the UI (Windows `AppHangB1`).
+     Now async: `VlcPlayer::beginTeardown()` hands the blocking stop to a reaper + joins only the worker; the
+     pane parks in `AppState::dyingPanes`, and `reapDyingPanes()` reaps it once its stop finishes (each mode
+     switch, the ~30 s scheduler tick, force-drained at WM_DESTROY before `engine.shutdown()`).
+   - **Recorder teardown no longer blocks the mode switch — review-caught, FIXED (runtime-verify).** The hang fix
+     above offloaded only the *playback* stop; the *recorder* (`rec_`) was still stopped **synchronously** on the
+     joined worker (`Cmd::Quit → doRecordStop()`), so recording a stuck feed into a **background split tile** and
+     then switching modes re-froze the UI — a residual hole in the "UI never blocks on a mode switch" invariant (not
+     a regression vs 0.2.2, which blocked on both). `doRecordStop(bool async)` now hands the recorder's blocking
+     `stop()/release()` to the same reaper vector, symmetric with `doStop(async)`; `beginTeardown()` enqueues an
+     async recorder-stop (a `Cmd::RecordStop` with `ivalue=1`) between the playback stop and the quit;
+     `teardownComplete()`/`shutdown()` already drain the whole reaper vector, so no lifecycle change. Manual
+     stop + shutdown stay synchronous. Built BOTH theme flags + selftest green. **Verify at runtime:** Split →
+     record into a *background* (non-active) tile → switch view modes → no hang, the `.ts` finalizes cleanly.
+   - **Video-only / fullscreen shows the 2×2 grid + clickable tile focus — owner-verified.** `layout()`'s
+     fullscreen/video-only branch (`MainWindowChrome.cpp`) tiles the panes per view mode across the whole client;
+     the active-pane border paints in these modes; and a click on a tile in video-only now **activates** it
+     (`VideoProc` previously only armed the window-drag and never called `setActivePane`; a real drag still moves
+     the window). Owner: "video only and full screen work perfectly."
+   - **Multi-view audio → only the active pane — TRACK-BASED mute, owner-verified.** First tried `volume=0` for
+     background panes, but libVLC 3.x **resets a player's output volume to 100% whenever it recreates the audio
+     output** (an HLS low→high quality switch, no event fired), so a volume mute leaked and *pulsed* ("jumpy") on
+     adaptive feeds — every command returned `rc=0` yet audio leaked. Fixed by **deselecting a background pane's
+     audio track** (`libvlc_audio_set_track(mp,-1)`): a pane with no audio ES has no aout to reset.
+     `VlcPlayer::setMuted`/`applyAudioState` (worker) apply it on the Playing transition + re-assert each 250 ms
+     poll; the saved track id is validated against the live stream and reset on `doPlay`, so a channel change
+     can't strand a pane silent. Callers (`addPane`/`playChannelInPane`/`setActivePane`) mute via
+     `setMuted(i!=active)`; the active pane keeps its track + volume slider. A 4-lens adversarial review caught +
+     fixed two edge bugs pre-ship (force-selecting the first track over libVLC's preferred audio language; a stale
+     track id silencing a pane). Owner-verified: audio follows the active tile through quality ramps. (Known edge:
+     one channel's quirky audio ES needed a channel re-select — stream-specific, self-heals.)
+   - **Single-collapse keeps the selected stream — owner-verified.** Leaving Split/PIP no longer snaps to the
+     top-left tile: `applyViewMode` captures the active pane's channel before teardown and replays it into the
+     persistent pane 0 (log-confirmed).
+   - **Active-pane highlight → only the active pane — owner-verified.** `setActivePane` now `InvalidateRect(…,
+     TRUE)` so the gap-drawn border erases before the new one paints (WS_CLIPCHILDREN keeps the gap-fill off the
+     video, no flicker).
+1. **✅ 0.2.4 SHIPPED** (2026-07-09) — tag `v0.2.4` @ `f30fcc2`, `0.2.4.166`, appcast @ `6e2b4ae`,
+   auto-updating from 0.2.3. **"VLC (Direct3D11 output)" popout FIXED**, owner-surf-verified. Rapid
+   channel-surf reused the pane HWND while the old stream's D3D11 vout (async reaper) still owned it → libVLC
+   spawned its own output window (the 0.1.3 "two vouts share the HWND" note). Fixed with a **per-pane self-cleaning
+   pool of vout-host child windows** (`kVoutHostClass`): libVLC renders into a host, never the pane HWND; a new
+   stream attaches to a **proven-free** host (selected by the reaper's done-flag, NOT parity — an initial design
+   review showed a fixed 2-slot ping-pong still recurs under ≥2 stuck reapers), the old stream keeps its host until
+   its reaper releases it, then it returns to the free set. `VlcPlayer` owns the pool + `Reaper.host` association +
+   `currentHost_`; hosts are created/sized/shown/hidden on the UI thread (`makeVoutHost`, `WM_APP_MAKE_VOUT_HOST`),
+   grown on demand via `SendMessageTimeout` (deadlock-safe vs `worker_.join()`); `VoutHostProc` forwards clicks to
+   the pane so activate/drag/dblclick/menu still work; the host is shown on `PlayerEvent::Playing` (no black gap).
+   Also in 0.2.4: **TV Guide reopen** (an `NM_CLICK` handler reopens the guide when its already-selected node is
+   re-clicked — `TVN_SELCHANGEDW` misses that) + **instant reopen** (`revealEpgGuide` re-reveals the built guide
+   without a DB rebuild); **"Video only" from fullscreen** now drops into windowed video-only instead of no-op.
+   Both flags + selftest green, adversarial review clean, owner-surf-verified (no popout on healthy + dead-feed
+   surfing). **Backlogged from the surf-testing:** the slow first startup (libVLC rescans 323 plugins — ship a
+   `plugins.dat`) → `Win32/BACKLOG.md`.
+2. **MainWindow.cpp split — DONE** (`7656750`→`a2c0118`, both flags green): header + `rabbitears::mw` + 5 `.cpp`
+   (core / chrome / dock / data / commands); 3283→~1425-line core. File map: memory
+   `mainwindow-modularization-plan`. **0.2.2 SHIPPED** (`v0.2.2` @ `059b632`, `0.2.2.153`, appcast `fcdac10`;
+   feed live + auto-updating). Next feature work after 0.2.3/0.2.4: multi-player polish — **concurrent recording**
+   (each pane already has its own recorder), per-pane recording ownership, persist the view mode.
+2. **Multi-player polish** — the engine EXISTS now, so build on `VideoPane` / `common/ui/VideoGrid` / the
+   shared `VlcEngine`, NOT the old one-`VlcPlayer` assumption (memory `rabbitears-feature-roadmap`). The big
+   unlock is **concurrent recording** (each pane's player already carries its own recorder); also per-pane
+   recording ownership (today the manual + scheduled recorder follow the *active* pane), persisting the view
+   mode across launches, and an optional PIP "always-on-top over other apps" toggle (`WS_EX_TOPMOST` now) + a
+   resize grip. The **custom EPG-URL override** and **split/PIP** items from the old roadmap are DONE.
+3. **macOS Phase-1** continues on `main`; keep `common/` green (the `mac-core` CI is the drift alarm) and
+   **`git fetch`/rebase before every release** — `main` is shared (0.1.7's build count jumped 39→52 mid-cut
+   from concurrent mac pushes). Aside: the mac `HANDOVER.md` is stale — PR #22 is merged; its "E3"
+   `MeterModel`→`common/ui` promotion is now post-merge backlog.
 
 ## Seed prompt for a new session
 
 Paste this verbatim to start a fresh session with working context restored:
 
+> You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC 3.0.23**
+> with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome (coral
+> `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps vendored/NuGet.
+> **Read `Win32/HANDOVER.md` first — the "🔲 Multi-view (Split/PIP) + TV Guide overhaul" + "🎨 Theme engine"
+> sections — plus the recalled memories.**
+>
+> **State:** last SHIPPED = **v0.2.2** (`059b632`, `0.2.2.153`, appcast @ `fcdac10`; feed live). **`main` is at
+> `ebd933d`** — the MainWindow.cpp split is committed. **0.2.3 is HELD: 7 UNCOMMITTED multi-view fixes in the
+> working tree** (`Win32/ui/VlcPlayer.{h,cpp}`, `MainWindowInternal.h`, `MainWindow.cpp`,
+> `MainWindow{Chrome,Commands,Data}.cpp`) — the mode-switch **hang** (async pane teardown, owner-verified),
+> **video-only shows the 2×2 grid**, and multi-view **audio + active-pane highlight** follow only the selected
+> pane. All build BOTH flags + selftest green; runtime-verify each on `build\Win32\RabbitEars.exe`, then commit +
+> cut 0.2.3. Built on **v0.2.1** — EPG/TV-Guide + Scheduled Recordings + the **multi-view engine**.
+> `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = its own video HWND +
+> `VlcPlayer` + channel; `AppState` holds the vector + an `active` index + a `ViewMode`); **Split (2×2)** child
+> tiles + a **floating `WS_EX_TOPMOST` PIP popup** (top-level, owned by the main window — a child sibling is
+> occluded by the libVLC D3D surface; draggable; right-click a channel ▸ **Play in PIP**). Pane geometry is
+> pure, headless-tested `common/ui/VideoGrid` (shared with mac). TV Guide: a 📺 sidebar node (`ViewKind::Guide`),
+> per-playlist **custom EPG URL** (`Database::setPlaylistEpgUrl`), type-to-search, playable-only rows,
+> hide-on-play, a modeless loading box. Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
+>
+> **Immediate next:** **land the held 0.2.3 fixes** — runtime-verify each on `build\Win32\RabbitEars.exe` (NOT
+> the installed 0.2.2), then commit + release 0.2.3: (a) mode-switch hang — DONE + owner-verified; (b) video-only
+> shows the 2×2 grid + active-pane border; (c) audio only from the active pane (`setActivePane` mutes others +
+> `playChannelInPane` applies the mute); (d) only the active pane highlighted (`setActivePane` now
+> `InvalidateRect(TRUE)` to clear stale gap-borders). Then **0.2.4:** the **"VLC (Direct3D11 output)" window on
+> rapid channel-surf** — pre-existing vout contention (old stream's D3D11 vout still owns the pane HWND when the
+> new one grabs it); agreed fix = per-pane **double-buffered vout child windows** (ping-pong), `doPlay` at
+> `VlcPlayer.cpp:223`. Then multi-player polish (memory `rabbitears-feature-roadmap`): concurrent recording +
+> per-pane ownership + persist view mode. MainWindow.cpp is now a header + `rabbitears::mw` + 5 `.cpp` (memory
+> `mainwindow-modularization-plan`). This machine has `python`+`sqlite3`+**Pillow** and **`gh` CLI + Inno Setup**,
+> so a full release runs locally — only EdDSA signing is on the Mac (`scripts/sign-release.sh`).
+>
+> **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
+> then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
+> Gotchas: `cmake`/`cl` NOT on PATH — use `scripts\build.cmd`; Windows outputs in `build\Win32\`; **LINK1168 =
+> a running RabbitEars.exe locks the exe** → `Stop-Process -Name RabbitEars -Force`, rebuild; ⚠️ build with
+> `-DRABBITEARS_THEME_ENGINE=ON` explicitly (build dirs cache the flag); static CRT (`/MT`, no redist); the
+> sandbox **can't launch the GUI** — build-verify + reason, owner runtime-verifies; `common/` stays mac-safe
+> (`mac-core` CI compiles it on clang). Commit only when asked; stage **specific paths** (never `git add -A` —
+> the owner adds `art/*.png`); end commits with the `Co-Authored-By` trailer; branch off `main`, PR back.
+>
+> ---
+> *The prior theme-engine-era seed prompt follows (still-useful build gotchas + the 0.2.0 phase history):*
+>
 > You are continuing work on **RabbitEars** (`G:\RabbitEars`), a native **Windows Win32 / C++20** IPTV
 > player on **libVLC 3.0.23**, themed to match its sibling apps `G:\SQLTerminal-Win32` and
 > `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral `#D97757`, custom `WM_NCCALCSIZE` title-bar
