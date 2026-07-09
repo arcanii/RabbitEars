@@ -112,6 +112,10 @@ using namespace rabbitears;
                                             action:@selector(setViewSplit:) keyEquivalent:@"2"];
     split.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     split.target = self;
+    NSMenuItem* pip = [viewMenu addItemWithTitle:@"Picture-in-Picture"
+                                          action:@selector(setViewPip:) keyEquivalent:@"3"];
+    pip.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    pip.target = self;
 
     // TV Guide (EPG) — open the channels×time guide (⌘G) + download the guide data.
     [viewMenu addItem:[NSMenuItem separatorItem]];
@@ -147,6 +151,7 @@ using namespace rabbitears;
 - (void)refreshGuide:(id)sender { [_mainController refreshGuide:sender]; }
 - (void)setViewSingle:(id)sender { [_mainController setViewSingle:sender]; }
 - (void)setViewSplit:(id)sender { [_mainController setViewSplit:sender]; }
+- (void)setViewPip:(id)sender { [_mainController setViewPip:sender]; }
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
@@ -157,9 +162,12 @@ using namespace rabbitears;
     else if (item.action == @selector(toggleVideoOnly:))
         item.title = _mainController.videoOnly ? @"Exit Video Only" : @"Video Only";
     else if (item.action == @selector(setViewSingle:))
-        item.state = _mainController.isSplitView ? NSControlStateValueOff : NSControlStateValueOn;
+        item.state = (!_mainController.isSplitView && !_mainController.isPipView)
+                         ? NSControlStateValueOn : NSControlStateValueOff;
     else if (item.action == @selector(setViewSplit:))
         item.state = _mainController.isSplitView ? NSControlStateValueOn : NSControlStateValueOff;
+    else if (item.action == @selector(setViewPip:))
+        item.state = _mainController.isPipView ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 

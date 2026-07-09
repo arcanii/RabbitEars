@@ -128,6 +128,8 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
     BOOL           _metersHidden;  // bottom-bar toggle: hide the whole meter line
     CGFloat        _meterPosX, _meterPosY;  // meter-bar position as a 0..1 fraction of the pane
+    BOOL           _pipMoved;               // the user dragged the PiP inset (else it sits bottom-right)
+    CGFloat        _pipPosX, _pipPosY;      // dragged PiP inset position, as a 0..1 fraction
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
@@ -572,6 +574,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (NSMenu*)makeRowMenu {
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Play" action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Play in PiP" action:@selector(playInPip:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Toggle Favourite" action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Set Channel Number…" action:@selector(editChannelNumber:) keyEquivalent:@""] setTarget:self];
     return m;
@@ -930,6 +933,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (ViewMode)viewMode { return _viewMode; }
 - (BOOL)isSplitView { return _viewMode == ViewMode::Split; }
+- (BOOL)isPipView { return _viewMode == ViewMode::Pip; }
 
 // Build a new pane (view + player) and add it to the container, below the meter bar.
 - (MacVideoPane*)makePane {
@@ -944,6 +948,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(paneClicked:)];
     [v addGestureRecognizer:clk];
     [clk release];  // MRC: the view retains it
+    NSPanGestureRecognizer* pan =  // drags the PiP inset (a no-op in Single/Split)
+        [[NSPanGestureRecognizer alloc] initWithTarget:self action:@selector(paneDragged:)];
+    [v addGestureRecognizer:pan];
+    [pan release];
     [_videoContainer addSubview:v positioned:NSWindowBelow relativeTo:_meterBar];  // under the meters
     [v release];    // MRC: the container retains it now
     pane->view = v;
@@ -967,7 +975,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         const auto& b = boxes[i];
         if (b.w <= 0 || b.h <= 0) { v.hidden = YES; continue; }
         v.hidden = NO;
-        v.frame = NSMakeRect(b.x, ch - b.y - b.h, b.w, b.h);  // top-down box → bottom-up frame
+        NSRect fr = NSMakeRect(b.x, ch - b.y - b.h, b.w, b.h);  // top-down box → bottom-up frame
+        // A PiP inset the user dragged keeps its position (as a fraction) across relayout.
+        if (_viewMode == ViewMode::Pip && i > 0 && _pipMoved) {
+            fr.origin.x = _pipPosX * std::max<CGFloat>(0, cw - fr.size.width);
+            fr.origin.y = _pipPosY * std::max<CGFloat>(0, ch - fr.size.height);
+        }
+        v.frame = fr;
     }
     [self updateActivePaneBorder];
 }
@@ -1010,6 +1024,28 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         if (_panes[(size_t)i]->view == g.view) { [self setActivePane:i]; return; }
 }
 
+// Drag the PiP inset around its backdrop (pane 0 is the full-bleed backdrop and never moves).
+// The position is remembered as a 0..1 fraction so it survives resize + relayout.
+- (void)paneDragged:(NSPanGestureRecognizer*)g {
+    if (_viewMode != ViewMode::Pip || !_videoContainer) return;
+    int idx = -1;
+    for (int i = 0; i < (int)_panes.size(); ++i)
+        if (_panes[(size_t)i]->view == g.view) { idx = i; break; }
+    if (idx <= 0) return;  // only inset panes move
+    NSView* v = g.view;
+    const NSPoint d = [g translationInView:_videoContainer];
+    NSRect f = v.frame;
+    const CGFloat maxX = std::max<CGFloat>(0, _videoContainer.bounds.size.width - f.size.width);
+    const CGFloat maxY = std::max<CGFloat>(0, _videoContainer.bounds.size.height - f.size.height);
+    f.origin.x = std::clamp<CGFloat>(f.origin.x + d.x, 0, maxX);
+    f.origin.y = std::clamp<CGFloat>(f.origin.y + d.y, 0, maxY);
+    v.frame = f;
+    [g setTranslation:NSZeroPoint inView:_videoContainer];
+    _pipMoved = YES;
+    _pipPosX = maxX > 0 ? f.origin.x / maxX : 0;
+    _pipPosY = maxY > 0 ? f.origin.y / maxY : 0;
+}
+
 // Copy the channel playing in `from` into pane `to` — used when collapsing so the active
 // stream survives into Single view (peer of the Win32 carryStream).
 - (void)carryStreamFromPane:(int)from toPane:(int)to {
@@ -1024,18 +1060,24 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     dst->channelId = src->channelId;
 }
 
-// Tear a removed pane down WITHOUT blocking the UI: drop its view on the main thread, then
+// Tear a removed pane down WITHOUT blocking the UI: unhook its view on the main thread, then
 // stop + destroy its (possibly stuck) player on a background queue.
+//
+// The view must OUTLIVE the player: libVLC still holds it via set_nsobject and its vout can
+// render into it until the player is actually released. removeFromSuperview drops the
+// container's retain, so we take our own first and release it (back on the main thread —
+// NSView dealloc is main-thread-only) once the player is gone.
 - (void)teardownPane:(std::unique_ptr<MacVideoPane>)pane {
-    [pane->view removeFromSuperview];
+    NSView* view = [pane->view retain];  // outlive the player's vout
+    [view removeFromSuperview];
     pane->view = nil;
     VlcPlayerMac* dying = pane->player.release();  // take the player out of the unique_ptr
-    if (dying) {
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            dying->stop();
-            delete dying;  // ~VlcPlayerMac: media_player_stop + release (blocking, off-main)
-        });
-    }
+    if (!dying) { [view release]; return; }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        dying->stop();
+        delete dying;  // ~VlcPlayerMac: media_player_stop + release (blocking, off-main)
+        dispatch_async(dispatch_get_main_queue(), ^{ [view release]; });  // now safe to free
+    });
 }
 
 // Switch view mode. Split uses `count` panes (2×2 = 4). Grows/shrinks the pane set,
@@ -1049,6 +1091,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     if ((int)_panes.size() > count) {                     // shrink
         if (_activePane >= count) { [self carryStreamFromPane:_activePane toPane:0]; _activePane = 0; }
+        // Re-point the aliases at a SURVIVING pane BEFORE tearing anything down, so
+        // _player/_videoView can never dangle at a destroyed pane (the stats timer and
+        // volume slider dereference them).
+        _player = [self activePlayer];
+        if (MacVideoPane* ap = [self activePane]) _videoView = ap->view;
         while ((int)_panes.size() > count) {
             std::unique_ptr<MacVideoPane> pane = std::move(_panes.back());
             _panes.pop_back();
@@ -1059,13 +1106,33 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [self applyVideoPaneLayout];
     [self setActivePane:_activePane];
-    [self setStatus:(_viewMode == ViewMode::Split
-                     ? @"Split view (2×2) — click a pane to make it active, then pick a channel."
-                     : @"Single view.")];
+    switch (_viewMode) {
+        case ViewMode::Split:
+            [self setStatus:@"Split view (2×2) — click a pane to make it active, then pick a channel."];
+            break;
+        case ViewMode::Pip:
+            [self setStatus:@"Picture-in-Picture — drag the inset to move it; click it to make it active."];
+            break;
+        default:
+            [self setStatus:@"Single view."];
+            break;
+    }
 }
 
 - (void)setViewSingle:(id)__unused sender { [self applyViewMode:ViewMode::Single paneCount:1]; }
 - (void)setViewSplit:(id)__unused sender  { [self applyViewMode:ViewMode::Split  paneCount:4]; }
+- (void)setViewPip:(id)__unused sender    { [self applyViewMode:ViewMode::Pip    paneCount:2]; }
+
+// Row context menu ▸ "Play in PiP": force PiP mode and play the clicked channel into the inset
+// (the backdrop keeps playing), mirroring the Win32 "Play in PIP" command.
+- (void)playInPip:(id)__unused sender {
+    const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+    if (row < 0 || row >= (NSInteger)_channels.size()) return;
+    const Channel c = _channels[(size_t)row];  // copy — the pane switch may reload the grid
+    if (_viewMode != ViewMode::Pip) [self applyViewMode:ViewMode::Pip paneCount:2];
+    [self setActivePane:1];  // the inset
+    [self playChannel:c];
+}
 
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
 // audio-capture consent prompt happens on the FIRST creation. macOS caches a denial,

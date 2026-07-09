@@ -23,10 +23,13 @@
 - (BOOL)toolbarHidden;
 - (BOOL)videoOnly;
 
-// Multi-view layout (View menu): Single vs Split (2×2). isSplitView backs the menu checkmarks.
+// Multi-view layout (View menu): Single / Split (2×2) / Picture-in-Picture. The getters
+// back the menu checkmarks.
 - (void)setViewSingle:(id)sender;
 - (void)setViewSplit:(id)sender;
+- (void)setViewPip:(id)sender;
 - (BOOL)isSplitView;
+- (BOOL)isPipView;
 
 // Command actions surfaced in BOTH the in-window Settings ▾ pull-down and the app
 // menu bar (the menu-bar items forward here from AppDelegate).
