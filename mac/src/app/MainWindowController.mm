@@ -384,6 +384,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     dbl.numberOfClicksRequired = 2;
     [_videoView addGestureRecognizer:dbl];
     [dbl release];  // MRC: the view retains it
+    // Single-click activates this pane in multi-view (a harmless no-op in Single view).
+    NSClickGestureRecognizer* act0 =
+        [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(paneClicked:)];
+    [_videoView addGestureRecognizer:act0];
+    [act0 release];
 
     // The meters live in a draggable bar that floats over the video. -applyMeterLayout
     // lays out the enabled ones inside it and sizes + positions the bar.
@@ -418,6 +423,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [content addSubview:split];
     _gridWidth = 380;
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
+    [self applyVideoPaneLayout];    // position pane 0 to fill (owns pane frames now)
     [self applyMeterConfig];        // configure + show the enabled meters (start the tap if Spectrum is on)
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
@@ -808,6 +814,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // no A/V desync): the bar tracks throughput against a slowly-decaying rolling peak,
 // so it fills while data flows at its usual rate and drops when the stream stalls.
 - (void)tickStats {
+    // Keep background panes silent (re-assert each tick so a libVLC aout recreation on a
+    // quality switch can't leak their audio). Only the active pane is audible.
+    if (_panes.size() > 1)
+        for (int i = 0; i < (int)_panes.size(); ++i)
+            if (i != _activePane) _panes[(size_t)i]->player->setMuted(true);
     const FlowStats fs = _player->sampleStats();
     if (!fs.playing) { for (MeterView* m : _meters) [m reset]; _spectrumSilentTicks = 0; return; }
     // Bitrate: the DEMUX byte-rate — HLS/segmented inputs report i_read_bytes as 0, but
@@ -873,10 +884,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // Lay the enabled meters out on one line at the bottom-left (each a fixed per-kind
 // width); the video fills the space above. All hidden while video-only.
 - (void)applyMeterLayout {
-    NSView* pane = _videoView.superview;
+    NSView* pane = _videoContainer;
     if (!pane) return;
     const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
-    _videoView.frame = pane.bounds;  // video fills; the meter bar floats on top
+    // (the video panes are positioned by -applyVideoPaneLayout; the meter bar floats on top)
 
     // Lay the enabled meters left-to-right inside the bar; size the bar to fit them.
     CGFloat x = 0;
@@ -895,7 +906,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _meterBar.frame = NSMakeRect(_meterPosX * availX, _meterPosY * availY, barW, kMeterH);
 }
 
-- (void)videoPaneResized:(NSNotification*)__unused n { [self applyMeterLayout]; }
+- (void)videoPaneResized:(NSNotification*)__unused n { [self applyVideoPaneLayout]; [self applyMeterLayout]; }
 
 // Record the meter bar's position as a 0..1 fraction of the pane (called after a drag).
 - (void)persistMeterPos {
@@ -910,6 +921,151 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _db->setSetting(L"meter_pos_y", std::to_wstring(_meterPosY));
     }
 }
+
+// ---- Multi-view (Single / Split-2×2) -----------------------------------------
+// Panes are laid out by common/ui/VideoGrid (the shared geometry Win32 uses too) and hung
+// in the video container. Only the ACTIVE pane produces audio + drives the meters; clicking
+// a pane activates it. A mode switch carries the active stream into pane 0 and tears surplus
+// panes down OFF the main thread (libVLC stop() is synchronous — a stuck stream would freeze).
+
+- (ViewMode)viewMode { return _viewMode; }
+- (BOOL)isSplitView { return _viewMode == ViewMode::Split; }
+
+// Build a new pane (view + player) and add it to the container, below the meter bar.
+- (MacVideoPane*)makePane {
+    auto pane = std::make_unique<MacVideoPane>();
+    pane->player = std::make_unique<VlcPlayerMac>();
+    pane->player->init(*_engine);
+    NSView* v = [[NSView alloc] initWithFrame:_videoContainer.bounds];
+    v.autoresizingMask = NSViewNotSizable;  // positioned by -applyVideoPaneLayout
+    v.wantsLayer = YES;
+    v.layer.backgroundColor = NSColor.blackColor.CGColor;
+    NSClickGestureRecognizer* clk =
+        [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(paneClicked:)];
+    [v addGestureRecognizer:clk];
+    [clk release];  // MRC: the view retains it
+    [_videoContainer addSubview:v positioned:NSWindowBelow relativeTo:_meterBar];  // under the meters
+    [v release];    // MRC: the container retains it now
+    pane->view = v;
+    pane->player->attachTo(v);
+    MacVideoPane* raw = pane.get();
+    _panes.push_back(std::move(pane));
+    return raw;
+}
+
+// Position every pane inside the container per the current mode (VideoGrid geometry,
+// y-flipped for AppKit's bottom-left origin). A zero-area box hides a surplus pane.
+- (void)applyVideoPaneLayout {
+    if (!_videoContainer || _panes.empty()) return;
+    const CGFloat cw = _videoContainer.bounds.size.width, ch = _videoContainer.bounds.size.height;
+    rabbitears::VideoGridOpts opts;
+    opts.gap = 3; opts.pipW = 240; opts.pipH = 135; opts.pipMargin = 14;
+    auto boxes = rabbitears::computeVideoPanes(_viewMode, (int)_panes.size(),
+                                               0, 0, (int)cw, (int)ch, opts);
+    for (size_t i = 0; i < _panes.size() && i < boxes.size(); ++i) {
+        NSView* v = _panes[i]->view;
+        const auto& b = boxes[i];
+        if (b.w <= 0 || b.h <= 0) { v.hidden = YES; continue; }
+        v.hidden = NO;
+        v.frame = NSMakeRect(b.x, ch - b.y - b.h, b.w, b.h);  // top-down box → bottom-up frame
+    }
+    [self updateActivePaneBorder];
+}
+
+// An accent border around the active pane (only when there's more than one).
+- (void)updateActivePaneBorder {
+    const BOOL multi = _panes.size() > 1;
+    for (int i = 0; i < (int)_panes.size(); ++i) {
+        CALayer* layer = _panes[(size_t)i]->view.layer;
+        if (multi && i == _activePane) {
+            layer.borderColor = NSColor.controlAccentColor.CGColor;
+            layer.borderWidth = 3;
+        } else {
+            layer.borderWidth = 0;
+        }
+    }
+}
+
+// Make pane `idx` the audio/meter/volume focus. Background panes are muted by audio-track
+// deselect (VlcPlayerMac::setMuted), so only one pane is ever audible.
+- (void)setActivePane:(int)idx {
+    if (idx < 0 || idx >= (int)_panes.size()) idx = 0;
+    _activePane = idx;
+    _player = _panes[(size_t)idx]->player.get();   // re-alias: stats/spectrum/volume follow active
+    _videoView = _panes[(size_t)idx]->view;
+    for (int i = 0; i < (int)_panes.size(); ++i)
+        _panes[(size_t)i]->player->setMuted(i != idx);   // single audio: only the active pane
+    _player->setVolume((int)_volume.doubleValue);
+    [self updateActivePaneBorder];
+    [self applyMeterLayout];
+    MacVideoPane* p = [self activePane];
+    if (p && p->channelId) {
+        _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(p->channel.name)];
+        [self setStatus:[NSString stringWithFormat:@"Active pane: %@", ns(p->channel.name)]];
+    }
+}
+
+- (void)paneClicked:(NSClickGestureRecognizer*)g {
+    for (int i = 0; i < (int)_panes.size(); ++i)
+        if (_panes[(size_t)i]->view == g.view) { [self setActivePane:i]; return; }
+}
+
+// Copy the channel playing in `from` into pane `to` — used when collapsing so the active
+// stream survives into Single view (peer of the Win32 carryStream).
+- (void)carryStreamFromPane:(int)from toPane:(int)to {
+    if (from == to || from < 0 || to < 0 ||
+        from >= (int)_panes.size() || to >= (int)_panes.size()) return;
+    MacVideoPane* src = _panes[(size_t)from].get();
+    MacVideoPane* dst = _panes[(size_t)to].get();
+    if (src->channelId == 0) return;  // nothing playing to carry
+    dst->player->play(src->channel.streamUrl, src->channel.userAgent, src->channel.referrer);
+    dst->player->setVolume((int)_volume.doubleValue);
+    dst->channel = src->channel;
+    dst->channelId = src->channelId;
+}
+
+// Tear a removed pane down WITHOUT blocking the UI: drop its view on the main thread, then
+// stop + destroy its (possibly stuck) player on a background queue.
+- (void)teardownPane:(std::unique_ptr<MacVideoPane>)pane {
+    [pane->view removeFromSuperview];
+    pane->view = nil;
+    VlcPlayerMac* dying = pane->player.release();  // take the player out of the unique_ptr
+    if (dying) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            dying->stop();
+            delete dying;  // ~VlcPlayerMac: media_player_stop + release (blocking, off-main)
+        });
+    }
+}
+
+// Switch view mode. Split uses `count` panes (2×2 = 4). Grows/shrinks the pane set,
+// carrying the active stream into pane 0 when collapsing away from it.
+- (void)applyViewMode:(ViewMode)mode paneCount:(int)count {
+    if (mode == ViewMode::Single) count = 1;
+    if (count < 1) count = 1;
+    _viewMode = mode;
+
+    while ((int)_panes.size() < count) [self makePane];   // grow
+
+    if ((int)_panes.size() > count) {                     // shrink
+        if (_activePane >= count) { [self carryStreamFromPane:_activePane toPane:0]; _activePane = 0; }
+        while ((int)_panes.size() > count) {
+            std::unique_ptr<MacVideoPane> pane = std::move(_panes.back());
+            _panes.pop_back();
+            [self teardownPane:std::move(pane)];
+        }
+    }
+    if (_activePane >= (int)_panes.size()) _activePane = 0;
+
+    [self applyVideoPaneLayout];
+    [self setActivePane:_activePane];
+    [self setStatus:(_viewMode == ViewMode::Split
+                     ? @"Split view (2×2) — click a pane to make it active, then pick a channel."
+                     : @"Single view.")];
+}
+
+- (void)setViewSingle:(id)__unused sender { [self applyViewMode:ViewMode::Single paneCount:1]; }
+- (void)setViewSplit:(id)__unused sender  { [self applyViewMode:ViewMode::Split  paneCount:4]; }
 
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
 // audio-capture consent prompt happens on the FIRST creation. macOS caches a denial,
@@ -1217,6 +1373,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)playChannel:(const Channel&)c {
     _player->play(c.streamUrl, c.userAgent, c.referrer);
     _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
+    if (MacVideoPane* p = [self activePane]) { p->channel = c; p->channelId = c.id; }  // remember per pane
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
