@@ -31,7 +31,20 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.4 SHIPPED** · **0.2.5 IN PROGRESS (uncommitted)** · macOS Phase-1
+## Current state — **v0.2.5 SHIPPED (native ARM64)** · macOS Phase-1
+
+**Released:** **`v0.2.5`** (2026-07-09), tag `v0.2.5` @ `fbebcc7`, full version **`0.2.5.168`**, signed **three**
+installers — **`RabbitEars-0.2.5-setup.exe`** (x64), **`RabbitEars-0.2.5-arm64-setup.exe`** (native ARM64), and
+**`RabbitEars-0.2.5-universal-setup.exe`** (bundles both, installs the native arch) — on GitHub release `v0.2.5`;
+**two appcasts** (`appcast.xml` x64 + `appcast-arm64.xml` ARM64, both `0.2.5.168`) committed @ `5c7073e` and LIVE
+(raw feeds serve 0.2.5.168; all three enclosures return HTTP 200). **The 0.2.5 headline = the NATIVE ARM64 build**
+(owner-measured ~4× faster than emulated x64) with per-arch auto-update, a universal installer, an About-box arch
+readout, and an ARM64 "which build?" update chooser — see "Immediate next steps". **Build-number note:** shipped as
+`0.2.5.168` (the commit count when built + signed); the tag commit `fbebcc7` is count 175 after rebasing onto the
+mac team's concurrent v0.1.10 pushes — cosmetic drift (installer + appcast + the app's self-report all agree on
+`0.2.5.168`, cleanly `> 0.2.4.166`), the same concurrent-push behaviour the handover has long noted. **Owner still
+to runtime-verify** on the ARM device: the native build's About-box arch line, the Check-for-Updates chooser, and a
+live 0.2.4→0.2.5 auto-update.
 
 **Released:** **`v0.2.4`** (2026-07-09), tag `v0.2.4` @ `f30fcc2`, full version `0.2.4.166`, signed
 **`RabbitEars-0.2.4-setup.exe`** (appcast @ `6e2b4ae`) — the **per-pane vout-host pool** that ends the "VLC
@@ -678,17 +691,12 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-⚠️ **0.2.5 IS IN PROGRESS — UNCOMMITTED in the working tree** (`main` is at `dfef166`-era + the shipped
-0.2.4 commits; the 0.2.5 work below is NOT committed). Version already bumped to **0.2.5** (all 4 spots).
-Uncommitted files: `Win32/ui/EpgGuideControl.{h,cpp}`, `Win32/ui/MainWindowCommands.cpp` (favourite);
-**ARM64 native + auto-update:** `Win32/CMakeLists.txt`, `cmake/LibVlc.cmake`, `Win32/platform/Updater.cpp`,
-`scripts/build-arm64.cmd`, restructured `third_party/winsparkle/{lib,bin}/{x64,arm64}/` (0.9.3, both arches
-now vendored); **ARM64 packaging (Option B, per-arch installers):** `packaging/installer.iss`,
-`scripts/build-installer.cmd`, `scripts/make-appcast.ps1`, new root `appcast-arm64.xml`, `docs/RELEASING.md`;
-**version:** `cmake/AppVersion.cmake`, `packaging/{installer.iss,RabbitEars.rc,app.manifest}`; `Win32/BACKLOG.md`,
-this file. **Commit only when the owner asks** — then stage specific paths (incl. the vendored `third_party/winsparkle`
-binaries) + cut 0.2.5 for BOTH arches (build both installers → sign both on the Mac → one GitHub release, two assets,
-two appcasts).
+✅ **0.2.5 SHIPPED** (2026-07-09) — tag `v0.2.5` @ `fbebcc7`, `0.2.5.168`, three signed installers on GitHub release
+`v0.2.5`, two appcasts LIVE @ `5c7073e`. The code landed in one commit (`d9b0840`, rebased to `fbebcc7` onto the mac
+team's v0.1.10), the appcasts in a follow-up (`5c7073e`); both pushed. The 0.2.5 feature set below is the changelog.
+**Owner's runtime pass still owed** (sandbox can't launch the GUI): on the ARM device, confirm the native build's
+About-box arch line reads `ARM64`, the Check-for-Updates chooser appears + points at the right feed, and a live
+`0.2.4 → 0.2.5` auto-update lands (x64 and/or ARM64).
 
 - **✅ Favourite-a-channel from the TV Guide — DONE, owner-verified.** Right-click a channel row in the guide
   → "★ Add to Favourites" / "Remove from Favourites". `GuideCallbacks` gained `onToggleFavourite` + `isFavourite`;
