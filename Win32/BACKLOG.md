@@ -105,6 +105,24 @@ disable caching, so no code change there — purely a build/packaging change.
 
 ---
 
+## 📺 TV Guide ↔ channel enhancements (owner-requested 2026-07-09)
+
+Two follow-ups off the 0.2.4 TV-Guide polish:
+- **Favourite a channel from the guide.** Right-click a guide row → **"Add to Favourites"** (toggle), so you
+  can star channels without leaving the guide. The guide already carries each row's full tvg-id
+  (`GuideRow::channelId`) → resolve to the `Channel` (`Database::channelByTvgId`) and toggle its favourite flag
+  (same one the grid's `COL_FAV` uses). Add the action to `EpgGuideControl`'s right-click menu, next to the
+  existing Play / Schedule (`GuideCallbacks`).
+- **"Show in TV Guide" from a channel.** Right-click a channel in the grid → jump to that channel's row in the
+  guide: open/reveal the guide (reuse `revealEpgGuide`) and scroll it to that channel (vertical to the row,
+  horizontal to "now"). Hook the channel grid's context menu (`ChannelGridCallbacks::onContextMenu`) → a new
+  `EpgGuideControl` "scroll to channel <tvg-id>" entry point.
+
+**Scope:** small UX features in the guide + channel-grid context menus; no schema change. Bundle into a
+TV-Guide polish point release.
+
+---
+
 ## Deferred epics
 
 - **JSON profiles** (deferred since 0.1.5): per-profile settings + playlist sources, channel cache

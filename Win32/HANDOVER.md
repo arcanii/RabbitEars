@@ -31,9 +31,15 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.4 (cutting release)** · **v0.2.3 SHIPPED** · macOS Phase-1
+## Current state — **v0.2.4 SHIPPED** · macOS Phase-1
 
-**Released:** **`v0.2.3`** (2026-07-08), tag `v0.2.3` @ `d6ad80a`, full version `0.2.3.162`, signed
+**Released:** **`v0.2.4`** (2026-07-09), tag `v0.2.4` @ `f30fcc2`, full version `0.2.4.166`, signed
+**`RabbitEars-0.2.4-setup.exe`** (appcast @ `6e2b4ae`) — the **per-pane vout-host pool** that ends the "VLC
+(Direct3D11 output)" popout on rapid channel-surf (libVLC renders into a proven-free host child window, never
+the reused pane HWND; hosts freed by the reaper done-flag, grown deadlock-safe via SendMessageTimeout), plus
+**TV Guide reopen + instant reopen** (`NM_CLICK` + `revealEpgGuide`) and **"Video only" from fullscreen** now
+dropping into windowed video-only. Owner-surf-verified; auto-updates from 0.2.3. Prior:
+**`v0.2.3`** (2026-07-08), tag `v0.2.3` @ `d6ad80a`, full version `0.2.3.162`, signed
 **`RabbitEars-0.2.3-setup.exe`** (appcast @ `ca7b682`) — **the multi-view fix batch**: **track-based per-pane
 audio** (only the active tile is audible, via `libvlc_audio_set_track(mp,-1)` — holds through HLS quality
 switches where a volume mute leaked), the **mode-switch AppHang fix** (async pane + recorder teardown),
@@ -715,7 +721,8 @@ commit messages with the Co-Authored-By trailer.
    - **Active-pane highlight → only the active pane — owner-verified.** `setActivePane` now `InvalidateRect(…,
      TRUE)` so the gap-drawn border erases before the new one paints (WS_CLIPCHILDREN keeps the gap-fill off the
      video, no flicker).
-1. **✅ 0.2.4 — "VLC (Direct3D11 output)" popout FIXED (cutting release), owner-surf-verified.** Rapid
+1. **✅ 0.2.4 SHIPPED** (2026-07-09) — tag `v0.2.4` @ `f30fcc2`, `0.2.4.166`, appcast @ `6e2b4ae`,
+   auto-updating from 0.2.3. **"VLC (Direct3D11 output)" popout FIXED**, owner-surf-verified. Rapid
    channel-surf reused the pane HWND while the old stream's D3D11 vout (async reaper) still owned it → libVLC
    spawned its own output window (the 0.1.3 "two vouts share the HWND" note). Fixed with a **per-pane self-cleaning
    pool of vout-host child windows** (`kVoutHostClass`): libVLC renders into a host, never the pane HWND; a new
