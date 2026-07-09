@@ -16,6 +16,8 @@
 
 namespace rabbitears {
 
+class VlcEngineMac;  // owns the shared libVLC instance (VlcEngineMac.h); players borrow its handle
+
 class VlcPlayerMac {
 public:
     VlcPlayerMac();
@@ -24,6 +26,11 @@ public:
     VlcPlayerMac(const VlcPlayerMac&) = delete;
     VlcPlayerMac& operator=(const VlcPlayerMac&) = delete;
 
+    // Create this player's media player on the shared engine's libVLC instance. Must be
+    // called once before play/attachTo. Returns false if the engine isn't ready (libVLC
+    // absent). Idempotent. Multiple players share one engine (Split/2×2/PiP panes).
+    bool init(VlcEngineMac& engine);
+
     // Bind the player's video output to a layer-backed NSView.
     bool attachTo(NSView* videoView);
 
@@ -31,6 +38,14 @@ public:
     void play(const std::wstring& url, const std::wstring& userAgent, const std::wstring& referrer);
     void stop();
     void setVolume(int percent);  // 0..100
+
+    // Multi-view mute: a background (non-active) pane is silenced by DESELECTING its audio
+    // track (libvlc_audio_set_track(mp, -1)), not by volume=0 — libVLC resets a player's
+    // volume to 100% whenever it recreates the audio output (e.g. an HLS quality switch,
+    // no event fired), so a volume-based mute leaks on adaptive feeds. Only the active pane
+    // is unmuted. Idempotent; re-assert after (re)starting a stream.
+    void setMuted(bool muted);
+    bool isMuted() const;
 
     // Sample libVLC's media stats into a FlowStats snapshot (per-second byte rates
     // over wall-clock + per-sample event deltas). Call on a steady ~250ms timer from

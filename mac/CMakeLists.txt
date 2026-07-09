@@ -52,6 +52,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/main.mm
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
+    src/app/VlcEngineMac.mm
     src/app/VlcPlayerMac.mm
     src/app/SpectrumTap.mm
     src/app/MeterView.mm

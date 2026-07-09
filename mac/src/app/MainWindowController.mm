@@ -39,6 +39,7 @@
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
 #import "TvGuideWindowController.h"
+#import "VlcEngineMac.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -119,6 +120,7 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
+    std::unique_ptr<VlcEngineMac> _engine;   // shared libVLC instance; every player borrows it
     std::unique_ptr<VlcPlayerMac> _player;
     NSTimer*                      _statsTimer;   // 250ms libVLC-stats poll → _statMeter
     double                        _bitrateMax;   // rolling throughput peak for the meter scale
@@ -138,7 +140,10 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
 - (instancetype)init {
     if ((self = [super init])) {
         _db = std::make_unique<Database>();
+        _engine = std::make_unique<VlcEngineMac>();
+        _engine->init();  // create the shared libVLC instance once (loads the plugins)
         _player = std::make_unique<VlcPlayerMac>();
+        _player->init(*_engine);
     }
     return self;
 }
