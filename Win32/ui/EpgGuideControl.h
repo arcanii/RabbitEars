@@ -36,6 +36,11 @@ struct GuideCallbacks {
                        const std::wstring& title, long long startUtc, long long stopUtc)>
         onSchedule;
     std::function<void(const std::wstring& channelId, const std::wstring& channelName)> onPlay;
+    // "Record series": create a standing rule for every future airing of `title` on this
+    // channel. Empty -> the popup's Record-series button does nothing.
+    std::function<void(const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title)>
+        onRecordSeries;
     // Right-click a channel row -> toggle it as a favourite (the host resolves the tvg-id to the
     // channel and flips its favourite flag). isFavourite reports the current state so the menu can
     // label "Add to" vs "Remove from" Favourites. Both empty -> no favourite action in the guide.

@@ -349,6 +349,8 @@ void onClick(HWND hwnd, GuideState* st, int x, int y) {
         st->cb.onPlay(channelId, channelName);
     else if (act == ProgrammeAction::Schedule && st->cb.onSchedule)
         st->cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
+    else if (act == ProgrammeAction::RecordSeries && st->cb.onRecordSeries)
+        st->cb.onRecordSeries(channelId, channelName, title);
 }
 
 // Right-click a channel row -> a "favourite" toggle for that channel. x,y are client coords.

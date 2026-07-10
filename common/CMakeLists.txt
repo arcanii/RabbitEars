@@ -11,6 +11,7 @@ add_library(RabbitEarsCore STATIC
   core/Gzip.cpp       # gunzip `.xml.gz` EPG feeds via vendored miniz — unit-tested headlessly
   core/M3uParser.cpp
   core/M3uWriter.cpp  # M3U exporter symmetric with the parser (favourites export) — unit-tested
+  core/RecordingRules.cpp      # pure EPG->schedule rule expander (series recording) — unit-tested
   core/RecordingScheduler.cpp  # pure recording-scheduler decision core — unit-tested headlessly
   core/XmltvParser.cpp  # XMLTV EPG parser — unit-tested headlessly
   db/Database.cpp

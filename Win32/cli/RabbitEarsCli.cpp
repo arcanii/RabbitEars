@@ -4,6 +4,7 @@
 // the sibling apps' GvasCli). Usage:
 //   RabbitEarsCli --selftest              run parser + DB round-trip assertions
 //   RabbitEarsCli <file.m3u> [--limit N]  parse a playlist file, store it, dump it
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -20,6 +21,7 @@
 #include "core/Http.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
+#include "core/RecordingRules.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
@@ -369,6 +371,69 @@ int selftest() {
         expect(db.listSchedules().empty(), "deleteSchedule removes the row");
     }
 
+    out("== Recording rules (DAO) ==\n");
+    {
+        RecordingRule r;
+        r.channelId = L"cnn.us";
+        r.channelName = L"CNN";
+        r.titleMatch = L"News";
+        r.match = RuleMatch::Contains;
+        r.leadSec = 60;
+        r.trailSec = 120;
+        r.mux = L"mkv";
+        r.createdAt = 5000;
+        const long long rid = db.addRule(r);
+        expect(rid > 0, "addRule returns id");
+
+        auto rules = db.listRules();
+        expect(rules.size() == 1 && rules[0].channelId == L"cnn.us" && rules[0].titleMatch == L"News" &&
+                   rules[0].match == RuleMatch::Contains && rules[0].enabled &&
+                   rules[0].leadSec == 60 && rules[0].trailSec == 120 && rules[0].mux == L"mkv",
+               "listRules round-trips every field");
+
+        db.setRuleEnabled(rid, false);
+        expect(!db.listRules()[0].enabled, "setRuleEnabled(false) persists");
+        db.setRuleEnabled(rid, true);
+
+        // deleteRule drops the rule's still-Pending rows but KEEPS its history (Done etc.).
+        auto mkRuleSched = [&](long long ruleId, long long start, ScheduleStatus st) {
+            ScheduledRecording s;
+            s.channelName = L"CNN";
+            s.streamUrl = L"http://c";
+            s.startUtc = start;
+            s.stopUtc = start + 100;
+            s.status = st;
+            s.ruleId = ruleId;
+            s.createdAt = 5000;
+            return db.addSchedule(s);
+        };
+        const long long pendId = mkRuleSched(rid, 10000, ScheduleStatus::Pending);
+        const long long doneId = mkRuleSched(rid, 20000, ScheduleStatus::Done);
+        const long long otherId = mkRuleSched(0, 30000, ScheduleStatus::Pending);  // one-off
+        expect(pendId > 0 && doneId > 0 && otherId > 0, "rule-tagged schedules insert");
+        expect(db.listSchedules().size() == 3, "3 schedules queued");
+        {
+            auto all = db.listSchedules();
+            const auto it = std::find_if(all.begin(), all.end(),
+                                         [&](const ScheduledRecording& s) { return s.id == pendId; });
+            expect(it != all.end() && it->ruleId == rid, "rule_id round-trips on a schedule");
+        }
+
+        db.deleteRule(rid);
+        auto left = db.listSchedules();
+        expect(db.listRules().empty(), "deleteRule removes the rule");
+        expect(left.size() == 2, "deleteRule drops only the rule's PENDING rows (got " +
+                                     std::to_string(left.size()) + ")");
+        const bool keptDone = std::any_of(left.begin(), left.end(), [&](const ScheduledRecording& s) {
+            return s.id == doneId && s.status == ScheduleStatus::Done;
+        });
+        const bool keptOneOff =
+            std::any_of(left.begin(), left.end(), [&](const ScheduledRecording& s) { return s.id == otherId; });
+        expect(keptDone, "a Done recording survives its rule's deletion (history)");
+        expect(keptOneOff, "an unrelated one-off schedule is untouched");
+        for (const auto& s : left) db.deleteSchedule(s.id);  // leave the DB clean for later blocks
+    }
+
     out("== Scheduler planning ==\n");
     {
         auto mk = [](long long id, long long start, long long stop, ScheduleStatus st) {
@@ -417,6 +482,116 @@ int selftest() {
         {  // Done/Cancelled are inert
             auto p = planScheduler({mk(1, 100, 200, S::Done), mk(2, 100, 200, S::Cancelled)}, 150, false);
             expect(p.start.empty() && p.stop.empty() && p.miss.empty(), "terminal statuses are inert");
+        }
+    }
+
+    out("== Recording rules (EPG expansion) ==\n");
+    {
+        expect(normaliseTvgId(L"CNN.us@SD") == L"cnn.us", "normaliseTvgId strips @feed + lowercases");
+        expect(normaliseTvgId(L"") == L"", "normaliseTvgId tolerates empty");
+
+        auto prog = [](const wchar_t* chan, const wchar_t* title, long long a, long long b) {
+            Programme p;
+            p.channelId = chan;
+            p.title = title;
+            p.startUtc = a;
+            p.stopUtc = b;
+            return p;
+        };
+        auto rule = [](long long id, const wchar_t* chan, const wchar_t* title, RuleMatch m) {
+            RecordingRule r;
+            r.id = id;
+            r.channelId = chan;
+            r.channelName = L"CNN";
+            r.titleMatch = title;
+            r.match = m;
+            return r;
+        };
+        // now=1000, horizon=100000. Two airings of "News" + one "Movie" on the same channel.
+        const std::vector<Programme> progs = {
+            prog(L"CNN.us", L"News", 2000, 3000),
+            prog(L"CNN.us", L"Movie", 3000, 4000),
+            prog(L"CNN.us", L"News", 90000, 91000),
+            prog(L"BBC.uk", L"News", 2000, 3000),  // different channel
+        };
+        {  // exact title + channel -> both News airings on CNN only
+            auto v = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {}, 1000, 100000);
+            expect(v.size() == 2, "exact rule matches both airings (got " + std::to_string(v.size()) + ")");
+            expect(v.size() == 2 && v[0].ruleId == 5 && v[0].title == L"News" &&
+                       v[0].status == ScheduleStatus::Pending,
+                   "generated rows carry ruleId + title + Pending");
+        }
+        {  // the rule's channel id is matched on the normalised base id (@feed / case)
+            auto v = expandRules({rule(5, L"CNN.us@HD", L"news", RuleMatch::Exact)}, progs, {}, 1000, 100000);
+            expect(v.size() == 2, "channel + title match are case/@feed insensitive");
+        }
+        {  // empty channelId == any channel
+            RecordingRule any = rule(6, L"", L"News", RuleMatch::Exact);
+            auto v = expandRules({any}, progs, {}, 1000, 100000);
+            expect(v.size() == 3, "empty channelId matches any channel (got " + std::to_string(v.size()) + ")");
+        }
+        {  // Contains
+            auto v = expandRules({rule(7, L"cnn.us", L"ov", RuleMatch::Contains)}, progs, {}, 1000, 100000);
+            expect(v.size() == 1 && v[0].title == L"Movie", "contains match");
+        }
+        {  // disabled rule yields nothing; empty title pattern is refused (would match all)
+            RecordingRule off = rule(8, L"cnn.us", L"News", RuleMatch::Exact);
+            off.enabled = false;
+            expect(expandRules({off}, progs, {}, 1000, 100000).empty(), "disabled rule expands to nothing");
+            expect(expandRules({rule(9, L"cnn.us", L"", RuleMatch::Contains)}, progs, {}, 1000, 100000).empty(),
+                   "empty title pattern never matches");
+        }
+        {  // horizon + already-finished programmes are skipped
+            auto v = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {}, 1000, 50000);
+            expect(v.size() == 1 && v[0].startUtc == 2000, "horizon excludes the far airing");
+            auto w = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {}, 3500, 100000);
+            expect(w.size() == 1 && w[0].startUtc == 90000, "a finished programme is not scheduled");
+        }
+        {  // lead/trail padding
+            RecordingRule pad = rule(5, L"cnn.us", L"Movie", RuleMatch::Exact);
+            pad.leadSec = 60;
+            pad.trailSec = 120;
+            auto v = expandRules({pad}, progs, {}, 1000, 100000);
+            expect(v.size() == 1 && v[0].startUtc == 2940 && v[0].stopUtc == 4120,
+                   "lead/trail padding applied");
+        }
+        {  // dedup vs existing rows — ANY status, so a cancelled slot never comes back
+            ScheduledRecording done;
+            done.channelId = L"CNN.us@SD";  // normalised on both sides
+            done.startUtc = 2000;
+            done.status = ScheduleStatus::Cancelled;
+            auto v = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {done}, 1000, 100000);
+            expect(v.size() == 1 && v[0].startUtc == 90000,
+                   "a cancelled airing is not recreated (dedup on channel+start)");
+        }
+        {  // two rules matching the same airing collapse to ONE recording
+            auto v = expandRules({rule(1, L"cnn.us", L"News", RuleMatch::Exact),
+                                  rule(2, L"cnn.us", L"New", RuleMatch::Contains)},
+                                 progs, {}, 1000, 100000);
+            expect(v.size() == 2, "overlapping rules dedup onto one row per airing");
+        }
+        {  // Tombstones are LOAD-BEARING: every terminal status must block re-creation, which is
+           // why the schedules manager cancels (rather than deletes) a rule's pending airing.
+            auto blocks = [&](ScheduleStatus stt) {
+                ScheduledRecording t;
+                t.channelId = L"CNN.us";
+                t.startUtc = 2000;
+                t.status = stt;
+                auto v = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {t}, 1000,
+                                     100000);
+                return v.size() == 1 && v[0].startUtc == 90000;  // only the far airing remains
+            };
+            expect(blocks(ScheduleStatus::Cancelled) && blocks(ScheduleStatus::Done) &&
+                       blocks(ScheduleStatus::Missed) && blocks(ScheduleStatus::Failed) &&
+                       blocks(ScheduleStatus::Pending) && blocks(ScheduleStatus::Recording),
+                   "an existing row of ANY status blocks re-creating that airing");
+        }
+        {  // degenerate inputs
+            expect(expandRules({}, progs, {}, 1000, 100000).empty(), "no rules -> nothing");
+            expect(expandRules({rule(1, L"cnn.us", L"News", RuleMatch::Exact)}, {}, {}, 1000, 100000).empty(),
+                   "no programmes -> nothing");
+            expect(expandRules({rule(1, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {}, 100000, 1000).empty(),
+                   "horizon before now -> nothing");
         }
     }
 
@@ -633,6 +808,12 @@ int selftest() {
         ms.startUtc = 1;
         ms.stopUtc = 2;
         expect(mdb.addSchedule(ms) > 0, "scheduled_recordings table added by migration (v4)");
+        RecordingRule mr;
+        mr.titleMatch = L"News";
+        mr.createdAt = 1000;
+        expect(mdb.addRule(mr) > 0, "recording_rules table added by migration (v5)");
+        expect(mdb.listSchedules().size() == 1 && mdb.listSchedules()[0].ruleId == 0,
+               "rule_id column added by migration; pre-v5 rows read back as 0");
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");

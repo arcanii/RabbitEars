@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include "models/Channel.h"             // channel pick-list for scheduleDialog
+#include "models/RecordingRule.h"       // rule rows for the recording-rules manager
 #include "models/ScheduledRecording.h"  // schedule rows for the manager + add dialogs
 #include "ui/MiniMeter.h"  // MeterConfig for chooseMeters
 
@@ -44,7 +45,9 @@ void updateLoadingDialog(HWND dlg, const std::wstring& message);
 void closeLoadingDialog(HWND dlg);
 
 // Action chosen in the programme popup (see programmeDialog).
-enum class ProgrammeAction { None, Play, Schedule };
+// RecordSeries creates a standing rule that records every future airing whose title matches
+// this programme's, on this channel (see common/core/RecordingRules).
+enum class ProgrammeAction { None, Play, Schedule, RecordSeries };
 
 // Modal programme popup shown when a TV Guide entry is clicked: the programme `title` +
 // `info` (channel / time / description) with Play channel / Schedule… / Close buttons.
@@ -88,5 +91,18 @@ struct ScheduleManagerCallbacks {
 // Modal schedule manager (Settings → Scheduled Recordings…): a list of schedules with
 // New / Cancel / Delete / Close. Re-queries via cb.list() after every change.
 void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCallbacks cb);
+
+// Host-provided actions for the recording-rules manager. The host owns the DB (and re-expands
+// the rule into schedules when it is enabled). All are invoked on the UI thread.
+struct RuleManagerCallbacks {
+    std::function<std::vector<RecordingRule>()> list;         // current rules
+    std::function<void(long long id, bool enabled)> setEnabled;
+    std::function<void(long long id)> remove;                 // deletes the rule + its pending rows
+};
+
+// Modal recording-rules manager (Settings → Recording Rules…): the standing "record every
+// airing" series rules, with Enable/Disable, Delete and Close. Rules are created from the TV
+// Guide (a programme's "Record series" button). Re-queries via cb.list() after every change.
+void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb);
 
 }  // namespace rabbitears

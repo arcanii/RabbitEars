@@ -15,6 +15,7 @@
 #include "models/ParsedChannel.h"
 #include "models/Playlist.h"
 #include "models/Programme.h"
+#include "models/RecordingRule.h"
 #include "models/ScheduledRecording.h"
 
 struct sqlite3;  // forward-declared; sqlite3.h is included only in the .cpp
@@ -102,12 +103,25 @@ public:
     // then start — the timeline-guide query.
     std::vector<Programme> programmesInWindow(long long playlistId, long long windowStartUtc,
                                               long long windowEndUtc);
+    // The same window across ALL enabled playlists — recording rules are library-wide, not
+    // playlist-scoped (see core/RecordingRules).
+    std::vector<Programme> programmesInWindowAll(long long windowStartUtc, long long windowEndUtc);
 
     // ---- Scheduled recordings ----------------------------------------------
     long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
     std::vector<ScheduledRecording> listSchedules();     // ordered by start_utc
     void updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath = {});
     void deleteSchedule(long long id);
+
+    // ---- Recording rules (EPG-driven series recording, schema v5) -----------
+    // A rule is a recipe; core/RecordingRules expands it against the stored EPG into ordinary
+    // scheduled_recordings rows (tagged with rule_id).
+    long long addRule(const RecordingRule& r);  // returns the new id, or 0 on failure
+    std::vector<RecordingRule> listRules();     // ordered by created_at
+    void setRuleEnabled(long long id, bool enabled);
+    // Deletes the rule and its still-Pending schedules; recordings that already ran (or were
+    // cancelled/missed) are kept as history.
+    void deleteRule(long long id);
 
     // ---- Settings (key/value blob) ----------------------------------------
     std::optional<std::wstring> getSetting(const std::wstring& key);

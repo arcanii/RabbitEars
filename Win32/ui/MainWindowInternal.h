@@ -90,6 +90,9 @@ constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-dr
 #endif
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
+// 0.2.7 (Recording Phase 3) — from the free 2063..2069 gap (2074..2098 went to the 0.2.6 batch).
+constexpr int ID_WAKE_RECORD = 2063;   // Settings → Wake this PC to record (Task Scheduler)
+constexpr int ID_RULES = 2064;         // Settings → Recording Rules… (series rules manager)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
@@ -242,6 +245,12 @@ struct AppState {
     int        schedulePane = -1;      // pane index the active schedule records on (recording is
                                        // per-pane; the user may switch panes mid-record) — -1 = none
     bool       schedulerReconciled = false;  // one-time startup reset of stale "Recording" rows
+    bool       wakeToRecord = true;   // register a Windows task to wake this PC for a recording
+                                      // (setting "wake_to_record"; see platform/WakeScheduler)
+    long long  wakeTaskFor = -1;      // the schedule start the wake task currently targets
+                                      // (0 = no task, -1 = never synced). Keyed on the UNCLAMPED
+                                      // start so the ~30s tick doesn't re-register COM every pass.
+    long long  rulesExpandedAt = 0;   // last EPG->schedule rule expansion (unix s); throttles the tick
     std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv" | "mp4"
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
     bool       categoryActive = false;    // is the Categories include-filter on?
@@ -336,6 +345,14 @@ void onToggleRecord(AppState* st);
 void onSchedulerTick(AppState* st);
 void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName, const std::wstring& title, long long startUtc, long long stopUtc);
 void onManageSchedules(AppState* st);
+// Recording Phase 3 (0.2.7)
+void syncKeepAwake(AppState* st);           // suppress sleep while any pane records
+void syncWakeFromSchedules(AppState* st);   // (re)register / clear the Windows wake task
+// Materialize rule matches into schedules; returns #added. Throttled to kRuleExpandIntervalSeconds
+// unless `force` (a guide refresh / a new or re-enabled rule) — the EPG query is heavy.
+int  expandRecordingRules(AppState* st, bool force = false);
+void recordSeriesFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName, const std::wstring& title);
+void onManageRules(AppState* st);
 std::wstring joinCategories(const std::set<std::wstring>& s);
 std::set<std::wstring> splitCategories(const std::wstring& s);
 void onCategories(AppState* st);

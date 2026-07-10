@@ -37,6 +37,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/Updater.h"
+#include "platform/WakeScheduler.h"
 #include "resource.h"
 #include "version.h"
 #include "ui/BufferMeter.h"
@@ -462,6 +463,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     rf && (*rf == L"ts" || *rf == L"mkv" || *rf == L"mp4"))
                     st->recFormat = *rf;
                 if (auto rl = st->db.getSetting(L"resume_last")) st->resumeLast = (*rl == L"1");
+                if (auto wr = st->db.getSetting(L"wake_to_record")) st->wakeToRecord = (*wr == L"1");
                 if (auto hd = st->db.getSetting(L"hide_dead"); hd && *hd == L"1") st->hideDead = true;
                 if (auto cf = st->db.getSetting(L"category_filter"); cf && !cf->empty()) {
                     st->categories = splitCategories(*cf);
@@ -1237,6 +1239,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_DESTROY:
             armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
             KillTimer(hwnd, kSchedulerTimer);
+            // Hand the queue to Windows on the way out — this is the whole point of wake-to-record:
+            // the wake task must be registered for whatever is still pending BEFORE we stop running.
+            // Also drop the sleep block; the process is going away and the state is per-thread.
+            if (st->db.isOpen()) syncWakeFromSchedules(st);
+            setRecordingKeepAwake(false);
 #ifdef RABBITEARS_THEME_ENGINE
             KillTimer(hwnd, kSkinAnimTimer);
             skin::shutdownSkinStrip();
@@ -1616,7 +1623,7 @@ void registerClasses(HINSTANCE hInst) {
 
 }  // namespace mw
 
-int runApp(HINSTANCE hInst, int nCmdShow) {
+int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake) {
     using namespace mw;  // the window internals now live in rabbitears::mw
     // Single-instance guard (before diag::init, so a second launch doesn't rotate the
     // running instance's log). The mutex name matches the installer's AppMutex, so the
@@ -1624,9 +1631,14 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
     // lifetime (released on exit); a second launch just focuses the existing window.
     HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"RabbitEars.SingleInstance");
     if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (HWND existing = FindWindowW(kMainClass, nullptr)) {
-            if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
-            SetForegroundWindow(existing);
+        // A wake-launch that finds us already running has nothing to do: the live instance's
+        // scheduler tick will start the recording. Yanking its window to the foreground (and
+        // over whatever the user is doing) would be the opposite of unattended.
+        if (!scheduledWake) {
+            if (HWND existing = FindWindowW(kMainClass, nullptr)) {
+                if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(existing);
+            }
         }
         CloseHandle(instanceMutex);
         return 0;
@@ -1676,27 +1688,48 @@ int runApp(HINSTANCE hInst, int nCmdShow) {
         const std::wstring tosVer = RE_VERSION_FULL_W;
         const auto accepted = st->db.getSetting(L"tos_accepted");
         if (!accepted || *accepted != tosVer) {
-            closeSplash(splash);  // don't leave the splash behind the modal gate
-            splash = nullptr;
-            if (!showTerms(hwnd, hInst, st->dpi)) {
-                diag::info(L"Terms declined — exiting");
-                DestroyWindow(hwnd);
-                delete st;
-                Gdiplus::GdiplusShutdown(gdipToken);
-                diag::shutdown();
-                return 0;
+            // An unattended wake-launch must never sit at a modal dialog while the recording
+            // window passes — an auto-update would otherwise silently break every scheduled
+            // recording until the user next opened the app. If the Terms were accepted for a
+            // PRIOR version, honour that for this run only: we deliberately do NOT write
+            // tos_accepted, so the next interactive launch still re-prompts. A first-ever run
+            // (no acceptance on record) still gates — we won't infer consent that never existed.
+            const bool priorAcceptance = accepted && !accepted->empty();
+            if (scheduledWake && priorAcceptance) {
+                diag::info(L"scheduled wake: deferring the Terms re-prompt (last accepted for " +
+                           *accepted + L"); it will be shown on the next interactive launch");
+            } else {
+                closeSplash(splash);  // don't leave the splash behind the modal gate
+                splash = nullptr;
+                if (!showTerms(hwnd, hInst, st->dpi)) {
+                    diag::info(L"Terms declined — exiting");
+                    DestroyWindow(hwnd);
+                    delete st;
+                    Gdiplus::GdiplusShutdown(gdipToken);
+                    diag::shutdown();
+                    return 0;
+                }
+                st->db.setSetting(L"tos_accepted", tosVer);
+                diag::info(L"Terms accepted for " + tosVer);
             }
-            st->db.setSetting(L"tos_accepted", tosVer);
-            diag::info(L"Terms accepted for " + tosVer);
         }
     }
 
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-    ShowWindow(hwnd, nCmdShow);
+    // A wake-launch comes up minimized and WITHOUT taking focus: the user may be asleep, or
+    // working in another app on a machine that just woke. It still runs a full message loop, so
+    // the scheduler tick fires and records exactly as if the app had been open all along.
+    ShowWindow(hwnd, scheduledWake ? SW_SHOWMINNOACTIVE : nCmdShow);
     UpdateWindow(hwnd);
     if (splash) closeSplash(splash);  // main window is up (already closed on the first-run path)
+    if (scheduledWake) diag::info(L"started by the recording wake task (minimized, unattended)");
 
     initUpdater(hwnd);  // WinSparkle: start background update checks (+ shutdown coordination)
+
+    // Run the scheduler once immediately rather than waiting up to 30 s for the first WM_TIMER:
+    // a machine woken by the recording task has a deadline. This also expands any EPG rules and
+    // (re)registers the wake task for whatever is still queued.
+    if (st->db.isOpen()) onSchedulerTick(st);
 
     // Ctrl+Shift+V toggles "Video only" from anywhere (an accelerator, so it fires whatever
     // child control has focus); it routes to WM_COMMAND(ID_VIDEO_ONLY) on the main window.

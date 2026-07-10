@@ -32,11 +32,13 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/Http.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
+#include "core/RecordingRules.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/Updater.h"
+#include "platform/WakeScheduler.h"
 #include "resource.h"
 #include "version.h"
 #include "ui/BufferMeter.h"
@@ -396,10 +398,19 @@ void onEpgDone(AppState* st, EpgResult* res) {
         detail += f.name + L":  " + std::to_wstring(stored) + L" programmes\r\n";
         diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
     }
-    const std::wstring summary =
+    std::wstring summary =
         okCount > 0 ? L"Stored " + std::to_wstring(totalProg) + L" programmes across " +
                           std::to_wstring(chans.size()) + L" channels"
                     : L"Could not refresh the guide";
+    // A fresh guide is exactly when a series rule learns about next week's airings — force it.
+    if (okCount > 0) {
+        const int queued = expandRecordingRules(st, /*force=*/true);
+        syncWakeFromSchedules(st);
+        if (queued > 0) {
+            detail += L"\r\nRecording rules queued " + std::to_wstring(queued) + L" new airing(s).\r\n";
+            summary += L" · " + std::to_wstring(queued) + L" queued by rules";
+        }
+    }
     setStatus(st, summary);
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
@@ -477,6 +488,10 @@ void onEpgGuide(AppState* st) {
     cb.onSchedule = [st](const std::wstring& channelId, const std::wstring& channelName,
                          const std::wstring& title, long long startUtc, long long stopUtc) {
         scheduleFromGuide(st, channelId, channelName, title, startUtc, stopUtc);
+    };
+    cb.onRecordSeries = [st](const std::wstring& channelId, const std::wstring& channelName,
+                             const std::wstring& title) {
+        recordSeriesFromGuide(st, channelId, channelName, title);
     };
     cb.onPlay = [st](const std::wstring& channelId, const std::wstring& channelName) {
         std::optional<Channel> ch;
@@ -795,6 +810,7 @@ void onToggleRecord(AppState* st) {
         st->ap().player.stopRecording();
         SetWindowTextW(st->btnRec, kGlyphRecord);
         setStatus(st, L"Recording saved: " + file);
+        syncKeepAwake(st);  // another pane may still be recording — re-derive, don't assume
         return;
     }
     if (st->ap().nowPlaying.id == 0) {
@@ -809,6 +825,7 @@ void onToggleRecord(AppState* st) {
                                   st->ap().nowPlaying.referrer, path, mux)) {
         SetWindowTextW(st->btnRec, kGlyphStop);
         setStatus(st, L"● Recording " + st->ap().nowPlaying.name + L"  →  " + path);
+        syncKeepAwake(st);  // don't let the machine sleep out from under a manual recording
     }
 }
 
@@ -834,6 +851,10 @@ void stopScheduledRecorder(AppState* st) {
     const bool stoppedActive = rec == &st->ap().player;
     SetWindowTextW(st->btnRec, (!stoppedActive && st->ap().player.isRecording()) ? kGlyphStop
                                                                                  : kGlyphRecord);
+    // The stop is async, so isRecording() may still read true for this player — a stale "keep
+    // awake" for one 30 s tick is harmless (the tick re-syncs), while releasing too eagerly
+    // could let the machine sleep on a recorder that hasn't finished flushing.
+    syncKeepAwake(st);
 }
 
 // The recording scheduler tick (~30s): decide via the pure planScheduler() core, then
@@ -843,7 +864,11 @@ void stopScheduledRecorder(AppState* st) {
 void onSchedulerTick(AppState* st) {
     reapDyingPanes(st, /*force=*/false);  // backstop: reap finished mode-switch panes (~30s tick)
     auto schedules = st->db.listSchedules();
-    if (schedules.empty()) return;
+    // NB: there is deliberately NO early return on an empty queue. The tail of this function
+    // (rule expansion, keep-awake, wake-task upkeep) must run even with nothing queued —
+    // otherwise a still-enabled series rule whose rows were all deleted would never re-queue,
+    // and a stale wake task would never be cleared (both review-caught). planScheduler() over an
+    // empty vector simply yields empty plans, so the loops below are no-ops.
     // One-time startup reconcile: a schedule still marked Recording is stale (a prior
     // session was closed mid-record — nothing is actually recording now), so reset it to
     // Pending and let planScheduler resume it (if still in window) or miss it.
@@ -897,6 +922,87 @@ void onSchedulerTick(AppState* st) {
             diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
         }
     }
+
+    // Rules first (they may queue an airing that starts within this tick), then the two
+    // side-effects that must track the queue: sleep suppression and the wake task.
+    expandRecordingRules(st);
+    syncKeepAwake(st);
+    syncWakeFromSchedules(st);
+}
+
+// ---- Recording Phase 3: keep-awake, wake task, and EPG-driven rules ----------
+
+void syncKeepAwake(AppState* st) {
+    bool any = false;
+    for (const auto& p : st->panes)
+        if (p->player.isRecording()) { any = true; break; }
+    setRecordingKeepAwake(any);  // per-thread state — always called on the UI thread
+}
+
+void syncWakeFromSchedules(AppState* st) {
+    // The schedule start the task SHOULD target: the earliest still-pending one (0 = none).
+    long long earliest = 0;
+    if (st->wakeToRecord)
+        for (const ScheduledRecording& s : st->db.listSchedules())
+            if (s.status == ScheduleStatus::Pending && (earliest == 0 || s.startUtc < earliest))
+                earliest = s.startUtc;
+
+    // This runs on every ~30 s tick, and touching Task Scheduler means a COM round-trip. Key on
+    // the UNCLAMPED start so an unchanged queue costs nothing; only a changed target re-registers.
+    if (earliest == st->wakeTaskFor) return;
+
+    if (earliest == 0) {
+        clearWakeTask();  // nothing queued (or the feature is off) — never wake a PC for nothing
+        st->wakeTaskFor = 0;
+        return;
+    }
+    // Clamp the FIRE time into the future: a past boundary would make Task Scheduler run the task
+    // immediately, launching a second instance that just bounces off the single-instance mutex. If
+    // we are exiting with an imminent recording, +30 s still relaunches us in time to catch it
+    // (planScheduler happily starts a schedule mid-window).
+    const long long now = static_cast<long long>(time(nullptr));
+    if (syncWakeTask(std::max(earliest - kWakeLeadSeconds, now + 30)))
+        st->wakeTaskFor = earliest;
+    // On failure leave wakeTaskFor unchanged so the next tick retries rather than going quiet.
+}
+
+// Materialize enabled rules against the stored EPG. Pure matching lives in
+// common/core/RecordingRules; here we only resolve each match to a playable stream (the core
+// has no DB) and insert. Returns the number of schedules added.
+int expandRecordingRules(AppState* st, bool force) {
+    if (!st->db.isOpen()) return 0;
+    const auto rules = st->db.listRules();
+    if (rules.empty()) return 0;  // the common case: no rules, no cost
+    const long long now = static_cast<long long>(time(nullptr));
+    // The EPG query below spans 14 days across every enabled playlist — far too heavy to run on
+    // every ~30 s tick. New airings only arrive with a guide refresh, which forces a pass anyway.
+    if (!force && st->rulesExpandedAt != 0 && now - st->rulesExpandedAt < kRuleExpandIntervalSeconds)
+        return 0;
+    const long long horizon = now + kRuleHorizonSeconds;
+    const auto programmes = st->db.programmesInWindowAll(now, horizon);
+    if (programmes.empty()) {
+        st->rulesExpandedAt = now;  // don't re-query every tick just because the guide is empty
+        return 0;
+    }
+
+    const auto planned = expandRules(rules, programmes, st->db.listSchedules(), now, horizon);
+    int added = 0;
+    for (ScheduledRecording s : planned) {
+        // The core can't look a channel up; a rule for a channel that has since left the
+        // library simply produces nothing (rather than an unrecordable row).
+        const auto ch = st->db.channelByTvgId(s.channelId);
+        if (!ch) continue;
+        s.channelName = ch->name.empty() ? s.channelName : ch->name;
+        s.streamUrl = ch->streamUrl;
+        s.userAgent = ch->userAgent;
+        s.referrer = ch->referrer;
+        s.createdAt = now;
+        if (st->db.addSchedule(s) > 0) ++added;
+    }
+    st->rulesExpandedAt = now;
+    if (added > 0)
+        diag::info(L"recording rules queued " + std::to_wstring(added) + L" upcoming airing(s)");
+    return added;
 }
 
 // Schedule a recording for a guide programme: resolve its tvg-id to a recordable stream,
@@ -935,6 +1041,71 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
     }
 }
 
+// "Record series" from the guide: store a rule that matches this programme's title on this
+// channel, then expand it immediately so the user sees the upcoming airings queue up.
+void recordSeriesFromGuide(AppState* st, const std::wstring& channelId,
+                           const std::wstring& channelName, const std::wstring& title) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (title.empty()) return;
+    std::optional<Channel> ch;
+    if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
+    if (!ch) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Channel not found",
+                       L"Couldn't match \"" + channelName +
+                           L"\" to a playable channel in your library.");
+        return;
+    }
+    // Reject an exact duplicate so mashing the button doesn't pile up identical rules.
+    for (const RecordingRule& r : st->db.listRules())
+        if (normaliseTvgId(r.channelId) == normaliseTvgId(channelId) && r.titleMatch == title &&
+            r.match == RuleMatch::Exact) {
+            showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Already recording this series",
+                           L"A rule for \"" + title + L"\" on " + ch->name +
+                               L" already exists.\r\nSee Settings ▸ Recording Rules….");
+            return;
+        }
+
+    RecordingRule r;
+    r.channelId = channelId;
+    r.channelName = ch->name.empty() ? channelName : ch->name;
+    r.titleMatch = title;
+    r.match = RuleMatch::Exact;  // the guide gives us the exact title; Contains would over-match
+    r.mux = st->recFormat;
+    r.createdAt = static_cast<long long>(time(nullptr));
+    if (st->db.addRule(r) == 0) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Could not save the rule",
+                       L"The recording rule could not be stored.");
+        return;
+    }
+    const int added = expandRecordingRules(st, /*force=*/true);  // a brand-new rule must queue now
+    syncWakeFromSchedules(st);
+    onSchedulerTick(st);  // catch an airing that is already on
+    diag::info(L"series rule added: \"" + title + L"\" on " + r.channelName);
+    showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Recording every airing of this show",
+                   title + L"\r\n" + r.channelName + L"\r\n\r\n" + std::to_wstring(added) +
+                       L" upcoming airing(s) queued from the guide.\r\n"
+                       L"New airings are picked up automatically as the guide refreshes.\r\n\r\n"
+                       L"Manage rules in Settings ▸ Recording Rules….");
+}
+
+// Settings → Recording Rules…: list the standing series rules, with enable/disable + delete.
+// Deleting a rule drops its still-pending schedules but keeps recordings that already ran.
+void onManageRules(AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    RuleManagerCallbacks cb;
+    cb.list = [st] { return st->db.listRules(); };
+    cb.setEnabled = [st](long long id, bool on) {
+        st->db.setRuleEnabled(id, on);
+        if (on) expandRecordingRules(st, /*force=*/true);  // a re-enabled rule re-queues at once
+        syncWakeFromSchedules(st);
+    };
+    cb.remove = [st](long long id) {
+        st->db.deleteRule(id);
+        syncWakeFromSchedules(st);  // its pending rows are gone; the wake time may have moved
+    };
+    manageRules(st->hwnd, hInst, st->dpi, cb);
+}
+
 // Settings ▸ Scheduled Recordings… — the manager (list + New/Cancel/Delete). The host
 // callbacks own the recorder + DB so cancel/delete stop an active recording, and New
 // opens scheduleDialog over the manager and stores + nudges the scheduler.
@@ -947,10 +1118,29 @@ void onManageSchedules(AppState* st) {
         // stops the right one (stopping the active pane here once cut a manual recording).
         if (st->activeScheduleId == id) stopScheduledRecorder(st);
         st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+        syncWakeFromSchedules(st);  // the earliest pending start may have just moved
     };
     cb.remove = [st](long long id) {
         if (st->activeScheduleId == id) stopScheduledRecorder(st);
-        st->db.deleteSchedule(id);
+        // A still-PENDING row that a series rule generated is a materialised prediction: hard
+        // deleting it leaves no dedup anchor, so the very next expansion would recreate it and
+        // the user's delete would silently undo itself. Cancel it instead — the Cancelled
+        // tombstone is precisely what tells the rule "skip this airing". One-off rows, and rows
+        // that already ran, delete for real.
+        bool ruleTombstone = false;
+        for (const ScheduledRecording& s : st->db.listSchedules())
+            if (s.id == id) {
+                ruleTombstone = (s.ruleId != 0 && s.status == ScheduleStatus::Pending);
+                break;
+            }
+        if (ruleTombstone) {
+            st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+            setStatus(st, L"Airing cancelled — it came from a series rule, so it stays listed as "
+                          L"Cancelled. Delete the rule to stop the series.");
+        } else {
+            st->db.deleteSchedule(id);
+        }
+        syncWakeFromSchedules(st);
     };
     cb.addNew = [st](HWND owner) {
         HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
@@ -1119,6 +1309,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, L"TV Guide");
     AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
     AppendMenuW(m, MF_STRING, ID_SCHEDULES, L"Scheduled Recordings…");
+    AppendMenuW(m, MF_STRING, ID_RULES, L"Recording Rules…");
+    AppendMenuW(m, MF_STRING | (st->wakeToRecord ? MF_CHECKED : 0u), ID_WAKE_RECORD,
+                L"Wake this PC to record");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
     // row live there now — the old inline quick-toggle checkboxes were redundant).
@@ -1260,6 +1453,17 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_RESUME_LAST:
             st->resumeLast = !st->resumeLast;
             st->db.setSetting(L"resume_last", st->resumeLast ? L"1" : L"0");
+            break;
+        case ID_RULES:
+            onManageRules(st);
+            break;
+        case ID_WAKE_RECORD:
+            st->wakeToRecord = !st->wakeToRecord;
+            st->db.setSetting(L"wake_to_record", st->wakeToRecord ? L"1" : L"0");
+            syncWakeFromSchedules(st);  // register or tear down the Windows task right away
+            setStatus(st, st->wakeToRecord
+                              ? L"This PC will wake for scheduled recordings."
+                              : L"Wake-to-record off — recordings need the app running.");
             break;
         case ID_FAV_EXPORT:
             onExportFavourites(st);

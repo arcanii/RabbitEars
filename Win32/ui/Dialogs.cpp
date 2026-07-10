@@ -1070,7 +1070,7 @@ void closeLoadingDialog(HWND dlg) {
 // ---- Programme popup (click a TV Guide entry) ------------------------------
 
 namespace {
-constexpr int ID_PROG_PLAY = 1801, ID_PROG_SCHED = 1802;
+constexpr int ID_PROG_PLAY = 1801, ID_PROG_SCHED = 1802, ID_PROG_SERIES = 1803;
 
 struct ProgrammeDlgState {
     ProgrammeAction action = ProgrammeAction::None;  // set in the Proc before destroy
@@ -1094,6 +1094,7 @@ LRESULT CALLBACK ProgrammeDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             switch (LOWORD(w)) {
                 case ID_PROG_PLAY: st->action = ProgrammeAction::Play; st->done = true; DestroyWindow(hwnd); return 0;
                 case ID_PROG_SCHED: st->action = ProgrammeAction::Schedule; st->done = true; DestroyWindow(hwnd); return 0;
+                case ID_PROG_SERIES: st->action = ProgrammeAction::RecordSeries; st->done = true; DestroyWindow(hwnd); return 0;
                 case IDCANCEL: st->done = true; DestroyWindow(hwnd); return 0;
             }
             return 0;
@@ -1120,7 +1121,7 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
     ProgrammeDlgState st;
     HFONT bodyFont = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
     HFONT headFont = themeFont(FontRole::Body, dpi, 15, FW_SEMIBOLD);
-    const int W = dp(460, dpi), H = dp(300, dpi);
+    const int W = dp(560, dpi), H = dp(300, dpi);  // +100dp for the Record series button
     RECT pr;
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
@@ -1146,7 +1147,8 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
                                     ES_READONLY | ES_AUTOVSCROLL,
                                 m, dp(48, dpi), cr.right - 2 * m, btnY - dp(60, dpi), dlg, nullptr, hInst,
                                 nullptr);
-    const int pw = dp(116, dpi), sw = dp(104, dpi), cw = dp(84, dpi), gap = dp(8, dpi);
+    const int pw = dp(116, dpi), sw = dp(104, dpi), rw = dp(124, dpi), cw = dp(84, dpi),
+              gap = dp(8, dpi);
     HWND play = CreateWindowExW(0, L"BUTTON", L"Play channel",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, m, btnY, pw, bh,
                                 dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_PLAY)), hInst,
@@ -1155,11 +1157,16 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
                                  m + pw + gap, btnY, sw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SCHED)), hInst,
                                  nullptr);
+    // "Record series" = a standing rule for every future airing of this title on this channel.
+    HWND series = CreateWindowExW(0, L"BUTTON", L"Record series", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  m + pw + gap + sw + gap, btnY, rw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SERIES)), hInst,
+                                  nullptr);
     HWND close = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                  cr.right - cw - m, btnY, cw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
     SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
-    for (HWND h : {body, play, sched, close})
+    for (HWND h : {body, play, sched, series, close})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
     applyDialogDarkMode(dlg);
 
@@ -2046,6 +2053,204 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
     ListView_SetTextBkColor(st.lv, th.windowBg);
     ListView_SetTextColor(st.lv, th.textPrimary);
     mgRepopulate(&st);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(st.lv);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(msg.wParam)); DestroyWindow(dlg); break; }
+        if (r == -1) { DestroyWindow(dlg); break; }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(st.font);
+}
+
+// ---- Recording rules manager (Settings → Recording Rules…) ------------------
+
+namespace {
+constexpr int ID_RM_LV = 1861, ID_RM_TOGGLE = 1862, ID_RM_DELETE = 1863;
+
+struct RuleDlgState {
+    RuleManagerCallbacks cb;
+    HWND  lv = nullptr;
+    HFONT font = nullptr;
+    UINT  dpi = 96;
+    std::vector<RecordingRule> rows;
+    bool  done = false;
+};
+
+void rmRepopulate(RuleDlgState* st) {
+    st->rows = st->cb.list ? st->cb.list() : std::vector<RecordingRule>{};
+    SendMessageW(st->lv, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(st->lv);
+    for (int i = 0; i < static_cast<int>(st->rows.size()); ++i) {
+        const RecordingRule& r = st->rows[i];
+        std::wstring show = r.titleMatch.empty() ? L"(any)" : r.titleMatch;
+        LVITEMW it{};
+        it.mask = LVIF_TEXT | LVIF_PARAM;
+        it.iItem = i;
+        it.lParam = i;
+        it.pszText = const_cast<LPWSTR>(show.c_str());
+        const int row = ListView_InsertItem(st->lv, &it);
+        std::wstring chan = r.channelName.empty() ? L"(any channel)" : r.channelName;
+        ListView_SetItemText(st->lv, row, 1, const_cast<LPWSTR>(chan.c_str()));
+        const wchar_t* kind = (r.match == RuleMatch::Exact) ? L"Exact title" : L"Title contains";
+        ListView_SetItemText(st->lv, row, 2, const_cast<LPWSTR>(kind));
+        const wchar_t* state = r.enabled ? L"Enabled" : L"Disabled";
+        ListView_SetItemText(st->lv, row, 3, const_cast<LPWSTR>(state));
+    }
+    SendMessageW(st->lv, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(st->lv, nullptr, TRUE);
+}
+
+// The selected row's index (not id) — the toggle needs the whole rule, not just its id.
+int rmSelectedIndex(RuleDlgState* st) {
+    const int sel = ListView_GetNextItem(st->lv, -1, LVNI_SELECTED);
+    if (sel < 0) return -1;
+    LVITEMW it{};
+    it.mask = LVIF_PARAM;
+    it.iItem = sel;
+    if (!ListView_GetItem(st->lv, &it)) return -1;
+    const int idx = static_cast<int>(it.lParam);
+    return (idx >= 0 && idx < static_cast<int>(st->rows.size())) ? idx : -1;
+}
+
+LRESULT CALLBACK RuleDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<RuleDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, w);
+        case WM_COMMAND:
+            switch (LOWORD(w)) {
+                case ID_RM_TOGGLE:
+                    if (const int i = rmSelectedIndex(st); i >= 0 && st->cb.setEnabled) {
+                        st->cb.setEnabled(st->rows[i].id, !st->rows[i].enabled);
+                        rmRepopulate(st);
+                    }
+                    return 0;
+                case ID_RM_DELETE:
+                    if (const int i = rmSelectedIndex(st); i >= 0 && st->cb.remove) {
+                        // Deleting drops the rule's still-pending recordings — say so.
+                        std::wstring msgText = L"Delete the rule for \"" + st->rows[i].titleMatch +
+                                               L"\"?\r\n\r\nUpcoming recordings it queued will be "
+                                               L"removed. Recordings that already ran are kept.";
+                        if (MessageBoxW(hwnd, msgText.c_str(), L"Recording Rules",
+                                        MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) == IDYES) {
+                            st->cb.remove(st->rows[i].id);
+                            rmRepopulate(st);
+                        }
+                    }
+                    return 0;
+                case IDCANCEL:
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+}  // namespace
+
+void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = RuleDlgProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsRuleMgr";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    RuleDlgState st;
+    st.dpi = dpi;
+    st.cb = std::move(cb);
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
+    const int W = dp(640, dpi), H = dp(420, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);
+    HWND dlg =
+        CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsRuleMgr", L"Recording Rules",
+                        WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst, nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        return;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(16, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(14, dpi);
+    const int hintH = dp(34, dpi);
+    const int listBottom = btnY - dp(10, dpi) - hintH;
+
+    st.lv = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
+                                LVS_SHOWSELALWAYS,
+                            m, m, cr.right - 2 * m, listBottom - m, dlg,
+                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_LV)), hInst, nullptr);
+    ListView_SetExtendedListViewStyle(st.lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    const int lvW = cr.right - 2 * m - GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+    const struct { const wchar_t* h; int pct; } cols[4] = {
+        {L"Show", 40}, {L"Channel", 28}, {L"Match", 18}, {L"State", 14}};
+    for (int i = 0; i < 4; ++i) {
+        LVCOLUMNW col{};
+        col.mask = LVCF_TEXT | LVCF_WIDTH;
+        col.pszText = const_cast<LPWSTR>(cols[i].h);
+        col.cx = lvW * cols[i].pct / 100;
+        ListView_InsertColumn(st.lv, i, &col);
+    }
+    // Rules are created from the guide, so an empty list needs to say where they come from.
+    HWND hint = CreateWindowExW(0, L"STATIC",
+                                L"Rules are created from the TV Guide: click a programme, then "
+                                L"“Record series”. Every future airing is queued automatically.",
+                                WS_CHILD | WS_VISIBLE, m, listBottom + dp(4, dpi), cr.right - 2 * m,
+                                hintH, dlg, nullptr, hInst, nullptr);
+
+    const int bw = dp(150, dpi), dw = dp(96, dpi), gap = dp(8, dpi);
+    HWND toggleB = CreateWindowExW(0, L"BUTTON", L"Enable / Disable", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                   m, btnY, bw, bh, dlg,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_TOGGLE)), hInst,
+                                   nullptr);
+    HWND delB = CreateWindowExW(0, L"BUTTON", L"Delete", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                m + bw + gap, btnY, dw, bh, dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_DELETE)), hInst,
+                                nullptr);
+    HWND closeB = CreateWindowExW(0, L"BUTTON", L"Close",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                  cr.right - dw - m, btnY, dw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
+    for (HWND h : {st.lv, hint, toggleB, delB, closeB})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+
+    applyDialogDarkMode(dlg);
+    const Theme& th = currentTheme();
+    ListView_SetBkColor(st.lv, th.windowBg);
+    ListView_SetTextBkColor(st.lv, th.windowBg);
+    ListView_SetTextColor(st.lv, th.textPrimary);
+    rmRepopulate(&st);
 
     EnableWindow(parent, FALSE);
     ShowWindow(dlg, SW_SHOW);

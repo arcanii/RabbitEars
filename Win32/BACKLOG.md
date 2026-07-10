@@ -140,12 +140,24 @@ the native ARM64 build (~3 s scan), so that's moot.
 Split/PIP (0.2.1); concurrent per-pane recording, MP4, PIP resize, view-mode/PIP persistence,
 resume-last-channel, named saved layouts, import/export favourites, Show-in-Guide (0.2.6).)*
 
-- **Recording Phase 3** — Windows **Task Scheduler wake-to-record** (today the app must be running)
-  + **EPG-driven scheduling** (series/season rules, "record this programme every week").
+- **Recording Phase 3** — ✅ DONE in the 0.2.7 batch: **wake-to-record** (a Windows Scheduled Task
+  wakes the PC + launches RabbitEars before a recording; `Win32/platform/WakeScheduler`, sleep also
+  suppressed *during* a recording) + **EPG-driven series rules** (schema v5 `recording_rules`, the
+  pure `common/core/RecordingRules` expander, "Record series" in the TV Guide, Settings ▸ Recording
+  Rules…). Remaining Phase-3-adjacent ideas: **season/episode dedup** (use `Programme::episodeNum` /
+  `subTitle` so a repeat airing of an already-recorded episode is skipped — today a rule records
+  every airing of a matching title), and richer rule editing (lead/trail padding + `Contains` rules
+  are in the model + DB but only `Exact` rules are creatable from the UI).
 - **Transcoding on record** — format/quality/size presets (CPU-heavy). Today recording is always a
   lossless stream copy (`ts`/`mkv`/`mp4` mux, no re-encode).
 - **Background dead-link checker** — so "Hide unavailable" isn't purely passive: probe channels
   off-thread, write `dead_status`, throttle + cache. Pairs with the existing `setDeadStatus` DAO.
+- **Series-rule follow-ups** (the 0.2.7 engine supports these; only the UI is missing):
+  **episode dedup** (skip a repeat airing of an episode already recorded — `Programme::episodeNum` /
+  `subTitle` are stored but unused, so today a rule records every airing of a matching title);
+  a **rule editor** (only `Exact` rules are creatable from the guide; `Contains`, `leadSec`/`trailSec`
+  padding, and "any channel" rules already exist in the model + DB + expander); and a
+  **"skip this airing"** affordance that reads better than the manager's Cancel.
 - **Group-title country fallback** for Xtream feeds (whose channels lack `tvg-id` country codes, so
   the Countries nav node stays empty for them).
 - **PIP "always on top of other apps" toggle** — the PIP popup is `WS_EX_TOPMOST` today (it must be,

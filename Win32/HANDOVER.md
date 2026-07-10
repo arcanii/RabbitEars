@@ -709,6 +709,79 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
+⚠️ **0.2.7 IS IN PROGRESS — UNCOMMITTED in the working tree** (version bumped to 0.2.7 in all 4 spots).
+**Recording Phase 3** (owner-directed): the DVR-completing feature — recordings now fire when the app
+ISN'T running, and a series records itself. Built green on x64 BOTH theme flags + selftest ALL PASS.
+**Commit only when the owner asks.**
+
+- **✅ Wake-to-record** — `Win32/platform/WakeScheduler.{h,cpp}` (new): a Task Scheduler 2.0 COM wrapper
+  registering ONE user task, "**RabbitEars Recording Wake**" (root folder), with `WakeToRun` +
+  `StartWhenAvailable` + no battery stops, whose action is `RabbitEars.exe --scheduled-wake`. It is
+  create-or-updated to fire at `earliestPendingStart − kWakeLeadSeconds (120 s)`, clamped to `now+30 s`
+  so a past boundary can't make Task Scheduler fire instantly against the single-instance mutex.
+  `syncWakeFromSchedules(st)` is the choke point (tick, EPG refresh, rule add/enable/delete, the
+  Settings toggle) **and runs at `WM_DESTROY`** — registering the task on the way out is the entire
+  point. Settings ▸ **Wake this PC to record** (`wake_to_record`, default ON) clears the task when off.
+  Also `setRecordingKeepAwake()` (`ES_CONTINUOUS|ES_SYSTEM_REQUIRED`, screen may still sleep) is
+  re-derived from "any pane recording?" by `syncKeepAwake(st)` on every record start/stop + tick.
+  **Limits (deliberate, documented in the header):** wakes from SLEEP only (not hibernate/shutdown —
+  firmware wake timers, not ours); needs the user logged on (interactive token ⇒ no elevation to
+  register); Windows power settings can disable wake timers, in which case `StartWhenAvailable` runs it
+  at the next boot instead.
+- **✅ `--scheduled-wake` launch path** — `wWinMain` now reads `lpCmdLine` (the app's only flag) and
+  `runApp(hInst, nCmdShow, scheduledWake)`. Three behaviours: (1) an already-running instance is NOT
+  yanked to the foreground; (2) the window comes up `SW_SHOWMINNOACTIVE`; (3) **the post-update Terms
+  re-prompt is deferred** when a PRIOR version was accepted — otherwise an auto-update would silently
+  break every scheduled recording until the user next opened the app. It does NOT write `tos_accepted`,
+  so the next interactive launch still prompts; a first-ever run (no acceptance on record) still gates.
+  `runApp` also calls `onSchedulerTick` once immediately (the first `WM_TIMER` is 30 s out — a woken
+  machine has a deadline).
+- **✅ EPG-driven series rules** — schema **v5**: `recording_rules` + `scheduled_recordings.rule_id`
+  (deliberately NOT an FK: `deleteRule()` drops only the rule's still-**Pending** rows and keeps the
+  Done/Missed/Cancelled history). New model `common/models/RecordingRule.h` + the **pure, headless-tested**
+  `common/core/RecordingRules.{h,cpp}`: `expandRules(rules, programmes, existing, now, horizon)` matches on
+  the normalised base tvg-id (`@feed` stripped, case-folded — `normaliseTvgId`, now shared) + `Exact`/
+  `Contains` title match, applies lead/trail padding, and **dedups by (channel, paddedStart) against ALL
+  existing rows whatever their status** — so a Cancelled or Done airing is never resurrected, and two rules
+  matching one airing collapse to one recording. Horizon `kRuleHorizonSeconds` = 14 days. The Win32 side
+  (`expandRecordingRules`) only resolves each match to a playable stream (the core has no DB) and inserts;
+  it runs on the tick, after an EPG refresh, at startup, and on rule add/enable.
+- **✅ UI** — the TV-Guide programme popup gains a 4th button **"Record series"** (`ProgrammeAction::RecordSeries`
+  → `GuideCallbacks::onRecordSeries` → `recordSeriesFromGuide`, which refuses an exact duplicate rule and
+  reports how many airings it queued). New **Settings ▸ Recording Rules…** manager (`manageRules` in
+  `Dialogs.cpp`, modelled on `manageSchedules`): Show / Channel / Match / State columns, Enable-Disable,
+  Delete (with a confirm that says pending recordings will go and history will stay). New ids
+  `ID_WAKE_RECORD=2063`, `ID_RULES=2064` (from the free 2063–2069 gap; 2074–2098 went to 0.2.6, and
+  **never allocate at/above 2100** — the open-ended skin range).
+- **New selftests**: expander (match/normalise/horizon/padding/dedup/degenerate), rule DAO round-trip +
+  `deleteRule` history-preservation, and the **v4→v5 migration** (`recording_rules` created, `rule_id`
+  added, pre-v5 rows read back as `ruleId==0`).
+- **Adversarially reviewed — 2 CONFIRMED bugs (one root cause) + 2 self-caught, all fixed:**
+  1. **(root, medium)** `onSchedulerTick` had a pre-existing `if (schedules.empty()) return;` and the new
+     Phase-3 tail was appended BELOW it — so with an empty queue, rules never re-expanded and a stale wake
+     task was never cleared (a still-enabled series would silently stop recording; the PC would wake for a
+     recording that no longer existed). **The early return is now gone** — `planScheduler({})` yields empty
+     plans, so the loops no-op. **Never re-add that early return.**
+  2. **(low)** the Scheduled-Recordings manager's Cancel/Delete didn't refresh the wake task (the Rules
+     manager did) → both now call `syncWakeFromSchedules`.
+  3. **(self-caught, perf)** removing the early return made `syncWakeFromSchedules` hit COM on every ~30 s
+     tick → it now keys on `AppState::wakeTaskFor` (the UNCLAMPED earliest pending start; `0` = no task,
+     `-1` = never synced) and only re-registers when the target actually changes. Likewise
+     `expandRecordingRules` is throttled to `kRuleExpandIntervalSeconds` (15 min) — its 14-day, all-playlist
+     EPG query is far too heavy for the tick — and is `force`d by a guide refresh / new / re-enabled rule.
+  4. **(self-caught, correctness trap)** with the tail always running, **hard-deleting** a rule-generated
+     *Pending* row left no dedup anchor, so the next expansion recreated it (the user's delete undid itself).
+     The manager's Delete now **Cancels** such rows instead — a `Cancelled` tombstone is exactly what tells
+     the rule "skip this airing". One-off rows, and rows that already ran, still delete for real.
+     **Consequence to remember: `expandRules` dedups against ALL statuses, so tombstones are load-bearing.**
+  5. `expandRules` also now folds each programme's title/channel-id **once** instead of once per rule
+     (it was O(rules × programmes) allocations on a large guide).
+- **Owner runtime pass wanted:** the wake task appears in Task Scheduler after queueing a recording and
+  disappears when the queue empties; a recording fires with the app CLOSED (and after sleep); the machine
+  doesn't sleep mid-recording; "Record series" from the guide queues future airings and survives a guide
+  refresh; Recording Rules… enable/disable/delete behaves; **and that an auto-update to 0.2.7 doesn't
+  break a queued recording** (the Terms-deferral path).
+
 ✅ **0.2.6 SHIPPED** (2026-07-10) — tag `v0.2.6` @ `4382395`, `0.2.6.180`, three signed installers on GitHub
 release `v0.2.6`, two appcasts LIVE @ `b2b7180`. Code landed in one commit (`4382395`, count 180 == the tag,
 no rebase drift), appcasts in a follow-up (`b2b7180`); both pushed. **This time the shipped build number matches

@@ -122,7 +122,7 @@ Programme readProgramme(Stmt& q) {
 // SELECT column order shared by every scheduled-recording query below.
 constexpr const char* kScheduleCols =
     "id,channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
-    "status,file_path,created_at";
+    "status,file_path,created_at,rule_id";
 
 ScheduledRecording readSchedule(Stmt& q) {
     ScheduledRecording s;
@@ -139,7 +139,26 @@ ScheduledRecording readSchedule(Stmt& q) {
     s.status = static_cast<ScheduleStatus>(q.intCol(10));
     s.filePath = q.textCol(11);
     s.createdAt = q.intCol(12);
+    s.ruleId = q.intCol(13);  // NULL (pre-v5 / one-off rows) reads back as 0
     return s;
+}
+
+constexpr const char* kRuleCols =
+    "id,channel_id,channel_name,title_match,match_kind,enabled,lead_sec,trail_sec,mux,created_at";
+
+RecordingRule readRule(Stmt& q) {
+    RecordingRule r;
+    r.id = q.intCol(0);
+    r.channelId = q.textCol(1);
+    r.channelName = q.textCol(2);
+    r.titleMatch = q.textCol(3);
+    r.match = static_cast<RuleMatch>(q.intCol(4));
+    r.enabled = q.intCol(5) != 0;
+    r.leadSec = static_cast<int>(q.intCol(6));
+    r.trailSec = static_cast<int>(q.intCol(7));
+    r.mux = q.textCol(8);
+    r.createdAt = q.intCol(9);
+    return r;
 }
 
 std::vector<Channel> runChannelQuery(sqlite3* db, const std::string& sql,
@@ -265,6 +284,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v2: playlists.enabled — per-playlist on/off toggle.
 //   v3: EPG — playlists.epg_url + the epg_programmes table (XMLTV now/next + guide).
 //   v4: scheduled_recordings — the recording scheduler queue.
+//   v5: recording_rules (EPG-driven series rules) + scheduled_recordings.rule_id.
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -273,7 +293,7 @@ void Database::migrate() {
         Stmt q(db_, "PRAGMA user_version");
         if (q && q.step()) v = q.intCol(0);
     }
-    if (v >= 4) return;
+    if (v >= 5) return;
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -321,13 +341,39 @@ void Database::migrate() {
         ");");
     exec("CREATE INDEX IF NOT EXISTS idx_sched_start ON scheduled_recordings(start_utc);");
 
+    // v5: EPG-driven "series" rules. A rule is a recipe (channel + title pattern); core/
+    // RecordingRules expands it against epg_programmes into ordinary scheduled_recordings
+    // rows, so the scheduler gains no new timing logic. rule_id back-links a generated row
+    // to its rule (NULL/0 == a one-off schedule). Deliberately NOT a foreign key: rule
+    // deletion is handled explicitly in deleteRule() (drop only the still-Pending rows), so
+    // a completed recording keeps its provenance even after its rule is gone.
+    exec(
+        "CREATE TABLE IF NOT EXISTS recording_rules("
+        "  id           INTEGER PRIMARY KEY,"
+        "  channel_id   TEXT,"                        // tvg-id; NULL/'' == any channel
+        "  channel_name TEXT,"
+        "  title_match  TEXT NOT NULL,"
+        "  match_kind   INTEGER NOT NULL DEFAULT 0,"  // 0 = exact, 1 = contains
+        "  enabled      INTEGER NOT NULL DEFAULT 1,"
+        "  lead_sec     INTEGER NOT NULL DEFAULT 0,"
+        "  trail_sec    INTEGER NOT NULL DEFAULT 0,"
+        "  mux          TEXT NOT NULL DEFAULT 'ts',"
+        "  created_at   INTEGER NOT NULL"
+        ");");
+    if (!hasColumn("scheduled_recordings", "rule_id"))
+        exec("ALTER TABLE scheduled_recordings ADD COLUMN rule_id INTEGER");
+    exec("CREATE INDEX IF NOT EXISTS idx_sched_rule ON scheduled_recordings(rule_id, start_utc);");
+
     // Advance user_version to reflect exactly what actually landed, so a partial
     // failure retries the missing step next open instead of skipping it. (hasColumn on a
     // column of a table doubles as a table-exists check — table_info is empty if absent.)
     const bool haveV2 = hasColumn("playlists", "enabled");
     const bool haveV3 = haveV2 && hasColumn("playlists", "epg_url");
     const bool haveV4 = haveV3 && hasColumn("scheduled_recordings", "id");
-    if (haveV4) exec("PRAGMA user_version=4");
+    const bool haveV5 =
+        haveV4 && hasColumn("recording_rules", "id") && hasColumn("scheduled_recordings", "rule_id");
+    if (haveV5) exec("PRAGMA user_version=5");
+    else if (haveV4) exec("PRAGMA user_version=4");
     else if (haveV3) exec("PRAGMA user_version=3");
     else if (haveV2) exec("PRAGMA user_version=2");
 }
@@ -666,13 +712,33 @@ std::vector<Programme> Database::programmesInWindow(long long playlistId, long l
     return out;
 }
 
+std::vector<Programme> Database::programmesInWindowAll(long long windowStartUtc,
+                                                       long long windowEndUtc) {
+    std::vector<Programme> out;
+    if (!db_) return out;
+    // Across every ENABLED playlist — a recording rule is library-wide, not playlist-scoped.
+    // Overlap test (start<end AND stop>start) matches programmesInWindow. A subquery rather
+    // than a JOIN so kScheduleCols-style bare column lists stay unqualified and unambiguous.
+    Stmt q(db_, (std::string("SELECT ") + kProgrammeCols +
+                 " FROM epg_programmes"
+                 " WHERE playlist_id IN (SELECT id FROM playlists WHERE enabled=1)"
+                 "   AND start_utc<? AND stop_utc>?"
+                 " ORDER BY channel_id, start_utc")
+                    .c_str());
+    if (!q) return out;
+    q.bindInt(1, windowEndUtc);
+    q.bindInt(2, windowStartUtc);
+    while (q.step()) out.push_back(readProgramme(q));
+    return out;
+}
+
 // ---- Scheduled recordings --------------------------------------------------
 
 long long Database::addSchedule(const ScheduledRecording& s) {
     Stmt q(db_,
            "INSERT INTO scheduled_recordings("
            "channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
-           "status,file_path,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+           "status,file_path,created_at,rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
     if (!q) return 0;
     q.bindText(1, s.channelId);
     q.bindText(2, s.channelName);
@@ -686,8 +752,68 @@ long long Database::addSchedule(const ScheduledRecording& s) {
     q.bindInt(10, static_cast<int>(s.status));
     q.bindText(11, s.filePath);
     q.bindInt(12, s.createdAt);
+    q.bindInt(13, s.ruleId);  // 0 == a one-off schedule (no owning rule)
     if (q.stepDone() != SQLITE_DONE) return 0;
     return sqlite3_last_insert_rowid(db_);
+}
+
+// ---- Recording rules (EPG-driven series recording) --------------------------
+
+long long Database::addRule(const RecordingRule& r) {
+    Stmt q(db_,
+           "INSERT INTO recording_rules("
+           "channel_id,channel_name,title_match,match_kind,enabled,lead_sec,trail_sec,mux,"
+           "created_at) VALUES(?,?,?,?,?,?,?,?,?)");
+    if (!q) return 0;
+    q.bindText(1, r.channelId);
+    q.bindText(2, r.channelName);
+    q.bindText(3, r.titleMatch);
+    q.bindInt(4, static_cast<int>(r.match));
+    q.bindInt(5, r.enabled ? 1 : 0);
+    q.bindInt(6, r.leadSec);
+    q.bindInt(7, r.trailSec);
+    q.bindText(8, r.mux);
+    q.bindInt(9, r.createdAt);
+    if (q.stepDone() != SQLITE_DONE) return 0;
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::vector<RecordingRule> Database::listRules() {
+    std::vector<RecordingRule> out;
+    if (!db_) return out;
+    Stmt q(db_, (std::string("SELECT ") + kRuleCols + " FROM recording_rules ORDER BY created_at")
+                    .c_str());
+    if (!q) return out;
+    while (q.step()) out.push_back(readRule(q));
+    return out;
+}
+
+void Database::setRuleEnabled(long long id, bool enabled) {
+    Stmt q(db_, "UPDATE recording_rules SET enabled=? WHERE id=?");
+    if (!q) return;
+    q.bindInt(1, enabled ? 1 : 0);
+    q.bindInt(2, id);
+    q.stepDone();
+}
+
+void Database::deleteRule(long long id) {
+    // Drop the rule's still-PENDING rows (they were only ever a materialised prediction), but
+    // keep anything Recording/Done/Missed/Failed/Cancelled — that history is a record of what
+    // actually happened and must survive the recipe that produced it. Not an FK cascade for
+    // exactly this reason; rule_id on the surviving rows becomes a dangling id, which is fine
+    // (nothing joins on it — it exists only for dedup + this cleanup).
+    {
+        Stmt q(db_, "DELETE FROM scheduled_recordings WHERE rule_id=? AND status=?");
+        if (q) {
+            q.bindInt(1, id);
+            q.bindInt(2, static_cast<int>(ScheduleStatus::Pending));
+            q.stepDone();
+        }
+    }
+    Stmt q(db_, "DELETE FROM recording_rules WHERE id=?");
+    if (!q) return;
+    q.bindInt(1, id);
+    q.stepDone();
 }
 
 std::vector<ScheduledRecording> Database::listSchedules() {
