@@ -15,6 +15,18 @@
     <description>Most recent updates to RabbitEars for macOS</description>
     <language>en</language>
     <item>
+      <title>Version 0.2.0</title>
+      <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.2.0-mac</sparkle:releaseNotesLink>
+      <pubDate>Fri, 10 Jul 2026 14:15:02 +0000</pubDate>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/arcanii/RabbitEars/releases/download/v0.2.0-mac/RabbitEars-0.2.0.dmg"
+                 sparkle:version="208"
+                 sparkle:shortVersionString="0.2.0"
+                 sparkle:edSignature="JZc/cO1HNZm6xi/3ct49MAcQH+cMVYX3jbxyL87GLxb+toEND03Jr7gpq5iWQTqMRTZ2AxVmSD7LeZzHyhXNDA=="
+                 length="75857056"
+                 type="application/octet-stream"/>
+    </item>
+    <item>
       <title>Version 0.1.10</title>
       <sparkle:releaseNotesLink>https://github.com/arcanii/RabbitEars/releases/tag/v0.1.10-mac</sparkle:releaseNotesLink>
       <pubDate>Thu, 09 Jul 2026 08:55:28 +0000</pubDate>
