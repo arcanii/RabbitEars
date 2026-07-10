@@ -837,7 +837,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             _panes[(size_t)i]->player->setMuted(i != _activePane);
 
     const FlowStats fs = _player->sampleStats();
-    if (!fs.playing) { for (MeterView* m : _meters) [m reset]; _spectrumSilentTicks = 0; return; }
+    // NOTE: do NOT reset _spectrumSilentTicks here. libVLC's is_playing() dips false at HLS
+    // segment boundaries, and zeroing the denial counter on every dip meant it could never
+    // accumulate its window on a real stream (see -updateSpectrumAvailability:).
+    if (!fs.playing) { for (MeterView* m : _meters) [m reset]; return; }
     // Bitrate: the DEMUX byte-rate — HLS/segmented inputs report i_read_bytes as 0, but
     // the demux rate tracks the real media bitrate for both HLS and plain streams.
     [_meters[(int)MeterKind::Bitrate] pushBitrate:fs.demuxBytesPerSec];
@@ -1204,8 +1207,14 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // legitimately silent — don't nag. Needs a sustained silence so a quiet intro on an
     // audio stream doesn't false-flag.
     const BOOL audible = _player->hasAudioTrack() && fs.demuxBytesPerSec > 0 && _volume.doubleValue > 0;
-    if (!audible) { _spectrumSilentTicks = 0; return; }
-    if (++_spectrumSilentTicks >= 32) [_meters[s] setAvailable:NO];  // ~8s audible but no tap energy => denied
+    // Accumulate only AUDIBLE, tap-silent polls — and do NOT reset on a transient non-audible
+    // one. demuxBytesPerSec legitimately reads 0 between HLS segments, so the old "32
+    // CONSECUTIVE audible ticks" rule was perpetually reset by normal streaming and the
+    // placeholder could never appear on a real stream (a denied tap looked like a dead meter).
+    // The count is now cumulative: ~10s of genuinely audible playback with zero tap energy.
+    // It is cleared only when the tap produces energy, or when the tap is (re)started/stopped.
+    if (!audible) return;
+    if (++_spectrumSilentTicks >= 40) [_meters[s] setAvailable:NO];
 }
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for

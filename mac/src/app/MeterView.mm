@@ -133,6 +133,11 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 - (void)setAvailable:(BOOL)available {
     if (_available == available) return;
     _available = available;
+    // The strip is too narrow for the real instruction — put it in the tooltip.
+    self.toolTip = available ? nil
+        : @"RabbitEars can’t read its own audio output, so the spectrum can’t be drawn.\n\n"
+          @"Allow audio recording for RabbitEars in System Settings ▸ Privacy & Security, "
+          @"then relaunch the app.";
     [self setNeedsDisplay:YES];
 }
 
@@ -248,15 +253,24 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 }
 
 - (void)drawUnavailable:(NSRect)b {
-    NSDictionary* attrs = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName: [NSColor colorWithWhite:0.62 alpha:1.0],
-    };
-    NSString* msg = @"No audio — check Settings ▸ Privacy ▸ Audio";
-    const NSSize sz = [msg sizeWithAttributes:attrs];
-    [msg drawAtPoint:NSMakePoint(std::max(4.0, (b.size.width - sz.width) / 2.0),
-                                 (b.size.height - sz.height) / 2.0)
-      withAttributes:attrs];
+    // The Spectrum strip is only ~180pt wide: the previous 43-character message was wider
+    // than the view and ran off both edges. Use a short message and shrink the font until it
+    // fits; the full instruction lives in the tooltip (see -setAvailable:).
+    NSColor* fg = [NSColor colorWithWhite:0.62 alpha:1.0];
+    NSString* msg = @"Spectrum needs audio permission";
+    for (CGFloat pt = 9.0;; pt -= 0.5) {
+        NSDictionary* attrs = @{
+            NSFontAttributeName: [NSFont systemFontOfSize:pt weight:NSFontWeightMedium],
+            NSForegroundColorAttributeName: fg,
+        };
+        const NSSize sz = [msg sizeWithAttributes:attrs];
+        if (sz.width <= b.size.width - 6 || pt <= 6.5) {
+            [msg drawAtPoint:NSMakePoint(std::max(3.0, (b.size.width - sz.width) / 2.0),
+                                         (b.size.height - sz.height) / 2.0)
+              withAttributes:attrs];
+            return;
+        }
+    }
 }
 
 - (void)drawSpectrum:(NSRect)b {
