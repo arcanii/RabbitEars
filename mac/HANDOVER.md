@@ -11,22 +11,28 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 *headers*), **`Win32/`** (the Windows app), **`mac/`** (this — the Cocoa app), under a unified root
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
-`main` carries **both platforms at decoupled versions**: **Windows 0.2.4** (theme engine + EPG/TV Guide,
-scheduled recordings, multi-view Split/PIP — the Windows team ships from `main`) and **mac 0.2.0** (the
-parity line; `main` still has the shipped 0.1.10 until the branch below merges). The version split lives in
+`main` carries **both platforms at decoupled versions**: **Windows 0.2.7** (theme engine + EPG/TV Guide,
+scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
+recording — the Windows team ships from `main`) and **mac 0.2.0** (the parity line). The version split lives in
 `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac).
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
 
-> **In flight — branch `mac-multiview-tvguide` (12 commits, NOT merged, tree clean, `main` merged in).**
+> **In flight — branch `mac-multiview-tvguide`, [PR #24](https://github.com/arcanii/RabbitEars/pull/24), tree clean.**
 > Opens the mac **0.2.0** line and lands the three Windows-parity features: **TV Guide (EPG)**, **multi-view
 > Split/2×2**, and **Picture-in-Picture** — plus the unified app icon and three real bug fixes found while
 > testing (multi-view active-pane silence, the Spectrum `audio-input` entitlement, the unreachable Spectrum
-> placeholder). All are built, adversarially reviewed (two review workflows, 13 confirmed findings, all fixed,
-> nothing critical/high) and **validated on real hardware** (incl. 4 simultaneous HLS streams in 2×2).
+> placeholder). Built, adversarially reviewed (three review workflows) and **validated on real hardware**
+> (incl. 4 simultaneous HLS streams in 2×2).
 > **Key discovery: this was wiring, not porting** — every shared core it needs (`VideoGrid`, `XmltvParser`,
 > `Gzip`, `Programme`, the `Database` EPG methods) **already compiled into the mac binary**; the branch
-> touches **no `common/`, `Win32/` or `third_party/` file at all**, so there is zero Windows risk.
-> **Next: push + PR to `main`, then cut v0.2.0-mac** (`AppVersion.cmake` already reads 0.2.0).
+> touches **no `common/`, `Win32/` or `third_party/` file at all**, so there is zero Windows risk. `mac-core`
+> CI is green and the Windows `core-selftest` passes on the branch too.
+>
+> **Scope caveat:** parity here is with the Windows **0.2.5** feature set. Windows has since shipped 0.2.6/0.2.7
+> (per-pane recording + MP4, saved layouts, PiP resize/persist, favourites I/O, Show-in-Guide, wake-to-record,
+> EPG-driven series rules). Those are **not ported to mac** — that is the next parity push. `origin/main`
+> (Windows 0.2.7) is merged into this branch and its new shared sources (`M3uWriter`, `RecordingRules`, the
+> `Database` schema steps) compile into the mac binary cleanly.
 
 ## Current state — v0.1.10-mac SHIPPED (everything merged to main)
 
@@ -184,6 +190,20 @@ with the full instruction in the view's tooltip. If the tap is hard-denied, `Aud
 `AudioHardwareCreateProcessTap` **blocks on the consent prompt**, so on first launch the main window doesn't
 appear until the user answers — worth deferring the tap off the critical path.
 
+**Open low-severity findings (0.2.0 adversarial review, deliberately NOT fixed before the release cut** —
+each needs on-device verification that wasn't available at the time, and none is user-visible enough to
+justify an untested change to shipped audio/memory paths):
+- **MRC dialog leaks.** `addPlaylist:` (~L714), `showSettings:` (~L1223) and `editChannelNumber:` (~L1457) in
+  `MainWindowController.mm` `alloc` an `NSAlert`/`NSTextField`/`NSMenu` with `+1` and never release it. This
+  is an MRC file, so each invocation leaks. The fix is an `autorelease` on each — but it depends on AppKit
+  retaining the alert for the sheet's lifetime and the block retaining the accessory view, so **verify on
+  device before shipping it**; a wrong call here is an over-release crash, not a leak.
+- **Transient background-pane audio bleed (~250 ms).** `playChannel:intoPane:` calls `setMuted(true)`
+  immediately, but at that moment no audio track exists yet, so `setMuted` sees `cur == -1` ("already
+  silent") and no-ops. libVLC then auto-selects the track when it appears and the background pane is briefly
+  audible until the next `tickStats` re-assert. A real fix needs a libVLC event callback
+  (`libvlc_MediaPlayerESSelected`) rather than the 250 ms poll.
+
 ## Playlists — enable / disable / rename / refresh / delete (SHIPPED in v0.1.9)
 
 A **Settings ▸ Manage Playlists…** sheet (`PlaylistsDialog`, ARC): per-playlist **Enabled** checkbox +
@@ -224,9 +244,11 @@ under account **`SQLTerminal`**.
 scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
     -DLIBVLC_MAC_PREFIX="<universal VLC.app>/Contents/MacOS"
 # 2. bundle libVLC + sign inside-out (app, plugins, AND Sparkle's Updater.app/Autoupdate/XPC)
+#    --entitlements now DEFAULTS to mac/packaging/RabbitEars.entitlements whenever --sign is given, and the
+#    script refuses to sign a hardened binary whose entitlements lack audio-input. (It used to sign a
+#    hardened build with an EMPTY entitlement set if you forgot the flag — which silently kills Spectrum.)
 scripts/package-mac.sh <app> --vlc "<VLC.app>" \
-    --sign "Developer ID Application: Matthew Mark (386M76FV3K)" \
-    --entitlements mac/packaging/RabbitEars.entitlements
+    --sign "Developer ID Application: Matthew Mark (386M76FV3K)"
 # 3. dmg → notarize → staple → Sparkle-sign
 create-dmg … <dmg> <app>
 xcrun notarytool submit <dmg> --keychain-profile SQLTerminal-notarize --wait
@@ -297,6 +319,12 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
   real bugs here.
 - **`git push` hangs intermittently** this machine/session — clear stuck `git-remote-https` procs + retry, or
   use `gh pr merge` / `gh api` (REST works fine) for anything targeting `main`.
+- **The repo lives under `~/Desktop`, which macOS TCC protects.** Access can be revoked *mid-session* — every
+  read, including `git`'s own cwd probe, starts returning `EPERM: operation not permitted` while `~/Documents`
+  and `~/Downloads` still work. An agent's `request_directory` grant does **not** lift it (that's Claude's
+  permission layer, not the kernel's). Fix: `tccutil reset SystemPolicyDesktopFolder com.anthropic.claude-code`
+  restores it immediately, no relaunch. **Any review or build that ran during an EPERM window is void, not
+  green** — the tools were reading nothing.
 - Windows `gui-build` CI is **pre-existing red** (the theme engine needs `fxc`, absent in CI) — unrelated to mac.
 
 ## Seed prompt for a fresh session
