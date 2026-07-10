@@ -219,7 +219,18 @@ FlowStats VlcPlayerMac::sampleStats() {
 bool VlcPlayerMac::hasAudioTrack() const {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return false;
-    return libvlc_audio_get_track_count(impl_->player) > 0;
+    // NOT libvlc_audio_get_track_count(): that counts the "-1 Disable" pseudo-entry too, so it
+    // can report a track on a stream that carries no audio ES at all. The only caller gates the
+    // Spectrum "grant permission" placeholder, and a false positive there nags the user about a
+    // permission that is fine — on a video-only stream nothing would ever feed the tap, the
+    // cumulative silent-tick counter would run to its threshold, and the placeholder would
+    // appear. Walk the descriptions and count tracks that actually exist.
+    libvlc_track_description_t* head = libvlc_audio_get_track_description(impl_->player);
+    bool real = false;
+    for (libvlc_track_description_t* t = head; t && !real; t = t->p_next)
+        real = (t->i_id != -1);
+    if (head) libvlc_track_description_list_release(head);
+    return real;
 #else
     return false;
 #endif
