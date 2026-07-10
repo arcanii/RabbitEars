@@ -827,11 +827,15 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // no A/V desync): the bar tracks throughput against a slowly-decaying rolling peak,
 // so it fills while data flows at its usual rate and drops when the stream stalls.
 - (void)tickStats {
-    // Keep background panes silent (re-assert each tick so a libVLC aout recreation on a
-    // quality switch can't leak their audio). Only the active pane is audible.
+    // Re-assert the single-audio model on EVERY pane each tick (both directions — setMuted is
+    // idempotent). Muting the background survives a libVLC aout recreation on a quality switch;
+    // re-asserting the ACTIVE pane's unmute is what heals a pane whose audio ES wasn't ready
+    // (or whose track ids changed across an ad break) when it was first activated — otherwise
+    // that pane stays silent forever.
     if (_panes.size() > 1)
         for (int i = 0; i < (int)_panes.size(); ++i)
-            if (i != _activePane) _panes[(size_t)i]->player->setMuted(true);
+            _panes[(size_t)i]->player->setMuted(i != _activePane);
+
     const FlowStats fs = _player->sampleStats();
     if (!fs.playing) { for (MeterView* m : _meters) [m reset]; _spectrumSilentTicks = 0; return; }
     // Bitrate: the DEMUX byte-rate — HLS/segmented inputs report i_read_bytes as 0, but
@@ -1210,6 +1214,17 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Manage Playlists…" action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
+
+    // View layout — mirrors the View menu (⌃⌘1/2/3) so it's reachable without the menu bar.
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* vSingle = [m addItemWithTitle:@"Single View" action:@selector(setViewSingle:) keyEquivalent:@""];
+    NSMenuItem* vSplit  = [m addItemWithTitle:@"Split View (2×2)" action:@selector(setViewSplit:) keyEquivalent:@""];
+    NSMenuItem* vPip    = [m addItemWithTitle:@"Picture-in-Picture" action:@selector(setViewPip:) keyEquivalent:@""];
+    for (NSMenuItem* it in @[ vSingle, vSplit, vPip ]) it.target = self;
+    vSingle.state = (_viewMode == ViewMode::Single) ? NSControlStateValueOn : NSControlStateValueOff;
+    vSplit.state  = (_viewMode == ViewMode::Split)  ? NSControlStateValueOn : NSControlStateValueOff;
+    vPip.state    = (_viewMode == ViewMode::Pip)    ? NSControlStateValueOn : NSControlStateValueOff;
+
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"TV Guide" action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Refresh Guide…" action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];

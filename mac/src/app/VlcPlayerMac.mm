@@ -124,29 +124,51 @@ void VlcPlayerMac::setMuted(bool muted) {
     impl_->muted = muted;
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return;
+    const int cur = libvlc_audio_get_track(impl_->player);  // -1 == nothing selected (silent)
+
     if (muted) {
-        // Only act when a track is actually selected. The host re-asserts mute on every
-        // stats tick (to survive an aout recreation), and re-issuing set_track(-1) on an
-        // already-silent player is needless churn — Win32 guards this the same way.
-        const int cur = libvlc_audio_get_track(impl_->player);
-        if (cur != -1) {
-            impl_->savedAudioTrack = cur;                  // remember the real track
-            libvlc_audio_set_track(impl_->player, -1);     // -1 == "Disable" => silent
-        }
-    } else {
-        int restore = impl_->savedAudioTrack;
-        if (restore == -1) {  // nothing saved yet — pick the first real audio track, if any
-            libvlc_track_description_t* head = libvlc_audio_get_track_description(impl_->player);
-            for (libvlc_track_description_t* t = head; t; t = t->p_next)
-                if (t->i_id != -1) { restore = t->i_id; break; }  // -1 is the "Disable" entry
-            if (head) libvlc_track_description_list_release(head);
-        }
-        if (restore != -1) libvlc_audio_set_track(impl_->player, restore);
+        if (cur == -1) return;                             // already silent — no churn
+        impl_->savedAudioTrack = cur;                      // remember the real track
+        libvlc_audio_set_track(impl_->player, -1);         // -1 == "Disable" => silent
+        return;
+    }
+
+    // ---- unmute ----
+    // Idempotent: a track is already selected, so we are audible.
+    if (cur != -1) return;
+    // Nothing to select yet (media still opening, or a video-only stream). The caller
+    // re-asserts this every stats tick, so we simply retry once the audio ES shows up.
+    if (libvlc_audio_get_track_count(impl_->player) <= 0) return;
+
+    // Select a track that ACTUALLY EXISTS right now. `savedAudioTrack` can go stale when the
+    // stream re-opens its elementary streams (an ad break, an HLS quality switch) — selecting
+    // a stale id fails silently and the pane stays mute forever. So prefer the saved id only
+    // when it is still present, else fall back to the first real track.
+    int restore = -1;
+    libvlc_track_description_t* head = libvlc_audio_get_track_description(impl_->player);
+    for (libvlc_track_description_t* t = head; t; t = t->p_next) {
+        if (t->i_id == -1) continue;                       // the "Disable" pseudo-entry
+        if (t->i_id == impl_->savedAudioTrack) { restore = t->i_id; break; }  // saved still valid
+        if (restore == -1) restore = t->i_id;              // else remember the first real track
+    }
+    if (head) libvlc_track_description_list_release(head);
+    if (restore != -1) {
+        libvlc_audio_set_track(impl_->player, restore);
+        impl_->savedAudioTrack = restore;
     }
 #endif
 }
 
 bool VlcPlayerMac::isMuted() const { return impl_->muted; }
+
+int VlcPlayerMac::audioTrack() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return -2;
+    return libvlc_audio_get_track(impl_->player);
+#else
+    return -2;
+#endif
+}
 
 // Peer of Win32 VlcPlayer::sampleStats. Reads libVLC's cumulative media stats and
 // turns them into per-second rates (byte-counter deltas over wall-clock) + per-sample

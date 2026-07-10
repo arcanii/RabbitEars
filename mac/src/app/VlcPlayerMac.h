@@ -46,6 +46,9 @@ public:
     // is unmuted. Idempotent; re-assert after (re)starting a stream.
     void setMuted(bool muted);
     bool isMuted() const;
+    // The audio track id libVLC currently has selected: -1 == none (deselected/silent),
+    // -2 == no player. Ground truth for the multi-view single-audio model.
+    int audioTrack() const;
 
     // Sample libVLC's media stats into a FlowStats snapshot (per-second byte rates
     // over wall-clock + per-sample event deltas). Call on a steady ~250ms timer from
