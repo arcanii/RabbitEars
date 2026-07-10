@@ -148,6 +148,19 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   `subTitle` so a repeat airing of an already-recorded episode is skipped — today a rule records
   every airing of a matching title), and richer rule editing (lead/trail padding + `Contains` rules
   are in the model + DB but only `Exact` rules are creatable from the UI).
+- **Wake-timer preflight** — ✅ DONE (0.2.8-dev, unreleased): `common/core/PowerPolicy` (pure) +
+  `Win32/platform/PowerPolicy` (probe) detect that Windows will not ARM the RTC wake timer for the
+  current power source (`GUID_ALLOW_RTC_WAKE` is per-source; `AC=Enable, DC=Disable` is a common
+  laptop default ⇒ unplugged = every recording silently missed), warn in the schedules manager +
+  the Settings toggle, and add **Settings ▸ Run wake task now** to exercise the `--scheduled-wake`
+  path without sleeping. See `Win32/HANDOVER.md` (0.2.8-dev block). Possible follow-ups: a "Fix this"
+  button that deep-links Power Options (`control.exe powercfg.cpl` / `powercfg /SETDCVALUEINDEX`
+  needs elevation — probably just open the page), and re-querying the verdict after New… in the manager.
+- **Verify wake-to-record on real hardware** — the dev box is a **Parallels ARM64 VM** (S0 Modern
+  Standby only, hibernate off, host suspends the guest), so a genuine wake-from-sleep test is
+  impossible there. On a physical PC: queue a recording, close the app, sleep the machine, confirm
+  it wakes and records. Parked (owner: non-critical for now); everything *except* the sleep is
+  already exercisable via Settings ▸ Run wake task now.
 - **Transcoding on record** — format/quality/size presets (CPU-heavy). Today recording is always a
   lossless stream copy (`ts`/`mkv`/`mp4` mux, no re-encode).
 - **Background dead-link checker** — so "Hide unavailable" isn't purely passive: probe channels

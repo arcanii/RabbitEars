@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.7 SHIPPED (DVR: wake-to-record + series rules)** · macOS Phase-1
+## Current state — **v0.2.7 SHIPPED (DVR: wake-to-record + series rules)** · 0.2.8-dev: wake-timer preflight · macOS Phase-1
 
 **Released:** **`v0.2.7`** (2026-07-10), tag `v0.2.7` @ `cc9f9e4`, full version **`0.2.7.184`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.7` (x64 / native ARM64 / universal),
@@ -42,10 +42,18 @@ records with RabbitEars closed**, sleep is suppressed *during* a recording, and 
 PASS + native ARM64); adversarially reviewed — **2 confirmed bugs + 2 self-caught, all fixed pre-ship** (see
 the 0.2.7 block under "Immediate next steps" — especially the two invariants: *never re-add an empty-queue
 early return to `onSchedulerTick`*, and *tombstones are load-bearing* because `expandRules` dedups against
-rows of ANY status). **Owner runtime pass still owed** — the headline test: **queue a recording, close the
-app, let the machine sleep, confirm it wakes and records**; plus "Record series" from the guide, the
-Recording Rules… manager, and that an auto-update to 0.2.7 doesn't break a queued recording (the
-`--scheduled-wake` Terms-deferral path).
+rows of ANY status).
+
+**Owner runtime pass — PARTIAL (2026-07-10).** ✅ **Scheduled recording works** (owner-confirmed). ⚠️ The
+**wake-from-sleep** leg is **unverified and unverifiable on this dev box**: it is a **Parallels ARM64 VM**
+(`powercfg /a` ⇒ only `Standby (S0 Low Power Idle)`, hibernate off), whose standby is virtualised and whose
+host Mac suspends the whole guest — no guest RTC timer can fire. **That test needs real hardware.** Owner
+judged it non-critical for now. Still unexercised: "Record series" from the guide, the Recording Rules…
+manager, and that an auto-update to 0.2.7 doesn't break a queued recording (the Terms-deferral path).
+
+**0.2.8-dev (uncommitted→committed, UNRELEASED): the wake-timer preflight** — the investigation above found a
+real, silent DVR bug (Windows won't ARM the RTC timer when the power plan says so, **per power source**), so
+the app now detects and says it instead of failing at 3am. See the 0.2.8-dev block under "Immediate next steps".
 
 **Released:** **`v0.2.6`** (2026-07-10), tag `v0.2.6` @ `4382395`, full version **`0.2.6.180`** (tag count ==
 shipped build number this time — `main` was level with origin, no rebase drift), three signed installers on
@@ -723,6 +731,58 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
+🚧 **0.2.8-dev — the wake-timer preflight** (UNRELEASED; committed to `main`). Built green x64 BOTH theme
+flags + native ARM64, selftest ALL PASS (+14), adversarially reviewed (2 confirmed findings, both fixed).
+**Owner runtime/visual pass owed** (the sandbox can't launch the GUI).
+
+**Why.** 0.2.7 registers the wake task — but Windows only **arms** the underlying RTC wake timer when the
+active power plan's "Allow wake timers" (`GUID_ALLOW_RTC_WAKE`) permits it, and **that setting is stored PER
+POWER SOURCE**. The dev box (and a great many real laptops — the same `AC=0x1 / DC=0x0` shows up verbatim in
+Microsoft's own Q&A on this symptom) reads **AC = Enable, DC = Disable**. So an unplugged laptop **silently
+misses every scheduled recording**: the task looks healthy in Task Scheduler, `StartWhenAvailable` runs it
+only when the user next wakes the PC themselves, and nothing warns anyone. Worst failure mode a DVR has.
+
+- **`common/core/PowerPolicy.{h,cpp}` (NEW, pure, mac-safe, selftested)** — `decideWakePolicy(inputs)` maps
+  (`rtcWakeCapable`, `hasBattery`, `onBattery`, `ac`, `dc`) → `{willWake, reason, otherSourceBlocked}`. It
+  returns a **reason enum, never UI copy** (the mac app compiles this file). `Unknown` indices **fail OPEN** —
+  never nag a machine whose policy we couldn't read. **Invariant:** `discharging = onBattery` and
+  `hasBattery = in.hasBattery || in.onBattery` — *you cannot run on battery without having one*; trusting a
+  gauge that says otherwise would read the AC index and promise a wake the DC policy is about to refuse.
+- **`Win32/platform/PowerPolicy.{h,cpp}` (NEW)** — `queryWakePolicy()` probes `PowerGetActiveScheme` +
+  `PowerRead{AC,DC}ValueIndex` on `GUID_ALLOW_RTC_WAKE` (GUIDs defined **locally**: `winnt.h` only *declares*
+  them and no lib exports them), `GetSystemPowerStatus` for the source, and `CallNtPowerInformation(
+  SystemPowerCapabilities)` for `SystemBatteriesPresent` + RTC capability. `wakeVerdictText()` renders the copy.
+  Links `powrprof.lib` via `#pragma comment` (house style; **present on ARM64**, link-verified).
+  - ⚠️ **The `AoAc` guard is load-bearing.** A **Modern Standby** machine reports
+    `RtcWake == PowerSystemUnspecified` (no S1–S3 states) *even though timer wakes work fine* through the S0
+    resiliency phase. Verified on this box: `AoAc=1, RtcWake=0`. So `rtcWakeCapable = caps.AoAc ||
+    caps.RtcWake != PowerSystemUnspecified`. **Drop the `AoAc` term and every modern laptop is told, wrongly,
+    that it cannot wake.**
+  - **Not** on the ~30 s tick — it's a registry + capability read. Called on dialog open and the Settings toggle.
+- **Surfaces** — an accent warning **banner** atop Settings ▸ Scheduled Recordings… (`ScheduleManagerCallbacks::
+  wakeWarning`, pre-rendered by the host so `Dialogs.cpp` stays pure UI), and a status line when
+  **Wake this PC to record** is switched on. `manageSchedules` gained the `clampToWorkArea` it was missing.
+  The banner's height is **measured** (`DrawTextW DT_CALCRECT|DT_WORDBREAK`) and the window grown to fit —
+  an `SS_LEFT` static wraps then **clips**, and a hard-coded 52 px truncated the longest verdict (needs 57 px
+  at the real 592 px width; review caught it, GDI measurement confirmed it). Never re-hard-code that height.
+- **`runWakeTaskNow()`** (`WakeScheduler.cpp`, reusing its COM RAII + `openRootFolder`) → `ITaskFolder::GetTask`
+  + `IRegisteredTask::Run` (`AllowDemandStart` was already `VARIANT_TRUE`). New **Settings ▸ Run wake task now**
+  (`ID_WAKE_RUN_NOW = 2065`, from the 2065–2069 gap; **never ≥2100**), greyed unless `wakeToRecord &&
+  wakeTaskFor > 0`. **This is how you exercise the whole `--scheduled-wake` path without sleeping the machine** —
+  which is the only way to test it on this VM at all.
+- **Adversarial review (6 lenses × 3 refute-by-default skeptics): 2 confirmed, 2 refuted 0/3.**
+  1. `BatteryFlag == 255` ("gauge unreadable") has bit 7 set exactly like 128 ("no battery"), so it was read as
+     *no battery* → on a discharging laptop the AC index was consulted → the status bar **affirmatively lied**
+     ("This PC will wake…"). Fixed in the pure core by the `onBattery ⇒ hasBattery` invariant, and in the probe
+     by preferring `caps.SystemBatteriesPresent`. Pinned by 2 selftests.
+  2. The banner clipped its last line (above).
+- **New selftests (14)** — the full decision table: source selection, both blocking settings, the
+  AC-enabled/DC-disabled mismatch flag, desktop ignores DC, no-RTC-capability, `Unknown` fails open, and the
+  `onBattery ⇒ hasBattery` invariant.
+- **Owner pass wanted:** the banner renders un-clipped and reads sensibly; Settings ▸ Run wake task now fires
+  the scheduled-wake launch (minimised, no focus steal, picks up the queued row); toggling wake-to-record on an
+  unplugged laptop shows the "wake timers are off" warning.
+
 ✅ **0.2.7 SHIPPED** (2026-07-10) — tag `v0.2.7` @ `cc9f9e4`, `0.2.7.184`, three signed installers on GitHub
 release `v0.2.7`, two appcasts LIVE @ `438c83d`. Code landed in one commit (`cc9f9e4`, count 184 == the tag,
 no rebase drift), appcasts in a follow-up (`438c83d`); both pushed. **Recording Phase 3** (owner-directed):
@@ -791,11 +851,11 @@ the DVR-completing feature — recordings now fire when the app ISN'T running, a
      **Consequence to remember: `expandRules` dedups against ALL statuses, so tombstones are load-bearing.**
   5. `expandRules` also now folds each programme's title/channel-id **once** instead of once per rule
      (it was O(rules × programmes) allocations on a large guide).
-- **Owner runtime pass wanted:** the wake task appears in Task Scheduler after queueing a recording and
-  disappears when the queue empties; a recording fires with the app CLOSED (and after sleep); the machine
-  doesn't sleep mid-recording; "Record series" from the guide queues future airings and survives a guide
-  refresh; Recording Rules… enable/disable/delete behaves; **and that an auto-update to 0.2.7 doesn't
-  break a queued recording** (the Terms-deferral path).
+- **Owner runtime pass — PARTIAL (2026-07-10):** ✅ scheduled recording works. ⚠️ wake-from-sleep is
+  **untestable on the dev box** (Parallels ARM64 VM, S0-only, host suspends the guest) — needs real hardware;
+  use **Settings ▸ Run wake task now** (0.2.8-dev) to exercise everything except the sleep itself. Still
+  unexercised: "Record series" from the guide surviving a refresh; Recording Rules… enable/disable/delete;
+  **and that an auto-update to 0.2.7 doesn't break a queued recording** (the Terms-deferral path).
 
 ✅ **0.2.6 SHIPPED** (2026-07-10) — tag `v0.2.6` @ `4382395`, `0.2.6.180`, three signed installers on GitHub
 release `v0.2.6`, two appcasts LIVE @ `b2b7180`. Code landed in one commit (`4382395`, count 180 == the tag,
@@ -1006,7 +1066,8 @@ Paste this verbatim to start a fresh session with working context restored:
 > — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
 > **State: last SHIPPED = `v0.2.7`** (2026-07-10, tag @ `cc9f9e4`, `0.2.7.184`, appcasts @ `438c83d`).
-> `main` is clean and level with origin. Everything below is LIVE and auto-updating.
+> Everything shipped is LIVE and auto-updating. **On `main`, UNRELEASED: the 0.2.8-dev wake-timer
+> preflight** (see its block under "Immediate next steps").
 >
 > **The app.** `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = a video
 > HWND + `VlcPlayer` + channel; `AppState` holds the vector + `active` + `ViewMode`). Single / Split (2×2
@@ -1047,12 +1108,23 @@ Paste this verbatim to start a fresh session with working context restored:
 > *cancels* (never hard-deletes) a rule-generated Pending airing — a hard delete would let the expander
 > resurrect it. Both are pinned by selftests.
 >
-> **Immediate next:** the **owner's runtime pass on 0.2.7** is still owed — headline test: *queue a
-> recording, close the app, let the machine sleep, confirm it wakes and records*; also "Record series", the
-> Rules manager, and that an auto-update to 0.2.7 doesn't break a queued recording. Then pick from
-> `Win32/BACKLOG.md`: **series-rule follow-ups** (episode dedup via `Programme::episodeNum`/`subTitle`; a
-> rule editor — `Contains` + lead/trail padding already exist in model/DB/expander, only the UI is missing),
-> **transcoding on record**, a **background dead-link checker**, **Authenticode** (recipe is in
+> **0.2.8-dev = the wake-timer preflight (newest, on `main`, unreleased).** 0.2.7's task registers, but
+> Windows only **arms** the RTC timer if the power plan's `GUID_ALLOW_RTC_WAKE` allows it — **per power
+> source**. `AC=Enable, DC=Disable` is a common laptop default, so an unplugged PC silently misses every
+> recording. Pure `common/core/PowerPolicy` (reason enum, mac-safe, 14 selftests; invariant: *`onBattery`
+> implies `hasBattery`*) + `Win32/platform/PowerPolicy` (powrprof probe) warn in the schedules manager +
+> the Settings toggle. **`AoAc` guard is load-bearing:** Modern Standby reports `RtcWake=Unspecified` yet
+> wakes fine — drop it and every modern laptop is wrongly told it can't wake. New **Settings ▸ Run wake
+> task now** (`ID_WAKE_RUN_NOW=2065`) demand-starts the task so `--scheduled-wake` is testable *without
+> sleeping*. The manager's banner height is **measured** (`DT_CALCRECT`) — never hard-code it, it clipped.
+>
+> **Immediate next:** the **owner's runtime pass**. 0.2.7: ✅ scheduled recording works; ⚠️ wake-from-sleep
+> is **untestable on this box** (Parallels ARM64 VM, S0-only — host suspends the guest); needs real hardware,
+> owner deems it non-critical. Unexercised: "Record series", the Rules manager, auto-update over a queued
+> recording. 0.2.8-dev: the banner renders un-clipped, and **Run wake task now** fires the launch path.
+> Then pick from `Win32/BACKLOG.md`: **series-rule follow-ups** (episode dedup via `Programme::episodeNum`/
+> `subTitle`; a rule editor — `Contains` + lead/trail padding already exist in model/DB/expander, only the UI
+> is missing), **transcoding on record**, a **background dead-link checker**, **Authenticode** (recipe is in
 > `docs/RELEASING.md`; blocked purely on the owner buying a cert — this is what silences SmartScreen),
 > portable-zip artifact, or the deferred **JSON profiles** epic.
 >
@@ -1069,8 +1141,8 @@ Paste this verbatim to start a fresh session with working context restored:
 > loop**). Static CRT (`/MT`, no redist). **The sandbox cannot launch the GUI** — build-verify + reason;
 > the owner does every runtime/visual pass. `common/` must stay mac-safe (the `mac-core` CI compiles it on
 > clang — no Win32 APIs). **`.cmd` scripts must be CRLF** (enforced in `.gitattributes`; LF made cmd.exe
-> mis-parse `build-arm64.cmd`). Command ids: 2074–2098 used by 0.2.6, 2063/2064 by 0.2.7 — **never allocate
-> at/above 2100** (`ID_THEME_SKIN_BASE` is open-ended). libVLC `stop()`/`release()` block → offloaded to
+> mis-parse `build-arm64.cmd`). Command ids: 2074–2098 used by 0.2.6, 2063/2064 by 0.2.7, 2065 by 0.2.8-dev
+> (2066–2069 free) — **never allocate at/above 2100** (`ID_THEME_SKIN_BASE` is open-ended). libVLC `stop()`/`release()` block → offloaded to
 > reaper threads; event callbacks → only `PostMessage`; `i_read_bytes` is 0 for HLS; VLC sout single-quoted
 > paths need `'` doubled; modal dialogs must read their controls **before** `DestroyWindow`.
 >
