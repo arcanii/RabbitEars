@@ -147,9 +147,28 @@ undetectable silence, then rebuilt properly with a `hasAudioTrack`-gated placeho
 - **MainWindowController** glue: a **`DraggableMeterBar`** floats the meters over full-bleed video
   (`meter_pos_x/y`); a bottom-bar show/hide button (`meters_hidden`); **Video Only** (⌥⌘F/Esc/dbl-click).
 
+**⚠ The Spectrum meter needs the `com.apple.security.device.audio-input` entitlement.** It taps the app's own
+audio output with `AudioHardwareCreateProcessTap`, and the **hardened runtime silently blocks audio capture
+without it**: `AudioHardwareCreateProcessTap`, the aggregate device and the IOProc all return success, the tap
+just delivers **zeros**, so the meter sits flat and *nothing* appears in the log. That entitlement is now in
+`mac/packaging/RabbitEars.entitlements` (which `scripts/package-mac.sh` passes to `codesign`), alongside the
+`NSAudioCaptureUsageDescription` Info.plist key that supplies the consent prompt's text.
+**Consequence for testing:** a plain `scripts/build-mac.sh --app` dev build is *ad-hoc, linker-signed* with no
+entitlements, so macOS never even prompts and the Spectrum meter is dead. To test it you must sign the dev
+bundle first:
+```sh
+codesign --force --deep --options runtime --timestamp=none \
+    --entitlements mac/packaging/RabbitEars.entitlements \
+    -s "Developer ID Application: Matthew Mark (386M76FV3K)" build-mac/mac/RabbitEars.app
+open build-mac/mac/RabbitEars.app     # now macOS prompts for audio recording; grant it
+```
+Signal/Bitrate/Frames never need any of this — they run off `FlowStats`.
+
 **Backlog (not blocking):** on-device fine-tuning of the Tube glow radius / Scope trace weight / knob curves
 (built blind, ship-quality per owner) — tweak the constants in `fillCell`/`strokeScope`. And **E3** (the
-`MeterModel` promotion, owned by the Win32 team).
+`MeterModel` promotion, owned by the Win32 team). Also: `updateSpectrumAvailability:` is meant to show a
+"grant permission" placeholder after ~8 s of audible-but-silent, but it did **not** fire while the tap was
+silently denied — worth revisiting so a denied user sees the placeholder instead of a dead meter.
 
 ## Playlists — enable / disable / rename / refresh / delete (SHIPPED in v0.1.9)
 
@@ -250,6 +269,14 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
   slice fails to link libvlc. Pass `-DCMAKE_OSX_ARCHITECTURES=arm64` to `scripts/build-mac.sh --app`.
 - The **ToU gate is keyed on the FULL version incl. build number**, so every rebuild after a commit re-prompts
   in dev. That's expected, not a bug.
+- **`open` can launch the WRONG bundle.** Several `RabbitEars.app`s share the bundle id
+  (`/Applications`, `build-mac/`, `build-mac-universal/`), and LaunchServices may resolve to any of them —
+  a stale `build-mac-universal` copy silently hijacked `open build-mac/mac/RabbitEars.app` for a whole
+  debugging session. **Always confirm the version banner in `rabbitears.log`** (`==== RabbitEars (macOS) X.Y.Z (build) ====`)
+  before trusting an on-device result, and `lsregister -f` the bundle you mean (or move the others aside).
+- Launching the raw binary (`.../Contents/MacOS/RabbitEars`) instead of the bundle makes the *shell* the TCC
+  "responsible process", so audio-capture permission is attributed to the terminal — another way to get a
+  silently dead Spectrum meter. Use `open <bundle>` for anything permission-related.
 - **Branch off `main`, PR back**; CI validates both platforms. Keep any shared‑file (`common/`) edit
   behavior‑preserving on Windows.
 - Run an **adversarial review on new ObjC++** (ARC/threading/Cocoa) before merging — it has repeatedly caught
