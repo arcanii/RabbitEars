@@ -41,9 +41,12 @@ batch: concurrent per-pane recording, MP4, PIP resize + view-mode/PIP persistenc
 resume-last-channel, named saved layouts, import/export favourites, and the x64 install-time `plugins.dat` fix
 — all built green (x64 BOTH theme flags + selftest ALL PASS + native ARM64), adversarially reviewed (3 confirmed
 recording regressions + 1 export nit fixed pre-ship). See the 0.2.6 block under "Immediate next steps" for the
-full feature map. **Owner runtime pass wanted** (sandbox can't launch the GUI): record in two panes at once +
-switch panes mid-record; MP4 plays back; PIP resize/position/mode survive a restart; resume-last; Show-in-Guide;
-saved layouts; favourites export→import; and the faster x64 cold start from the installed cache.
+full feature map. **✅ Auto-update `0.2.5 → 0.2.6` CONFIRMED IN THE WILD on the native ARM64 build** (the one the
+universal installer laid down) — so the whole per-arch chain is proven end-to-end: `appcast-arm64.xml` → ARM64
+WinSparkle → the arm64 installer. **Owner runtime pass still wanted** for the 0.2.6 features (sandbox can't
+launch the GUI): record in two panes at once + switch panes mid-record; MP4 plays back; PIP resize/position/mode
+survive a restart; resume-last; Show-in-Guide; saved layouts; favourites export→import; and the faster x64 cold
+start from the installed cache.
 
 **Released:** **`v0.2.5`** (2026-07-09), tag `v0.2.5` @ `fbebcc7`, full version **`0.2.5.168`**, signed **three**
 installers — **`RabbitEars-0.2.5-setup.exe`** (x64), **`RabbitEars-0.2.5-arm64-setup.exe`** (native ARM64), and

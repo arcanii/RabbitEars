@@ -7,7 +7,15 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
-## 🎨 Theme engine — the big 0.2.x epic
+## 🎨 Theme engine — ✅ SHIPPED in v0.2.0 (this section is kept as the design record)
+
+All four skins (Dark / Light / Cyberpunk / Steampunk) and the complete authored GPU-effect set
+(strip underglow · gutter neon · button glow · Steampunk heat-haze) shipped in **v0.2.0**, theme-ON
+by default. **Optional follow-ups still open:** per-skin glow/heat-haze *tuning* (`SkinGpu` in
+`common/ui/Skin.cpp` + the wobble/plume magnitudes in `underglow.hlsl`); Steampunk palette/serif
+polish; extend `SkinGpu` to the GDI+ button glow (still a hardcoded strength); refresh the
+About/Splash *logo* art to match the clockwork icon; or reskin a further surface (nav / grid /
+dialogs — Appendix A of `docs/THEME_ENGINE.md`). The design/architecture below is the record.
 
 **Goal (owner-directed):** a **full-app reskin** with **runtime-selectable skins**
 (Dark / Steampunk / Cyberpunk — mockups exist) powered by **Direct3D 11 + HLSL shaders** for
@@ -128,16 +136,21 @@ the native ARM64 build (~3 s scan), so that's moot.
 
 ## Features
 
-- **Recording Phase 2 (scheduled)** — DB schedule table + dialog + a timer firing the headless
-  recorder at set times (app must be running). **Phase 3** — Windows Task Scheduler wake-to-record +
-  EPG-driven scheduling.
-- **Recording formats** — MP4 (record `.ts`, remux on stop — MP4 isn't crash-safe if written live)
-  and **transcoding** (format/quality/size presets; CPU-heavy).
-- **EPG** (XMLTV now/next; `tvg-id` already stored) + a **background dead-link checker** (so "Hide
-  unavailable" isn't purely passive). **Import/export favourites.**
-- **Resume last channel** on launch (`last_channel_id` is already persisted).
-- **Named saved layouts** (`DockLayout` already serializes any tree).
-- **Group-title country fallback** for Xtream feeds (whose channels lack `tvg-id` country codes).
+*(Shipped and removed from this list: EPG/XMLTV + scheduled recording Phase 2 (0.2.1); multi-view
+Split/PIP (0.2.1); concurrent per-pane recording, MP4, PIP resize, view-mode/PIP persistence,
+resume-last-channel, named saved layouts, import/export favourites, Show-in-Guide (0.2.6).)*
+
+- **Recording Phase 3** — Windows **Task Scheduler wake-to-record** (today the app must be running)
+  + **EPG-driven scheduling** (series/season rules, "record this programme every week").
+- **Transcoding on record** — format/quality/size presets (CPU-heavy). Today recording is always a
+  lossless stream copy (`ts`/`mkv`/`mp4` mux, no re-encode).
+- **Background dead-link checker** — so "Hide unavailable" isn't purely passive: probe channels
+  off-thread, write `dead_status`, throttle + cache. Pairs with the existing `setDeadStatus` DAO.
+- **Group-title country fallback** for Xtream feeds (whose channels lack `tvg-id` country codes, so
+  the Countries nav node stays empty for them).
+- **PIP "always on top of other apps" toggle** — the PIP popup is `WS_EX_TOPMOST` today (it must be,
+  to composite over libVLC's D3D vout); a user toggle to drop it out of topmost when the main window
+  isn't focused. (Its resize grip + position/size persistence shipped in 0.2.6.)
 
 ## Polish / cleanup
 
@@ -156,5 +169,10 @@ the native ARM64 build (~3 s scan), so that's moot.
 ## Release / infra
 
 - **Authenticode** code-signing of the exe + installer (silences SmartScreen; separate from the EdDSA
-  update signature).
+  update signature). **Recipe + where it slots into the release flow is documented in
+  `docs/RELEASING.md` ("Not yet covered")** — blocked only on the owner buying/provisioning a
+  code-signing cert (Azure Trusted Signing is the low-friction, headless-capable option).
 - **Portable-zip** artifact on releases (alongside the auto-updating installer).
+- **ARM64 `plugins.dat`** — no ARM64 `vlc-cache-gen` exists upstream; would mean building the tiny
+  tool against the NuGet's arm64 `libvlccore`. LOW value (native ARM64 scan is already ~3 s). The x64
+  side is solved (install-time cache-gen, 0.2.6).
