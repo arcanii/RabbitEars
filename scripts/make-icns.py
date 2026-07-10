@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Build mac/packaging/RabbitEars.icns from art/macos_icon.png — the macOS peer of
-# scripts/make_ico.py (which builds the Windows packaging/app.ico).
+# Build mac/packaging/RabbitEars.icns from art/clockwork_icon3.png — the SAME artist's
+# final icon the Windows .ico uses (scripts/make_ico.py), so both platforms share one
+# brand mark. (Previously the mac icns was built from a separate art/macos_icon.png.)
 #
 # macOS app icons are the rounded "squircle" sitting on a TRANSPARENT canvas (the
-# system draws its own shadow). The source art has an opaque light background, so
-# we flood-fill the exterior from the four corners to transparency; the interior
-# (the bunny) is enclosed by the dark squircle and is left untouched. If the source
-# already has transparent corners, it's used as-is. Requires Pillow; assembles the
-# .icns with the system `iconutil`.
+# system draws its own shadow). clockwork_icon3.png is already the finished tile with
+# transparent corners, so the flood-fill below is a no-op for it (kept so the script
+# still handles an opaque-background source); fit_squircle then crops the transparent
+# margin and scales the mark to fill the tile. Requires Pillow; assembles the .icns
+# with the system `iconutil`.
 #   python3 scripts/make-icns.py
 import os
 import subprocess
@@ -60,7 +61,7 @@ def fit_squircle(im: Image.Image) -> Image.Image:
 
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src = os.path.join(root, "art", "macos_icon.png")
+    src = os.path.join(root, "art", "clockwork_icon3.png")
     out = os.path.join(root, "mac", "packaging", "RabbitEars.icns")
 
     im = Image.open(src).convert("RGBA")
@@ -91,7 +92,7 @@ def main() -> int:
         os.makedirs(os.path.dirname(out), exist_ok=True)
         subprocess.run(["iconutil", "-c", "icns", iconset, "-o", out], check=True)
 
-    print(f"wrote {out} from art/macos_icon.png")
+    print(f"wrote {out} from {os.path.relpath(src, root)}")
     return 0
 
 

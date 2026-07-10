@@ -23,10 +23,23 @@
 - (BOOL)toolbarHidden;
 - (BOOL)videoOnly;
 
+// Multi-view layout (View menu): Single / Split (2×2) / Picture-in-Picture. The getters
+// back the menu checkmarks.
+- (void)setViewSingle:(id)sender;
+- (void)setViewSplit:(id)sender;
+- (void)setViewPip:(id)sender;
+- (BOOL)isSplitView;
+- (BOOL)isPipView;
+
 // Command actions surfaced in BOTH the in-window Settings ▾ pull-down and the app
 // menu bar (the menu-bar items forward here from AppDelegate).
 - (void)addPlaylist:(id)sender;
 - (void)openFile:(id)sender;
 - (void)showPlaylists:(id)sender;
 - (void)showMeters:(id)sender;
+
+// TV Guide (EPG). refreshGuide: downloads + stores the XMLTV guide for every enabled
+// playlist that carries a guide URL; showGuide: opens the channels×time guide window.
+- (void)refreshGuide:(id)sender;
+- (void)showGuide:(id)sender;
 @end

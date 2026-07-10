@@ -9,7 +9,13 @@
 #
 #   scripts/package-mac.sh build-mac/mac/RabbitEars.app \
 #       --sign "Developer ID Application: Name (TEAMID)" [--vlc /Applications/VLC.app]
+#
+# --entitlements defaults to mac/packaging/RabbitEars.entitlements whenever --sign is
+# given; see the guard below for why signing without it must not be possible.
 set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+default_ent="$here/../mac/packaging/RabbitEars.entitlements"
 
 app=""; ID=""; ENT=""; vlc="/Applications/VLC.app"
 while [[ $# -gt 0 ]]; do
@@ -21,7 +27,23 @@ while [[ $# -gt 0 ]]; do
     *)              app="$1"; shift;;
   esac
 done
-[[ -d "$app" ]] || { echo "usage: package-mac.sh <RabbitEars.app> [--sign <id>] [--vlc <VLC.app>]" >&2; exit 1; }
+[[ -d "$app" ]] || { echo "usage: package-mac.sh <RabbitEars.app> [--sign <id>] [--vlc <VLC.app>] [--entitlements <plist>]" >&2; exit 1; }
+
+# A Developer ID signature turns on the hardened runtime (below), and the hardened
+# runtime denies audio capture unless the entitlements grant it — SILENTLY: the Core
+# Audio process tap, its aggregate device and the IOProc all return noErr and just
+# deliver zeros, so the Spectrum meter sits flat with nothing in the log and macOS
+# never prompts. Forgetting --entitlements therefore ships a plausible-looking,
+# fully notarized build with a dead meter. Default it, and refuse to sign a hardened
+# binary whose entitlements are missing or lack the audio-input key.
+if [[ -n "$ID" ]]; then
+  [[ -n "$ENT" ]] || ENT="$default_ent"
+  [[ -f "$ENT" ]] || { echo "error: entitlements not found: $ENT" >&2; exit 1; }
+  grep -q 'com.apple.security.device.audio-input' "$ENT" || {
+    echo "error: $ENT lacks com.apple.security.device.audio-input — the Spectrum meter would be silently dead" >&2
+    exit 1
+  }
+fi
 
 libdir="$vlc/Contents/MacOS/lib"
 plugdir="$vlc/Contents/MacOS/plugins"

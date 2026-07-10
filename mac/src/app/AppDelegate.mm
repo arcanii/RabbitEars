@@ -102,6 +102,28 @@ using namespace rabbitears;
     vidOnly.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     vidOnly.target = self;
 
+    // Multi-view layout — Single vs Split (2×2). ⌃⌘1 / ⌃⌘2.
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* single = [viewMenu addItemWithTitle:@"Single View"
+                                             action:@selector(setViewSingle:) keyEquivalent:@"1"];
+    single.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    single.target = self;
+    NSMenuItem* split = [viewMenu addItemWithTitle:@"Split View (2×2)"
+                                            action:@selector(setViewSplit:) keyEquivalent:@"2"];
+    split.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    split.target = self;
+    NSMenuItem* pip = [viewMenu addItemWithTitle:@"Picture-in-Picture"
+                                          action:@selector(setViewPip:) keyEquivalent:@"3"];
+    pip.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    pip.target = self;
+
+    // TV Guide (EPG) — open the channels×time guide (⌘G) + download the guide data.
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    [[viewMenu addItemWithTitle:@"TV Guide"
+                         action:@selector(showGuide:) keyEquivalent:@"g"] setTarget:self];
+    [[viewMenu addItemWithTitle:@"Refresh Guide…"
+                         action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
+
     [viewMenu addItem:[NSMenuItem separatorItem]];
     [[viewMenu addItemWithTitle:@"Meters…"
                          action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
@@ -125,6 +147,11 @@ using namespace rabbitears;
 - (void)openFile:(id)sender { [_mainController openFile:sender]; }
 - (void)showPlaylists:(id)sender { [_mainController showPlaylists:sender]; }
 - (void)showMeters:(id)sender { [_mainController showMeters:sender]; }
+- (void)showGuide:(id)sender { [_mainController showGuide:sender]; }
+- (void)refreshGuide:(id)sender { [_mainController refreshGuide:sender]; }
+- (void)setViewSingle:(id)sender { [_mainController setViewSingle:sender]; }
+- (void)setViewSplit:(id)sender { [_mainController setViewSplit:sender]; }
+- (void)setViewPip:(id)sender { [_mainController setViewPip:sender]; }
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
@@ -134,6 +161,13 @@ using namespace rabbitears;
         item.title = _mainController.toolbarHidden ? @"Show Toolbar" : @"Hide Toolbar";
     else if (item.action == @selector(toggleVideoOnly:))
         item.title = _mainController.videoOnly ? @"Exit Video Only" : @"Video Only";
+    else if (item.action == @selector(setViewSingle:))
+        item.state = (!_mainController.isSplitView && !_mainController.isPipView)
+                         ? NSControlStateValueOn : NSControlStateValueOff;
+    else if (item.action == @selector(setViewSplit:))
+        item.state = _mainController.isSplitView ? NSControlStateValueOn : NSControlStateValueOff;
+    else if (item.action == @selector(setViewPip:))
+        item.state = _mainController.isPipView ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 

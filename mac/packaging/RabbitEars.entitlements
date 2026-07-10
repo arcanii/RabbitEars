@@ -2,11 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Hardened-runtime entitlements for the notarized build. libVLC dlopens ~340
      plugins (disable-library-validation) and some codecs use JIT / W^X executable
-     memory. All are notarization-permitted. -->
+     memory. All are notarization-permitted.
+
+     audio-input is required by the SPECTRUM meter: it taps this process's own audio
+     output via AudioHardwareCreateProcessTap (Core Audio). The hardened runtime blocks
+     audio capture without this entitlement, and the failure is SILENT — the tap, the
+     aggregate device and the IOProc all report success, they just deliver zeros, so the
+     meter sits flat with nothing in the log. NSAudioCaptureUsageDescription (Info.plist)
+     supplies the consent prompt's rationale. -->
 <plist version="1.0">
 <dict>
     <key>com.apple.security.cs.disable-library-validation</key>          <true/>
     <key>com.apple.security.cs.allow-jit</key>                           <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>    <true/>
+    <key>com.apple.security.device.audio-input</key>                     <true/>
 </dict>
 </plist>

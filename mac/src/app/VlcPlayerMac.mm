@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "VlcEngineMac.h"
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "platform/Log.h"
 
@@ -26,38 +27,35 @@ namespace rabbitears {
 
 struct VlcPlayerMac::Impl {
 #if defined(RABBITEARS_HAVE_LIBVLC)
-    libvlc_instance_t* vlc = nullptr;
+    libvlc_instance_t* vlc = nullptr;      // BORROWED from VlcEngineMac — never released here
     libvlc_media_player_t* player = nullptr;
     // Stats accumulators (main-thread only) for per-second deltas across samples.
     int  prevRead = 0, prevDemux = 0, prevCorrupted = 0, prevDiscont = 0, prevLost = 0, prevShown = 0;
     bool firstSample = true;
     std::chrono::steady_clock::time_point lastSample{};
+    int  savedAudioTrack = -1;  // track id to restore on unmute (multi-view background panes)
 #endif
+    bool    muted = false;
     NSView* videoView = nil;  // weak; owned by the window
 };
 
-VlcPlayerMac::VlcPlayerMac() : impl_(new Impl) {
+// The plugin-path setup + libvlc_new moved to VlcEngineMac (once per process); a player
+// now just allocates state and creates its cheap media player in init(engine).
+VlcPlayerMac::VlcPlayerMac() : impl_(new Impl) {}
+
+bool VlcPlayerMac::init(VlcEngineMac& engine) {
 #if defined(RABBITEARS_HAVE_LIBVLC)
-    // Point libVLC at its plugins unless VLC_PLUGIN_PATH is already set. Prefer the
-    // plugins bundled in the app (Contents/PlugIns — a self-contained release);
-    // fall back to the compile-time VLC.app path for non-bundled dev/CLI builds.
-    if (!getenv("VLC_PLUGIN_PATH")) {
-        NSString* bundled = NSBundle.mainBundle.builtInPlugInsPath;  // Contents/PlugIns
-        BOOL isDir = NO;
-        if (bundled.length &&
-            [NSFileManager.defaultManager fileExistsAtPath:bundled isDirectory:&isDir] && isDir) {
-            setenv("VLC_PLUGIN_PATH", bundled.fileSystemRepresentation, 1);
-        }
-#if defined(RABBITEARS_VLC_PLUGIN_PATH)
-        else {
-            setenv("VLC_PLUGIN_PATH", RABBITEARS_VLC_PLUGIN_PATH, 1);
-        }
-#endif
-    }
-    const char* args[] = {"--no-video-title-show"};
-    impl_->vlc = libvlc_new(sizeof(args) / sizeof(args[0]), args);
-    if (impl_->vlc) impl_->player = libvlc_media_player_new(impl_->vlc);
-    diag::info(impl_->vlc ? L"libVLC instance created" : L"libVLC init FAILED (plugins/deps?)");
+    if (impl_->player) return true;                 // idempotent
+    impl_->vlc = engine.handle();                   // borrowed; the engine owns it
+    if (!impl_->vlc) return false;                  // engine not ready (libVLC absent)
+    impl_->player = libvlc_media_player_new(impl_->vlc);
+    if (impl_->player && impl_->videoView)          // attachTo may have run before init
+        libvlc_media_player_set_nsobject(impl_->player, (__bridge void*)impl_->videoView);
+    return impl_->player != nullptr;
+#else
+    (void)engine;
+    diag::info(L"VlcPlayerMac::init (stub: libVLC not provisioned)");
+    return false;
 #endif
 }
 
@@ -67,7 +65,7 @@ VlcPlayerMac::~VlcPlayerMac() {
         libvlc_media_player_stop(impl_->player);
         libvlc_media_player_release(impl_->player);
     }
-    if (impl_->vlc) libvlc_release(impl_->vlc);
+    // impl_->vlc is owned by VlcEngineMac — do NOT release it here.
 #endif
     delete impl_;
 }
@@ -120,6 +118,58 @@ void VlcPlayerMac::setVolume(int percent) {
 #endif
 }
 
+// Silence a background pane by DESELECTING its audio track (survives libVLC recreating
+// the audio output on a quality switch); unmute restores the saved track. See the header.
+void VlcPlayerMac::setMuted(bool muted) {
+    impl_->muted = muted;
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return;
+    const int cur = libvlc_audio_get_track(impl_->player);  // -1 == nothing selected (silent)
+
+    if (muted) {
+        if (cur == -1) return;                             // already silent — no churn
+        impl_->savedAudioTrack = cur;                      // remember the real track
+        libvlc_audio_set_track(impl_->player, -1);         // -1 == "Disable" => silent
+        return;
+    }
+
+    // ---- unmute ----
+    // Idempotent: a track is already selected, so we are audible.
+    if (cur != -1) return;
+    // Nothing to select yet (media still opening, or a video-only stream). The caller
+    // re-asserts this every stats tick, so we simply retry once the audio ES shows up.
+    if (libvlc_audio_get_track_count(impl_->player) <= 0) return;
+
+    // Select a track that ACTUALLY EXISTS right now. `savedAudioTrack` can go stale when the
+    // stream re-opens its elementary streams (an ad break, an HLS quality switch) — selecting
+    // a stale id fails silently and the pane stays mute forever. So prefer the saved id only
+    // when it is still present, else fall back to the first real track.
+    int restore = -1;
+    libvlc_track_description_t* head = libvlc_audio_get_track_description(impl_->player);
+    for (libvlc_track_description_t* t = head; t; t = t->p_next) {
+        if (t->i_id == -1) continue;                       // the "Disable" pseudo-entry
+        if (t->i_id == impl_->savedAudioTrack) { restore = t->i_id; break; }  // saved still valid
+        if (restore == -1) restore = t->i_id;              // else remember the first real track
+    }
+    if (head) libvlc_track_description_list_release(head);
+    if (restore != -1) {
+        libvlc_audio_set_track(impl_->player, restore);
+        impl_->savedAudioTrack = restore;
+    }
+#endif
+}
+
+bool VlcPlayerMac::isMuted() const { return impl_->muted; }
+
+int VlcPlayerMac::audioTrack() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return -2;
+    return libvlc_audio_get_track(impl_->player);
+#else
+    return -2;
+#endif
+}
+
 // Peer of Win32 VlcPlayer::sampleStats. Reads libVLC's cumulative media stats and
 // turns them into per-second rates (byte-counter deltas over wall-clock) + per-sample
 // event deltas. Main-thread only (called from the UI's meter timer).
@@ -169,7 +219,18 @@ FlowStats VlcPlayerMac::sampleStats() {
 bool VlcPlayerMac::hasAudioTrack() const {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return false;
-    return libvlc_audio_get_track_count(impl_->player) > 0;
+    // NOT libvlc_audio_get_track_count(): that counts the "-1 Disable" pseudo-entry too, so it
+    // can report a track on a stream that carries no audio ES at all. The only caller gates the
+    // Spectrum "grant permission" placeholder, and a false positive there nags the user about a
+    // permission that is fine — on a video-only stream nothing would ever feed the tap, the
+    // cumulative silent-tick counter would run to its threshold, and the placeholder would
+    // appear. Walk the descriptions and count tracks that actually exist.
+    libvlc_track_description_t* head = libvlc_audio_get_track_description(impl_->player);
+    bool real = false;
+    for (libvlc_track_description_t* t = head; t && !real; t = t->p_next)
+        real = (t->i_id != -1);
+    if (head) libvlc_track_description_list_release(head);
+    return real;
 #else
     return false;
 #endif

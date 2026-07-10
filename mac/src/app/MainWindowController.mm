@@ -12,11 +12,14 @@
 #include <string>
 #include <vector>
 
+#include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "models/Channel.h"
 #include "platform/Encoding.h"
+#include "ui/VideoGrid.h"  // computeVideoPanes + ViewMode — multi-view pane geometry
 #include "platform/Log.h"
 #include "platform/Updater.h"
 
@@ -36,6 +39,8 @@
 #import "PlaylistsDialog.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
+#import "TvGuideWindowController.h"
+#import "VlcEngineMac.h"
 #import "VlcPlayerMac.h"
 
 using namespace rabbitears;
@@ -82,6 +87,16 @@ using namespace rabbitears::mac;  // MeterKind / MeterStyle / MeterConfig + the 
 - (void)mouseUp:(NSEvent*)__unused e { if (_onMoved) _onMoved(); }
 @end
 
+// One video pane in the multi-view area: a video surface (a child of the video container)
+// + its libVLC player + what it's currently playing. Single view uses one pane; Split/2×2
+// and PiP use several. The pane OWNS its player; its view is owned by the container (super).
+struct MacVideoPane {
+    NSView*                                view = nil;
+    std::unique_ptr<rabbitears::VlcPlayerMac> player;
+    rabbitears::Channel                    channel;      // currently playing (empty when idle)
+    long long                              channelId = 0;
+};
+
 // Filter popup tags.
 enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
 
@@ -113,10 +128,17 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
     BOOL           _metersHidden;  // bottom-bar toggle: hide the whole meter line
     CGFloat        _meterPosX, _meterPosY;  // meter-bar position as a 0..1 fraction of the pane
+    BOOL           _pipMoved;               // the user dragged the PiP inset (else it sits bottom-right)
+    CGFloat        _pipPosX, _pipPosY;      // dragged PiP inset position, as a 0..1 fraction
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
-    std::unique_ptr<VlcPlayerMac> _player;
+    std::unique_ptr<VlcEngineMac> _engine;   // shared libVLC instance; every player borrows it
+    std::vector<std::unique_ptr<MacVideoPane>> _panes;  // 1 pane (Single) or N (Split/2×2/PiP)
+    int                           _activePane;      // index into _panes: drives audio/meters/volume
+    ViewMode                      _viewMode;        // Single / Split / Pip
+    NSView*                       _videoContainer;  // the split's right pane; holds the pane views + meter bar
+    VlcPlayerMac*                 _player;          // alias → the active pane's player (panes own them)
     NSTimer*                      _statsTimer;   // 250ms libVLC-stats poll → _statMeter
     double                        _bitrateMax;   // rolling throughput peak for the meter scale
     SpectrumTap*                  _spectrumTap;      // Core Audio process tap → the Spectrum meter
@@ -126,6 +148,8 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
+    uint64_t                      _epgToken;               // only the newest guide refresh's result applies
+    id                            _guideWC;                // TvGuideWindowController (lazily created; app-lifetime)
     CGFloat                       _gridWidth;              // channel-grid width; the video pane fills the rest
     int                           _preMuteVolume;          // volume to restore when un-muting
 }
@@ -133,7 +157,17 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
 - (instancetype)init {
     if ((self = [super init])) {
         _db = std::make_unique<Database>();
-        _player = std::make_unique<VlcPlayerMac>();
+        _engine = std::make_unique<VlcEngineMac>();
+        _engine->init();  // create the shared libVLC instance once (loads the plugins)
+        _viewMode = ViewMode::Single;
+        _activePane = 0;
+        // Pane 0 (the active pane). Its player is created now so early -showWindow calls
+        // (e.g. setVolume) work; its video surface is built in -showWindow with the window.
+        auto pane = std::make_unique<MacVideoPane>();
+        pane->player = std::make_unique<VlcPlayerMac>();
+        pane->player->init(*_engine);
+        _panes.push_back(std::move(pane));
+        _player = _panes[0]->player.get();  // alias to the active pane's player
     }
     return self;
 }
@@ -340,16 +374,23 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // right when enabled. Each is a fixed kMeterW wide — they do NOT stretch with the
     // window; the video fills the space above. -applyMeterLayout positions them.
     NSView* videoPane = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+    _videoContainer = videoPane;  // holds the video panes + the floating meter bar
     _videoView = [[NSView alloc] initWithFrame:NSMakeRect(0, kMeterH, 600, 100 - kMeterH)];
     _videoView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _videoView.wantsLayer = YES;
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [videoPane addSubview:_videoView];
+    _panes[0]->view = _videoView;  // pane 0's surface is the active video view (aliased above)
     NSClickGestureRecognizer* dbl =
         [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(videoDoubleClicked:)];
     dbl.numberOfClicksRequired = 2;
     [_videoView addGestureRecognizer:dbl];
     [dbl release];  // MRC: the view retains it
+    // Single-click activates this pane in multi-view (a harmless no-op in Single view).
+    NSClickGestureRecognizer* act0 =
+        [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(paneClicked:)];
+    [_videoView addGestureRecognizer:act0];
+    [act0 release];
 
     // The meters live in a draggable bar that floats over the video. -applyMeterLayout
     // lays out the enabled ones inside it and sizes + positions the bar.
@@ -384,6 +425,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [content addSubview:split];
     _gridWidth = 380;
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
+    [self applyVideoPaneLayout];    // position pane 0 to fill (owns pane frames now)
     [self applyMeterConfig];        // configure + show the enabled meters (start the tap if Spectrum is on)
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
@@ -397,6 +439,16 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [_window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
+}
+
+// ---- multi-view pane accessors ----
+- (MacVideoPane*)activePane {
+    if (_activePane < 0 || _activePane >= (int)_panes.size()) return nullptr;
+    return _panes[(size_t)_activePane].get();
+}
+- (VlcPlayerMac*)activePlayer {
+    MacVideoPane* p = [self activePane];
+    return p ? p->player.get() : nullptr;
 }
 
 - (void)addColumn:(NSString*)ident title:(NSString*)title width:(CGFloat)w {
@@ -522,6 +574,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (NSMenu*)makeRowMenu {
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Play" action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Play in PiP" action:@selector(playInPip:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Toggle Favourite" action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Set Channel Number…" action:@selector(editChannelNumber:) keyEquivalent:@""] setTarget:self];
     return m;
@@ -642,7 +695,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [_table reloadData];
     [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
                      q.empty() ? @"" : @" (search)"]];
-    _emptyHint.hidden = !_channels.empty();
+    [self updateEmptyHint];
+}
+
+// The "no channels yet" hint is a subview of pane 0, so it is only meaningful in Single view
+// (in Split it would sit in the top-left quadrant; in PiP it hides behind the inset).
+- (void)updateEmptyHint {
+    _emptyHint.hidden = !_channels.empty() || _viewMode != ViewMode::Single;
 }
 
 // ---- actions ----
@@ -704,7 +763,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             isUrl:(bool)isUrl {
     if (!_db) { [self setStatus:@"Database unavailable — cannot save playlist."]; return; }
     const long long now = (long long)time(nullptr);
-    const long long pid = _db->addPlaylist(name, source, isUrl, now);
+    // Pass doc.epgUrl (the M3U x-tvg-url) through so the playlist carries its XMLTV guide
+    // source — without it, Refresh Guide has nothing to fetch (the Win32 peer at
+    // MainWindowCommands.cpp:108 does the same).
+    const long long pid = _db->addPlaylist(name, source, isUrl, now, doc.epgUrl);
     if (pid == 0) {
         [self setStatus:@"Add playlist failed: could not save to the database."];
         [self showResults:@"Could not import the playlist"
@@ -740,6 +802,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     a.informativeText = info;
     [a addButtonWithTitle:@"OK"];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse __unused r) {}];
+    [a autorelease];  // MRC: the sheet retains it for its lifetime; balance the alloc +1
 }
 
 - (void)filterChanged:(id)__unused sender { [self refreshChannels]; }
@@ -750,6 +813,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)stop:(id)__unused sender {
     _player->stop();
+    // Clear the pane's "now playing" so a later mode collapse can't resurrect the stream
+    // the user explicitly stopped (carryStreamFromPane keys off channelId). Peer of the
+    // Win32 Stop handler zeroing st->ap().nowPlayingId.
+    if (MacVideoPane* p = [self activePane]) { p->channel = Channel{}; p->channelId = 0; }
     for (MeterView* m : _meters) [m reset];
     [self stopSpectrumTap];  // free the tap's RT thread (no spinning on silence)
     _window.title = @"RabbitEars";
@@ -760,8 +827,20 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // no A/V desync): the bar tracks throughput against a slowly-decaying rolling peak,
 // so it fills while data flows at its usual rate and drops when the stream stalls.
 - (void)tickStats {
+    // Re-assert the single-audio model on EVERY pane each tick (both directions — setMuted is
+    // idempotent). Muting the background survives a libVLC aout recreation on a quality switch;
+    // re-asserting the ACTIVE pane's unmute is what heals a pane whose audio ES wasn't ready
+    // (or whose track ids changed across an ad break) when it was first activated — otherwise
+    // that pane stays silent forever.
+    if (_panes.size() > 1)
+        for (int i = 0; i < (int)_panes.size(); ++i)
+            _panes[(size_t)i]->player->setMuted(i != _activePane);
+
     const FlowStats fs = _player->sampleStats();
-    if (!fs.playing) { for (MeterView* m : _meters) [m reset]; _spectrumSilentTicks = 0; return; }
+    // NOTE: do NOT reset _spectrumSilentTicks here. libVLC's is_playing() dips false at HLS
+    // segment boundaries, and zeroing the denial counter on every dip meant it could never
+    // accumulate its window on a real stream (see -updateSpectrumAvailability:).
+    if (!fs.playing) { for (MeterView* m : _meters) [m reset]; return; }
     // Bitrate: the DEMUX byte-rate — HLS/segmented inputs report i_read_bytes as 0, but
     // the demux rate tracks the real media bitrate for both HLS and plain streams.
     [_meters[(int)MeterKind::Bitrate] pushBitrate:fs.demuxBytesPerSec];
@@ -825,10 +904,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // Lay the enabled meters out on one line at the bottom-left (each a fixed per-kind
 // width); the video fills the space above. All hidden while video-only.
 - (void)applyMeterLayout {
-    NSView* pane = _videoView.superview;
+    NSView* pane = _videoContainer;
     if (!pane) return;
     const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
-    _videoView.frame = pane.bounds;  // video fills; the meter bar floats on top
+    // (the video panes are positioned by -applyVideoPaneLayout; the meter bar floats on top)
 
     // Lay the enabled meters left-to-right inside the bar; size the bar to fit them.
     CGFloat x = 0;
@@ -847,7 +926,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _meterBar.frame = NSMakeRect(_meterPosX * availX, _meterPosY * availY, barW, kMeterH);
 }
 
-- (void)videoPaneResized:(NSNotification*)__unused n { [self applyMeterLayout]; }
+- (void)videoPaneResized:(NSNotification*)__unused n { [self applyVideoPaneLayout]; [self applyMeterLayout]; }
 
 // Record the meter bar's position as a 0..1 fraction of the pane (called after a drag).
 - (void)persistMeterPos {
@@ -861,6 +940,224 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _db->setSetting(L"meter_pos_x", std::to_wstring(_meterPosX));
         _db->setSetting(L"meter_pos_y", std::to_wstring(_meterPosY));
     }
+}
+
+// ---- Multi-view (Single / Split-2×2) -----------------------------------------
+// Panes are laid out by common/ui/VideoGrid (the shared geometry Win32 uses too) and hung
+// in the video container. Only the ACTIVE pane produces audio + drives the meters; clicking
+// a pane activates it. A mode switch carries the active stream into pane 0 and tears surplus
+// panes down OFF the main thread (libVLC stop() is synchronous — a stuck stream would freeze).
+
+- (ViewMode)viewMode { return _viewMode; }
+- (BOOL)isSplitView { return _viewMode == ViewMode::Split; }
+- (BOOL)isPipView { return _viewMode == ViewMode::Pip; }
+
+// Build a new pane (view + player) and add it to the container, below the meter bar.
+- (MacVideoPane*)makePane {
+    auto pane = std::make_unique<MacVideoPane>();
+    pane->player = std::make_unique<VlcPlayerMac>();
+    pane->player->init(*_engine);
+    NSView* v = [[NSView alloc] initWithFrame:_videoContainer.bounds];
+    v.autoresizingMask = NSViewNotSizable;  // positioned by -applyVideoPaneLayout
+    v.wantsLayer = YES;
+    v.layer.backgroundColor = NSColor.blackColor.CGColor;
+    NSClickGestureRecognizer* clk =
+        [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(paneClicked:)];
+    [v addGestureRecognizer:clk];
+    [clk release];  // MRC: the view retains it
+    NSPanGestureRecognizer* pan =  // drags the PiP inset (a no-op in Single/Split)
+        [[NSPanGestureRecognizer alloc] initWithTarget:self action:@selector(paneDragged:)];
+    [v addGestureRecognizer:pan];
+    [pan release];
+    [_videoContainer addSubview:v positioned:NSWindowBelow relativeTo:_meterBar];  // under the meters
+    [v release];    // MRC: the container retains it now
+    pane->view = v;
+    pane->player->attachTo(v);
+    MacVideoPane* raw = pane.get();
+    _panes.push_back(std::move(pane));
+    return raw;
+}
+
+// Position every pane inside the container per the current mode (VideoGrid geometry,
+// y-flipped for AppKit's bottom-left origin). A zero-area box hides a surplus pane.
+- (void)applyVideoPaneLayout {
+    if (!_videoContainer || _panes.empty()) return;
+    // Flip against the SAME integer height fed to computeVideoPanes, else the container's
+    // fractional height leaks in as a sub-pixel gap along the bottom edge.
+    const int icw = (int)_videoContainer.bounds.size.width;
+    const int ich = (int)_videoContainer.bounds.size.height;
+    rabbitears::VideoGridOpts opts;
+    opts.gap = 3; opts.pipW = 240; opts.pipH = 135; opts.pipMargin = 14;
+    auto boxes = rabbitears::computeVideoPanes(_viewMode, (int)_panes.size(), 0, 0, icw, ich, opts);
+    for (size_t i = 0; i < _panes.size() && i < boxes.size(); ++i) {
+        NSView* v = _panes[i]->view;
+        const auto& b = boxes[i];
+        if (b.w <= 0 || b.h <= 0) { v.hidden = YES; continue; }
+        v.hidden = NO;
+        NSRect fr = NSMakeRect(b.x, ich - b.y - b.h, b.w, b.h);  // top-down box → bottom-up frame
+        // A PiP inset the user dragged keeps its position (as a fraction) across relayout.
+        if (_viewMode == ViewMode::Pip && i > 0 && _pipMoved) {
+            fr.origin.x = _pipPosX * std::max<CGFloat>(0, icw - fr.size.width);
+            fr.origin.y = _pipPosY * std::max<CGFloat>(0, ich - fr.size.height);
+        }
+        v.frame = fr;
+    }
+    [self updateActivePaneBorder];
+}
+
+// An accent border around the active pane (only when there's more than one).
+- (void)updateActivePaneBorder {
+    const BOOL multi = _panes.size() > 1;
+    for (int i = 0; i < (int)_panes.size(); ++i) {
+        CALayer* layer = _panes[(size_t)i]->view.layer;
+        if (multi && i == _activePane) {
+            layer.borderColor = NSColor.controlAccentColor.CGColor;
+            layer.borderWidth = 3;
+        } else {
+            layer.borderWidth = 0;
+        }
+    }
+}
+
+// Make pane `idx` the audio/meter/volume focus. Background panes are muted by audio-track
+// deselect (VlcPlayerMac::setMuted), so only one pane is ever audible.
+- (void)setActivePane:(int)idx {
+    if (idx < 0 || idx >= (int)_panes.size()) idx = 0;
+    _activePane = idx;
+    _player = _panes[(size_t)idx]->player.get();   // re-alias: stats/spectrum/volume follow active
+    _videoView = _panes[(size_t)idx]->view;
+    for (int i = 0; i < (int)_panes.size(); ++i)
+        _panes[(size_t)i]->player->setMuted(i != idx);   // single audio: only the active pane
+    _player->setVolume((int)_volume.doubleValue);
+    [self updateActivePaneBorder];
+    [self applyMeterLayout];
+    MacVideoPane* p = [self activePane];
+    if (p && p->channelId) {
+        _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(p->channel.name)];
+        [self setStatus:[NSString stringWithFormat:@"Active pane: %@", ns(p->channel.name)]];
+    }
+}
+
+- (void)paneClicked:(NSClickGestureRecognizer*)g {
+    for (int i = 0; i < (int)_panes.size(); ++i)
+        if (_panes[(size_t)i]->view == g.view) { [self setActivePane:i]; return; }
+}
+
+// Drag the PiP inset around its backdrop (pane 0 is the full-bleed backdrop and never moves).
+// The position is remembered as a 0..1 fraction so it survives resize + relayout.
+- (void)paneDragged:(NSPanGestureRecognizer*)g {
+    if (_viewMode != ViewMode::Pip || !_videoContainer) return;
+    int idx = -1;
+    for (int i = 0; i < (int)_panes.size(); ++i)
+        if (_panes[(size_t)i]->view == g.view) { idx = i; break; }
+    if (idx <= 0) return;  // only inset panes move
+    NSView* v = g.view;
+    const NSPoint d = [g translationInView:_videoContainer];
+    NSRect f = v.frame;
+    const CGFloat maxX = std::max<CGFloat>(0, _videoContainer.bounds.size.width - f.size.width);
+    const CGFloat maxY = std::max<CGFloat>(0, _videoContainer.bounds.size.height - f.size.height);
+    f.origin.x = std::clamp<CGFloat>(f.origin.x + d.x, 0, maxX);
+    f.origin.y = std::clamp<CGFloat>(f.origin.y + d.y, 0, maxY);
+    v.frame = f;
+    [g setTranslation:NSZeroPoint inView:_videoContainer];
+    _pipMoved = YES;
+    _pipPosX = maxX > 0 ? f.origin.x / maxX : 0;
+    _pipPosY = maxY > 0 ? f.origin.y / maxY : 0;
+}
+
+// Copy the channel playing in `from` into pane `to` — used when collapsing so the active
+// stream survives into Single view (peer of the Win32 carryStream).
+- (void)carryStreamFromPane:(int)from toPane:(int)to {
+    if (from == to || from < 0 || to < 0 ||
+        from >= (int)_panes.size() || to >= (int)_panes.size()) return;
+    MacVideoPane* src = _panes[(size_t)from].get();
+    MacVideoPane* dst = _panes[(size_t)to].get();
+    if (src->channelId == 0) return;                 // nothing playing to carry
+    if (dst->channelId == src->channelId) {          // already the same stream — don't re-buffer
+        dst->channel = src->channel;
+        return;
+    }
+    dst->player->play(src->channel.streamUrl, src->channel.userAgent, src->channel.referrer);
+    dst->player->setVolume((int)_volume.doubleValue);
+    dst->channel = src->channel;
+    dst->channelId = src->channelId;
+}
+
+// Tear a removed pane down WITHOUT blocking the UI: unhook its view on the main thread, then
+// stop + destroy its (possibly stuck) player on a background queue.
+//
+// The view must OUTLIVE the player: libVLC still holds it via set_nsobject and its vout can
+// render into it until the player is actually released. removeFromSuperview drops the
+// container's retain, so we take our own first and release it (back on the main thread —
+// NSView dealloc is main-thread-only) once the player is gone.
+- (void)teardownPane:(std::unique_ptr<MacVideoPane>)pane {
+    NSView* view = [pane->view retain];  // outlive the player's vout
+    [view removeFromSuperview];
+    pane->view = nil;
+    VlcPlayerMac* dying = pane->player.release();  // take the player out of the unique_ptr
+    if (!dying) { [view release]; return; }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        dying->stop();
+        delete dying;  // ~VlcPlayerMac: media_player_stop + release (blocking, off-main)
+        dispatch_async(dispatch_get_main_queue(), ^{ [view release]; });  // now safe to free
+    });
+}
+
+// Switch view mode. Split uses `count` panes (2×2 = 4). Grows/shrinks the pane set,
+// carrying the active stream into pane 0 when collapsing away from it.
+- (void)applyViewMode:(ViewMode)mode paneCount:(int)count {
+    if (mode == ViewMode::Single) count = 1;
+    if (count < 1) count = 1;
+    _viewMode = mode;
+    _pipMoved = NO;  // a freshly-entered PiP starts in the default corner (Win32 parity)
+
+    while ((int)_panes.size() < count) [self makePane];   // grow
+
+    if ((int)_panes.size() > count) {                     // shrink
+        if (_activePane >= count) { [self carryStreamFromPane:_activePane toPane:0]; _activePane = 0; }
+        // Re-point the aliases at a SURVIVING pane BEFORE tearing anything down, so
+        // _player/_videoView can never dangle at a destroyed pane (the stats timer and
+        // volume slider dereference them).
+        _player = [self activePlayer];
+        if (MacVideoPane* ap = [self activePane]) _videoView = ap->view;
+        while ((int)_panes.size() > count) {
+            std::unique_ptr<MacVideoPane> pane = std::move(_panes.back());
+            _panes.pop_back();
+            [self teardownPane:std::move(pane)];
+        }
+    }
+    if (_activePane >= (int)_panes.size()) _activePane = 0;
+
+    [self applyVideoPaneLayout];
+    [self setActivePane:_activePane];
+    [self updateEmptyHint];
+    switch (_viewMode) {
+        case ViewMode::Split:
+            [self setStatus:@"Split view (2×2) — click a pane to make it active, then pick a channel."];
+            break;
+        case ViewMode::Pip:
+            [self setStatus:@"Picture-in-Picture — drag the inset to move it; click it to make it active."];
+            break;
+        default:
+            [self setStatus:@"Single view."];
+            break;
+    }
+}
+
+- (void)setViewSingle:(id)__unused sender { [self applyViewMode:ViewMode::Single paneCount:1]; }
+- (void)setViewSplit:(id)__unused sender  { [self applyViewMode:ViewMode::Split  paneCount:4]; }
+- (void)setViewPip:(id)__unused sender    { [self applyViewMode:ViewMode::Pip    paneCount:2]; }
+
+// Row context menu ▸ "Play in PiP": force PiP mode and play the clicked channel into the
+// INSET, leaving the backdrop (pane 0) active and audible — mirroring the Win32 "Play in
+// PIP" command. Click the inset to make it the active/audible pane.
+- (void)playInPip:(id)__unused sender {
+    const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+    if (row < 0 || row >= (NSInteger)_channels.size()) return;
+    const Channel c = _channels[(size_t)row];  // copy — the pane switch may reload the grid
+    if (_viewMode != ViewMode::Pip) [self applyViewMode:ViewMode::Pip paneCount:2];
+    if (_panes.size() < 2) return;  // PiP must have an inset
+    [self playChannel:c intoPane:1];
 }
 
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
@@ -910,8 +1207,14 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // legitimately silent — don't nag. Needs a sustained silence so a quiet intro on an
     // audio stream doesn't false-flag.
     const BOOL audible = _player->hasAudioTrack() && fs.demuxBytesPerSec > 0 && _volume.doubleValue > 0;
-    if (!audible) { _spectrumSilentTicks = 0; return; }
-    if (++_spectrumSilentTicks >= 32) [_meters[s] setAvailable:NO];  // ~8s audible but no tap energy => denied
+    // Accumulate only AUDIBLE, tap-silent polls — and do NOT reset on a transient non-audible
+    // one. demuxBytesPerSec legitimately reads 0 between HLS segments, so the old "32
+    // CONSECUTIVE audible ticks" rule was perpetually reset by normal streaming and the
+    // placeholder could never appear on a real stream (a denied tap looked like a dead meter).
+    // The count is now cumulative: ~10s of genuinely audible playback with zero tap energy.
+    // It is cleared only when the tap produces energy, or when the tap is (re)started/stopped.
+    if (!audible) return;
+    if (++_spectrumSilentTicks >= 40) [_meters[s] setAvailable:NO];
 }
 
 // Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
@@ -920,6 +1223,20 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     NSMenu* m = [[NSMenu alloc] init];
     [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Manage Playlists…" action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
+
+    // View layout — mirrors the View menu (⌃⌘1/2/3) so it's reachable without the menu bar.
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* vSingle = [m addItemWithTitle:@"Single View" action:@selector(setViewSingle:) keyEquivalent:@""];
+    NSMenuItem* vSplit  = [m addItemWithTitle:@"Split View (2×2)" action:@selector(setViewSplit:) keyEquivalent:@""];
+    NSMenuItem* vPip    = [m addItemWithTitle:@"Picture-in-Picture" action:@selector(setViewPip:) keyEquivalent:@""];
+    for (NSMenuItem* it in @[ vSingle, vSplit, vPip ]) it.target = self;
+    vSingle.state = (_viewMode == ViewMode::Single) ? NSControlStateValueOn : NSControlStateValueOff;
+    vSplit.state  = (_viewMode == ViewMode::Split)  ? NSControlStateValueOn : NSControlStateValueOff;
+    vPip.state    = (_viewMode == ViewMode::Pip)    ? NSControlStateValueOn : NSControlStateValueOff;
+
+    [m addItem:[NSMenuItem separatorItem]];
+    [[m addItemWithTitle:@"TV Guide" action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Refresh Guide…" action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Meters…" action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
@@ -983,6 +1300,100 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self refreshChannels];
     if (!_currentPid && lastEnabled == 0 && !playlists.empty())
         [self setStatus:@"All playlists are disabled — enable one to see channels."];
+}
+
+// ---- TV Guide (EPG) ----------------------------------------------------------
+// Peer of the Win32 onEpgRefresh/onEpgDone (MainWindowCommands.cpp): download + gunzip
+// + parse the XMLTV guide for every enabled playlist that carries a guide URL, off the
+// main queue, then store the parsed programmes on the main thread. Newest refresh wins.
+
+- (void)refreshGuide:(id)__unused sender {
+    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    struct Target { long long id; std::wstring name; std::wstring url; };
+    auto targets = std::make_shared<std::vector<Target>>();
+    for (const auto& pl : _db->listPlaylists())
+        if (pl.enabled && !pl.epgUrl.empty()) targets->push_back({pl.id, pl.name, pl.epgUrl});
+    if (targets->empty()) {
+        [self showResults:@"No guide source found"
+                     info:@"None of your enabled playlists carry an XMLTV guide URL (the x-tvg-url in "
+                          @"the #EXTM3U header).\n\nAdd a playlist that includes one, or set one per "
+                          @"playlist in Manage Playlists ▸ 📅 Set Guide URL, then try again."];
+        return;
+    }
+    [self setStatus:@"Downloading guide…"];
+    const uint64_t token = ++_epgToken;  // newest refresh wins (an in-flight one is superseded)
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        // Each fetch's outcome: parsed programmes, or an error string.
+        struct Fetch { long long id; std::wstring name; std::wstring error; std::vector<Programme> progs; };
+        auto results = std::make_shared<std::vector<Fetch>>();
+        for (const auto& t : *targets) {
+            Fetch f; f.id = t.id; f.name = t.name;
+            std::string bytes; std::wstring err;
+            if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60s
+                f.error = err.empty() ? L"download failed" : err;
+            } else {
+                const std::string xml = gunzipIfNeeded(bytes);  // .xml.gz bodies arrive still-compressed
+                if (xml.empty()) f.error = L"empty or invalid after decompression";
+                else f.progs = parseXmltv(xml).programmes;
+            }
+            results->push_back(std::move(f));
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (token != self->_epgToken || !self->_db) return;  // a newer refresh superseded this one
+            const long long now = (long long)time(nullptr);  // stamp at store-time (peer of Win32 onEpgDone)
+            int okCount = 0, totalProg = 0;
+            std::set<std::wstring> chans;
+            NSMutableString* detail = [NSMutableString string];
+            for (auto& f : *results) {
+                if (!f.error.empty()) {
+                    [detail appendFormat:@"%@:  %@\n", ns(f.name), ns(f.error)];
+                    continue;
+                }
+                const int stored = self->_db->bulkInsertProgrammes(f.id, f.progs, now);
+                ++okCount; totalProg += stored;
+                for (const auto& p : f.progs) chans.insert(p.channelId);
+                [detail appendFormat:@"%@:  %d programmes\n", ns(f.name), stored];
+            }
+            NSString* summary = okCount > 0
+                ? [NSString stringWithFormat:@"Stored %d programmes across %lu channels",
+                   totalProg, (unsigned long)chans.size()]
+                : @"Could not refresh the guide";
+            [self setStatus:summary];
+            [self showResults:summary info:detail];
+        });
+    });
+}
+
+// Open (or re-reveal) the channels×time guide window. The window controller queries the
+// DB and lays the grid out; a picked programme calls back to -playFromGuide:name:.
+- (void)showGuide:(id)__unused sender {
+    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    if (!_guideWC) _guideWC = [[TvGuideWindowController alloc] initWithDatabase:_db.get()];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    [(TvGuideWindowController*)_guideWC presentRelativeTo:_window
+                                                  onPlay:^(NSString* tvgId, NSString* name) {
+        [me playFromGuide:tvgId name:name];
+    }];
+}
+
+// Resolve a guide row's tvg-id back to a playable channel and play it (peer of the Win32
+// onEpgGuide onPlay callback); hide the guide so the picked channel is actually visible.
+- (void)playFromGuide:(NSString*)tvgId name:(NSString*)name {
+    if (!_db) return;
+    std::optional<Channel> ch;
+    if (tvgId.length) ch = _db->channelByTvgId(ws(tvgId));
+    if (ch) {
+        [self playChannel:*ch];
+        [(TvGuideWindowController*)_guideWC hide];  // don't leave the show playing behind the guide
+        [_window makeKeyAndOrderFront:nil];
+    } else {
+        [self showResults:@"No matching channel"
+                     info:[NSString stringWithFormat:
+                           @"Couldn't find a channel for “%@” in your playlists.\n\nThe guide matches "
+                           @"programmes to channels by tvg-id; this programme's ID has no match. Point "
+                           @"the playlist at a guide whose IDs line up (Manage Playlists ▸ 📅 Set Guide "
+                           @"URL).", name]];
+    }
 }
 
 - (void)showAbout:(id)sender { [(AppDelegate*)NSApp.delegate showAboutPanel:sender]; }
@@ -1064,14 +1475,34 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)playRow:(NSInteger)row {
     if (row < 0 || row >= (NSInteger)_channels.size()) return;
-    const Channel& c = _channels[(size_t)row];
-    _player->play(c.streamUrl, c.userAgent, c.referrer);
-    _player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
+    [self playChannel:_channels[(size_t)row]];
+}
+
+// Play `c` into a SPECIFIC pane. Only the active pane is audible and owns the title/status/
+// meters/resume-state; a background pane (e.g. the PiP inset) starts muted. The 250ms tick
+// re-asserts that mute once the audio track actually shows up.
+- (void)playChannel:(const Channel&)c intoPane:(int)idx {
+    if (idx < 0 || idx >= (int)_panes.size()) return;
+    MacVideoPane* p = _panes[(size_t)idx].get();
+    p->player->play(c.streamUrl, c.userAgent, c.referrer);
+    p->player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
+    p->player->setMuted(idx != _activePane);         // single-audio: only the active pane
+    p->channel = c;
+    p->channelId = c.id;
+    if (idx != _activePane) {
+        [self setStatus:[NSString stringWithFormat:@"Playing in %@: %@",
+                         (_viewMode == ViewMode::Pip ? @"PiP" : @"background pane"), ns(c.name)]];
+        return;
+    }
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
     [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
 }
+
+// The shared "start playing this channel" path — used by the grid (playRow:) and the
+// TV Guide (playFromGuide:name:). Always targets the active pane.
+- (void)playChannel:(const Channel&)c { [self playChannel:c intoPane:_activePane]; }
 
 // ---- NSTableView data source / delegate ----
 

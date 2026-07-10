@@ -42,8 +42,9 @@ if(RABBITEARS_BUILD_MAC)
   include(Mac)
   rabbitears_provision_mac_deps()
 
-  # App icon: the .icns (built from art/macos_icon.png by scripts/make-icns.py) is
-  # copied into Contents/Resources and named in Info.plist via CFBundleIconFile.
+  # App icon: the .icns (built from art/clockwork_icon3.png by scripts/make-icns.py —
+  # the same art the Windows .ico uses) is copied into Contents/Resources and named in
+  # Info.plist via CFBundleIconFile.
   set(RE_MAC_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/RabbitEars.icns")
   set_source_files_properties("${RE_MAC_ICNS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
@@ -51,23 +52,28 @@ if(RABBITEARS_BUILD_MAC)
     src/app/main.mm
     src/app/AppDelegate.mm
     src/app/MainWindowController.mm
+    src/app/VlcEngineMac.mm
     src/app/VlcPlayerMac.mm
     src/app/SpectrumTap.mm
     src/app/MeterView.mm
     src/app/MetersDialog.mm
     src/app/PlaylistsDialog.mm
     src/app/TermsDialog.mm
+    src/app/EpgGuideView.mm
+    src/app/TvGuideWindowController.mm
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm
     "${RE_MAC_ICNS}")
 
   # These use ARC (weak-self timers; CoreFoundation bridging + a block-owning C++
-  # struct for the Core Audio spectrum tap; block-captured self in the dialogs). The
+  # struct for the Core Audio spectrum tap; block-captured self in the dialogs; the
+  # TV Guide view/window controller retain Cocoa ivars + copy a callback block). The
   # rest of the app is MRC-style.
   set_source_files_properties(
     src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
     src/app/PlaylistsDialog.mm src/app/TermsDialog.mm
+    src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE

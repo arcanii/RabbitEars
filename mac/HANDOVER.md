@@ -11,10 +11,28 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 *headers*), **`Win32/`** (the Windows app), **`mac/`** (this — the Cocoa app), under a unified root
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
-`main` carries **both platforms at decoupled versions**: **Windows 0.2.4** (theme engine + EPG/TV Guide,
-scheduled recordings, multi-view Split/PIP — the Windows team ships from `main`) and **mac 0.1.10**. The
-version split lives in `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac).
+`main` carries **both platforms at decoupled versions**: **Windows 0.2.7** (theme engine + EPG/TV Guide,
+scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
+recording — the Windows team ships from `main`) and **mac 0.2.0** (the parity line). The version split lives in
+`cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac).
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
+
+> **In flight — branch `mac-multiview-tvguide`, [PR #24](https://github.com/arcanii/RabbitEars/pull/24), tree clean.**
+> Opens the mac **0.2.0** line and lands the three Windows-parity features: **TV Guide (EPG)**, **multi-view
+> Split/2×2**, and **Picture-in-Picture** — plus the unified app icon and three real bug fixes found while
+> testing (multi-view active-pane silence, the Spectrum `audio-input` entitlement, the unreachable Spectrum
+> placeholder). Built, adversarially reviewed (three review workflows) and **validated on real hardware**
+> (incl. 4 simultaneous HLS streams in 2×2).
+> **Key discovery: this was wiring, not porting** — every shared core it needs (`VideoGrid`, `XmltvParser`,
+> `Gzip`, `Programme`, the `Database` EPG methods) **already compiled into the mac binary**; the branch
+> touches **no `common/`, `Win32/` or `third_party/` file at all**, so there is zero Windows risk. `mac-core`
+> CI is green and the Windows `core-selftest` passes on the branch too.
+>
+> **Scope caveat:** parity here is with the Windows **0.2.5** feature set. Windows has since shipped 0.2.6/0.2.7
+> (per-pane recording + MP4, saved layouts, PiP resize/persist, favourites I/O, Show-in-Guide, wake-to-record,
+> EPG-driven series rules). Those are **not ported to mac** — that is the next parity push. `origin/main`
+> (Windows 0.2.7) is merged into this branch and its new shared sources (`M3uWriter`, `RecordingRules`, the
+> `Database` schema steps) compile into the mac binary cleanly.
 
 ## Current state — v0.1.10-mac SHIPPED (everything merged to main)
 
@@ -65,6 +83,54 @@ version + continues; **Decline** quits. Every other launch is silent. Same `tos_
 scheme as Win32. On-device-validated. **To re-trigger for testing:**
 `sqlite3 "$HOME/Library/Application Support/RabbitEars/rabbitears.db" "DELETE FROM settings WHERE key='tos_accepted'"` then relaunch.
 
+## TV Guide / EPG (branch `mac-multiview-tvguide`, 0.2.0)
+
+The whole data pipeline was **already compiled in** — this is wiring, not porting. **No `common/` edits.**
+- **Refresh** — `MainWindowController -refreshGuide:` (View ▸ Refresh Guide, or the ⚙ menu): for every
+  *enabled* playlist with a non-empty `epgUrl`, off the main queue → `httpGet(url,…,60000)` →
+  `gunzipIfNeeded` (XMLTV is usually served as `.xml.gz`) → `parseXmltv(...).programmes` → back on the main
+  queue → `Database::bulkInsertProgrammes`. Newest-refresh-wins via `_epgToken`. **DB is main-thread only.**
+- **Guide window** — `TvGuideWindowController` (own modeless `NSWindow`) assembles rows from
+  `programmesInWindow(pid, now-6h, now+72h)`, grouping consecutive same-`channelId` programmes and joining to
+  channels by the **lowercased base tvg-id** (`normId` strips iptv-org's `@feed` suffix: `CNN.us@SD` → `cnn.us`).
+  Channels absent from the playlist are skipped, so **every row is playable**. `EpgGuideView` is a *flipped*
+  custom `NSView` drawing 4 clipped regions (programme blocks + now-line, frozen channel column, frozen hour
+  axis, corner) with its own scroll offsets — the AppKit peer of Win32's Direct2D three-clip control.
+  Clicking a programme opens details + **Play Channel** (`channelByTvgId` → play → hide the guide).
+- **Guide URL** — parsed from the M3U `x-tvg-url`, or set per playlist via **Manage Playlists ▸ 📅**
+  (`setPlaylistEpgUrl`). *(A real bug fixed here: `importDoc` used to drop `doc.epgUrl`, so Refresh Guide
+  had nothing to fetch.)*
+- **Gotchas:** hour-axis ticks are aligned to **local** hour boundaries via `NSCalendar` (raw UTC stepping
+  mislabels fractional-hour zones like UTC+5:30). All programme text goes through the `Encoding.h` UTF seam —
+  **never** the naive `widen`/`narrow` byte-cast (titles are routinely non-ASCII).
+
+## Multi-view — Split / 2×2 + Picture-in-Picture (branch `mac-multiview-tvguide`, 0.2.0)
+
+- **`VlcEngineMac`** owns the ONE `libvlc_instance_t` (`libvlc_new` loads ~325 plugins — once per process).
+  Every `VlcPlayerMac` borrows it via `init(engine)`; an Nth pane is now cheap. **Destroy all players before
+  the engine.**
+- **Pane model** — `MacVideoPane { NSView* view; unique_ptr<VlcPlayerMac> player; Channel channel; long long
+  channelId; }` in `_panes`. `_player` / `_videoView` are **raw ALIASES to the active pane**, so all the
+  pre-existing playback/meter/stats code kept working untouched. Single view = exactly one pane.
+- **Layout** — `-applyVideoPaneLayout` feeds the shared `common/ui/VideoGrid::computeVideoPanes` and
+  **y-flips** each box (`VideoGrid` is top-down; AppKit is bottom-up): `y = ich - b.y - b.h`, flipping against
+  the *same integer* height passed in. Split(4) ⇒ 2×2; Pip(2) ⇒ full backdrop + draggable bottom-right inset.
+- **Single-audio active pane** — only the active pane is audible; background panes are muted by
+  **audio-track deselect** (`libvlc_audio_set_track(mp,-1)`), NOT volume=0 (libVLC resets volume to 100% when
+  it recreates the aout on an HLS quality switch). `tickStats` **re-asserts** the mute every 250ms because the
+  track may not exist yet at `play()` time. Clicking a pane activates it (accent `CALayer` border).
+- **Async teardown (do NOT regress this)** — `stop()` is synchronous and blocks on a stuck stream. On collapse,
+  panes are torn down on a GCD background queue. The pane's **`NSView` is retained across the async stop and
+  released back on the main thread**: libVLC holds it via `set_nsobject` and its vout renders into it until the
+  player is released. `applyViewMode` also re-points `_player`/`_videoView` at a **surviving** pane *before*
+  any teardown. Collapsing carries the active stream into pane 0 (`carryStreamFromPane`, skipped when it's
+  already the same channel); `Stop` clears `channelId` so a stopped stream is not resurrected by that carry.
+- **Triggers** — View ▸ Single (⌃⌘1) / Split 2×2 (⌃⌘2) / Picture-in-Picture (⌃⌘3), with checkmarks; row
+  context menu ▸ **Play in PiP** (plays the inset, backdrop stays active + audible — Win32 parity).
+- **mac is SIMPLER than Win32 here:** no vout-host pool. That whole Win32 apparatus exists only to dodge a
+  Direct3D11 "VLC (Direct3D11 output)" popout; AVFoundation composites sibling `NSView`s fine (validated with
+  4 live streams). Persisting view mode is deliberately NOT done (Win32 doesn't either).
+
 ## Meters — full Win32-parity meter system (SHIPPED in v0.1.9)
 
 **KEY: only Spectrum needs audio capture; Signal/Bitrate/Frames run off `FlowStats` — no consent, no desync.**
@@ -90,9 +156,53 @@ undetectable silence, then rebuilt properly with a `hasAudioTrack`-gated placeho
 - **MainWindowController** glue: a **`DraggableMeterBar`** floats the meters over full-bleed video
   (`meter_pos_x/y`); a bottom-bar show/hide button (`meters_hidden`); **Video Only** (⌥⌘F/Esc/dbl-click).
 
+**⚠ The Spectrum meter needs the `com.apple.security.device.audio-input` entitlement.** It taps the app's own
+audio output with `AudioHardwareCreateProcessTap`, and the **hardened runtime silently blocks audio capture
+without it**: `AudioHardwareCreateProcessTap`, the aggregate device and the IOProc all return success, the tap
+just delivers **zeros**, so the meter sits flat and *nothing* appears in the log. That entitlement is now in
+`mac/packaging/RabbitEars.entitlements` (which `scripts/package-mac.sh` passes to `codesign`), alongside the
+`NSAudioCaptureUsageDescription` Info.plist key that supplies the consent prompt's text.
+**Consequence for testing:** a plain `scripts/build-mac.sh --app` dev build is *ad-hoc, linker-signed* with no
+entitlements, so macOS never even prompts and the Spectrum meter is dead. To test it you must sign the dev
+bundle first:
+```sh
+codesign --force --deep --options runtime --timestamp=none \
+    --entitlements mac/packaging/RabbitEars.entitlements \
+    -s "Developer ID Application: Matthew Mark (386M76FV3K)" build-mac/mac/RabbitEars.app
+open build-mac/mac/RabbitEars.app     # now macOS prompts for audio recording; grant it
+```
+Signal/Bitrate/Frames never need any of this — they run off `FlowStats`.
+
+**The "grant permission" placeholder** (`updateSpectrumAvailability:` → `MeterView -drawUnavailable:`) used to
+be unreachable: it required **32 _consecutive_** audible-but-tap-silent 250 ms polls, and the counter was zeroed
+both by `tickStats` whenever `libvlc_media_player_is_playing()` momentarily dipped false and by the
+`demuxBytesPerSec == 0` branch — both happen routinely at HLS segment boundaries, so on a real stream it never
+reached the threshold and a denied tap just looked like a dead meter. It now **accumulates** audible, tap-silent
+polls (never reset by a transient dip) and trips after ~10 s of genuinely audible playback with zero tap energy;
+`_spectrumEverHadEnergy` still latches "granted" so a quiet passage can't false-flag. The message was also wider
+(43 chars @ 9 pt) than the 180 pt strip — it is now a short auto-shrinking *"Spectrum needs audio permission"*
+with the full instruction in the view's tooltip. If the tap is hard-denied, `AudioDeviceStart` fails outright
+(`SpectrumTap` init returns nil) and `startSpectrumTap` shows the placeholder immediately.
+
 **Backlog (not blocking):** on-device fine-tuning of the Tube glow radius / Scope trace weight / knob curves
 (built blind, ship-quality per owner) — tweak the constants in `fillCell`/`strokeScope`. And **E3** (the
-`MeterModel` promotion, owned by the Win32 team).
+`MeterModel` promotion, owned by the Win32 team). Also: `startSpectrumTap` runs inside `-showWindow` and
+`AudioHardwareCreateProcessTap` **blocks on the consent prompt**, so on first launch the main window doesn't
+appear until the user answers — worth deferring the tap off the critical path.
+
+**Open low-severity findings (0.2.0 adversarial review, deliberately NOT fixed before the release cut** —
+each needs on-device verification that wasn't available at the time, and none is user-visible enough to
+justify an untested change to shipped audio/memory paths):
+- **MRC dialog leaks.** `addPlaylist:` (~L714), `showSettings:` (~L1223) and `editChannelNumber:` (~L1457) in
+  `MainWindowController.mm` `alloc` an `NSAlert`/`NSTextField`/`NSMenu` with `+1` and never release it. This
+  is an MRC file, so each invocation leaks. The fix is an `autorelease` on each — but it depends on AppKit
+  retaining the alert for the sheet's lifetime and the block retaining the accessory view, so **verify on
+  device before shipping it**; a wrong call here is an over-release crash, not a leak.
+- **Transient background-pane audio bleed (~250 ms).** `playChannel:intoPane:` calls `setMuted(true)`
+  immediately, but at that moment no audio track exists yet, so `setMuted` sees `cur == -1` ("already
+  silent") and no-ops. libVLC then auto-selects the track when it appears and the background pane is briefly
+  audible until the next `tickStats` re-assert. A real fix needs a libVLC event callback
+  (`libvlc_MediaPlayerESSelected`) rather than the 250 ms poll.
 
 ## Playlists — enable / disable / rename / refresh / delete (SHIPPED in v0.1.9)
 
@@ -134,9 +244,11 @@ under account **`SQLTerminal`**.
 scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
     -DLIBVLC_MAC_PREFIX="<universal VLC.app>/Contents/MacOS"
 # 2. bundle libVLC + sign inside-out (app, plugins, AND Sparkle's Updater.app/Autoupdate/XPC)
+#    --entitlements now DEFAULTS to mac/packaging/RabbitEars.entitlements whenever --sign is given, and the
+#    script refuses to sign a hardened binary whose entitlements lack audio-input. (It used to sign a
+#    hardened build with an EMPTY entitlement set if you forgot the flag — which silently kills Spectrum.)
 scripts/package-mac.sh <app> --vlc "<VLC.app>" \
-    --sign "Developer ID Application: Matthew Mark (386M76FV3K)" \
-    --entitlements mac/packaging/RabbitEars.entitlements
+    --sign "Developer ID Application: Matthew Mark (386M76FV3K)"
 # 3. dmg → notarize → staple → Sparkle-sign
 create-dmg … <dmg> <app>
 xcrun notarytool submit <dmg> --keychain-profile SQLTerminal-notarize --wait
@@ -155,8 +267,12 @@ build-mac*/sparkle/bin/sign_update --account SQLTerminal <dmg>   # prints edSign
 mac/CMakeLists.txt                     # mac targets; rpath; Sparkle embed; icon; per-file -fobjc-arc list
 mac/cmake/Mac.cmake                    # libVLC + Sparkle provisioning (-DLIBVLC_MAC_PREFIX overrides VLC.app)
 mac/src/app/AppDelegate.mm             # lifecycle + menu bar (App/File/Edit/View) + custom About + Updates
-mac/src/app/MainWindowController.mm    # the UI: top bar, grid, split, playback, meters glue, ToU gate
-mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper + sampleStats()->FlowStats
+mac/src/app/MainWindowController.mm    # the UI: top bar, grid, split, playback, meters glue, ToU gate,
+                                       #   video PANE model (Single/Split-2×2/PiP) + EPG orchestration
+mac/src/app/VlcEngineMac.{h,mm}        # the ONE shared libvlc_instance_t; players borrow handle()
+mac/src/app/VlcPlayerMac.{h,mm}        # libVLC wrapper: init(engine), setMuted (track-deselect), sampleStats()
+mac/src/app/EpgGuideView.{h,mm}        # TV Guide renderer: flipped NSView, channels×time grid (ARC)
+mac/src/app/TvGuideWindowController.{h,mm}  # guide window; DB->rows (normId @feed join), play-from-guide (ARC)
 mac/src/app/TermsDialog.{h,mm}         # first-launch / version-change Terms-of-Use gate (ARC)
 mac/src/app/PlaylistsDialog.{h,mm}     # Settings > Manage Playlists (enable/disable/rename/refresh/delete)
 mac/src/app/MetersDialog.{h,mm}        # Settings > Meters (Show/Style/Colours/Tuning + live preview)
@@ -168,6 +284,8 @@ mac/packaging/{Info.plist.in, appcast-mac.xml, RabbitEars.icns, RabbitEars.entit
 scripts/{build-mac.sh, package-mac.sh, make-icns.py}         # build / bundle+sign+notarize / icon
 cmake/AppVersion.cmake                 # per-platform version (Windows APP_VERSION + APPLE override)
 common/models/FlowStats.h              # shared stream-health snapshot (Win32 + mac)
+common/ui/VideoGrid.{h,cpp}            # SHARED pane geometry (Single/Split/Pip) — mac y-flips the boxes
+common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already compiled into mac; called as-is)
 ../common/ …                           # the shared engine (edit carefully — feeds Windows too)
 ```
 
@@ -176,12 +294,37 @@ common/models/FlowStats.h              # shared stream-health snapshot (Win32 + 
 - **Can't test GUI/audio headlessly** — real Mac testing is required for anything visual or audible (drive it
   with the computer-use MCP: `open` the app + screenshot; that's how the "can't paste" / meter / list-anchor
   bugs surfaced).
+- **On-device testing recipe.** Launch the dev binary with an isolated DB so you never touch the user's data:
+  `RABBITEARS_DATA_DIR=/tmp/redb build-mac/mac/RabbitEars.app/Contents/MacOS/RabbitEars &` (`defaultDbPath()`
+  honors it). A local `python3 -m http.server` serving a hand-made `.m3u` + XMLTV fixture makes the whole
+  import→refresh→guide→playback path deterministic and offline; use **`http://127.0.0.1:…`** (the loopback IP
+  literal is ATS-exempt, so `NSURLSession` won't block cleartext HTTP). Public HLS streams that work for
+  multi-view testing: `test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`, Apple's `bipbop_4x3_variant.m3u8`.
+- **Dev builds must be native arm64.** `build-mac/CMakeCache.txt` can hold a stale
+  `CMAKE_OSX_ARCHITECTURES=arm64;x86_64` from a release build; a stock VLC.app is arm64-only, so the x86_64
+  slice fails to link libvlc. Pass `-DCMAKE_OSX_ARCHITECTURES=arm64` to `scripts/build-mac.sh --app`.
+- The **ToU gate is keyed on the FULL version incl. build number**, so every rebuild after a commit re-prompts
+  in dev. That's expected, not a bug.
+- **`open` can launch the WRONG bundle.** Several `RabbitEars.app`s share the bundle id
+  (`/Applications`, `build-mac/`, `build-mac-universal/`), and LaunchServices may resolve to any of them —
+  a stale `build-mac-universal` copy silently hijacked `open build-mac/mac/RabbitEars.app` for a whole
+  debugging session. **Always confirm the version banner in `rabbitears.log`** (`==== RabbitEars (macOS) X.Y.Z (build) ====`)
+  before trusting an on-device result, and `lsregister -f` the bundle you mean (or move the others aside).
+- Launching the raw binary (`.../Contents/MacOS/RabbitEars`) instead of the bundle makes the *shell* the TCC
+  "responsible process", so audio-capture permission is attributed to the terminal — another way to get a
+  silently dead Spectrum meter. Use `open <bundle>` for anything permission-related.
 - **Branch off `main`, PR back**; CI validates both platforms. Keep any shared‑file (`common/`) edit
   behavior‑preserving on Windows.
 - Run an **adversarial review on new ObjC++** (ARC/threading/Cocoa) before merging — it has repeatedly caught
   real bugs here.
 - **`git push` hangs intermittently** this machine/session — clear stuck `git-remote-https` procs + retry, or
   use `gh pr merge` / `gh api` (REST works fine) for anything targeting `main`.
+- **The repo lives under `~/Desktop`, which macOS TCC protects.** Access can be revoked *mid-session* — every
+  read, including `git`'s own cwd probe, starts returning `EPERM: operation not permitted` while `~/Documents`
+  and `~/Downloads` still work. An agent's `request_directory` grant does **not** lift it (that's Claude's
+  permission layer, not the kernel's). Fix: `tccutil reset SystemPolicyDesktopFolder com.anthropic.claude-code`
+  restores it immediately, no relaunch. **Any review or build that ran during an EPERM window is void, not
+  green** — the tools were reading nothing.
 - Windows `gui-build` CI is **pre-existing red** (the theme engine needs `fxc`, absent in CI) — unrelated to mac.
 
 ## Seed prompt for a fresh session
@@ -190,7 +333,8 @@ common/models/FlowStats.h              # shared stream-health snapshot (Win32 + 
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions: Windows 0.2.4 (theme engine + EPG/TV Guide,
-scheduled recordings, multi-view Split/PIP) and mac 0.1.10 — the split lives in cmake/AppVersion.cmake
+scheduled recordings, multi-view Split/PIP) and mac 0.2.0 (the parity line, on branch
+mac-multiview-tvguide; main still carries the shipped 0.1.10) — the split lives in cmake/AppVersion.cmake
 (APP_VERSION = Windows; an if(APPLE) override = mac). The mac app is SHIPPED + auto-updating (v0.1.10-mac,
 universal, notarized, self-contained; Sparkle path proven end-to-end). App min macOS 26 (LSMinimumSystemVersion
 only; deployment target unpinned so CI's older SDK builds; macOS 26 is Apple-Silicon-only). Build:
@@ -200,8 +344,10 @@ mac-release-deployment memory (Dev ID 386M76FV3K, notary profile SQLTerminal-not
 '--' in a comment broke the feed once; land the appcast on main via `gh api` PUT because git push hangs).
 GUI/audio can't be verified headlessly — real Mac testing required (computer-use MCP: open + screenshot).
 Branch off main, PR back; keep common/ edits Windows-safe. mac .mm are MRC-style (app-lifetime leaks OK);
--fobjc-arc per-file only (MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/TermsDialog). Run an
-adversarial ObjC++ review before merging.
+-fobjc-arc per-file only (MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/TermsDialog/EpgGuideView/
+TvGuideWindowController). Run an adversarial ObjC++ review before merging. Dev testing: launch with
+RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a local m3u/XMLTV fixture over http://127.0.0.1
+(ATS-exempt loopback), and build with -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only).
 
 SHIPPED + MERGED to main (all mac features live): the METER system (unified MeterView, 4 kinds
 Spectrum/Signal/Bitrate/Frames × 4 styles LED/LCD/Tube/Scope from a mac-local MeterModel; SpectrumTap =
@@ -215,5 +361,44 @@ BACKLOG (not blocking): on-device fine-tuning of the Tube glow / Scope trace / k
 strokeScope in MeterView.mm); E3 = promote MeterModel -> common/ui under a neutral rabbitears::meter ns,
 owned by the Win32 team. NOTE: the Windows team added shared common/ code (XmltvParser, RecordingScheduler,
 Gzip, VideoGrid, miniz, Database schema v3/v4) — the mac build compiles + migrates cleanly against it.
+
+IN FLIGHT on branch mac-multiview-tvguide (12 commits, NOT merged, tree clean, main already merged in): the
+mac 0.2.0 PARITY LINE. NO common/, Win32/ or third_party/ FILE IS TOUCHED — this was wiring, not porting; all
+the shared cores already compiled into the mac binary, so there is zero Windows risk.
+(1) ICON — icns now built from art/clockwork_icon3.png, the same art as the Windows .ico.
+(2) TV GUIDE / EPG — refreshGuide: (httpGet->gunzipIfNeeded->parseXmltv->bulkInsertProgrammes, GCD,
+newest-wins) + EpgGuideView (flipped custom NSView: frozen channel column + hour axis, programme blocks,
+now-line, airing highlight, hit-test) + TvGuideWindowController (DB->rows, normId strips the @feed tvg-id
+suffix, play-from-guide) + Set Guide URL per playlist + View menu TV Guide (Cmd-G) / Refresh Guide.
+FIXED: importDoc dropped doc.epgUrl so Refresh Guide had nothing to fetch.
+(3) MULTI-VIEW — new VlcEngineMac (ONE libvlc_instance; players borrow it via init(engine)); a MacVideoPane
+collection with _player/_videoView as raw ALIASES to the active pane; layout via the SHARED
+common/ui/VideoGrid computeVideoPanes (y-flipped for AppKit); single-audio active pane; accent focus border;
+click-to-activate; ASYNC GCD teardown; carryStream on collapse; View menu + gear menu Single/Split-2x2/PiP
+(Ctrl-Cmd-1/2/3). Validated with 4 SIMULTANEOUS HLS STREAMS in 2x2, no popout windows (mac needs no
+Win32-style vout-host pool).
+(4) PiP — full-bleed backdrop + draggable bottom-right inset, row menu "Play in PiP" (backdrop stays active
+and audible, Win32 parity).
+THREE REAL BUGS FOUND BY TESTING, all fixed + verified: (a) an ACTIVE pane could stay SILENT — unmute restored
+the audio-track id saved at mute time, but an ad break / HLS quality switch RENUMBERS the tracks so the stale
+id failed silently and nothing retried. setMuted is now idempotent both ways and validates the restore target
+against the tracks that exist right now; tickStats re-asserts the model on EVERY pane so a failed unmute
+self-heals. (b) the SPECTRUM meter was dead in EVERY shipped build — the hardened runtime silently blocks the
+Core Audio process tap without com.apple.security.device.audio-input (tap/aggregate/IOProc all return noErr,
+just deliver zeros; no prompt, nothing in the log). Entitlement added. (c) the "grant permission" placeholder
+could never appear (needed 32 CONSECUTIVE audible ticks; is_playing() dips and demux==0 samples reset it every
+few seconds) and its text was wider than the 180pt strip. Now cumulative + auto-shrinking, tooltip carries the
+full instruction.
+DO NOT REGRESS: the pane's NSView must be RETAINED across the async player stop (libVLC's vout still renders
+into it via set_nsobject); applyViewMode must re-point the _player/_videoView aliases at a SURVIVING pane
+before any teardown; Stop must clear the pane's channelId or a later collapse resurrects the stopped stream.
+TESTING TRAPS THAT COST HOURS: `open` can launch a DIFFERENT RabbitEars.app (several share the bundle id —
+/Applications, build-mac/, build-mac-universal/); ALWAYS confirm the version banner in rabbitears.log. A plain
+dev build is ad-hoc signed with no entitlements, so Spectrum is silently denied — codesign it with the Dev ID +
+--options runtime + the entitlements file to test Spectrum. Launching the raw binary makes the SHELL the TCC
+responsible process (another silent-zeros path) — use `open <bundle>`.
+NEXT: push the branch + open the PR to main (git push hangs — use gh), then cut v0.2.0-mac per the
+mac-release-deployment memory (AppVersion.cmake already reads 0.2.0; universal build needs
+vlc-3.0.23-universal.dmg; ALWAYS xmllint appcast-mac.xml; land the appcast on main via `gh api` PUT).
 ```
 ```
