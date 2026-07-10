@@ -47,7 +47,8 @@ portable zip for people who prefer it; those users update manually).
 
 ## Per release
 1. **Bump the version** if the marketing version changes, in all four places:
-   `APP_VERSION` in `CMakeLists.txt` (About box + update checks), `MyVer` in
+   `APP_VERSION` in `cmake/AppVersion.cmake` (About box + update checks; the
+   `if(APPLE)` override below it is the mac version and must NOT move), `MyVer` in
    `packaging/installer.iss` (installer name/version), the `FILEVERSION`/
    `PRODUCTVERSION` + `FileVersion`/`ProductVersion` strings in
    `packaging/RabbitEars.rc`, and the `assemblyIdentity version` in

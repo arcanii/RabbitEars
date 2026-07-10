@@ -3,11 +3,11 @@
 ;   scripts\build-installer.cmd   (after a normal GUI build)
 ; Produces build\installer\RabbitEars-<ver>-setup.exe.
 ;
-; Keep MyVer in sync with APP_VERSION (CMakeLists.txt), packaging/app.manifest,
+; Keep MyVer in sync with APP_VERSION (cmake/AppVersion.cmake), packaging/app.manifest,
 ; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.2.7"
+#define MyVer "0.2.8"
 
 ; Build-variant selection (see docs/RELEASING.md + scripts\build-installer.cmd):
 ;   (defaults)   -> x64 installer from build\Win32\  (byte-identical to the original script)
