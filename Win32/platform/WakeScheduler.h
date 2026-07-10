@@ -8,9 +8,11 @@
 // the app then starts, its tick sees the airing schedule, and records as usual.
 //
 // Scope + limits (deliberate):
-//  - Wakes from SLEEP (S1-S3). It cannot wake from hibernate/full shutdown — that depends on
-//    firmware wake timers the app doesn't control. Windows power settings can also disable
-//    wake timers entirely; then the task simply runs at the next boot (StartWhenAvailable).
+//  - Wakes from SLEEP (S1-S3, and the S0 low-power idle of a Modern Standby machine). It cannot
+//    wake from hibernate/full shutdown — that depends on firmware wake timers the app doesn't
+//    control. Windows power settings can also disable wake timers entirely (per power source!);
+//    then the task simply runs at the next boot (StartWhenAvailable), long after the programme
+//    aired. platform/PowerPolicy detects exactly that and warns the user before they rely on it.
 //  - Runs with the interactive user's token, so it needs that user to be logged on (locked is
 //    fine). This keeps it elevation-free: registering the task requires no admin rights.
 #pragma once
@@ -33,6 +35,13 @@ bool syncWakeTask(long long fireAtUtc);
 // Remove the wake task — call when no pending schedules remain, so we never wake a machine
 // for nothing.
 void clearWakeTask();
+
+// Start the wake task immediately (IRegisteredTask::Run — the task sets AllowDemandStart), so the
+// whole --scheduled-wake path can be exercised without sleeping the machine. Everything the real
+// wake does then happens for real: a second RabbitEars launches, bounces off the single-instance
+// mutex, and this instance's tick records the airing schedule. Returns false (already logged) if
+// the task isn't registered — which means nothing is queued, or wake-to-record is off.
+bool runWakeTaskNow();
 
 // While `on`, ask Windows not to sleep (the display may still turn off). Called on the UI
 // thread whenever the set of active recorders becomes non-empty / empty: the execution state

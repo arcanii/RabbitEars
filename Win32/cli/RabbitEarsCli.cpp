@@ -21,6 +21,7 @@
 #include "core/Http.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
+#include "core/PowerPolicy.h"
 #include "core/RecordingRules.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
@@ -482,6 +483,78 @@ int selftest() {
         {  // Done/Cancelled are inert
             auto p = planScheduler({mk(1, 100, 200, S::Done), mk(2, 100, 200, S::Cancelled)}, 150, false);
             expect(p.start.empty() && p.stop.empty() && p.miss.empty(), "terminal statuses are inert");
+        }
+    }
+
+    out("== Wake-timer policy (preflight) ==\n");
+    {
+        using W = WakeTimerSetting;
+        // (hasBattery, onBattery, ac, dc) — rtcWakeCapable defaults true; overridden where tested.
+        auto decide = [](bool hasBat, bool onBat, W ac, W dc) {
+            WakePolicyInputs in;
+            in.hasBattery = hasBat;
+            in.onBattery = onBat;
+            in.ac = ac;
+            in.dc = dc;
+            return decideWakePolicy(in);
+        };
+        {  // desktop, wake timers on -> nothing to say
+            auto v = decide(false, false, W::Enable, W::Enable);
+            expect(v.willWake && v.reason == WakeBlock::None && !v.otherSourceBlocked,
+                   "desktop + wake timers enabled -> wakes, silent");
+        }
+        {  // the two blocking settings, on the source in use
+            auto v = decide(false, false, W::Disable, W::Enable);
+            expect(!v.willWake && v.reason == WakeBlock::TimersDisabled,
+                   "AC wake timers disabled -> blocked (TimersDisabled)");
+            auto i = decide(false, false, W::ImportantOnly, W::Enable);
+            expect(!i.willWake && i.reason == WakeBlock::ImportantOnly,
+                   "AC important-timers-only -> blocked (an app task is not 'important')");
+        }
+        {  // the source in use selects the index — DC only counts while discharging
+            expect(decide(true, true, W::Disable, W::Enable).willWake,
+                   "on battery reads DC (enabled), ignoring a disabled AC");
+            expect(!decide(true, true, W::Enable, W::Disable).willWake,
+                   "on battery + DC disabled -> blocked even though AC is enabled");
+            expect(decide(true, false, W::Enable, W::Disable).willWake,
+                   "plugged in reads AC (enabled), ignoring a disabled DC");
+        }
+        {  // the real-world laptop default: AC=Enable, DC=Disable. Records tonight, misses
+           // tomorrow's airing if unplugged first — warn softly rather than stay silent.
+            auto v = decide(true, false, W::Enable, W::Disable);
+            expect(v.willWake && v.reason == WakeBlock::None && v.otherSourceBlocked,
+                   "plugged-in laptop with DC disabled -> wakes now, flags the other source");
+            auto b = decide(true, true, W::Disable, W::Enable);
+            expect(b.willWake && b.otherSourceBlocked,
+                   "on battery with AC disabled -> wakes now, flags the other source");
+        }
+        {  // a desktop has no DC state to switch to, so its DC index must never raise the flag
+            auto v = decide(false, false, W::Enable, W::Disable);
+            expect(v.willWake && !v.otherSourceBlocked,
+                   "desktop (no battery) ignores the DC index entirely");
+        }
+        {  // An unreadable battery gauge (BatteryFlag 0xFF) reports hasBattery=false while the
+           // machine really is discharging. Trusting it would read AC and promise a wake that the
+           // DC policy refuses — the one false POSITIVE this feature must never emit.
+            auto v = decide(false, true, W::Enable, W::Disable);
+            expect(!v.willWake && v.reason == WakeBlock::TimersDisabled,
+                   "onBattery implies a battery: reads DC even when hasBattery is misreported");
+            auto o = decide(false, true, W::Disable, W::Enable);
+            expect(o.willWake && o.otherSourceBlocked,
+                   "onBattery without hasBattery still flags the blocked other source");
+        }
+        {  // hardware trumps policy, and beats a perfectly enabled plan
+            WakePolicyInputs in;
+            in.rtcWakeCapable = false;
+            auto v = decideWakePolicy(in);
+            expect(!v.willWake && v.reason == WakeBlock::NoRtcCapability,
+                   "no RTC wake capability -> blocked, regardless of the power plan");
+        }
+        {  // an unreadable/newer index must fail OPEN — never nag on a policy we can't read
+            auto v = decide(false, false, W::Unknown, W::Unknown);
+            expect(v.willWake && v.reason == WakeBlock::None, "unknown AC index -> fail open");
+            auto o = decide(true, false, W::Enable, W::Unknown);
+            expect(o.willWake && !o.otherSourceBlocked, "unknown DC index -> no mismatch warning");
         }
     }
 

@@ -93,6 +93,7 @@ constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
 // 0.2.7 (Recording Phase 3) — from the free 2063..2069 gap (2074..2098 went to the 0.2.6 batch).
 constexpr int ID_WAKE_RECORD = 2063;   // Settings → Wake this PC to record (Task Scheduler)
 constexpr int ID_RULES = 2064;         // Settings → Recording Rules… (series rules manager)
+constexpr int ID_WAKE_RUN_NOW = 2065;  // Settings → Run wake task now (fires --scheduled-wake)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif

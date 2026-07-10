@@ -86,6 +86,10 @@ struct ScheduleManagerCallbacks {
     std::function<void(long long id)> cancel;                 // cancel (stop if it's recording)
     std::function<void(long long id)> remove;                 // delete (stop if it's recording)
     std::function<void(HWND owner)>   addNew;                 // New… (opens scheduleDialog over `owner`)
+    // Not a callback: the host's wake-timer preflight (platform/PowerPolicy), already rendered to
+    // text so this file stays pure UI. Non-empty ⇒ a warning banner tops the list — queueing a
+    // recording the OS will never wake for is the one failure the manager must not hide.
+    std::wstring wakeWarning;
 };
 
 // Modal schedule manager (Settings → Scheduled Recordings…): a list of schedules with

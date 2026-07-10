@@ -204,6 +204,30 @@ void clearWakeTask() {
     if (SUCCEEDED(root->DeleteTask(name, 0))) diag::info(L"wake task removed (no pending recordings)");
 }
 
+bool runWakeTaskNow() {
+    ComInit com;
+    ComPtr<ITaskService> svc;
+    ComPtr<ITaskFolder> root;
+    if (!openRootFolder(svc, root)) return false;
+
+    Bstr name(kTaskName);
+    ComPtr<IRegisteredTask> task;
+    if (FAILED(root->GetTask(name, &task)) || !task) {
+        diag::warn(L"run wake task: not registered — nothing pending, or wake-to-record is off");
+        return false;
+    }
+    VARIANT empty;
+    VariantInit(&empty);  // VT_EMPTY == no arguments beyond the registered --scheduled-wake
+    ComPtr<IRunningTask> running;
+    const HRESULT hr = task->Run(empty, &running);
+    if (FAILED(hr)) {
+        diag::warn(L"run wake task: Run failed, hr=" + std::to_wstring(hr));
+        return false;
+    }
+    diag::info(L"run wake task: demanded start of \"" + std::wstring(kTaskName) + L"\"");
+    return true;
+}
+
 void setRecordingKeepAwake(bool on) {
     // ES_CONTINUOUS pins the state to THIS thread until cleared with a bare ES_CONTINUOUS.
     // ES_SYSTEM_REQUIRED (no ES_DISPLAY_REQUIRED) keeps the machine awake but lets the screen

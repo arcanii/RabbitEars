@@ -73,6 +73,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/VlcPlayer.cpp
     audio/SpectrumTap.cpp
     platform/Log.cpp
+    platform/PowerPolicy.cpp
     platform/Updater.cpp
     platform/WakeScheduler.cpp
     "${CMAKE_SOURCE_DIR}/packaging/RabbitEars.rc")

@@ -1862,6 +1862,20 @@ bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Ch
 namespace {
 
 constexpr int ID_MG_LV = 1701, ID_MG_NEW = 1702, ID_MG_CANCEL = 1703, ID_MG_DELETE = 1704;
+constexpr int ID_MG_BANNER = 1705;  // the wake-timer warning static (accent-coloured, see DlgProc)
+
+// Height a wrapped STATIC needs for `text` at `width`. An SS_LEFT static wraps on words and then
+// CLIPS to its rectangle, so a hard-coded line count silently truncates the message whenever the
+// font, the DPI, or the string changes. Measure with the font we are actually about to set.
+int wrappedTextHeight(HWND dlg, HFONT font, const std::wstring& text, int width) {
+    HDC hdc = GetDC(dlg);
+    HFONT prev = static_cast<HFONT>(SelectObject(hdc, font));
+    RECT r{0, 0, width, 0};
+    DrawTextW(hdc, text.c_str(), -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(hdc, prev);
+    ReleaseDC(dlg, hdc);
+    return r.bottom - r.top;
+}
 
 const wchar_t* scheduleStatusText(ScheduleStatus s) {
     switch (s) {
@@ -1939,6 +1953,16 @@ LRESULT CALLBACK ManageDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             return 1;
         }
         case WM_CTLCOLORSTATIC:
+            // The banner must not read as ordinary body text; dialogCtlColor paints every static
+            // th.textPrimary. Accent (not dangerHover) — that one only exists under the theme flag.
+            if (GetDlgCtrlID(reinterpret_cast<HWND>(l)) == ID_MG_BANNER) {
+                const Theme& th = currentTheme();
+                HDC hdc = reinterpret_cast<HDC>(w);
+                SetTextColor(hdc, th.accent);
+                SetBkColor(hdc, th.panelBg);
+                return reinterpret_cast<LRESULT>(themeBrush(th.panelBg));
+            }
+            [[fallthrough]];
         case WM_CTLCOLORBTN:
             return dialogCtlColor(msg, w);
         case WM_COMMAND:
@@ -1994,10 +2018,14 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
     st.dpi = dpi;
     st.cb = std::move(cb);
     st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
-    const int W = dp(640, dpi), H = dp(460, dpi);
+    const bool hasBanner = !st.cb.wakeWarning.empty();
+    const int bannerGap = dp(8, dpi);
+    const int W = dp(640, dpi);
+    int H = dp(460, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
-    const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);
     HWND dlg =
         CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsScheduleMgr", L"Scheduled Recordings",
                         WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst, nullptr);
@@ -2008,13 +2036,35 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
     SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
     RECT cr;
     GetClientRect(dlg, &cr);
-    const int m = dp(16, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(14, dpi);
+    const int m = dp(16, dpi);
+
+    // The banner grows the window rather than squeezing the list — the queue is the point. Its
+    // height comes from measuring the wrapped warning, never from a guessed line count.
+    int bannerH = 0;
+    if (hasBanner) {
+        bannerH = wrappedTextHeight(dlg, st.font, st.cb.wakeWarning, cr.right - 2 * m) + dp(4, dpi);
+        H += bannerH + bannerGap;
+        y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+        clampToWorkArea(parent, W, H, x, y);  // the taller window may no longer fit where it was
+        SetWindowPos(dlg, nullptr, x, y, W, H, SWP_NOZORDER | SWP_NOACTIVATE);
+        GetClientRect(dlg, &cr);
+    }
+
+    const int bh = dp(30, dpi), btnY = cr.bottom - bh - dp(14, dpi);
     const int listBottom = btnY - dp(10, dpi);
+    const int listTop = m + (hasBanner ? bannerH + bannerGap : 0);
+
+    HWND banner = nullptr;
+    if (hasBanner)
+        banner = CreateWindowExW(0, L"STATIC", st.cb.wakeWarning.c_str(), WS_CHILD | WS_VISIBLE, m, m,
+                                 cr.right - 2 * m, bannerH, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_BANNER)), hInst,
+                                 nullptr);
 
     st.lv = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
                                 LVS_SHOWSELALWAYS,
-                            m, m, cr.right - 2 * m, listBottom - m, dlg,
+                            m, listTop, cr.right - 2 * m, listBottom - listTop, dlg,
                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_LV)), hInst, nullptr);
     ListView_SetExtendedListViewStyle(st.lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
     const int lvW = cr.right - 2 * m - GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
@@ -2046,6 +2096,7 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
     for (HWND h : {st.lv, newB, cancelB, delB, closeB})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+    if (banner) SendMessageW(banner, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
 
     applyDialogDarkMode(dlg);
     const Theme& th = currentTheme();

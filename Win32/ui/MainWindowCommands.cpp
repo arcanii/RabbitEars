@@ -37,6 +37,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
+#include "platform/PowerPolicy.h"
 #include "platform/Updater.h"
 #include "platform/WakeScheduler.h"
 #include "resource.h"
@@ -1112,6 +1113,10 @@ void onManageRules(AppState* st) {
 void onManageSchedules(AppState* st) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
     ScheduleManagerCallbacks cb;
+    // Registering the wake task says nothing about whether Windows will ARM it. Ask before the
+    // user queues something the machine will sleep straight through. Only when they expect a wake
+    // at all — with the feature off, "the app must be running" is already the documented deal.
+    if (st->wakeToRecord) cb.wakeWarning = wakeVerdictText(queryWakePolicy());
     cb.list = [st] { return st->db.listSchedules(); };
     cb.cancel = [st](long long id) {
         // Per-pane recording: the schedule's recorder lives on its PINNED pane — the helper
@@ -1312,6 +1317,10 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_STRING, ID_RULES, L"Recording Rules…");
     AppendMenuW(m, MF_STRING | (st->wakeToRecord ? MF_CHECKED : 0u), ID_WAKE_RECORD,
                 L"Wake this PC to record");
+    // Greyed with the feature off, or with nothing queued: in both cases no task is registered,
+    // so there is nothing to demand-start. (wakeTaskFor is the start the task currently targets.)
+    AppendMenuW(m, MF_STRING | ((st->wakeToRecord && st->wakeTaskFor > 0) ? 0u : MF_GRAYED),
+                ID_WAKE_RUN_NOW, L"Run wake task now");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
     // row live there now — the old inline quick-toggle checkboxes were redundant).
@@ -1457,13 +1466,26 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_RULES:
             onManageRules(st);
             break;
-        case ID_WAKE_RECORD:
+        case ID_WAKE_RECORD: {
             st->wakeToRecord = !st->wakeToRecord;
             st->db.setSetting(L"wake_to_record", st->wakeToRecord ? L"1" : L"0");
             syncWakeFromSchedules(st);  // register or tear down the Windows task right away
-            setStatus(st, st->wakeToRecord
-                              ? L"This PC will wake for scheduled recordings."
-                              : L"Wake-to-record off — recordings need the app running.");
+            if (!st->wakeToRecord) {
+                setStatus(st, L"Wake-to-record off — recordings need the app running.");
+                break;
+            }
+            // Switching it on is exactly when a promise is made. Keep it honest: if the power plan
+            // won't arm an RTC wake, say so here instead of at 3am when the recording didn't run.
+            const std::wstring warn = wakeVerdictText(queryWakePolicy());
+            setStatus(st, warn.empty() ? L"This PC will wake for scheduled recordings." : warn);
+            break;
+        }
+        case ID_WAKE_RUN_NOW:
+            // The honest end-to-end test on a machine you can't put to sleep (a VM, a remote box):
+            // this runs the registered task for real, --scheduled-wake and all.
+            setStatus(st, runWakeTaskNow()
+                              ? L"Wake task started — the scheduled-wake launch path is running now."
+                              : L"Could not start the wake task. Check the log; is one queued?");
             break;
         case ID_FAV_EXPORT:
             onExportFavourites(st);
