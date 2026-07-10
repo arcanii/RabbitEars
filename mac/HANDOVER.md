@@ -11,32 +11,32 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 *headers*), **`Win32/`** (the Windows app), **`mac/`** (this — the Cocoa app), under a unified root
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
-`main` carries **both platforms at decoupled versions**: **Windows 0.2.7** (theme engine + EPG/TV Guide,
+`main` carries **both platforms at decoupled versions**: **Windows 0.2.8** (theme engine + EPG/TV Guide,
 scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
 recording — the Windows team ships from `main`) and **mac 0.2.0** (the parity line). The version split lives in
-`cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac).
+`cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac). **That file is the one
+recurring merge conflict** between the two teams — keep the Windows line and the `if(APPLE)` override intact.
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
 
-> **In flight — branch `mac-multiview-tvguide`, [PR #24](https://github.com/arcanii/RabbitEars/pull/24), tree clean.**
-> Opens the mac **0.2.0** line and lands the three Windows-parity features: **TV Guide (EPG)**, **multi-view
-> Split/2×2**, and **Picture-in-Picture** — plus the unified app icon and three real bug fixes found while
-> testing (multi-view active-pane silence, the Spectrum `audio-input` entitlement, the unreachable Spectrum
-> placeholder). Built, adversarially reviewed (three review workflows) and **validated on real hardware**
-> (incl. 4 simultaneous HLS streams in 2×2).
-> **Key discovery: this was wiring, not porting** — every shared core it needs (`VideoGrid`, `XmltvParser`,
-> `Gzip`, `Programme`, the `Database` EPG methods) **already compiled into the mac binary**; the branch
-> touches **no `common/`, `Win32/` or `third_party/` file at all**, so there is zero Windows risk. `mac-core`
-> CI is green and the Windows `core-selftest` passes on the branch too.
->
-> **Scope caveat:** parity here is with the Windows **0.2.5** feature set. Windows has since shipped 0.2.6/0.2.7
-> (per-pane recording + MP4, saved layouts, PiP resize/persist, favourites I/O, Show-in-Guide, wake-to-record,
-> EPG-driven series rules). Those are **not ported to mac** — that is the next parity push. `origin/main`
-> (Windows 0.2.7) is merged into this branch and its new shared sources (`M3uWriter`, `RecordingRules`, the
-> `Database` schema steps) compile into the mac binary cleanly.
+> **Scope caveat:** mac 0.2.0 reaches parity with the Windows **0.2.5** feature set. Windows has since shipped
+> 0.2.6/0.2.7/0.2.8 (per-pane recording + MP4, saved layouts, PiP resize/persist, favourites I/O,
+> Show-in-Guide, wake-to-record, EPG-driven series rules, wake-timer preflight). Those are **not ported to
+> mac** — that is the next parity push.
 
-## Current state — v0.1.10-mac SHIPPED (everything merged to main)
+## Current state — v0.2.0-mac SHIPPED (PR #24 merged to main)
 
-The mac app is **shipped and auto-updating**: **`v0.1.10-mac`** on GitHub — universal (arm64 + x86_64),
+The mac app is **shipped and auto-updating**: **`v0.2.0-mac`** on GitHub — universal (arm64 + x86_64),
+notarized, self-contained, `0.2.0` build `208`. It lands the three Windows-parity features — **TV Guide (EPG)**,
+**multi-view Split/2×2** and **Picture-in-Picture** — plus the unified app icon.
+**Key discovery: this was wiring, not porting** — every shared core it needed (`VideoGrid`, `XmltvParser`,
+`Gzip`, `Programme`, the `Database` EPG methods) **already compiled into the mac binary**; PR #24 touched
+**no `common/`, `Win32/` or `third_party/` file at all**.
+The 0.2.0 release was verified end-to-end before the appcast went live: `spctl` → "Notarized Developer ID",
+staple validates, the `edSignature` verifies against the **downloaded** GitHub asset under the key that matches
+the app's embedded `SUPublicEDKey`, `sparkle:version` 208 > 172, `length` byte-exact, and the launched bundle's
+banner read `0.2.0 (208)`.
+
+Older: **`v0.1.10-mac`** — universal (arm64 + x86_64),
 notarized, self-contained. **App minimum is macOS 26** ("latest is best"; `LSMinimumSystemVersion` only,
 deployment target unpinned so CI's older SDK still builds — note macOS 26 is Apple-Silicon-only, so the
 x86_64 slice is effectively dead weight but shipped for parity). The Sparkle path is **proven end-to-end**
