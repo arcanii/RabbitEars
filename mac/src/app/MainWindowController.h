@@ -42,4 +42,6 @@
 // playlist that carries a guide URL; showGuide: opens the channels×time guide window.
 - (void)refreshGuide:(id)sender;
 - (void)showGuide:(id)sender;
+- (void)exportFavourites:(id)sender;
+- (void)importFavourites:(id)sender;
 @end

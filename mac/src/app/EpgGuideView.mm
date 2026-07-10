@@ -25,6 +25,7 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     long long _timeEnd;     // right edge (epoch)
     CGFloat   _scrollX;     // px scrolled along time (>= 0)
     CGFloat   _scrollY;     // px scrolled down channels (>= 0)
+    NSInteger _highlightRow;  // row tinted by -revealRowAtIndex:; -1 == none
     NSDateFormatter* _timeFmt;
     NSDateFormatter* _dayFmt;
 }
@@ -32,6 +33,7 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
 - (instancetype)initWithFrame:(NSRect)f {
     if ((self = [super initWithFrame:f])) {
         _rows = @[];
+        _highlightRow = -1;
         _timeFmt = [[NSDateFormatter alloc] init];
         _timeFmt.dateStyle = NSDateFormatterNoStyle;
         _timeFmt.timeStyle = NSDateFormatterShortStyle;
@@ -44,6 +46,7 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     return self;
 }
 
+- (NSArray<REGuideRow*>*)rows { return _rows; }
 - (BOOL)isFlipped { return YES; }            // origin top-left, y grows downward
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; [self setNeedsDisplay:YES]; }
@@ -51,6 +54,7 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
 - (void)setRows:(NSArray<REGuideRow*>*)rows nowUtc:(long long)nowUtc {
     _rows = rows ?: @[];
     _nowUtc = nowUtc;
+    _highlightRow = -1;  // the row indices these rows are addressed by are about to change
 
     // Timeline bounds from the data: floor the earliest start to the hour, and take the
     // latest stop (capped to 5 days so a stray far-future programme can't blow up the width).
@@ -82,6 +86,25 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
 
 // Epoch -> x within the content area (already scroll-adjusted; may be off-screen).
 - (CGFloat)xForTime:(long long)t { return kChanColW + (t - _timeStart) / 3600.0 * kPxPerHour - _scrollX; }
+
+// Scroll `index` into view, vertically centred, and tint it until the next scroll or click.
+// Only Y moves: the caller wants "where is this channel", and the time axis is already parked
+// on "now" from -setRows:nowUtc:.
+- (void)revealRowAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)_rows.count) return;
+    _scrollY = std::max<CGFloat>(0, index * kRowH - ([self contentH] - kRowH) / 2);
+    _highlightRow = index;
+    [self clampScroll];
+    [self setNeedsDisplay:YES];
+}
+
+// The highlight is transient: any deliberate navigation clears it, so it never lingers as a
+// stale "selection" the user can't dismiss.
+- (void)clearHighlight {
+    if (_highlightRow < 0) return;
+    _highlightRow = -1;
+    [self setNeedsDisplay:YES];
+}
 
 - (void)clampScroll {
     _scrollX = std::clamp<CGFloat>(_scrollX, 0, [self maxScrollX]);
@@ -148,6 +171,10 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     for (NSInteger i = first; i <= last; ++i) {
         REGuideRow* row = _rows[(NSUInteger)i];
         const CGFloat top = kHeaderH + i * kRowH - _scrollY;
+        if (i == _highlightRow) {  // "Show in TV Guide" tint across the programme area
+            [[NSColor.controlAccentColor colorWithAlphaComponent:0.18] setFill];
+            NSRectFill(NSMakeRect(kChanColW, top, [self contentW], kRowH));
+        }
         for (REGuideProgramme* p in row.programmes) {
             CGFloat x0 = [self xForTime:p.startUtc];
             long long stop = p.stopUtc > p.startUtc ? p.stopUtc : p.startUtc + 1800;  // guard 0/short
@@ -211,6 +238,9 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     for (NSInteger i = first; i <= last; ++i) {
         REGuideRow* row = _rows[(NSUInteger)i];
         const CGFloat top = kHeaderH + i * kRowH - _scrollY;
+        if (i == _highlightRow)  // "Show in TV Guide" tint, matched in drawProgrammes:
+            [[NSColor.controlAccentColor colorWithAlphaComponent:0.18] setFill],
+            NSRectFill(NSMakeRect(0, top, kChanColW, kRowH));
         [row.channelName drawInRect:NSMakeRect(10, top + (kRowH - 16) / 2, kChanColW - 18, 16)
                      withAttributes:nameAttr];
         NSBezierPath* sep = [NSBezierPath bezierPath];  // row separator
@@ -300,10 +330,12 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     if (e.modifierFlags & NSEventModifierFlagShift) { dx = dy; dy = 0; }  // shift-wheel scrubs time
     _scrollX = std::clamp<CGFloat>(_scrollX - dx, 0, [self maxScrollX]);
     _scrollY = std::clamp<CGFloat>(_scrollY - dy, 0, [self maxScrollY]);
+    _highlightRow = -1;  // any deliberate scroll dismisses the "Show in Guide" tint
     [self setNeedsDisplay:YES];
 }
 
 - (void)mouseDown:(NSEvent*)e {
+    [self clearHighlight];  // a click is deliberate navigation — drop the "Show in Guide" tint
     const NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
     if (p.x < kChanColW || p.y < kHeaderH) return;  // clicks in the frozen bands do nothing
     const NSInteger i = (NSInteger)((p.y - kHeaderH + _scrollY) / kRowH);

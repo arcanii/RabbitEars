@@ -59,6 +59,11 @@ using namespace rabbitears;
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [[fileMenu addItemWithTitle:@"Manage Playlists…"
                          action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    [[fileMenu addItemWithTitle:@"Import Favourites…"
+                         action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
+    [[fileMenu addItemWithTitle:@"Export Favourites…"
+                         action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
     fileItem.submenu = fileMenu;
 
     // Edit menu — REQUIRED for Cmd-X/C/V/A/Z to work in text fields: Cocoa routes
@@ -149,6 +154,8 @@ using namespace rabbitears;
 - (void)showMeters:(id)sender { [_mainController showMeters:sender]; }
 - (void)showGuide:(id)sender { [_mainController showGuide:sender]; }
 - (void)refreshGuide:(id)sender { [_mainController refreshGuide:sender]; }
+- (void)importFavourites:(id)sender { [_mainController importFavourites:sender]; }
+- (void)exportFavourites:(id)sender { [_mainController exportFavourites:sender]; }
 - (void)setViewSingle:(id)sender { [_mainController setViewSingle:sender]; }
 - (void)setViewSplit:(id)sender { [_mainController setViewSplit:sender]; }
 - (void)setViewPip:(id)sender { [_mainController setViewPip:sender]; }

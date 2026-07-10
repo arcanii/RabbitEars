@@ -107,6 +107,12 @@ std::wstring normId(const std::wstring& s) {
 
 - (void)presentRelativeTo:(NSWindow*)parent
                    onPlay:(void (^)(NSString*, NSString*))onPlay {
+    [self presentRelativeTo:parent showChannel:nil onPlay:onPlay];
+}
+
+- (REGuideShowResult)presentRelativeTo:(NSWindow*)parent
+                           showChannel:(NSString*)tvgId
+                                onPlay:(void (^)(NSString*, NSString*))onPlay {
     _onPlay = [onPlay copy];
     NSArray<REGuideRow*>* rows = [self buildRows];
     if (rows.count == 0) {
@@ -119,11 +125,23 @@ std::wstring normId(const std::wstring& s) {
         [a addButtonWithTitle:@"OK"];
         [a beginSheetModalForWindow:(parent ?: NSApp.keyWindow)
                   completionHandler:^(NSModalResponse __unused r) {}];
-        return;
+        return REGuideShowNoGuide;
     }
     if (!_window) [self buildWindowNear:parent];
     [_guideView setRows:rows nowUtc:(long long)time(nullptr)];
     [_window makeKeyAndOrderFront:nil];
+
+    if (tvgId.length == 0) return REGuideShowRevealed;
+    // Find the row whose channel resolves to the same base tvg-id (rows are sorted by name,
+    // so scan _guideView.rows — the exact array the view is addressing by index).
+    const std::wstring want = normId(ws(tvgId));
+    NSInteger found = -1;
+    NSArray<REGuideRow*>* shown = _guideView.rows;
+    for (NSInteger i = 0; i < (NSInteger)shown.count; ++i)
+        if (normId(ws(shown[(NSUInteger)i].channelId)) == want) { found = i; break; }
+    if (found < 0) return REGuideShowChannelMissing;
+    [_guideView revealRowAtIndex:found];
+    return REGuideShowRevealed;
 }
 
 - (void)buildWindowNear:(NSWindow*)parent {
