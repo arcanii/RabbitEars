@@ -738,10 +738,16 @@ flags + native ARM64, selftest ALL PASS (+14), adversarially reviewed (2 confirm
 **Marketing version bumped `0.2.7` → `0.2.8`** in the four places that must move together —
 `cmake/AppVersion.cmake` (`APP_VERSION`), `packaging/app.manifest` (`assemblyIdentity version`),
 `packaging/installer.iss` (`MyVer`), `packaging/RabbitEars.rc` (`FILEVERSION`/`PRODUCTVERSION` + the two
-version strings). The `if(APPLE)` override under `APP_VERSION` is the **mac** version (`0.1.10`) and must
-NOT be touched. Build number = git commit count, stamped at configure, so **build AFTER committing** or the
+version strings). Build number = git commit count, stamped at configure, so **build AFTER committing** or the
 stamp trails `HEAD`. **No tag, no appcast, no installers yet** — bumping the version does not release
 anything; the tag + appcast still gate the rollout, and 0.2.7 users stay on 0.2.7 until then.
+
+> ⚠️ **`cmake/AppVersion.cmake` is shared, and the two platforms stay DECOUPLED.** Line 8's `APP_VERSION`
+> is **Windows**; the `if(APPLE)` override below it is **mac** — never touch the mac line from Windows work,
+> and never collapse them into one version. On `main` the override still reads `0.1.10`, but the mac team has
+> moved to **mac `0.2.0`** (multi-view + PIP + TV Guide parity) on the unmerged branch
+> `origin/mac-multiview-tvguide`, which rewrites that block. **Their merge will conflict with this bump on
+> line 8** — resolve by keeping BOTH: `APP_VERSION "0.2.8"` (Windows) *and* their `if(APPLE) "0.2.0"` (mac).
 
 **Why.** 0.2.7 registers the wake task — but Windows only **arms** the underlying RTC wake timer when the
 active power plan's "Allow wake timers" (`GUID_ALLOW_RTC_WAKE`) permits it, and **that setting is stored PER
