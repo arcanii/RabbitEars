@@ -349,6 +349,8 @@ void onClick(HWND hwnd, GuideState* st, int x, int y) {
         st->cb.onPlay(channelId, channelName);
     else if (act == ProgrammeAction::Schedule && st->cb.onSchedule)
         st->cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
+    else if (act == ProgrammeAction::RecordSeries && st->cb.onRecordSeries)
+        st->cb.onRecordSeries(channelId, channelName, title);
 }
 
 // Right-click a channel row -> a "favourite" toggle for that channel. x,y are client coords.
@@ -591,6 +593,45 @@ void revealEpgGuide(long long nowUtc) {
     applyDialogDarkMode(g_guide);  // re-theme the caption in case the skin changed while hidden
     ShowWindow(g_guide, SW_SHOW);
     SetForegroundWindow(g_guide);
+}
+
+bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc) {
+    if (!g_guide || !IsWindow(g_guide) || tvgId.empty()) return false;
+    GuideState* st = stateOf(g_guide);
+    if (!st) return false;
+    // Match on the NORMALISED base id — the same normalisation onEpgGuide builds rows with:
+    // iptv-org tvg-ids carry an '@feed' quality suffix (CNN.us@SD) while a row may hold a
+    // different feed variant of the same channel, so strip at '@' + ASCII-lowercase both sides.
+    auto normId = [](std::wstring s) {
+        if (const size_t at = s.find(L'@'); at != std::wstring::npos) s.resize(at);
+        for (wchar_t& c : s)
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + 32);
+        return s;
+    };
+    // A type-to-search filter could hide the target row, and applyFilter resets scrollY —
+    // clear it FIRST, then compute the row index against the full row set.
+    if (!st->filter.empty()) {
+        st->filter.clear();
+        applyFilter(st);
+    }
+    const std::wstring want = normId(tvgId);
+    int row = -1;
+    for (size_t i = 0; i < st->rows.size(); ++i)
+        if (normId(st->rows[i].channelId) == want) {
+            row = static_cast<int>(i);
+            break;
+        }
+    if (row < 0) return false;  // channel has no guide row (no EPG coverage / no tvg-id match)
+    st->nowUtc = nowUtc;
+    st->scrollX = std::max(0, timeToContentX(st, nowUtc) - dpx(st->dpi, 80));  // centre on "now"
+    st->scrollY = row * st->rowH;  // top-align the row (clamped near the bottom by updateScrollbars)
+    st->hoverRow = row;            // transient highlight so the target row is identifiable
+    updateScrollbars(g_guide, st);
+    InvalidateRect(g_guide, nullptr, FALSE);
+    applyDialogDarkMode(g_guide);
+    ShowWindow(g_guide, SW_SHOW);
+    SetForegroundWindow(g_guide);
+    return true;
 }
 
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,

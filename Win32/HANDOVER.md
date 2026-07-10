@@ -31,7 +31,36 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.5 SHIPPED (native ARM64)** · macOS Phase-1
+## Current state — **v0.2.7 SHIPPED (DVR: wake-to-record + series rules)** · macOS Phase-1
+
+**Released:** **`v0.2.7`** (2026-07-10), tag `v0.2.7` @ `cc9f9e4`, full version **`0.2.7.184`** (tag count ==
+shipped build number), three signed installers on GitHub release `v0.2.7` (x64 / native ARM64 / universal),
+**two appcasts** (`0.2.7.184`) committed @ `438c83d` and LIVE (raw feeds serve 0.2.7.184; all three enclosures
+HTTP 200). **Recording Phase 3** — the app is now a real DVR: a Windows scheduled task **wakes the PC and
+records with RabbitEars closed**, sleep is suppressed *during* a recording, and **EPG-driven series rules**
+("Record series" in the guide) queue every future airing. Built green (x64 BOTH theme flags + selftest ALL
+PASS + native ARM64); adversarially reviewed — **2 confirmed bugs + 2 self-caught, all fixed pre-ship** (see
+the 0.2.7 block under "Immediate next steps" — especially the two invariants: *never re-add an empty-queue
+early return to `onSchedulerTick`*, and *tombstones are load-bearing* because `expandRules` dedups against
+rows of ANY status). **Owner runtime pass still owed** — the headline test: **queue a recording, close the
+app, let the machine sleep, confirm it wakes and records**; plus "Record series" from the guide, the
+Recording Rules… manager, and that an auto-update to 0.2.7 doesn't break a queued recording (the
+`--scheduled-wake` Terms-deferral path).
+
+**Released:** **`v0.2.6`** (2026-07-10), tag `v0.2.6` @ `4382395`, full version **`0.2.6.180`** (tag count ==
+shipped build number this time — `main` was level with origin, no rebase drift), three signed installers on
+GitHub release `v0.2.6` (x64 / native ARM64 / universal), **two appcasts** (`0.2.6.180`) committed @ `b2b7180`
+and LIVE (raw feeds serve 0.2.6.180; all three enclosures HTTP 200). The **owner-directed "do all of these"**
+batch: concurrent per-pane recording, MP4, PIP resize + view-mode/PIP persistence, TV-Guide "Show in Guide",
+resume-last-channel, named saved layouts, import/export favourites, and the x64 install-time `plugins.dat` fix
+— all built green (x64 BOTH theme flags + selftest ALL PASS + native ARM64), adversarially reviewed (3 confirmed
+recording regressions + 1 export nit fixed pre-ship). See the 0.2.6 block under "Immediate next steps" for the
+full feature map. **✅ Auto-update `0.2.5 → 0.2.6` CONFIRMED IN THE WILD on the native ARM64 build** (the one the
+universal installer laid down) — so the whole per-arch chain is proven end-to-end: `appcast-arm64.xml` → ARM64
+WinSparkle → the arm64 installer. **Owner runtime pass still wanted** for the 0.2.6 features (sandbox can't
+launch the GUI): record in two panes at once + switch panes mid-record; MP4 plays back; PIP resize/position/mode
+survive a restart; resume-last; Show-in-Guide; saved layouts; favourites export→import; and the faster x64 cold
+start from the installed cache.
 
 **Released:** **`v0.2.5`** (2026-07-09), tag `v0.2.5` @ `fbebcc7`, full version **`0.2.5.168`**, signed **three**
 installers — **`RabbitEars-0.2.5-setup.exe`** (x64), **`RabbitEars-0.2.5-arm64-setup.exe`** (native ARM64), and
@@ -694,6 +723,146 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
+✅ **0.2.7 SHIPPED** (2026-07-10) — tag `v0.2.7` @ `cc9f9e4`, `0.2.7.184`, three signed installers on GitHub
+release `v0.2.7`, two appcasts LIVE @ `438c83d`. Code landed in one commit (`cc9f9e4`, count 184 == the tag,
+no rebase drift), appcasts in a follow-up (`438c83d`); both pushed. **Recording Phase 3** (owner-directed):
+the DVR-completing feature — recordings now fire when the app ISN'T running, and a series records itself.
+**Owner runtime pass still owed** (see the current-state header).
+
+- **✅ Wake-to-record** — `Win32/platform/WakeScheduler.{h,cpp}` (new): a Task Scheduler 2.0 COM wrapper
+  registering ONE user task, "**RabbitEars Recording Wake**" (root folder), with `WakeToRun` +
+  `StartWhenAvailable` + no battery stops, whose action is `RabbitEars.exe --scheduled-wake`. It is
+  create-or-updated to fire at `earliestPendingStart − kWakeLeadSeconds (120 s)`, clamped to `now+30 s`
+  so a past boundary can't make Task Scheduler fire instantly against the single-instance mutex.
+  `syncWakeFromSchedules(st)` is the choke point (tick, EPG refresh, rule add/enable/delete, the
+  Settings toggle) **and runs at `WM_DESTROY`** — registering the task on the way out is the entire
+  point. Settings ▸ **Wake this PC to record** (`wake_to_record`, default ON) clears the task when off.
+  Also `setRecordingKeepAwake()` (`ES_CONTINUOUS|ES_SYSTEM_REQUIRED`, screen may still sleep) is
+  re-derived from "any pane recording?" by `syncKeepAwake(st)` on every record start/stop + tick.
+  **Limits (deliberate, documented in the header):** wakes from SLEEP only (not hibernate/shutdown —
+  firmware wake timers, not ours); needs the user logged on (interactive token ⇒ no elevation to
+  register); Windows power settings can disable wake timers, in which case `StartWhenAvailable` runs it
+  at the next boot instead.
+- **✅ `--scheduled-wake` launch path** — `wWinMain` now reads `lpCmdLine` (the app's only flag) and
+  `runApp(hInst, nCmdShow, scheduledWake)`. Three behaviours: (1) an already-running instance is NOT
+  yanked to the foreground; (2) the window comes up `SW_SHOWMINNOACTIVE`; (3) **the post-update Terms
+  re-prompt is deferred** when a PRIOR version was accepted — otherwise an auto-update would silently
+  break every scheduled recording until the user next opened the app. It does NOT write `tos_accepted`,
+  so the next interactive launch still prompts; a first-ever run (no acceptance on record) still gates.
+  `runApp` also calls `onSchedulerTick` once immediately (the first `WM_TIMER` is 30 s out — a woken
+  machine has a deadline).
+- **✅ EPG-driven series rules** — schema **v5**: `recording_rules` + `scheduled_recordings.rule_id`
+  (deliberately NOT an FK: `deleteRule()` drops only the rule's still-**Pending** rows and keeps the
+  Done/Missed/Cancelled history). New model `common/models/RecordingRule.h` + the **pure, headless-tested**
+  `common/core/RecordingRules.{h,cpp}`: `expandRules(rules, programmes, existing, now, horizon)` matches on
+  the normalised base tvg-id (`@feed` stripped, case-folded — `normaliseTvgId`, now shared) + `Exact`/
+  `Contains` title match, applies lead/trail padding, and **dedups by (channel, paddedStart) against ALL
+  existing rows whatever their status** — so a Cancelled or Done airing is never resurrected, and two rules
+  matching one airing collapse to one recording. Horizon `kRuleHorizonSeconds` = 14 days. The Win32 side
+  (`expandRecordingRules`) only resolves each match to a playable stream (the core has no DB) and inserts;
+  it runs on the tick, after an EPG refresh, at startup, and on rule add/enable.
+- **✅ UI** — the TV-Guide programme popup gains a 4th button **"Record series"** (`ProgrammeAction::RecordSeries`
+  → `GuideCallbacks::onRecordSeries` → `recordSeriesFromGuide`, which refuses an exact duplicate rule and
+  reports how many airings it queued). New **Settings ▸ Recording Rules…** manager (`manageRules` in
+  `Dialogs.cpp`, modelled on `manageSchedules`): Show / Channel / Match / State columns, Enable-Disable,
+  Delete (with a confirm that says pending recordings will go and history will stay). New ids
+  `ID_WAKE_RECORD=2063`, `ID_RULES=2064` (from the free 2063–2069 gap; 2074–2098 went to 0.2.6, and
+  **never allocate at/above 2100** — the open-ended skin range).
+- **New selftests**: expander (match/normalise/horizon/padding/dedup/degenerate), rule DAO round-trip +
+  `deleteRule` history-preservation, and the **v4→v5 migration** (`recording_rules` created, `rule_id`
+  added, pre-v5 rows read back as `ruleId==0`).
+- **Adversarially reviewed — 2 CONFIRMED bugs (one root cause) + 2 self-caught, all fixed:**
+  1. **(root, medium)** `onSchedulerTick` had a pre-existing `if (schedules.empty()) return;` and the new
+     Phase-3 tail was appended BELOW it — so with an empty queue, rules never re-expanded and a stale wake
+     task was never cleared (a still-enabled series would silently stop recording; the PC would wake for a
+     recording that no longer existed). **The early return is now gone** — `planScheduler({})` yields empty
+     plans, so the loops no-op. **Never re-add that early return.**
+  2. **(low)** the Scheduled-Recordings manager's Cancel/Delete didn't refresh the wake task (the Rules
+     manager did) → both now call `syncWakeFromSchedules`.
+  3. **(self-caught, perf)** removing the early return made `syncWakeFromSchedules` hit COM on every ~30 s
+     tick → it now keys on `AppState::wakeTaskFor` (the UNCLAMPED earliest pending start; `0` = no task,
+     `-1` = never synced) and only re-registers when the target actually changes. Likewise
+     `expandRecordingRules` is throttled to `kRuleExpandIntervalSeconds` (15 min) — its 14-day, all-playlist
+     EPG query is far too heavy for the tick — and is `force`d by a guide refresh / new / re-enabled rule.
+  4. **(self-caught, correctness trap)** with the tail always running, **hard-deleting** a rule-generated
+     *Pending* row left no dedup anchor, so the next expansion recreated it (the user's delete undid itself).
+     The manager's Delete now **Cancels** such rows instead — a `Cancelled` tombstone is exactly what tells
+     the rule "skip this airing". One-off rows, and rows that already ran, still delete for real.
+     **Consequence to remember: `expandRules` dedups against ALL statuses, so tombstones are load-bearing.**
+  5. `expandRules` also now folds each programme's title/channel-id **once** instead of once per rule
+     (it was O(rules × programmes) allocations on a large guide).
+- **Owner runtime pass wanted:** the wake task appears in Task Scheduler after queueing a recording and
+  disappears when the queue empties; a recording fires with the app CLOSED (and after sleep); the machine
+  doesn't sleep mid-recording; "Record series" from the guide queues future airings and survives a guide
+  refresh; Recording Rules… enable/disable/delete behaves; **and that an auto-update to 0.2.7 doesn't
+  break a queued recording** (the Terms-deferral path).
+
+✅ **0.2.6 SHIPPED** (2026-07-10) — tag `v0.2.6` @ `4382395`, `0.2.6.180`, three signed installers on GitHub
+release `v0.2.6`, two appcasts LIVE @ `b2b7180`. Code landed in one commit (`4382395`, count 180 == the tag,
+no rebase drift), appcasts in a follow-up (`b2b7180`); both pushed. **This time the shipped build number matches
+the tag's commit count** (`main` was level with origin at cut time). The owner-directed "do all of these" batch —
+every feature below built green on x64 BOTH theme flags + selftest ALL PASS + native ARM64, all three installers
+compile, and the batch was **adversarially reviewed**: 3 CONFIRMED regressions in the per-pane recording change +
+1 plausible export
+nit, **all four fixed** — (1) the Scheduled-Recordings manager's Cancel/Delete stopped the ACTIVE pane's
+recorder instead of the pinned pane's (could cut a user's manual recording and leave the scheduled one
+running unowned) → shared `stopScheduledRecorder(st)` helper (tick + manager); (2) the Record glyph read
+`isRecording()` right after the async stop ENQUEUE (still true) and stuck on Stop — the next "stop" click
+would silently START a recording → glyph forced to Record when the stopped recorder is the active pane's;
+(3) plan.stop's active-pane fallback could kill an unrelated manual recording when the pin went stale → a
+gone pinned pane now stops nothing (fallback only for pin-less pre-0.2.6 rows); (4) favourites export now
+flushes + checks before the success dialog (close() swallows flush failures). NB: the review's UI lens +
+one verifier died on a subagent spend limit — that lens was re-covered by a careful inline pass (restore
+ordering, PIP resize state machine, id math, guide scroll; nothing further found). **Owner runtime pass still
+owed** (see the current-state header for the checklist).
+
+- **✅ Concurrent per-pane recording.** The engine was already per-pane (each pane's `VlcPlayer` owns its own
+  `rec_`); the UI now matches: the Record button toggles the **ACTIVE pane's** recorder (glyph follows pane
+  switches via `setActivePane`), N panes record at once, a scheduled recording **pins to the pane it started
+  on** (`AppState::schedulePane`) and only blocks manual record there, and `applyViewMode` **confirms before
+  killing background (pane>0) recordings** (MessageBox; closes a scheduled one's DB row as Done). Scheduler
+  still runs one scheduled recording at a time (`planScheduler` unchanged).
+- **✅ MP4 recording — direct mp4 mux** (no ts+remux: libVLC's mp4 mux finalizes the moov on stop, and every
+  stop path — manual/scheduled/quit — goes through `doRecordStop`). Settings ▸ Recording format gains MP4;
+  `formatToExtMux` (Commands.cpp) is the single ext/mux mapping; the load whitelist accepts "mp4". Caveat
+  (documented, accepted): a hard crash mid-record leaves an unplayable .mp4, unlike .ts.
+- **✅ View mode + PIP persistence + PIP resize.** `view_mode` persists in `applyViewMode` (the choke point)
+  and restores in WM_CREATE; `pip_pos` saves on drag-release and restores AFTER `applyViewMode` (which resets
+  `pipMoved`); `positionFloatingPip` clamps a stale pos into the client. **PIP resize**: drag the bottom-right
+  dp(18) corner (`resizingPip`), routed through `layout()` (`applyUserPipSize` clamps dp(120)…60% of region),
+  EFFECTIVE size persisted as `pip_size` from `paneBounds`. Cursor feedback only on an empty PIP (vout hosts
+  don't forward WM_SETCURSOR) — the drag itself always works.
+- **✅ TV Guide "Show in Guide".** Right-click a grid channel ▸ Show in TV Guide → `epgGuideShowChannel(tvgId,
+  now)` (EpgGuideControl export): clears the type-to-search filter, matches the row on the **normalised base
+  id** (@feed stripped + case-folded, same as `onEpgGuide`'s join), top-aligns the row + re-centres on "now".
+  Builds the guide first via the `epgGuideOpen() ? … : onEpgGuide(st)` pattern; explains via status if the
+  channel has no row.
+- **✅ Resume last channel** (Settings toggle, default ON, `resume_last`): WM_CREATE auto-plays
+  `last_channel_id` via the new `Database::channelById` (nullopt-safe if deleted). Win32 deliberately
+  AUTO-PLAYS (the mac port only highlights).
+- **✅ Named saved layouts** (Settings ▸ Layout ▸ Save layout as… / Apply / Delete): `promptText` names it;
+  stored as `layout_saved_<name>` + a `layout_names` newline index; cap 10 (menu ids 2079–2098 — NEVER
+  allocate at/above 2100, the open-ended skin range).
+- **✅ Import/export favourites** (Settings): export = the new **`common/core/M3uWriter`** (symmetric with the
+  parser, CRLF, quote-degrading escaping; **selftest round-trip coverage**) via the app's first
+  `GetSaveFileNameW`; import parses any M3U and stars library channels matching by **exact stream URL, then
+  tvg-id** (all matching rows, de-duped), with an import-results info dialog. `Database::channelById` +
+  selftests also new in `common/` (mac-safe).
+- **✅ Slow first startup FIXED for x64 installs — install-time `vlc-cache-gen`** (the VLC-installer approach;
+  supersedes the CI-generation idea, whose zip-mtime/timezone skew would go stale): vendored
+  `third_party/vlc-tools/x64/vlc-cache-gen.exe` (3.0.23, **byte-identical libvlccore** to our NuGet — see the
+  README there), shipped + run by `installer.iss` post-install **gated `IsX64Native`** (never under ARM
+  emulation — it silently writes an EMPTY cache ⇒ libVLC loads 0 plugins ⇒ no playback), `[UninstallDelete]`
+  cleans `plugins.dat`. CI verifier `.github/workflows/plugins-cache-verify.yml` proves the exe+NuGet produce
+  a valid cache on a native-x64 runner (auto-runs when the vendored tool changes; also workflow_dispatch).
+  ARM64 cache stays backlogged (native scan ~3s, no ARM64 cache-gen exists).
+- **Authenticode** — scaffolded in `docs/RELEASING.md` (signtool recipe, sign exe→installer→EdDSA order);
+  **owner-gated on a cert purchase**.
+- **Owner runtime pass wanted:** concurrent recording (record in 2 panes at once; switch panes mid-record;
+  the mode-switch confirm), MP4 recording plays back, PIP resize + position/size/mode surviving a restart,
+  resume-last on launch, Show in Guide, saved layouts, favourites export→import round-trip, and (on an x64
+  machine or after the next x64 release) the faster cold start from the installed `plugins.dat`.
+
 ✅ **0.2.5 SHIPPED** (2026-07-09) — tag `v0.2.5` @ `fbebcc7`, `0.2.5.168`, three signed installers on GitHub release
 `v0.2.5`, two appcasts LIVE @ `5c7073e`. The code landed in one commit (`d9b0840`, rebased to `fbebcc7` onto the mac
 team's v0.1.10), the appcasts in a follow-up (`5c7073e`); both pushed. The 0.2.5 feature set below is the changelog.
@@ -833,124 +1002,85 @@ Paste this verbatim to start a fresh session with working context restored:
 > You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC 3.0.23**
 > with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome (coral
 > `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps vendored/NuGet.
-> **Read `Win32/HANDOVER.md` first — the "🔲 Multi-view (Split/PIP) + TV Guide overhaul" + "🎨 Theme engine"
-> sections — plus the recalled memories.**
+> **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.7 block)
+> — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
-> **State:** last SHIPPED = **v0.2.4** (`f30fcc2`, `0.2.4.166`, appcast @ `6e2b4ae`; auto-updating from 0.2.3).
-> `main` carries 0.2.3 + 0.2.4. **0.2.5 IS IN PROGRESS, UNCOMMITTED** in the working tree (version already bumped
-> to 0.2.5): **favourite-a-channel from the TV Guide** (right-click a guide row → Add/Remove Favourites) is DONE +
-> owner-verified; a **native ARM64 build** compiles + links clean (`scripts\build-arm64.cmd` →
-> `build-arm64\Win32\RabbitEars.exe`, a real PE32+ ARM64 exe; `-DRABBITEARS_UPDATER=OFF` stubs WinSparkle) and
-> awaits the owner's runtime perf test; the **slow-startup `plugins.dat`** fix is diagnosed + backlogged. **Read
-> "Immediate next steps → ⚠️ 0.2.5 IN PROGRESS" for the uncommitted file list + full details.** The app:
-> `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each a video HWND + `VlcPlayer` +
-> channel; `AppState` holds the vector + `active` + `ViewMode`); Split (2×2) child tiles + a floating
-> `WS_EX_TOPMOST` PIP popup. Each pane hosts a **self-cleaning pool of vout-host child windows** (0.2.4 — libVLC
-> renders into a proven-free host, never the reused pane HWND, killing the "VLC (Direct3D11 output)" popout).
-> Multi-view audio = TRACK-based mute (active pane keeps its audio track; others deselect via
-> `libvlc_audio_set_track(mp,-1)`). TV Guide = a 📺 sidebar node (`ViewKind::Guide`), per-playlist custom EPG URL,
-> type-to-search, playable-only rows, hide-on-play, instant reopen (`revealEpgGuide`), right-click favourite.
-> Headless-tested (`RabbitEarsCli --selftest`); GUI owner-verified live.
+> **State: last SHIPPED = `v0.2.7`** (2026-07-10, tag @ `cc9f9e4`, `0.2.7.184`, appcasts @ `438c83d`).
+> `main` is clean and level with origin. Everything below is LIVE and auto-updating.
 >
-> **Immediate next:** finish **0.2.5**. Owner still owes a **native-ARM64 perf test** — run
-> `build-arm64\Win32\RabbitEars.exe` (native) vs the emulated x64 `build\Win32\RabbitEars.exe`, compare cold-start
-> + playback. Then decide the ARM64 release path (needs an **ARM64 WinSparkle** for auto-update + an ARM64
-> `plugins.dat` + the x64-launcher-detects-and-hands-off packaging — all in `Win32/BACKLOG.md`). The **`plugins.dat`**
-> startup fix needs a **native-x64 env / CI** to generate + verify with `vlc-cache-gen` (an EMPTY cache must NEVER
-> ship — libVLC would read 0 plugins → no playback). When the owner says go, **commit the 0.2.5 WIP + cut 0.2.5**
-> (build-installer here → sign on the Mac → `gh release` + appcast). Further backlog: TV-Guide "Show in Guide" from
-> a channel; multi-player polish (concurrent recording, per-pane ownership, persist view mode). MainWindow.cpp is
-> a header + `rabbitears::mw` + 5 `.cpp` (memory `mainwindow-modularization-plan`). This machine has `gh` CLI +
-> Inno Setup, so a full release runs locally — only EdDSA signing is on the Mac (`scripts/sign-release.sh`).
+> **The app.** `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = a video
+> HWND + `VlcPlayer` + channel; `AppState` holds the vector + `active` + `ViewMode`). Single / Split (2×2
+> child tiles) / floating `WS_EX_TOPMOST` PIP popup — the PIP **must** be a top-level window (a child
+> sibling loses to libVLC's D3D vout). Each pane owns a **self-cleaning pool of vout-host child windows**
+> (libVLC renders into a proven-free host, never the reused pane HWND). Multi-view audio = **track-based**
+> mute (`libvlc_audio_set_track(mp,-1)` for background panes; a volume mute leaks through HLS quality
+> switches). `MainWindow.cpp` is a header + `rabbitears::mw` + 5 `.cpp` (memory `mainwindow-modularization-plan`).
+>
+> **Shipped highlights.** 0.2.0 theme engine (4 skins + HLSL effects). 0.2.1 EPG/TV-Guide + scheduled
+> recordings + multi-view. 0.2.4 vout-host pool. **0.2.5** native **ARM64** (~4× faster than emulated) with
+> **per-arch auto-update** (x64 reads `appcast.xml`, ARM64 reads `appcast-arm64.xml` — `Updater.cpp` keys on
+> `_M_ARM64`) and **three installers** (x64 / arm64 / **universal**, which installs the native arch via an
+> Inno `ProcessorArchitecture` Check and needs no feed of its own). **0.2.6** concurrent **per-pane
+> recording** (the Record button drives the ACTIVE pane; a schedule pins to `AppState::schedulePane`), MP4,
+> PIP resize + view-mode/PIP persistence, Show-in-Guide, resume-last-channel, saved layouts, favourites
+> import/export (`common/core/M3uWriter`), and the **x64 install-time `plugins.dat`** (vendored
+> `third_party/vlc-tools/x64/vlc-cache-gen.exe`, run post-install gated `IsX64Native` — **NEVER under ARM
+> emulation: it silently writes an EMPTY cache ⇒ libVLC loads 0 plugins ⇒ no playback**).
+>
+> **0.2.7 = Recording Phase 3 (newest).** `Win32/platform/WakeScheduler.{h,cpp}` registers ONE Task
+> Scheduler task ("RabbitEars Recording Wake", `WakeToRun`+`StartWhenAvailable`) running
+> `RabbitEars.exe --scheduled-wake` at `earliestPendingStart − 120s` (clamped to `now+30s`).
+> `syncWakeFromSchedules(st)` is the choke point (tick / guide refresh / rule change / Settings toggle)
+> **and runs at `WM_DESTROY`** — registering the task on the way out is the whole point; it keys on
+> `AppState::wakeTaskFor` so an unchanged queue costs no COM. `syncKeepAwake(st)` suppresses sleep while any
+> pane records. `--scheduled-wake` = no focus steal, `SW_SHOWMINNOACTIVE`, and it **defers the post-update
+> Terms re-prompt** when a prior version was accepted (without writing `tos_accepted`) — otherwise an
+> auto-update silently kills every queued recording. **Series rules:** schema **v5** (`recording_rules` +
+> `scheduled_recordings.rule_id`, deliberately not an FK — `deleteRule()` drops only Pending rows, keeps
+> history) + the pure `common/core/RecordingRules::expandRules()`; "Record series" in the guide's programme
+> popup; Settings ▸ Recording Rules… manager.
+>
+> **Two 0.2.7 invariants you must not break** (both review-caught): (1) `onSchedulerTick` has **no
+> empty-queue early return** — the tail (rule expansion, keep-awake, wake-task upkeep) must run even with an
+> empty queue, or a series silently stops recording and a stale wake task never clears. (2) **Tombstones are
+> load-bearing:** `expandRules` dedups against existing rows of **ANY** status, so the schedules manager
+> *cancels* (never hard-deletes) a rule-generated Pending airing — a hard delete would let the expander
+> resurrect it. Both are pinned by selftests.
+>
+> **Immediate next:** the **owner's runtime pass on 0.2.7** is still owed — headline test: *queue a
+> recording, close the app, let the machine sleep, confirm it wakes and records*; also "Record series", the
+> Rules manager, and that an auto-update to 0.2.7 doesn't break a queued recording. Then pick from
+> `Win32/BACKLOG.md`: **series-rule follow-ups** (episode dedup via `Programme::episodeNum`/`subTitle`; a
+> rule editor — `Contains` + lead/trail padding already exist in model/DB/expander, only the UI is missing),
+> **transcoding on record**, a **background dead-link checker**, **Authenticode** (recipe is in
+> `docs/RELEASING.md`; blocked purely on the owner buying a cert — this is what silences SmartScreen),
+> portable-zip artifact, or the deferred **JSON profiles** epic.
 >
 > **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
-> then `build\Win32\RabbitEarsCli.exe --selftest`; core-only headless (no libVLC): `& "<repo>\scripts\build.cmd"`.
-> Gotchas: `cmake`/`cl` NOT on PATH — use `scripts\build.cmd`; Windows outputs in `build\Win32\`; **LINK1168 =
-> a running RabbitEars.exe locks the exe** → `Stop-Process -Name RabbitEars -Force`, rebuild; ⚠️ build with
-> `-DRABBITEARS_THEME_ENGINE=ON` explicitly (build dirs cache the flag); static CRT (`/MT`, no redist); the
-> sandbox **can't launch the GUI** — build-verify + reason, owner runtime-verifies; `common/` stays mac-safe
-> (`mac-core` CI compiles it on clang). **ARM64 (0.2.5):** `scripts\build-arm64.cmd` (native `vcvarsarm64`, output
-> in `build-arm64\`, `-DRABBITEARS_UPDATER=OFF`); `cmake/LibVlc.cmake` picks the libVLC arch by
-> `CMAKE_CXX_COMPILER_ARCHITECTURE_ID` (the MSVC **TARGET**) — NOT `CMAKE_SYSTEM_PROCESSOR` (the HOST = `ARM64`
-> here even for the x64 build). **After any shared-CMake edit, re-verify the x64 build BOTH flags** — the arch bug
-> only surfaced at link. Commit only when asked; stage **specific paths** (never `git add -A` — the owner adds
-> `art/*.png`); end commits with the `Co-Authored-By` trailer.
+> then `build\Win32\RabbitEarsCli.exe --selftest`. **Build BOTH theme flags** (ON and OFF) — flag-off must
+> stay byte-identical to shipping. **ARM64:** `scripts\build-arm64.cmd` (native `vcvarsarm64`, output in
+> `build-arm64\`). `cmake/LibVlc.cmake` + the WinSparkle slice pick the arch by
+> **`CMAKE_CXX_COMPILER_ARCHITECTURE_ID`** (the MSVC **TARGET**) — **NOT `CMAKE_SYSTEM_PROCESSOR`** (the
+> HOST, which is `ARM64` here even for the x64 build). **After any shared-CMake edit, re-verify the x64 build
+> BOTH flags** — that arch bug only surfaces at link.
 >
-> ---
-> *The prior theme-engine-era seed prompt follows (still-useful build gotchas + the 0.2.0 phase history):*
+> **Gotchas.** `cmake`/`cl` are NOT on PATH — use `scripts\build.cmd`; outputs in `build\Win32\`.
+> `LINK1168` = a running `RabbitEars.exe` locks the exe (the owner runs it — **ask them to close it, don't
+> loop**). Static CRT (`/MT`, no redist). **The sandbox cannot launch the GUI** — build-verify + reason;
+> the owner does every runtime/visual pass. `common/` must stay mac-safe (the `mac-core` CI compiles it on
+> clang — no Win32 APIs). **`.cmd` scripts must be CRLF** (enforced in `.gitattributes`; LF made cmd.exe
+> mis-parse `build-arm64.cmd`). Command ids: 2074–2098 used by 0.2.6, 2063/2064 by 0.2.7 — **never allocate
+> at/above 2100** (`ID_THEME_SKIN_BASE` is open-ended). libVLC `stop()`/`release()` block → offloaded to
+> reaper threads; event callbacks → only `PostMessage`; `i_read_bytes` is 0 for HLS; VLC sout single-quoted
+> paths need `'` doubled; modal dialogs must read their controls **before** `DestroyWindow`.
 >
-> You are continuing work on **RabbitEars** (`G:\RabbitEars`), a native **Windows Win32 / C++20** IPTV
-> player on **libVLC 3.0.23**, themed to match its sibling apps `G:\SQLTerminal-Win32` and
-> `G:\ManorLords-SGE` (dark "Claude-desktop" look, coral `#D97757`, custom `WM_NCCALCSIZE` title-bar
-> chrome, CMake + Ninja + MSVC via **VS 2026 Community**, deps vendored/NuGet, **no VS project**).
-> **Read `Win32/HANDOVER.md` first — especially the "🎨 Theme engine" section — plus
-> `Win32/docs/THEME_ENGINE.md`.** (Team docs live under `Win32/` now, not the repo root, so they don't
-> collide with the mac team; the mac team owns `mac/` + shares `common/` and root `docs/`.)
->
-> **State:** last SHIPPED release is **v0.2.0** (`343aa0e`, `0.2.0.107`, appcast `7b3946a`) — **the theme
-> engine**, merged to `main` and **theme-ON by default** (the `RABBITEARS_THEME_ENGINE` flag default was
-> flipped ON; `-DRABBITEARS_THEME_ENGINE=OFF` still builds the parity path). ⚠️ **Build the GUI with
-> `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — build dirs cache the flag (a stale OFF cache once shipped a
-> Theme-menu-less exe). The `theme-engine` branch was merged + deleted (only `main` remains); auto-update
-> `0.1.7 → 0.2.0` is verified; and `packaging/app.ico` was swapped to the macOS icon on `main` for 0.2.1.
-> The theme engine, phase by phase (all shipped in 0.2.0) — committed +
-> reviewed (0 findings) + build-verified both flags: **Phase 1** — the D3D11⇄D2D1.1 interop device
-> `Win32/ui/skin/SkinDevice` + a **windowless** transport-strip HLSL **underglow** (offscreen
-> GDI-compatible texture → child-clipped `BitBlt`; a swapchain `Present` bypasses GDI sibling-clipping so
-> it CAN'T be used over the controls); **Phase 2a** — shared model **`common/ui/Skin.{h,cpp}`**
-> (SkinColor/SkinPalette/SkinFont/Skin + registry + UTF-8 codecs, 14 CLI selftests — the FIRST model
-> physically in `common/`); **Phase 2b** — `currentTheme()`/`themeBrush()` in `Theme.h` re-backed by the
-> active skin (parity: the dark skin == `makeDarkTheme` exactly); **Phase 2c** — live **Settings→Theme**
-> switch (Follow System/Dark/Light), persisted, whole-app repaint broadcast (`applyActiveSkin`); **Phase
-> 3a** — `themeFont(role,dpi)` typography seam + `dangerHover` wiring; and a **Cyberpunk** skin (neon
-> magenta on midnight, **colours only, no shaders**) with a registry-driven Theme menu. **Done since then:**
-> 3b (fonts → a `themeFont`/`themeTextFormat` seam), 3c (owner-draw transport buttons), 4a (**Steampunk**
-> skin + Georgia serif title), 4b-1 (GDI+ **button glow**), 4b-2 (per-skin **neon glow on the dock gutters**
-> — a new `PSEdge` shader via the windowless SkinStrip/`BitBlt`), the per-skin **`SkinGpu` manifest**
-> (`{stripGlow, edgeGlow, heatHaze}` on the `common/` Skin model — `SkinStrip` reads `currentSkin().gpu.*`
-> instead of hardcoded intensities; codec + selftests), and **Steampunk heat-haze** (a procedural brass
-> shimmer on the strip underglow — `underglow.hlsl` `PSMain` wobble + rising plume gated by `heatHaze`, a
-> no-op for every other skin; new `uParams` cbuffer field). Plus **ungated UI** (`e6b83d7`, ships both
-> flags): a meters **Data-flow row** + "Meters…" menu cleanup + buffer-meter half-width/`LED_PITCH 5→3`, and
-> a windowed **Video-only** mode (Settings→Video only / **Ctrl+Shift+V**; hide all chrome; drag the video to
-> move; double-click/Esc/right-click to exit; libVLC input passthrough so it works while playing). All
-> committed + reviewed SHIP + both-flag build-verified; **all owner-verified live in 0.2.0**. The
-> **authored GPU-effect set is complete** (strip, gutter, button glow, heat-haze). **Next (0.2.x):** cut
-> **0.2.1** (the macOS-icon swap is already on `main`; bump the version + build → sign-on-mac → appcast per
-> `docs/RELEASING.md`); optional per-skin glow/heat-haze *tuning* (`SkinGpu` in `common/ui/Skin.cpp` +
-> `underglow.hlsl`); Steampunk palette/serif polish; extend `SkinGpu` to the button glow; refresh the
-> About/Splash logo art; or reskin a new surface. **Coordination:** the shared contract is
-> `docs/SKIN_MODEL.md` (the mac Metal renderer mirrors it); `main` is shared with the mac team, so
-> **`git fetch`/rebase before every release**. **JSON profiles** stay deferred.
->
-> **Cross-platform (memory `rabbitears-cross-platform`):** premium per platform, ~70% common core; the
-> **skin MODEL is shared in `common/`, the RENDERER is per-platform** (Win32 D3D11/D2D+HLSL; mac Metal
-> later). Ratified: skins define their OWN colours (no OS `GetSysColor`); active-selection + OS dark/light
-> detection are renderer-side, only the id + `skinSettingKey()` are shared; the positional palette codec
-> is frozen until user skins ship. Keep `common/` graphics-free (the `mac-core` CI compiles it on clang).
->
-> The GUI: owner-draw command bar + Settings menu; three **dockable regions** (nav TreeView /
-> video+transport strip / Direct2D `ChannelGridControl`, persisted `dock_layout`); a `VlcPlayer` (libVLC
-> lifecycle + headless recorder on a worker thread); a blocky-LED buffer meter + modular mini-meters
-> (`ui/MiniMeter` + WASAPI process-loopback `audio/SpectrumTap`); log at `%LOCALAPPDATA%\RabbitEars\rabbitears.log`.
->
-> **Build/verify** (from PowerShell):
-> ```
-> & "G:\RabbitEars\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON   # theme-engine dev
-> & "G:\RabbitEars\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=OFF  # verify shipping path
-> build\Win32\RabbitEarsCli.exe --selftest    # core + dock + country + skin-model/SkinGpu assertions (headless)
-> ```
-> Every theme-engine change: adversarially reviewed via a background **Workflow** (independent lenses) +
-> build-verified **BOTH flags** before committing. **flag-off must stay byte-identical to shipping** —
-> every engine addition is `#ifdef RABBITEARS_THEME_ENGINE`-gated. Gotchas: `cmake`/`cl` aren't on PATH —
-> use `scripts\build.cmd`; Windows outputs are in `build\Win32\`. `LINK1168` = an instance running →
-> `Stop-Process -Name RabbitEars -Force`, rebuild. Static CRT (`/MT`, **no redist** — shaders are
-> precompiled `.cso` embedded as C headers via `bin2h.cmake`, never a runtime DLL). `themeBrush()` is a
-> per-skin `unordered_map` flag-on (the 12-slot array flag-off). **This sandbox CANNOT launch the GUI** —
-> build-verify + reason + run `RabbitEarsCli` headless; hand visual verification to the owner. Commit only
-> when asked; stage specific paths (never `git add -A` — owner adds `art/*.png`); end commits with the
-> Co-Authored-By trailer. Also: libVLC `stop()`/`release()` block (offloaded to reaper threads); event
-> callbacks → only `PostMessage`; RECT fields are `LONG` (cast to int); channel grid D2D pinned to 96 DPI;
-> libVLC `i_read_bytes` is 0 for HLS; VLC sout single-quoted paths need `'` doubled; modal dialogs read
-> controls before `DestroyWindow`. Releases signed on macOS with the shared family Ed25519 key —
-> `docs/RELEASING.md`.
+> **Process.** Every substantive change gets an **adversarial multi-lens review** (a background `Workflow`)
+> + a both-flags build before it ships — it keeps catching real bugs (3 in 0.2.6, 2 in 0.2.7). **Commit only
+> when the owner asks**; stage **specific paths** (never `git add -A` — the owner adds `art/*.png`); end
+> commits with the `Co-Authored-By` trailer. `main` is shared with the mac team → **`git fetch`/rebase before
+> pushing** (push the code commit early to lock the build number = git commit count, so the tag matches).
+> Release flow (`docs/RELEASING.md`): commit+push → rebuild both arches → 3 installers
+> (`scripts\build-installer.cmd [x64|arm64|universal]`) → **owner signs on the Mac** (only EdDSA signing is
+> there) → `scripts\make-appcast.ps1 [-Arch arm64] -Version <ver.build> -Tag v<ver> …` → `gh release create`
+> with 3 assets → commit+push both appcasts → verify raw feeds + HTTP 200. `gh` CLI + Inno Setup are on this
+> machine, so everything except signing runs locally.

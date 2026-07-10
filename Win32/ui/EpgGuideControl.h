@@ -36,6 +36,11 @@ struct GuideCallbacks {
                        const std::wstring& title, long long startUtc, long long stopUtc)>
         onSchedule;
     std::function<void(const std::wstring& channelId, const std::wstring& channelName)> onPlay;
+    // "Record series": create a standing rule for every future airing of `title` on this
+    // channel. Empty -> the popup's Record-series button does nothing.
+    std::function<void(const std::wstring& channelId, const std::wstring& channelName,
+                       const std::wstring& title)>
+        onRecordSeries;
     // Right-click a channel row -> toggle it as a favourite (the host resolves the tvg-id to the
     // channel and flips its favourite flag). isFavourite reports the current state so the menu can
     // label "Add to" vs "Remove from" Favourites. Both empty -> no favourite action in the guide.
@@ -61,5 +66,13 @@ bool epgGuideOpen();  // true if the guide window exists (open or hidden)
 // programmes don't change); a full rebuild (showEpgGuide via onEpgGuide) is only needed the first
 // time or on an explicit Refresh. No-op if the guide isn't open.
 void revealEpgGuide(long long nowUtc);
+
+// Reveal the guide scrolled to a channel's row ("Show in TV Guide" from the channel grid):
+// clears any type-to-search filter, top-aligns the row matching `tvgId` (matched on the
+// normalised base id — '@feed' suffix stripped, case-folded — like the guide's own row
+// join), and re-centres the time axis on `nowUtc`. Returns false (without revealing) when
+// the guide isn't built yet or the channel has no guide row — the caller decides what to
+// tell the user. Build the guide first via the epgGuideOpen()/onEpgGuide pattern.
+bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc);
 
 }  // namespace rabbitears

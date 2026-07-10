@@ -9,6 +9,7 @@
 #include <ctime>
 #include <cwchar>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <thread>
@@ -30,11 +31,14 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/M3uWriter.h"
+#include "core/RecordingRules.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/Updater.h"
+#include "platform/WakeScheduler.h"
 #include "resource.h"
 #include "version.h"
 #include "ui/BufferMeter.h"
@@ -97,6 +101,177 @@ void onOpenFile(AppState* st) {
     ofn.nMaxFile = ARRAYSIZE(path);
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
     if (GetOpenFileNameW(&ofn)) startPlaylistWorker(st, path, false, nameFromSource(path, false));
+}
+
+// ---- Favourites import/export (Settings menu) --------------------------------
+// Export writes the starred channels as a portable Extended-M3U (round-trips through our own
+// parser and imports into any IPTV player); import stars library channels matching an M3U's
+// entries — by exact stream URL first, then by tvg-id.
+
+void onExportFavourites(AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    const std::vector<Channel> favs = st->db.favourites();
+    if (favs.empty()) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Export favourites", L"No favourites yet",
+                       L"Star some channels first (the ★ column in the channel list, or "
+                       L"right-click a TV-Guide row), then export.\r\n");
+        return;
+    }
+    wchar_t path[MAX_PATH] = L"favourites.m3u";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = st->hwnd;
+    ofn.lpstrFilter = L"M3U playlist (*.m3u)\0*.m3u\0All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = ARRAYSIZE(path);
+    ofn.lpstrDefExt = L"m3u";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    if (!GetSaveFileNameW(&ofn)) return;
+
+    M3uDocument doc;
+    doc.channels.reserve(favs.size());
+    for (const Channel& c : favs) {
+        ParsedChannel p;
+        p.name = c.name;
+        p.streamUrl = c.streamUrl;
+        p.logoUrl = c.logoUrl;
+        p.groupTitle = c.groupTitle;
+        p.tvgId = c.tvgId;
+        p.tvgName = c.tvgName;
+        p.chno = c.lcn.value_or(-1);
+        p.userAgent = c.userAgent;
+        p.referrer = c.referrer;
+        doc.channels.push_back(std::move(p));
+    }
+    const std::string bytes = writeM3u(doc);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    // Flush explicitly and check BEFORE reporting success: a favourites file is smaller than
+    // the filebuf, so the real disk write otherwise happens inside close(), which swallows
+    // failures — a full disk / dying USB stick would get a success dialog over a truncated file.
+    f.flush();
+    if (!f) {
+        diag::error(L"favourites export failed to write: " + std::wstring(path));
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Export favourites", L"Could not write the file",
+                       L"Path:  " + std::wstring(path) + L"\r\n");
+        return;
+    }
+    f.close();
+    diag::info(L"favourites exported: " + std::to_wstring(favs.size()) + L" -> " +
+               std::wstring(path));
+    setStatus(st, L"Exported " + std::to_wstring(favs.size()) + L" favourites.");
+    showInfoDialog(st->hwnd, hInst, st->dpi, L"Export favourites",
+                   L"Exported " + std::to_wstring(favs.size()) + L" favourite" +
+                       (favs.size() == 1 ? L"" : L"s"),
+                   L"File:  " + std::wstring(path) + L"\r\n");
+}
+
+void onImportFavourites(AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = st->hwnd;
+    ofn.lpstrFilter = L"Playlists (*.m3u;*.m3u8)\0*.m3u;*.m3u8\0All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = ARRAYSIZE(path);
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    if (!GetOpenFileNameW(&ofn)) return;
+
+    std::wstring err;
+    const M3uDocument doc = parseM3uFile(path, &err);
+    if (doc.channels.empty()) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Import favourites", L"No channels found",
+                       L"File:  " + std::wstring(path) + L"\r\n" +
+                           (err.empty() ? L"" : L"Problem:  " + err + L"\r\n"));
+        return;
+    }
+    // One pass over the library builds both match keys; the file may star a channel that
+    // appears in several playlists — match ALL library rows carrying that URL / tvg-id.
+    const std::vector<Channel> all = st->db.allChannels();
+    std::unordered_map<std::wstring, std::vector<long long>> byUrl, byTvg;
+    for (const Channel& c : all) {
+        byUrl[c.streamUrl].push_back(c.id);
+        if (!c.tvgId.empty()) byTvg[c.tvgId].push_back(c.id);
+    }
+    std::set<long long> ids;  // de-duped targets
+    int missed = 0;
+    for (const ParsedChannel& p : doc.channels) {
+        const std::vector<long long>* hits = nullptr;
+        if (auto it = byUrl.find(p.streamUrl); it != byUrl.end()) hits = &it->second;
+        else if (!p.tvgId.empty())
+            if (auto jt = byTvg.find(p.tvgId); jt != byTvg.end()) hits = &jt->second;
+        if (hits)
+            ids.insert(hits->begin(), hits->end());
+        else
+            ++missed;
+    }
+    for (long long id : ids) st->db.setFavourite(id, true);
+    loadForFilter(st);  // refresh the grid (★ column / the Favourites view)
+    diag::info(L"favourites imported: " + std::to_wstring(ids.size()) + L" starred, " +
+               std::to_wstring(missed) + L" not in the library");
+    std::wstring details = L"File:  " + std::wstring(path) + L"\r\nEntries in file:  " +
+                           std::to_wstring(doc.channels.size()) + L"\r\nChannels starred:  " +
+                           std::to_wstring(ids.size()) + L"\r\n";
+    if (missed > 0)
+        details += L"Not in your library (skipped):  " + std::to_wstring(missed) + L"\r\n";
+    showInfoDialog(st->hwnd, hInst, st->dpi, L"Import favourites",
+                   L"Starred " + std::to_wstring(ids.size()) + L" channel" +
+                       (ids.size() == 1 ? L"" : L"s"),
+                   details);
+}
+
+// ---- Named saved layouts (Settings → Layout) ----------------------------------
+// Stored in the settings K/V: "layout_names" = newline-joined index (menu order), each
+// layout at "layout_saved_<name>" as DockLayout::serialize(). Capped at kMaxSavedLayouts
+// (the two menu-id ranges hold exactly that many).
+
+std::vector<std::wstring> savedLayoutNames(AppState* st) {
+    std::vector<std::wstring> names;
+    if (auto v = st->db.getSetting(L"layout_names"); v && !v->empty()) {
+        size_t pos = 0;
+        while (pos <= v->size()) {
+            const size_t nl = v->find(L'\n', pos);
+            const std::wstring n =
+                v->substr(pos, nl == std::wstring::npos ? std::wstring::npos : nl - pos);
+            if (!n.empty()) names.push_back(n);
+            if (nl == std::wstring::npos) break;
+            pos = nl + 1;
+        }
+    }
+    if (names.size() > static_cast<size_t>(kMaxSavedLayouts))
+        names.resize(static_cast<size_t>(kMaxSavedLayouts));
+    return names;
+}
+
+void storeLayoutNames(AppState* st, const std::vector<std::wstring>& names) {
+    std::wstring joined;
+    for (const auto& n : names) {
+        if (!joined.empty()) joined += L'\n';
+        joined += n;
+    }
+    st->db.setSetting(L"layout_names", joined);
+}
+
+void onLayoutSave(HWND hwnd, AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+    std::wstring name = L"My layout";
+    if (!promptText(hwnd, hInst, st->dpi, L"Save Layout", L"Layout name:", name) || name.empty())
+        return;
+    for (wchar_t& c : name)
+        if (c == L'\n' || c == L'\r') c = L' ';  // the index is newline-joined
+    auto names = savedLayoutNames(st);
+    if (std::find(names.begin(), names.end(), name) == names.end()) {
+        if (names.size() >= static_cast<size_t>(kMaxSavedLayouts)) {
+            setStatus(st, L"Layout limit reached (" + std::to_wstring(kMaxSavedLayouts) +
+                              L") — delete one first.");
+            return;
+        }
+        names.push_back(name);
+        storeLayoutNames(st, names);
+    }  // an existing name is simply overwritten below
+    st->db.setSetting(L"layout_saved_" + name, st->dock.serialize());
+    setStatus(st, L"Layout saved: " + name);
 }
 
 void onPlaylistDone(AppState* st, PlaylistResult* res) {
@@ -223,10 +398,19 @@ void onEpgDone(AppState* st, EpgResult* res) {
         detail += f.name + L":  " + std::to_wstring(stored) + L" programmes\r\n";
         diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
     }
-    const std::wstring summary =
+    std::wstring summary =
         okCount > 0 ? L"Stored " + std::to_wstring(totalProg) + L" programmes across " +
                           std::to_wstring(chans.size()) + L" channels"
                     : L"Could not refresh the guide";
+    // A fresh guide is exactly when a series rule learns about next week's airings — force it.
+    if (okCount > 0) {
+        const int queued = expandRecordingRules(st, /*force=*/true);
+        syncWakeFromSchedules(st);
+        if (queued > 0) {
+            detail += L"\r\nRecording rules queued " + std::to_wstring(queued) + L" new airing(s).\r\n";
+            summary += L" · " + std::to_wstring(queued) + L" queued by rules";
+        }
+    }
     setStatus(st, summary);
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
@@ -304,6 +488,10 @@ void onEpgGuide(AppState* st) {
     cb.onSchedule = [st](const std::wstring& channelId, const std::wstring& channelName,
                          const std::wstring& title, long long startUtc, long long stopUtc) {
         scheduleFromGuide(st, channelId, channelName, title, startUtc, stopUtc);
+    };
+    cb.onRecordSeries = [st](const std::wstring& channelId, const std::wstring& channelName,
+                             const std::wstring& title) {
+        recordSeriesFromGuide(st, channelId, channelName, title);
     };
     cb.onPlay = [st](const std::wstring& channelId, const std::wstring& channelName) {
         std::optional<Channel> ch;
@@ -468,6 +656,9 @@ void setActivePane(AppState* st, int idx) {
     }
     channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
     SetWindowTextW(st->btnPlay, st->ap().player.isPlaying() ? kGlyphPause : kGlyphPlay);
+    // Recording is PER-PANE (each pane's player has its own recorder) — the Record button
+    // reflects and controls the ACTIVE pane, so its glyph must follow the pane switch.
+    SetWindowTextW(st->btnRec, st->ap().player.isRecording() ? kGlyphStop : kGlyphRecord);
     resetStatMeters(st);  // the previous pane's readings don't apply to the newly-active stream
     setStatus(st, st->ap().nowPlayingName.empty()
                       ? L"Active pane " + std::to_wstring(idx + 1)
@@ -501,6 +692,30 @@ void reapDyingPanes(AppState* st, bool force) {
 
 void applyViewMode(AppState* st, ViewMode mode) {
     reapDyingPanes(st, /*force=*/false);  // clear any finished leftovers from a previous switch
+    // A mode switch tears down every pane except pane 0 — including their RECORDERS (the async
+    // teardown enqueues a recorder stop). Never kill a background recording silently: confirm
+    // first, and if a scheduled recording lives in a dying pane, close out its DB row.
+    {
+        int recCount = 0;
+        for (size_t i = 1; i < st->panes.size(); ++i)
+            if (st->panes[i]->player.isRecording()) ++recCount;
+        if (recCount > 0) {
+            wchar_t msg[160];
+            swprintf_s(msg, L"Switching the view stops %d background recording%s (the file will be "
+                            L"finalized). Continue?",
+                       recCount, recCount == 1 ? L"" : L"s");
+            if (MessageBoxW(st->hwnd, msg, L"RabbitEars",
+                            MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+                return;
+            if (st->activeScheduleId != 0 && st->schedulePane >= 1) {
+                st->db.updateScheduleStatus(st->activeScheduleId, ScheduleStatus::Done);
+                diag::info(L"scheduled recording closed by view switch (id " +
+                           std::to_wstring(st->activeScheduleId) + L")");
+                st->activeScheduleId = 0;
+                st->schedulePane = -1;
+            }
+        }
+    }
     // Carry the SELECTED pane's stream across the collapse. Pane 0 (the primary child surface)
     // always persists, but only pane 0's HWND survives — not necessarily its channel. If a
     // NON-pane-0 tile is active (e.g. you picked the bottom-right of a 2x2), remember what it was
@@ -521,6 +736,9 @@ void applyViewMode(AppState* st, ViewMode mode) {
     }
     st->active = 0;
     st->viewMode = mode;
+    // Persist here — the single choke point every entry path funnels through (Settings menu,
+    // the video right-click menu, AND the grid's "Play in PIP"), so the mode survives a restart.
+    st->db.setSetting(L"view_mode", std::to_wstring(static_cast<int>(mode)));
     st->pipMoved = false;  // a fresh PIP starts in the default corner (until the user drags it)
     if (mode == ViewMode::Split)
         for (int i = 1; i < 4; ++i) addPane(st->hwnd, st, i);        // three more tiles -> 2x2
@@ -547,6 +765,24 @@ std::wstring recordingsDir() {
     return dir.wstring();
 }
 
+// Map a recording-format setting to its file extension + libVLC mux name. "mp4" is a
+// DIRECT mp4 mux (stream copy): the mux writes its moov index when the recording stops,
+// so a normal stop (manual, scheduled, quit — all finalize through doRecordStop) yields a
+// playable file; only a hard crash mid-record loses one (unlike .ts, readable up to the
+// cut). Anything unrecognized falls back to ts, the crash-safest container.
+void formatToExtMux(const std::wstring& fmt, std::wstring& ext, std::string& mux) {
+    if (fmt == L"mkv") {
+        ext = L".mkv";
+        mux = "mkv";
+    } else if (fmt == L"mp4") {
+        ext = L".mp4";
+        mux = "mp4";
+    } else {
+        ext = L".ts";
+        mux = "ts";
+    }
+}
+
 std::wstring recordingPath(const std::wstring& channelName, const std::wstring& ext) {
     std::wstring name = channelName;
     for (wchar_t& ch : name)
@@ -561,8 +797,12 @@ std::wstring recordingPath(const std::wstring& channelName, const std::wstring& 
 }
 
 void onToggleRecord(AppState* st) {
-    if (st->activeScheduleId != 0) {  // the recorder is owned by a scheduled recording
-        setStatus(st, L"A scheduled recording is in progress — manage it in Scheduled Recordings.");
+    // Recording is PER-PANE: the button toggles the ACTIVE pane's recorder, and other panes'
+    // recordings run concurrently (each pane's player owns an independent recorder). A scheduled
+    // recording only blocks the pane it is recording on — that pane's recorder belongs to the
+    // scheduler, but any other pane records freely alongside it.
+    if (st->activeScheduleId != 0 && st->schedulePane == st->active) {
+        setStatus(st, L"A scheduled recording owns this pane — manage it in Scheduled Recordings.");
         return;
     }
     if (st->ap().player.isRecording()) {
@@ -570,20 +810,51 @@ void onToggleRecord(AppState* st) {
         st->ap().player.stopRecording();
         SetWindowTextW(st->btnRec, kGlyphRecord);
         setStatus(st, L"Recording saved: " + file);
+        syncKeepAwake(st);  // another pane may still be recording — re-derive, don't assume
         return;
     }
     if (st->ap().nowPlaying.id == 0) {
         setStatus(st, L"Play a channel first, then Record.");
         return;
     }
-    const std::wstring ext = (st->recFormat == L"mkv") ? L".mkv" : L".ts";
-    const std::string mux = (st->recFormat == L"mkv") ? "mkv" : "ts";
+    std::wstring ext;
+    std::string mux;
+    formatToExtMux(st->recFormat, ext, mux);
     const std::wstring path = recordingPath(st->ap().nowPlaying.name, ext);
     if (st->ap().player.startRecording(st->ap().nowPlaying.streamUrl, st->ap().nowPlaying.userAgent,
                                   st->ap().nowPlaying.referrer, path, mux)) {
         SetWindowTextW(st->btnRec, kGlyphStop);
         setStatus(st, L"● Recording " + st->ap().nowPlaying.name + L"  →  " + path);
+        syncKeepAwake(st);  // don't let the machine sleep out from under a manual recording
     }
+}
+
+// Stop the recorder owned by the ACTIVE schedule and release ownership. Per-pane recording:
+// the recorder lives on the pane the schedule STARTED on (st->schedulePane), not necessarily
+// the active pane — stopping st->ap().player here once silently killed an unrelated manual
+// recording (review-caught). When the pinned pane is GONE (a view switch already closed the
+// recording out) no recorder is stopped — NEVER fall back to the active pane, whose recording
+// (if any) belongs to the user. Shared by the scheduler tick and the manager's Cancel/Delete.
+void stopScheduledRecorder(AppState* st) {
+    VlcPlayer* rec = nullptr;
+    if (st->schedulePane >= 0 && st->schedulePane < static_cast<int>(st->panes.size()))
+        rec = &st->panes[st->schedulePane]->player;
+    else if (st->schedulePane < 0)
+        rec = &st->ap().player;  // no pin recorded (pre-0.2.6 row) — old single-recorder path
+    if (rec) rec->stopRecording();
+    st->activeScheduleId = 0;
+    st->schedulePane = -1;
+    // stopRecording() only ENQUEUES — the stopped player's isRecording() still reads true here
+    // (the worker clears it after the blocking stop). If we just stopped the ACTIVE pane's
+    // recorder the glyph must show Record unconditionally; otherwise the active pane was
+    // untouched and its live state is what the button should reflect.
+    const bool stoppedActive = rec == &st->ap().player;
+    SetWindowTextW(st->btnRec, (!stoppedActive && st->ap().player.isRecording()) ? kGlyphStop
+                                                                                 : kGlyphRecord);
+    // The stop is async, so isRecording() may still read true for this player — a stale "keep
+    // awake" for one 30 s tick is harmless (the tick re-syncs), while releasing too eagerly
+    // could let the machine sleep on a recorder that hasn't finished flushing.
+    syncKeepAwake(st);
 }
 
 // The recording scheduler tick (~30s): decide via the pure planScheduler() core, then
@@ -593,7 +864,11 @@ void onToggleRecord(AppState* st) {
 void onSchedulerTick(AppState* st) {
     reapDyingPanes(st, /*force=*/false);  // backstop: reap finished mode-switch panes (~30s tick)
     auto schedules = st->db.listSchedules();
-    if (schedules.empty()) return;
+    // NB: there is deliberately NO early return on an empty queue. The tail of this function
+    // (rule expansion, keep-awake, wake-task upkeep) must run even with nothing queued —
+    // otherwise a still-enabled series rule whose rows were all deleted would never re-queue,
+    // and a stale wake task would never be cleared (both review-caught). planScheduler() over an
+    // empty vector simply yields empty plans, so the loops below are no-ops.
     // One-time startup reconcile: a schedule still marked Recording is stale (a prior
     // session was closed mid-record — nothing is actually recording now), so reset it to
     // Pending and let planScheduler resume it (if still in window) or miss it.
@@ -608,14 +883,17 @@ void onSchedulerTick(AppState* st) {
         if (changed) schedules = st->db.listSchedules();
     }
     const long long now = static_cast<long long>(time(nullptr));
-    // "Manual" recording = the recorder is busy but no schedule owns it.
+    // "Manual" recording = the ACTIVE pane's recorder is busy but no schedule owns it. The
+    // scheduler starts on the active pane, so only that pane's manual recording blocks it —
+    // recordings in other panes run concurrently (per-pane recorders, 0.2.6).
     const bool manualRecording = st->ap().player.isRecording() && st->activeScheduleId == 0;
     const SchedulerPlan plan = planScheduler(schedules, now, manualRecording);
 
     for (long long id : plan.stop) {
-        st->ap().player.stopRecording();
+        // Only the schedule that actually OWNS a recorder gets one stopped; a foreign
+        // Recording row (shouldn't happen) is just closed out in the DB.
+        if (id == st->activeScheduleId) stopScheduledRecorder(st);
         st->db.updateScheduleStatus(id, ScheduleStatus::Done);
-        if (st->activeScheduleId == id) st->activeScheduleId = 0;
         diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
         setStatus(st, L"Scheduled recording saved.");
     }
@@ -628,12 +906,15 @@ void onSchedulerTick(AppState* st) {
         for (const auto& x : schedules)
             if (x.id == id) { s = &x; break; }
         if (!s) continue;
-        const std::wstring ext = (s->mux == L"mkv") ? L".mkv" : L".ts";
-        const std::string mux = (s->mux == L"mkv") ? "mkv" : "ts";
+        std::wstring ext;
+        std::string mux;
+        formatToExtMux(s->mux, ext, mux);
         const std::wstring path = recordingPath(s->channelName, ext);
         if (st->ap().player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
             st->activeScheduleId = id;
+            st->schedulePane = st->active;  // pin the schedule to the pane it records on
             st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path);
+            SetWindowTextW(st->btnRec, kGlyphStop);  // the active pane's recorder just engaged
             diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
             setStatus(st, L"● Recording (scheduled) " + s->channelName);
         } else {
@@ -641,6 +922,87 @@ void onSchedulerTick(AppState* st) {
             diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
         }
     }
+
+    // Rules first (they may queue an airing that starts within this tick), then the two
+    // side-effects that must track the queue: sleep suppression and the wake task.
+    expandRecordingRules(st);
+    syncKeepAwake(st);
+    syncWakeFromSchedules(st);
+}
+
+// ---- Recording Phase 3: keep-awake, wake task, and EPG-driven rules ----------
+
+void syncKeepAwake(AppState* st) {
+    bool any = false;
+    for (const auto& p : st->panes)
+        if (p->player.isRecording()) { any = true; break; }
+    setRecordingKeepAwake(any);  // per-thread state — always called on the UI thread
+}
+
+void syncWakeFromSchedules(AppState* st) {
+    // The schedule start the task SHOULD target: the earliest still-pending one (0 = none).
+    long long earliest = 0;
+    if (st->wakeToRecord)
+        for (const ScheduledRecording& s : st->db.listSchedules())
+            if (s.status == ScheduleStatus::Pending && (earliest == 0 || s.startUtc < earliest))
+                earliest = s.startUtc;
+
+    // This runs on every ~30 s tick, and touching Task Scheduler means a COM round-trip. Key on
+    // the UNCLAMPED start so an unchanged queue costs nothing; only a changed target re-registers.
+    if (earliest == st->wakeTaskFor) return;
+
+    if (earliest == 0) {
+        clearWakeTask();  // nothing queued (or the feature is off) — never wake a PC for nothing
+        st->wakeTaskFor = 0;
+        return;
+    }
+    // Clamp the FIRE time into the future: a past boundary would make Task Scheduler run the task
+    // immediately, launching a second instance that just bounces off the single-instance mutex. If
+    // we are exiting with an imminent recording, +30 s still relaunches us in time to catch it
+    // (planScheduler happily starts a schedule mid-window).
+    const long long now = static_cast<long long>(time(nullptr));
+    if (syncWakeTask(std::max(earliest - kWakeLeadSeconds, now + 30)))
+        st->wakeTaskFor = earliest;
+    // On failure leave wakeTaskFor unchanged so the next tick retries rather than going quiet.
+}
+
+// Materialize enabled rules against the stored EPG. Pure matching lives in
+// common/core/RecordingRules; here we only resolve each match to a playable stream (the core
+// has no DB) and insert. Returns the number of schedules added.
+int expandRecordingRules(AppState* st, bool force) {
+    if (!st->db.isOpen()) return 0;
+    const auto rules = st->db.listRules();
+    if (rules.empty()) return 0;  // the common case: no rules, no cost
+    const long long now = static_cast<long long>(time(nullptr));
+    // The EPG query below spans 14 days across every enabled playlist — far too heavy to run on
+    // every ~30 s tick. New airings only arrive with a guide refresh, which forces a pass anyway.
+    if (!force && st->rulesExpandedAt != 0 && now - st->rulesExpandedAt < kRuleExpandIntervalSeconds)
+        return 0;
+    const long long horizon = now + kRuleHorizonSeconds;
+    const auto programmes = st->db.programmesInWindowAll(now, horizon);
+    if (programmes.empty()) {
+        st->rulesExpandedAt = now;  // don't re-query every tick just because the guide is empty
+        return 0;
+    }
+
+    const auto planned = expandRules(rules, programmes, st->db.listSchedules(), now, horizon);
+    int added = 0;
+    for (ScheduledRecording s : planned) {
+        // The core can't look a channel up; a rule for a channel that has since left the
+        // library simply produces nothing (rather than an unrecordable row).
+        const auto ch = st->db.channelByTvgId(s.channelId);
+        if (!ch) continue;
+        s.channelName = ch->name.empty() ? s.channelName : ch->name;
+        s.streamUrl = ch->streamUrl;
+        s.userAgent = ch->userAgent;
+        s.referrer = ch->referrer;
+        s.createdAt = now;
+        if (st->db.addSchedule(s) > 0) ++added;
+    }
+    st->rulesExpandedAt = now;
+    if (added > 0)
+        diag::info(L"recording rules queued " + std::to_wstring(added) + L" upcoming airing(s)");
+    return added;
 }
 
 // Schedule a recording for a guide programme: resolve its tvg-id to a recordable stream,
@@ -679,6 +1041,71 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
     }
 }
 
+// "Record series" from the guide: store a rule that matches this programme's title on this
+// channel, then expand it immediately so the user sees the upcoming airings queue up.
+void recordSeriesFromGuide(AppState* st, const std::wstring& channelId,
+                           const std::wstring& channelName, const std::wstring& title) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (title.empty()) return;
+    std::optional<Channel> ch;
+    if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
+    if (!ch) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Channel not found",
+                       L"Couldn't match \"" + channelName +
+                           L"\" to a playable channel in your library.");
+        return;
+    }
+    // Reject an exact duplicate so mashing the button doesn't pile up identical rules.
+    for (const RecordingRule& r : st->db.listRules())
+        if (normaliseTvgId(r.channelId) == normaliseTvgId(channelId) && r.titleMatch == title &&
+            r.match == RuleMatch::Exact) {
+            showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Already recording this series",
+                           L"A rule for \"" + title + L"\" on " + ch->name +
+                               L" already exists.\r\nSee Settings ▸ Recording Rules….");
+            return;
+        }
+
+    RecordingRule r;
+    r.channelId = channelId;
+    r.channelName = ch->name.empty() ? channelName : ch->name;
+    r.titleMatch = title;
+    r.match = RuleMatch::Exact;  // the guide gives us the exact title; Contains would over-match
+    r.mux = st->recFormat;
+    r.createdAt = static_cast<long long>(time(nullptr));
+    if (st->db.addRule(r) == 0) {
+        showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Could not save the rule",
+                       L"The recording rule could not be stored.");
+        return;
+    }
+    const int added = expandRecordingRules(st, /*force=*/true);  // a brand-new rule must queue now
+    syncWakeFromSchedules(st);
+    onSchedulerTick(st);  // catch an airing that is already on
+    diag::info(L"series rule added: \"" + title + L"\" on " + r.channelName);
+    showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Recording every airing of this show",
+                   title + L"\r\n" + r.channelName + L"\r\n\r\n" + std::to_wstring(added) +
+                       L" upcoming airing(s) queued from the guide.\r\n"
+                       L"New airings are picked up automatically as the guide refreshes.\r\n\r\n"
+                       L"Manage rules in Settings ▸ Recording Rules….");
+}
+
+// Settings → Recording Rules…: list the standing series rules, with enable/disable + delete.
+// Deleting a rule drops its still-pending schedules but keeps recordings that already ran.
+void onManageRules(AppState* st) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    RuleManagerCallbacks cb;
+    cb.list = [st] { return st->db.listRules(); };
+    cb.setEnabled = [st](long long id, bool on) {
+        st->db.setRuleEnabled(id, on);
+        if (on) expandRecordingRules(st, /*force=*/true);  // a re-enabled rule re-queues at once
+        syncWakeFromSchedules(st);
+    };
+    cb.remove = [st](long long id) {
+        st->db.deleteRule(id);
+        syncWakeFromSchedules(st);  // its pending rows are gone; the wake time may have moved
+    };
+    manageRules(st->hwnd, hInst, st->dpi, cb);
+}
+
 // Settings ▸ Scheduled Recordings… — the manager (list + New/Cancel/Delete). The host
 // callbacks own the recorder + DB so cancel/delete stop an active recording, and New
 // opens scheduleDialog over the manager and stores + nudges the scheduler.
@@ -687,18 +1114,33 @@ void onManageSchedules(AppState* st) {
     ScheduleManagerCallbacks cb;
     cb.list = [st] { return st->db.listSchedules(); };
     cb.cancel = [st](long long id) {
-        if (st->activeScheduleId == id) {
-            st->ap().player.stopRecording();
-            st->activeScheduleId = 0;
-        }
+        // Per-pane recording: the schedule's recorder lives on its PINNED pane — the helper
+        // stops the right one (stopping the active pane here once cut a manual recording).
+        if (st->activeScheduleId == id) stopScheduledRecorder(st);
         st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+        syncWakeFromSchedules(st);  // the earliest pending start may have just moved
     };
     cb.remove = [st](long long id) {
-        if (st->activeScheduleId == id) {
-            st->ap().player.stopRecording();
-            st->activeScheduleId = 0;
+        if (st->activeScheduleId == id) stopScheduledRecorder(st);
+        // A still-PENDING row that a series rule generated is a materialised prediction: hard
+        // deleting it leaves no dedup anchor, so the very next expansion would recreate it and
+        // the user's delete would silently undo itself. Cancel it instead — the Cancelled
+        // tombstone is precisely what tells the rule "skip this airing". One-off rows, and rows
+        // that already ran, delete for real.
+        bool ruleTombstone = false;
+        for (const ScheduledRecording& s : st->db.listSchedules())
+            if (s.id == id) {
+                ruleTombstone = (s.ruleId != 0 && s.status == ScheduleStatus::Pending);
+                break;
+            }
+        if (ruleTombstone) {
+            st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+            setStatus(st, L"Airing cancelled — it came from a series rule, so it stays listed as "
+                          L"Cancelled. Delete the rule to stop the series.");
+        } else {
+            st->db.deleteSchedule(id);
         }
-        st->db.deleteSchedule(id);
+        syncWakeFromSchedules(st);
     };
     cb.addNew = [st](HWND owner) {
         HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
@@ -844,10 +1286,13 @@ void onMeters(AppState* st) {
 // Command-bar Settings menu: Open File, About, recording format, and view toggles.
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     HMENU fmt = CreatePopupMenu();
-    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mkv" ? 0u : MF_CHECKED), ID_FMT_TS,
-                L"MPEG-TS  (.ts)");
+    AppendMenuW(fmt,
+                MF_STRING | (st->recFormat != L"mkv" && st->recFormat != L"mp4" ? MF_CHECKED : 0u),
+                ID_FMT_TS, L"MPEG-TS  (.ts)");
     AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mkv" ? MF_CHECKED : 0u), ID_FMT_MKV,
                 L"Matroska  (.mkv)");
+    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mp4" ? MF_CHECKED : 0u), ID_FMT_MP4,
+                L"MP4  (.mp4)");
 
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, ID_OPEN_FILE, L"Open File…");
@@ -859,15 +1304,22 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
     AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
                 catLabel.c_str());
+    AppendMenuW(m, MF_STRING, ID_FAV_EXPORT, L"Export favourites…");
+    AppendMenuW(m, MF_STRING, ID_FAV_IMPORT, L"Import favourites…");
     AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, L"TV Guide");
     AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
     AppendMenuW(m, MF_STRING, ID_SCHEDULES, L"Scheduled Recordings…");
+    AppendMenuW(m, MF_STRING, ID_RULES, L"Recording Rules…");
+    AppendMenuW(m, MF_STRING | (st->wakeToRecord ? MF_CHECKED : 0u), ID_WAKE_RECORD,
+                L"Wake this PC to record");
 
     // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
     // row live there now — the old inline quick-toggle checkboxes were redundant).
     AppendMenuW(m, MF_STRING, ID_METERS_SETUP, L"Meters…");
     AppendMenuW(m, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), ID_VIDEO_ONLY,
                 L"Video only\tCtrl+Shift+V");
+    AppendMenuW(m, MF_STRING | (st->resumeLast ? MF_CHECKED : 0u), ID_RESUME_LAST,
+                L"Resume last channel");
 
     HMENU viewMenu = CreatePopupMenu();
     AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Single ? MF_CHECKED : 0u),
@@ -889,6 +1341,22 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         for (int s = 0; s < 4; ++s)
             AppendMenuW(sub, MF_STRING, ID_DOCK_BASE + static_cast<int>(pn.p) * 4 + s, dockSides[s]);
         AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), pn.name);
+    }
+    AppendMenuW(layoutMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_SAVE, L"Save layout as…");
+    const std::vector<std::wstring> savedNames = savedLayoutNames(st);
+    if (!savedNames.empty()) {
+        HMENU applyMenu = CreatePopupMenu(), delMenu = CreatePopupMenu();
+        for (size_t i = 0; i < savedNames.size(); ++i) {  // capped at kMaxSavedLayouts by the getter
+            AppendMenuW(applyMenu, MF_STRING, ID_LAYOUT_APPLY_BASE + static_cast<int>(i),
+                        savedNames[i].c_str());
+            AppendMenuW(delMenu, MF_STRING, ID_LAYOUT_DELETE_BASE + static_cast<int>(i),
+                        savedNames[i].c_str());
+        }
+        AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(applyMenu),
+                    L"Apply saved layout");
+        AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(delMenu),
+                    L"Delete saved layout");
     }
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"Layout");
 
@@ -923,6 +1391,34 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         applyDockChange(hwnd, st);
         return;
     }
+    if (cmd == ID_LAYOUT_SAVE) {
+        onLayoutSave(hwnd, st);
+        return;
+    }
+    if (cmd >= ID_LAYOUT_APPLY_BASE && cmd < ID_LAYOUT_APPLY_BASE + kMaxSavedLayouts) {
+        const auto names = savedLayoutNames(st);
+        const size_t i = static_cast<size_t>(cmd - ID_LAYOUT_APPLY_BASE);
+        if (i < names.size()) {
+            if (auto s = st->db.getSetting(L"layout_saved_" + names[i]); s && !s->empty()) {
+                st->dock = DockLayout::parse(*s);  // malformed input degrades to the default tree
+                applyDockChange(hwnd, st);         // applies + re-persists the live dock_layout
+                setStatus(st, L"Layout applied: " + names[i]);
+            }
+        }
+        return;
+    }
+    if (cmd >= ID_LAYOUT_DELETE_BASE && cmd < ID_LAYOUT_DELETE_BASE + kMaxSavedLayouts) {
+        auto names = savedLayoutNames(st);
+        const size_t i = static_cast<size_t>(cmd - ID_LAYOUT_DELETE_BASE);
+        if (i < names.size()) {
+            st->db.setSetting(L"layout_saved_" + names[i], L"");  // K/V store has no delete; empty = gone
+            const std::wstring gone = names[i];
+            names.erase(names.begin() + static_cast<ptrdiff_t>(i));
+            storeLayoutNames(st, names);
+            setStatus(st, L"Layout deleted: " + gone);
+        }
+        return;
+    }
 #ifdef RABBITEARS_THEME_ENGINE
     if (cmd == ID_THEME_SYSTEM) {
         setSkinSelection(hwnd, st, "system");
@@ -949,6 +1445,31 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_FMT_MKV:
             st->recFormat = L"mkv";
             st->db.setSetting(L"rec_format", L"mkv");
+            break;
+        case ID_FMT_MP4:
+            st->recFormat = L"mp4";
+            st->db.setSetting(L"rec_format", L"mp4");
+            break;
+        case ID_RESUME_LAST:
+            st->resumeLast = !st->resumeLast;
+            st->db.setSetting(L"resume_last", st->resumeLast ? L"1" : L"0");
+            break;
+        case ID_RULES:
+            onManageRules(st);
+            break;
+        case ID_WAKE_RECORD:
+            st->wakeToRecord = !st->wakeToRecord;
+            st->db.setSetting(L"wake_to_record", st->wakeToRecord ? L"1" : L"0");
+            syncWakeFromSchedules(st);  // register or tear down the Windows task right away
+            setStatus(st, st->wakeToRecord
+                              ? L"This PC will wake for scheduled recordings."
+                              : L"Wake-to-record off — recordings need the app running.");
+            break;
+        case ID_FAV_EXPORT:
+            onExportFavourites(st);
+            break;
+        case ID_FAV_IMPORT:
+            onImportFavourites(st);
             break;
         case ID_HIDE_DEAD:
             st->hideDead = !st->hideDead;

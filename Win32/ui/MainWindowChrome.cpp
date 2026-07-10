@@ -190,8 +190,16 @@ void positionFloatingPip(AppState* st) {
         RECT r = st->paneBounds[i];  // default corner, main-client coords from the last layout()
         const int w = static_cast<int>(r.right - r.left), h = static_cast<int>(r.bottom - r.top);
         // Honour a user-dragged position (pipPos, client coords); else the default corner. The size
-        // always comes from the layout — dragging only moves the PIP, it doesn't resize it.
+        // comes from the layout (which folds in a user resize via st->pipW/pipH — see the vgo
+        // sites). Clamp a remembered position so the PIP never strands outside the client area —
+        // a persisted pipPos can be stale after a window resize, monitor change, or DPI change.
         POINT tl = st->pipMoved ? st->pipPos : POINT{r.left, r.top};
+        if (st->pipMoved) {
+            RECT cli;
+            GetClientRect(st->hwnd, &cli);
+            tl.x = std::max(0L, std::min(tl.x, cli.right - w));
+            tl.y = std::max(0L, std::min(tl.y, cli.bottom - h));
+        }
         ClientToScreen(st->hwnd, &tl);
         const bool show = (w > 0 && h > 0) && !st->fullscreen && !st->videoOnly;
         // HWND_TOPMOST so it composites over the main window's libVLC D3D surface (an owned but
@@ -202,6 +210,16 @@ void positionFloatingPip(AppState* st) {
         for (HWND vh : p->voutHosts)
             if (vh) SetWindowPos(vh, nullptr, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
     }
+}
+
+// Fold a user-chosen PIP size (the resize grip; persisted "pip_size") into the layout options,
+// clamped so a stale setting can never produce an unusably tiny or region-swallowing PIP.
+static void applyUserPipSize(const AppState* st, VideoGridOpts& vgo, int regionW, int regionH) {
+    if (st->pipW <= 0 || st->pipH <= 0) return;  // 0 = no user resize; keep the defaults
+    const int minW = dp(120, st->dpi), minH = dp(68, st->dpi);
+    const int maxW = std::max(minW, regionW * 3 / 5), maxH = std::max(minH, regionH * 3 / 5);
+    vgo.pipW = std::max(minW, std::min(st->pipW, maxW));
+    vgo.pipH = std::max(minH, std::min(st->pipH, maxH));
 }
 
 void layout(HWND hwnd, AppState* st) {
@@ -255,6 +273,7 @@ void layout(HWND hwnd, AppState* st) {
         vgoF.pipW = dp(220, st->dpi);
         vgoF.pipH = dp(124, st->dpi);
         vgoF.pipMargin = dp(12, st->dpi);
+        applyUserPipSize(st, vgoF, W, H);
         const auto boxesF = computeVideoPanes(st->viewMode, static_cast<int>(st->panes.size()),
                                               0, 0, W, H, vgoF);
         for (int i = 0; i < static_cast<int>(st->panes.size()); ++i) {
@@ -309,6 +328,7 @@ void layout(HWND hwnd, AppState* st) {
     vgo.pipW = dp(220, st->dpi);
     vgo.pipH = dp(124, st->dpi);
     vgo.pipMargin = dp(12, st->dpi);
+    applyUserPipSize(st, vgo, vidW, videoAreaH);
     const auto boxes = computeVideoPanes(st->viewMode, static_cast<int>(st->panes.size()),
                                          static_cast<int>(vidR.left), static_cast<int>(vidR.top),
                                          vidW, videoAreaH, vgo);

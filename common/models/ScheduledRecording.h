@@ -29,10 +29,14 @@ struct ScheduledRecording {
     std::wstring   title;        // programme title / user-entered label
     long long      startUtc = 0; // unix epoch seconds (UTC)
     long long      stopUtc = 0;
-    std::wstring   mux = L"ts";   // "ts" | "mkv" (matches recFormat / VlcPlayer mux)
+    std::wstring   mux = L"ts";   // "ts" | "mkv" | "mp4" (matches recFormat / VlcPlayer mux)
     ScheduleStatus status = ScheduleStatus::Pending;
     std::wstring   filePath;     // output path, set when recording starts
     long long      createdAt = 0;
+    // The RecordingRule that generated this row (0 == a one-off / manually created schedule).
+    // Set by core/RecordingRules::expandRules; lets a rule's still-Pending rows be dropped
+    // when the rule is deleted, and keeps the expander from re-creating a row it already made.
+    long long      ruleId = 0;
 };
 
 }  // namespace rabbitears

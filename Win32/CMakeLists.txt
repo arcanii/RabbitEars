@@ -74,6 +74,7 @@ if(RABBITEARS_BUILD_GUI)
     audio/SpectrumTap.cpp
     platform/Log.cpp
     platform/Updater.cpp
+    platform/WakeScheduler.cpp
     "${CMAKE_SOURCE_DIR}/packaging/RabbitEars.rc")
   # The .rc pulls in app.manifest, app.ico, and the About/splash PNGs — declare
   # them so editing any forces a .res rebuild (RC dependency scanning misses these).

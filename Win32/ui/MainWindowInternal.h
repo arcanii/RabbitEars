@@ -74,12 +74,25 @@ constexpr int ID_SCHEDULES = 2070;     // Settings → Scheduled Recordings… (
 constexpr int ID_VIEW_SINGLE = 2071;   // Settings → View: one pane (classic single-player)
 constexpr int ID_VIEW_SPLIT = 2072;    // Settings → View: 2×2 split (multiple simultaneous views)
 constexpr int ID_VIEW_PIP = 2073;      // Settings → View: picture-in-picture
+// 0.2.6 batch — allocated from the free 2074..2099 block (NEVER at/above 2100: that's the
+// open-ended ID_THEME_SKIN_BASE range, which grows with builtinSkins()).
+constexpr int ID_FMT_MP4 = 2074;         // recording format: MP4 (direct mp4 mux; see onToggleRecord)
+constexpr int ID_RESUME_LAST = 2075;     // Settings → Resume last channel on launch (toggle)
+constexpr int ID_FAV_EXPORT = 2076;      // Settings → Export favourites… (M3U)
+constexpr int ID_FAV_IMPORT = 2077;      // Settings → Import favourites… (match by URL, then tvg-id)
+constexpr int ID_LAYOUT_SAVE = 2078;     // Settings → Layout → Save layout as…
+constexpr int ID_LAYOUT_APPLY_BASE = 2079;   // + saved-layout index (10 ids: 2079..2088)
+constexpr int ID_LAYOUT_DELETE_BASE = 2089;  // + saved-layout index (10 ids: 2089..2098)
+constexpr int kMaxSavedLayouts = 10;         // both ranges above hold exactly this many
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr int ID_THEME_SYSTEM = 2045;     // Settings → Theme: "Follow System"
 constexpr int ID_THEME_SKIN_BASE = 2100;  // + builtinSkins() index (registry-driven; above ID_DOCK_BASE)
 #endif
 constexpr int ID_LAYOUT_RESET = 2050;  // Settings → Layout
 constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
+// 0.2.7 (Recording Phase 3) — from the free 2063..2069 gap (2074..2098 went to the 0.2.6 batch).
+constexpr int ID_WAKE_RECORD = 2063;   // Settings → Wake this PC to record (Task Scheduler)
+constexpr int ID_RULES = 2064;         // Settings → Recording Rules… (series rules manager)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
@@ -218,13 +231,27 @@ struct AppState {
     bool       draggingPip = false;    // the drag above is moving the floating PIP, not the main window
     bool       pipMoved = false;       // user dragged the PIP — honour pipPos instead of the default corner
     POINT      pipPos{};               // PIP top-left in main-client coords (used when pipMoved)
+    bool       resizingPip = false;    // dragging the PIP's bottom-right resize corner (not moving it)
+    POINT      pipResizeStart{};       // cursor (screen) at resize start
+    SIZE       pipResizeOrigin{};      // PIP size at resize start
+    int        pipW = 0, pipH = 0;     // user-chosen PIP size in px (0 = the default dp(220)×dp(124));
+                                       // persisted as "pip_size", fed into layout()'s VideoGridOpts
+    bool       resumeLast = true;      // auto-play the last channel on launch (setting "resume_last")
     WINDOWPLACEMENT prevPlacement{};  // saved to restore from fullscreen
     LONG       prevStyle = 0;         // window style saved on entering fullscreen
     bool       busy = false;
     HWND       loadingDlg = nullptr;    // modeless "please wait" box during an EPG fetch (null = idle)
-    long long  activeScheduleId = 0;   // id of the schedule currently owning the recorder (0 = none)
+    long long  activeScheduleId = 0;   // id of the schedule currently owning a recorder (0 = none)
+    int        schedulePane = -1;      // pane index the active schedule records on (recording is
+                                       // per-pane; the user may switch panes mid-record) — -1 = none
     bool       schedulerReconciled = false;  // one-time startup reset of stale "Recording" rows
-    std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv"
+    bool       wakeToRecord = true;   // register a Windows task to wake this PC for a recording
+                                      // (setting "wake_to_record"; see platform/WakeScheduler)
+    long long  wakeTaskFor = -1;      // the schedule start the wake task currently targets
+                                      // (0 = no task, -1 = never synced). Keyed on the UNCLAMPED
+                                      // start so the ~30s tick doesn't re-register COM every pass.
+    long long  rulesExpandedAt = 0;   // last EPG->schedule rule expansion (unix s); throttles the tick
+    std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv" | "mp4"
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
     bool       categoryActive = false;    // is the Categories include-filter on?
     std::set<std::wstring> categories;    // included group titles when active
@@ -318,6 +345,14 @@ void onToggleRecord(AppState* st);
 void onSchedulerTick(AppState* st);
 void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName, const std::wstring& title, long long startUtc, long long stopUtc);
 void onManageSchedules(AppState* st);
+// Recording Phase 3 (0.2.7)
+void syncKeepAwake(AppState* st);           // suppress sleep while any pane records
+void syncWakeFromSchedules(AppState* st);   // (re)register / clear the Windows wake task
+// Materialize rule matches into schedules; returns #added. Throttled to kRuleExpandIntervalSeconds
+// unless `force` (a guide refresh / a new or re-enabled rule) — the EPG query is heavy.
+int  expandRecordingRules(AppState* st, bool force = false);
+void recordSeriesFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName, const std::wstring& title);
+void onManageRules(AppState* st);
 std::wstring joinCategories(const std::set<std::wstring>& s);
 std::set<std::wstring> splitCategories(const std::wstring& s);
 void onCategories(AppState* st);
