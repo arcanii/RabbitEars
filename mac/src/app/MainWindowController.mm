@@ -2,6 +2,8 @@
 // See MainWindowController.h.
 #import "MainWindowController.h"
 
+#import <IOKit/pwr_mgt/IOPMLib.h>  // IOPMAssertion — keep-awake while recording
+
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -137,6 +139,9 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSSlider*      _volume;      // bottom-bar volume (0..100)
     NSButton*      _muteBtn;     // 🔊 / 🔇 toggle
     NSButton*      _meterBtn;    // bottom-bar show/hide-meters toggle
+    NSButton*      _recBtn;      // top-bar record toggle (● / ■), tracks the active pane
+    std::wstring   _recFormat;   // recording container: "ts" (default) / "mkv" / "mp4"
+    unsigned int   _keepAwake;   // IOPMAssertion id held while any pane records (0 == none)
     NSView*        _topBar;      // top command bar (add / settings / search / filter)
     NSSplitView*   _split;       // channel grid | video
     BOOL           _gridHidden;    // View ▸ Hide Channel List
@@ -297,6 +302,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     setBtn.frame = NSMakeRect(158, 9, 40, 28);
     setBtn.toolTip = @"Settings";
     [bar addSubview:setBtn];
+
+    // Record toggle for the active pane (● idle / ■ recording). Between the gear and search.
+    NSImage* recImg = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:@"Record"];
+    _recBtn = [NSButton buttonWithImage:recImg target:self action:@selector(toggleRecord:)];
+    _recBtn.frame = NSMakeRect(206, 9, 40, 28);
+    _recBtn.toolTip = @"Record the active pane";
+    [bar addSubview:_recBtn];
 
     // Right (pinned): Stop, the filter popup, and the stretchy search field between.
     NSButton* stopBtn = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stop:)];
@@ -840,6 +852,130 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self stopSpectrumTap];  // free the tap's RT thread (no spinning on silence)
     _window.title = @"RabbitEars";
     [self setStatus:@"Stopped."];
+    // NB: recording is independent of playback (its own connection) — Stop does NOT stop a
+    // running recording, matching Win32. Use the Record button to stop recording.
+}
+
+// ---- recording (per-pane; the active pane's recorder) ------------------------------------
+// The recorder is a second, headless libVLC player inside the pane's VlcPlayerMac. Recording
+// is PER-PANE: the Record button toggles the ACTIVE pane's recorder and others keep recording.
+
+// ~/Movies/RabbitEars, created on demand. (~/Movies is not TCC-protected, so no consent prompt;
+// the app is hardened-runtime but not sandboxed, so no extra entitlement is needed to write it.)
+- (NSString*)recordingsDir {
+    NSArray<NSString*>* dirs =
+        NSSearchPathForDirectoriesInDomains(NSMoviesDirectory, NSUserDomainMask, YES);
+    NSString* base = dirs.firstObject ?: NSTemporaryDirectory();
+    NSString* dir = [base stringByAppendingPathComponent:@"RabbitEars"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES
+                                             attributes:nil error:nil];
+    return dir;
+}
+
+// Map _recFormat to file extension + libVLC mux. Only ts and mp4 are offered on mac because
+// the bundled VLC ships libmux_ts + libmux_mp4 but NO mkv muxer (libmkv_plugin is the DEMUXER),
+// so mux=mkv would silently produce a broken file. mp4 writes its index on a clean stop (all our
+// stops finalize) → playable; a hard crash mid-record loses it, unlike .ts (readable to the cut).
+// Anything unrecognized (incl. a stale "mkv") falls back to ts, the crash-safest container.
++ (void)extForFormat:(const std::wstring&)fmt ext:(NSString**)ext mux:(std::string*)mux {
+    if (fmt == L"mp4") { *ext = @".mp4"; *mux = "mp4"; }
+    else               { *ext = @".ts";  *mux = "ts";  }
+}
+
+// A recording file path: <dir>/<sanitized channel> - <local timestamp><ext>. The channel name
+// is scrubbed for BOTH filename safety and sout-MRL safety — `{ } ,` break the #std{…} chain
+// and `/ :` etc. break the path, so the exact Win32 set is replaced with '_'.
+- (NSString*)recordingPathFor:(NSString*)channelName ext:(NSString*)ext {
+    NSMutableString* name = [NSMutableString string];
+    static NSCharacterSet* bad =
+        [NSCharacterSet characterSetWithCharactersInString:@"\\/:*?\"<>|'{},"];
+    for (NSUInteger i = 0; i < channelName.length; ++i) {
+        unichar c = [channelName characterAtIndex:i];
+        [name appendString:(c < 0x20 || [bad characterIsMember:c]) ? @"_"
+                                                                   : [NSString stringWithCharacters:&c length:1]];
+    }
+    if (name.length == 0) [name setString:@"channel"];
+    NSDateFormatter* df = [[[NSDateFormatter alloc] init] autorelease];  // MRC: don't leak per record
+    // en_US_POSIX so the fixed pattern yields a Gregorian, ASCII, 24-hour stamp regardless of the
+    // user's regional calendar/locale (a non-POSIX locale could inject an era name, AM/PM, or a
+    // non-Gregorian year into the filename).
+    df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    df.dateFormat = @"yyyy-MM-dd HH-mm-ss";
+    NSString* stamp = [df stringFromDate:[NSDate date]];
+    NSString* dir = [self recordingsDir];
+    NSString* path = [dir stringByAppendingPathComponent:
+                      [NSString stringWithFormat:@"%@ - %@%@", name, stamp, ext]];
+    // Uniquify: two recordings of the same channel within one second would collide (same stamp);
+    // append " (N)" so the second never overwrites the first's file.
+    for (int n = 2; [NSFileManager.defaultManager fileExistsAtPath:path] && n < 1000; ++n)
+        path = [dir stringByAppendingPathComponent:
+                [NSString stringWithFormat:@"%@ - %@ (%d)%@", name, stamp, n, ext]];
+    return path;
+}
+
+- (void)toggleRecord:(id)__unused sender {
+    MacVideoPane* p = [self activePane];
+    if (!p) return;
+    if (p->player->isRecording()) {
+        const std::wstring file = p->player->recordingFile();
+        p->player->stopRecordingAsync();  // off-main: a stalled feed can't hang the UI on stop
+        [self updateRecordButton];
+        [self syncKeepAwake];  // another pane may still record — re-derive, don't assume
+        [self setStatus:[NSString stringWithFormat:@"Recording saved: %@", ns(file)]];
+        return;
+    }
+    if (p->channelId == 0) { [self setStatus:@"Play a channel first, then Record."]; return; }
+    NSString* ext; std::string mux;
+    [MainWindowController extForFormat:_recFormat ext:&ext mux:&mux];
+    NSString* path = [self recordingPathFor:ns(p->channel.name) ext:ext];
+    if (p->player->startRecording(p->channel.streamUrl, p->channel.userAgent, p->channel.referrer,
+                                  ws(path), mux)) {
+        [self updateRecordButton];
+        [self syncKeepAwake];  // don't let the machine idle-sleep out from under a recording
+        [self setStatus:[NSString stringWithFormat:@"● Recording %@ → %@", ns(p->channel.name), path]];
+    } else {
+        [self setStatus:@"Couldn't start recording (the stream may cap concurrent connections)."];
+    }
+}
+
+- (void)finalizeRecordingsForQuit {
+    // Synchronously finalize recordings still attached to a live pane — the common case (a
+    // recording the user left running). A recorder already detached to a background stop (a
+    // just-clicked async Stop, or a pane collapsed via -teardownPane:) races process exit; for
+    // the default .ts that's harmless (readable to the cut), and for mp4 it's a narrow window
+    // (quit within ~1s of that stop) where the index may not be written. Draining those isn't
+    // worth a global in-flight tracker here.
+    for (auto& pane : _panes)
+        if (pane->player) pane->player->stopRecording();  // synchronous flush + index write
+    if (_keepAwake != 0) { IOPMAssertionRelease(_keepAwake); _keepAwake = 0; }
+}
+
+// The button reflects the ACTIVE pane's recording state, so it stays correct as the user
+// switches panes (call from -setActivePane:). Red filled dot = recording.
+- (void)updateRecordButton {
+    MacVideoPane* p = [self activePane];
+    const BOOL rec = p && p->player->isRecording();
+    NSString* sym = rec ? @"stop.circle.fill" : @"record.circle";
+    _recBtn.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:@"Record"];
+    _recBtn.contentTintColor = rec ? NSColor.systemRedColor : nil;
+    _recBtn.toolTip = rec ? @"Stop recording this pane" : @"Record the active pane";
+}
+
+// Hold an IOPMAssertion iff ANY pane is recording, so the Mac won't IDLE-sleep mid-recording.
+// (This does NOT wake a sleeping Mac and does not survive a lid close / low battery / Dark
+// Wake — macOS gives a non-root, hardened app no way to arm a wake. See mac/HANDOVER.md.)
+- (void)syncKeepAwake {
+    BOOL anyRecording = NO;
+    for (auto& pane : _panes)
+        if (pane->player && pane->player->isRecording()) { anyRecording = YES; break; }
+    if (anyRecording && _keepAwake == 0) {
+        IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep,
+                                    kIOPMAssertionLevelOn, CFSTR("RabbitEars recording"),
+                                    &_keepAwake);
+    } else if (!anyRecording && _keepAwake != 0) {
+        IOPMAssertionRelease(_keepAwake);
+        _keepAwake = 0;
+    }
 }
 
 // 250ms libVLC-stats poll → the stream-health meter. No audio capture (no consent,
@@ -911,6 +1047,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         if (auto y = _db->getSetting(L"pip_pos_y")) _pipPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
         if (auto w = _db->getSetting(L"pip_w")) _pipW = std::max(0.0, std::wcstod(w->c_str(), nullptr));
         if (auto h = _db->getSetting(L"pip_h")) _pipH = std::max(0.0, std::wcstod(h->c_str(), nullptr));
+        // Recording container: ts (default, crash-safest) or mp4. (No mkv — the bundled VLC
+        // has no mkv muxer; see +extForFormat:.)
+        _recFormat = L"ts";
+        if (auto r = _db->getSetting(L"rec_format"))
+            if (*r == L"mp4" || *r == L"ts") _recFormat = *r;
     }
 }
 
@@ -1063,6 +1204,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _panes[(size_t)i]->player->setMuted(i != idx);   // single audio: only the active pane
     _player->setVolume((int)_volume.doubleValue);
     [self updateActivePaneBorder];
+    [self updateRecordButton];  // the Record button reflects the newly-active pane's state
     [self applyMeterLayout];
     MacVideoPane* p = [self activePane];
     if (p && p->channelId) {
@@ -1225,6 +1367,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [self applyVideoPaneLayout];
     [self setActivePane:_activePane];
+    [self syncKeepAwake];  // a torn-down pane may have been recording — re-derive the assertion
     [self updateEmptyHint];
     switch (_viewMode) {
         case ViewMode::Split:
@@ -1549,12 +1692,33 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [[m addItemWithTitle:@"Refresh Guide…" action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Meters…" action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
+
+    // Recording ▸ format (ts / mkv / mp4). Recordings save to ~/Movies/RabbitEars.
+    NSMenuItem* recItem = [m addItemWithTitle:@"Recording" action:nil keyEquivalent:@""];
+    NSMenu* recMenu = [[NSMenu alloc] init];
+    [recMenu addItemWithTitle:@"Format" action:nil keyEquivalent:@""].enabled = NO;
+    struct { NSString* title; const wchar_t* fmt; } fmts[] = {
+        { @"MPEG-TS (.ts) — safest", L"ts" }, { @"MP4 (.mp4)", L"mp4" } };
+    for (auto& f : fmts) {
+        NSMenuItem* it = [recMenu addItemWithTitle:f.title action:@selector(setRecFormat:) keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = ns(f.fmt);
+        it.state = (_recFormat == f.fmt) ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    recItem.submenu = recMenu;
+
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"About RabbitEars" action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
     [m popUpMenuPositioningItem:nil
                      atLocation:NSMakePoint(0, NSHeight(sender.bounds) + 4)
                          inView:sender];
+}
+
+- (void)setRecFormat:(NSMenuItem*)sender {
+    _recFormat = ws(sender.representedObject);
+    if (_db) _db->setSetting(L"rec_format", _recFormat);
+    [self setStatus:[NSString stringWithFormat:@"Recording format: %@", sender.representedObject]];
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }

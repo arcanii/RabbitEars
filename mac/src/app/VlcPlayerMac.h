@@ -61,6 +61,29 @@ public:
     // silent stream isn't mistaken for denied audio capture.
     bool hasAudioTrack() const;
 
+    // ---- recording (independent headless second player) ----------------------------
+    // Record the stream to `filePath` via a SECOND, headless libVLC media player that muxes
+    // the elementary streams straight to disk (`:sout=#std{...}`, stream-copy, no re-encode,
+    // no video output) — the mac peer of Win32 VlcPlayer::doRecordStart. It opens a SEPARATE
+    // connection to `url`, independent of playback, so a pane can record while it plays (and
+    // providers that cap concurrent connections per account may reject the second one).
+    // `mux` is the libVLC container ("ts"/"mkv"/"mp4"). Returns false if the recorder can't
+    // start. One recording per player; a second start stops the first.
+    bool startRecording(const std::wstring& url, const std::wstring& userAgent,
+                        const std::wstring& referrer, const std::wstring& filePath,
+                        const std::string& mux);
+    // Stop + finalize the recording (SYNCHRONOUS: flushes and, for mp4/mkv, writes the index
+    // so the file is playable). Safe to call when not recording. Also run from the destructor,
+    // so a pane torn down mid-recording finalizes its file on the teardown queue.
+    void stopRecording();
+    // Like stopRecording, but hands the (blocking) stop+release to a background GCD queue so a
+    // stalled recording connection can't hang the UI — the mac peer of Win32's reaper thread.
+    // Returns immediately; the file finalizes when the background stop completes. Use for the
+    // user-facing Stop button; the destructor/quit paths use the synchronous stopRecording.
+    void stopRecordingAsync();
+    bool isRecording() const;
+    std::wstring recordingFile() const;  // the path being written, or empty
+
 private:
     struct Impl;
     Impl* impl_;

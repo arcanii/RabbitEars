@@ -29,14 +29,16 @@ struct VlcPlayerMac::Impl {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     libvlc_instance_t* vlc = nullptr;      // BORROWED from VlcEngineMac — never released here
     libvlc_media_player_t* player = nullptr;
+    libvlc_media_player_t* recorder = nullptr;  // headless second player muxing to a file
     // Stats accumulators (main-thread only) for per-second deltas across samples.
     int  prevRead = 0, prevDemux = 0, prevCorrupted = 0, prevDiscont = 0, prevLost = 0, prevShown = 0;
     bool firstSample = true;
     std::chrono::steady_clock::time_point lastSample{};
     int  savedAudioTrack = -1;  // track id to restore on unmute (multi-view background panes)
 #endif
-    bool    muted = false;
-    NSView* videoView = nil;  // weak; owned by the window
+    bool         muted = false;
+    std::wstring recFile;     // path the recorder is writing, or empty
+    NSView*      videoView = nil;  // weak; owned by the window
 };
 
 // The plugin-path setup + libvlc_new moved to VlcEngineMac (once per process); a player
@@ -61,6 +63,7 @@ bool VlcPlayerMac::init(VlcEngineMac& engine) {
 
 VlcPlayerMac::~VlcPlayerMac() {
 #if defined(RABBITEARS_HAVE_LIBVLC)
+    stopRecording();  // finalize + release the recorder BEFORE the player / the borrowed instance
     if (impl_->player) {
         libvlc_media_player_stop(impl_->player);
         libvlc_media_player_release(impl_->player);
@@ -235,5 +238,88 @@ bool VlcPlayerMac::hasAudioTrack() const {
     return false;
 #endif
 }
+
+// ---- recording (headless second player) -----------------------------------------------
+
+bool VlcPlayerMac::startRecording(const std::wstring& url, const std::wstring& userAgent,
+                                  const std::wstring& referrer, const std::wstring& filePath,
+                                  const std::string& mux) {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    stopRecording();  // one recording per player
+    if (!impl_->vlc) return false;
+    libvlc_media_t* m = libvlc_media_new_location(impl_->vlc, utf8FromWide(url).c_str());
+    if (!m) { diag::error(L"record: media_new failed for " + url); return false; }
+
+    // Stream-copy to a file: no re-encode, low CPU. Single-quote the dst so spaces survive,
+    // and DOUBLE any literal ' — VLC's config-chain parser ends a single-quoted value at the
+    // first ' unless doubled (the ~/Movies path can hold one, e.g. a user named O'Brien; the
+    // channel-name component is already scrubbed of ' by the caller). Paths are native '/'.
+    std::string dst = utf8FromWide(filePath);
+    for (size_t i = 0; (i = dst.find('\'', i)) != std::string::npos; i += 2) dst.insert(i, 1, '\'');
+    const std::string container = mux.empty() ? "ts" : mux;
+    libvlc_media_add_option(m, (":sout=#std{access=file,mux=" + container + ",dst='" + dst + "'}").c_str());
+    libvlc_media_add_option(m, ":sout-keep");
+    if (!userAgent.empty())
+        libvlc_media_add_option(m, (":http-user-agent=" + utf8FromWide(userAgent)).c_str());
+    if (!referrer.empty())
+        libvlc_media_add_option(m, (":http-referrer=" + utf8FromWide(referrer)).c_str());
+
+    impl_->recorder = libvlc_media_player_new_from_media(m);
+    libvlc_media_release(m);
+    if (!impl_->recorder) { diag::error(L"record: player_new failed"); return false; }
+    if (libvlc_media_player_play(impl_->recorder) != 0) {  // headless (no set_nsobject) -> muxed to file
+        diag::error(L"record: play failed to start");
+        libvlc_media_player_release(impl_->recorder);
+        impl_->recorder = nullptr;
+        return false;
+    }
+    impl_->recFile = filePath;
+    diag::info(L"recording started -> " + filePath);
+    return true;
+#else
+    (void)url; (void)userAgent; (void)referrer; (void)filePath; (void)mux;
+    return false;
+#endif
+}
+
+void VlcPlayerMac::stopRecording() {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (impl_->recorder) {
+        libvlc_media_player_stop(impl_->recorder);     // flush + finalize (mp4/mkv write their index here)
+        libvlc_media_player_release(impl_->recorder);
+        impl_->recorder = nullptr;
+        diag::info(L"recording stopped");
+    }
+#endif
+    impl_->recFile.clear();
+}
+
+void VlcPlayerMac::stopRecordingAsync() {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    libvlc_media_player_t* dying = impl_->recorder;
+    impl_->recorder = nullptr;      // detach now so isRecording() is immediately false
+    impl_->recFile.clear();
+    if (!dying) return;
+    // Hand the blocking stop()+release() to a background queue (peer of Win32's reaper thread):
+    // a stalled recorder connection or a slow mp4 index write can't hang the UI. The borrowed
+    // libVLC instance is an app-lifetime object (it leaks at quit, never released), so this
+    // detached stop can safely run even past termination — no use-after-free of the instance.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        libvlc_media_player_stop(dying);
+        libvlc_media_player_release(dying);
+        diag::info(L"recording stopped (async)");
+    });
+#endif
+}
+
+bool VlcPlayerMac::isRecording() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    return impl_->recorder != nullptr;
+#else
+    return false;
+#endif
+}
+
+std::wstring VlcPlayerMac::recordingFile() const { return impl_->recFile; }
 
 }  // namespace rabbitears

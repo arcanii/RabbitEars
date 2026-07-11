@@ -81,7 +81,7 @@ if(RABBITEARS_BUILD_MAC)
     "${CMAKE_BINARY_DIR}")                  # "generated/version.h"
   target_link_libraries(RabbitEars PRIVATE
     RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit"
-    "-framework CoreAudio" "-framework Accelerate")
+    "-framework CoreAudio" "-framework Accelerate" "-framework IOKit")
   set_target_properties(RabbitEars PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "RabbitEars"

@@ -44,4 +44,9 @@
 - (void)showGuide:(id)sender;
 - (void)exportFavourites:(id)sender;
 - (void)importFavourites:(id)sender;
+// Finalize any in-progress recordings on quit. The MRC app-lifetime objects (this controller,
+// its panes) are not destroyed at termination, so the VlcPlayerMac destructors that finalize a
+// recording never run — without this, an mp4/mkv recording open at quit loses its index and is
+// unplayable. Called from -applicationWillTerminate:.
+- (void)finalizeRecordingsForQuit;
 @end
