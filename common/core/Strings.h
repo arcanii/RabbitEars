@@ -187,7 +187,6 @@ enum class StringId {
     StatusPipChannel,
     StatusDownloadingPlaylist,
     StatusLoadingPlaylist,
-    StatusLanguageRestart,
     StatusActivePane,
     StatusActiveChannel,
     // --- Playlist ---
