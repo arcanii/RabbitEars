@@ -110,6 +110,13 @@ static const CGFloat kMeterGap = 8;  // gap between adjacent meters
 // Per-kind meter widths (index = (int)MeterKind: Spectrum, Signal, Bitrate, Frames).
 static const CGFloat kMeterW[4] = {180, 64, 130, 96};
 
+// PiP inset sizing. Default 16:9 at 240×135; the user can drag-resize between the min and
+// 60% of the container (enforced in -applyVideoPaneLayout and -paneDragged:).
+static const int kPipDefaultW = 240;
+static const int kPipDefaultH = 135;
+static const int kPipMinW = 160;
+static const int kPipMinH = 90;
+
 @implementation MainWindowController {
     NSWindow*      _window;
     NSSearchField* _search;
@@ -130,8 +137,10 @@ static const CGFloat kMeterW[4] = {180, 64, 130, 96};
     BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
     BOOL           _metersHidden;  // bottom-bar toggle: hide the whole meter line
     CGFloat        _meterPosX, _meterPosY;  // meter-bar position as a 0..1 fraction of the pane
-    BOOL           _pipMoved;               // the user dragged the PiP inset (else it sits bottom-right)
-    CGFloat        _pipPosX, _pipPosY;      // dragged PiP inset position, as a 0..1 fraction
+    BOOL           _pipMoved;               // the user moved/resized the PiP inset (else default corner)
+    CGFloat        _pipPosX, _pipPosY;      // PiP inset position, as a 0..1 fraction of the free travel
+    CGFloat        _pipW, _pipH;            // PiP inset size in px (persisted); 0 == use the default
+    BOOL           _pipResizing;            // latched at drag-start: this drag resizes (else moves)
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
@@ -888,6 +897,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         if (auto h = _db->getSetting(L"meters_hidden")) _metersHidden = (*h == L"1");
         if (auto x = _db->getSetting(L"meter_pos_x")) _meterPosX = std::clamp(std::wcstod(x->c_str(), nullptr), 0.0, 1.0);
         if (auto y = _db->getSetting(L"meter_pos_y")) _meterPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
+        // PiP inset geometry (position fraction + size px). Size is re-clamped against the
+        // live container in -applyVideoPaneLayout, so a stale size from a bigger window is safe.
+        if (auto m = _db->getSetting(L"pip_moved")) _pipMoved = (*m == L"1");
+        if (auto x = _db->getSetting(L"pip_pos_x")) _pipPosX = std::clamp(std::wcstod(x->c_str(), nullptr), 0.0, 1.0);
+        if (auto y = _db->getSetting(L"pip_pos_y")) _pipPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
+        if (auto w = _db->getSetting(L"pip_w")) _pipW = std::max(0.0, std::wcstod(w->c_str(), nullptr));
+        if (auto h = _db->getSetting(L"pip_h")) _pipH = std::max(0.0, std::wcstod(h->c_str(), nullptr));
     }
 }
 
@@ -990,7 +1006,14 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     const int icw = (int)_videoContainer.bounds.size.width;
     const int ich = (int)_videoContainer.bounds.size.height;
     rabbitears::VideoGridOpts opts;
-    opts.gap = 3; opts.pipW = 240; opts.pipH = 135; opts.pipMargin = 14;
+    // PiP inset size: the user's persisted size if set, else the default. Clamp to the
+    // container so a stale saved size (from a larger window) can't exceed it.
+    const int pw = _pipW > 0 ? (int)_pipW : kPipDefaultW;
+    const int ph = _pipH > 0 ? (int)_pipH : kPipDefaultH;
+    opts.gap = 3;
+    opts.pipW = std::clamp(pw, kPipMinW, std::max(kPipMinW, (int)(icw * 0.6)));
+    opts.pipH = std::clamp(ph, kPipMinH, std::max(kPipMinH, (int)(ich * 0.6)));
+    opts.pipMargin = 14;
     auto boxes = rabbitears::computeVideoPanes(_viewMode, (int)_panes.size(), 0, 0, icw, ich, opts);
     for (size_t i = 0; i < _panes.size() && i < boxes.size(); ++i) {
         NSView* v = _panes[i]->view;
@@ -1047,25 +1070,86 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 }
 
 // Drag the PiP inset around its backdrop (pane 0 is the full-bleed backdrop and never moves).
-// The position is remembered as a 0..1 fraction so it survives resize + relayout.
+// A drag that STARTS in the inset's top-left grip resizes it (bottom-right corner pinned);
+// any other drag moves it. Position is stored as a 0..1 fraction of the free travel and size
+// in px, both persisted, so the inset survives relayout AND relaunch.
 - (void)paneDragged:(NSPanGestureRecognizer*)g {
     if (_viewMode != ViewMode::Pip || !_videoContainer) return;
     int idx = -1;
     for (int i = 0; i < (int)_panes.size(); ++i)
         if (_panes[(size_t)i]->view == g.view) { idx = i; break; }
-    if (idx <= 0) return;  // only inset panes move
+    if (idx <= 0) return;  // only inset panes move/resize (pane 0 is the fixed backdrop)
     NSView* v = g.view;
+
+    if (g.state == NSGestureRecognizerStateBegan) {
+        // Decide resize-vs-move ONCE, from where the drag started. The inset view is not
+        // flipped (origin bottom-left), so its top-left corner is (0, height) — the corner
+        // that faces into the screen and is the natural resize handle.
+        const NSPoint p = [g locationInView:v];
+        const CGFloat grip = 24;
+        _pipResizing = (p.x <= grip && p.y >= v.bounds.size.height - grip);
+        [g setTranslation:NSZeroPoint inView:_videoContainer];
+        return;
+    }
+
     const NSPoint d = [g translationInView:_videoContainer];
-    NSRect f = v.frame;
-    const CGFloat maxX = std::max<CGFloat>(0, _videoContainer.bounds.size.width - f.size.width);
-    const CGFloat maxY = std::max<CGFloat>(0, _videoContainer.bounds.size.height - f.size.height);
-    f.origin.x = std::clamp<CGFloat>(f.origin.x + d.x, 0, maxX);
-    f.origin.y = std::clamp<CGFloat>(f.origin.y + d.y, 0, maxY);
-    v.frame = f;
     [g setTranslation:NSZeroPoint inView:_videoContainer];
+    const CGFloat cw = _videoContainer.bounds.size.width;
+    const CGFloat ch = _videoContainer.bounds.size.height;
+    NSRect f = v.frame;
+
+    if (_pipResizing) {
+        // Top-left handle: pin the bottom-right corner, grow toward the top-left. Dragging
+        // left (d.x<0) widens; dragging up (d.y>0) heightens. The upper bound is the SMALLER
+        // of 60% of the container and the free space to the pinned corner (rightX to the left,
+        // ch-bottomY upward) — so the growing top/left edge can never leave the container.
+        // (Both free spaces are >= the min: the inset is on-screen and at least min-sized.)
+        const CGFloat rightX  = f.origin.x + f.size.width;
+        const CGFloat bottomY = f.origin.y;
+        const CGFloat maxW = std::max<CGFloat>(kPipMinW, std::min<CGFloat>(cw * 0.6, rightX));
+        const CGFloat maxH = std::max<CGFloat>(kPipMinH, std::min<CGFloat>(ch * 0.6, ch - bottomY));
+        CGFloat newW = std::clamp<CGFloat>(f.size.width  - d.x, kPipMinW, maxW);
+        CGFloat newH = std::clamp<CGFloat>(f.size.height + d.y, kPipMinH, maxH);
+        f.size.width = newW; f.size.height = newH;
+        // Bottom-right pinned. newW<=rightX and newH<=ch-bottomY already keep both edges
+        // on-screen for any container >= the min inset; the max(0,...) floors make that hold
+        // by construction even if the container were ever smaller than the inset minimum.
+        f.origin.x = std::max<CGFloat>(0, rightX - newW);
+        f.origin.y = std::max<CGFloat>(0, bottomY);
+        v.frame = f;
+        _pipW = newW; _pipH = newH;
+    } else {
+        const CGFloat maxX = std::max<CGFloat>(0, cw - f.size.width);
+        const CGFloat maxY = std::max<CGFloat>(0, ch - f.size.height);
+        f.origin.x = std::clamp<CGFloat>(f.origin.x + d.x, 0, maxX);
+        f.origin.y = std::clamp<CGFloat>(f.origin.y + d.y, 0, maxY);
+        v.frame = f;
+    }
+
+    // Recompute the position fraction from the (possibly resized) frame so a later relayout
+    // reproduces this exact spot. Clamped defensively — the geometry above already keeps the
+    // frame on-screen, so these are always in [0,1]; the clamp guards against any future edit
+    // writing an out-of-range fraction that -loadMeterConfig would then snap on relaunch.
+    const CGFloat maxX = std::max<CGFloat>(0, cw - f.size.width);
+    const CGFloat maxY = std::max<CGFloat>(0, ch - f.size.height);
+    _pipPosX = std::clamp<CGFloat>(maxX > 0 ? f.origin.x / maxX : 0, 0, 1);
+    _pipPosY = std::clamp<CGFloat>(maxY > 0 ? f.origin.y / maxY : 0, 0, 1);
     _pipMoved = YES;
-    _pipPosX = maxX > 0 ? f.origin.x / maxX : 0;
-    _pipPosY = maxY > 0 ? f.origin.y / maxY : 0;
+
+    if (g.state == NSGestureRecognizerStateEnded ||
+        g.state == NSGestureRecognizerStateCancelled)
+        [self persistPipGeometry];
+}
+
+// Persist the PiP inset geometry (peer of the meter-bar position persistence). Fractions for
+// position (window-size-independent), px for size (clamped back into range on load).
+- (void)persistPipGeometry {
+    if (!_db) return;
+    _db->setSetting(L"pip_moved", _pipMoved ? L"1" : L"0");
+    _db->setSetting(L"pip_pos_x", std::to_wstring((double)_pipPosX));
+    _db->setSetting(L"pip_pos_y", std::to_wstring((double)_pipPosY));
+    _db->setSetting(L"pip_w", std::to_wstring((double)_pipW));
+    _db->setSetting(L"pip_h", std::to_wstring((double)_pipH));
 }
 
 // Copy the channel playing in `from` into pane `to` — used when collapsing so the active
@@ -1112,7 +1196,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (mode == ViewMode::Single) count = 1;
     if (count < 1) count = 1;
     _viewMode = mode;
-    _pipMoved = NO;  // a freshly-entered PiP starts in the default corner (Win32 parity)
+    // NB: the PiP inset position/size is PERSISTED (see -paneDragged: / -persistPipGeometry),
+    // so entering PiP restores where the user last left it rather than snapping to the corner.
 
     while ((int)_panes.size() < count) [self makePane];   // grow
 
