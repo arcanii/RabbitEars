@@ -189,6 +189,24 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   to composite over libVLC's D3D vout); a user toggle to drop it out of topmost when the main window
   isn't focused. (Its resize grip + position/size persistence shipped in 0.2.6.)
 
+## Localization (i18n) follow-ups
+
+The engine shipped in 0.2.8-dev (English + Japanese; JSON source in `common/i18n/`, generator
+`tools/i18n/gen_i18n.py`, `common/i18n/README.md`). Remaining:
+- **Native Japanese review** — the current `ja.json` is a glossary-consistent machine draft. A native
+  speaker should pass over it (via `gen_i18n.py --review ja`), the **Terms-of-Use** text especially
+  (provisional legal wording). This is the gate before advertising JP support in a release.
+- **Live language switch** (currently restart-to-apply) — rebuild the built-once chrome + GDI fonts +
+  the cached Direct2D grid/guide text formats on toggle, reusing the DPI-change relayout path. Modest.
+- **More languages** — drop a `<code>.json` + `languages.json` entry + wire `Tr.h`/menu; the generator
+  refuses to build until every key is filled. The lookup already scales (kTables indexed by `Lang`).
+- **Localize the 2 COMDLG filter strings** ("Playlists (*.m3u)…") — kept literal because of their
+  embedded `\0` separators; needs a small special-cased builder, not the flat catalog.
+- **macOS adoption** — the catalog is pure `common/`, so mac can consume `trU8()` (wrap with its `ns()`
+  UTF-8 helper) and gain the same completeness selftest; currently Win32-only.
+- **Date/time format strings** in the schedule dialog/columns are left numeric (yyyy-MM-dd) — revisit if
+  locale-aware date formatting is wanted.
+
 ## Polish / cleanup
 
 - **Shared `runModalLoop` helper** — About / prompt / Categories / Terms / info / Meters each run a

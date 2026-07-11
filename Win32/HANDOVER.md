@@ -731,9 +731,38 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-🚧 **0.2.8-dev** (UNRELEASED; committed to `main`) — two things so far: the **wake-timer preflight** and a
-**TV Guide loading box**. Built green x64 BOTH theme flags + native ARM64, selftest ALL PASS (+14),
-adversarially reviewed. **Owner runtime/visual pass owed** (the sandbox can't launch the GUI).
+🚧 **0.2.8-dev** (UNRELEASED; committed to `main`) — three things so far: the **wake-timer preflight**, a
+**TV Guide loading box**, and **localization (Japanese first)**. Built green x64 BOTH theme flags + native
+ARM64, selftest ALL PASS, adversarially reviewed. **Owner runtime/visual pass owed** (the sandbox can't
+launch the GUI).
+
+**Localization — Japanese first (commit `c9c2504`).** The app is fully localizable and ships English + 日本語,
+defaulting to the system language with a Settings ▸ Language toggle (System / English / 日本語, restart-to-apply).
+- **The pipeline is the point (sustainable).** Source of truth = JSON under **`common/i18n/`** (`languages.json`
+  + `keys.json` + one `<code>.json` per language). **`tools/i18n/gen_i18n.py`** generates the pure catalog
+  `common/core/Strings.{h,cpp}` (enum `StringId` indexing a per-language table → "every key in every language"
+  is generator- AND compile-time enforced). **Never hand-edit `Strings.{h,cpp}`** — edit the JSON, run the
+  generator, commit both. Adding a language = drop a `<code>.json` + a `languages.json` entry + wire
+  `Tr.h`/menu; it won't build until every one of the ~374 keys is filled. Translator confirmation:
+  `gen_i18n.py --review ja` → a side-by-side `review-ja.md`. See `common/i18n/README.md`.
+- **Three drift guards:** `gen_i18n.py --check` (wired into `.github/workflows/windows-core.yml`), the CLI
+  `--selftest` (completeness + placeholder parity), and the compile-time array-vs-enum check.
+- **Call sites:** `Win32/ui/Tr.h` gives `tr(StringId)`→wstring and `trf(id,{args})` (fills `{0}`,`{1}`…);
+  ~430 hardcoded `L"..."` across `Win32/ui/*.cpp` were converted (much of it by parallel agents, build-gated +
+  a completeness scan). Two COMDLG filter strings (embedded `\0`) stay literal in code, by design.
+- **Selector/chrome:** system default via `GetUserDefaultUILanguage`, read at WM_CREATE **before** the chrome
+  builds (and before the splash thread starts — see the atomic below); ids 2066–2068. The command-bar
+  "Settings ▾" is now an **MDL2 gear glyph** (`kGlyphSettings` U+E713, mac parity) and the flat Settings menu
+  is **regrouped** (Channels / Recording / View / Layout submenus; Language + Theme top-level).
+- **CJK font:** `themeFontFamily()` (the single GDI+DirectWrite choke point) switches non-symbol roles to
+  **Yu Gothic UI** when Japanese; the MDL2 glyph role is exempt so the gear/transport icons stay.
+- **Two review-caught bugs fixed:** the JP view-switch confirm leaked an English `%s` plural "s" (now baked
+  "(s)" into the string); and the language global is a **relaxed `std::atomic`** set **before** the splash
+  worker thread starts — fixing a data race + an English flash on the localized splash.
+- **⚠️ Japanese is a glossary-consistent MACHINE DRAFT** pending a native review (Terms-of-Use especially).
+  The pipeline exists precisely so that review is a clean `ja.json` diff.
+- **Owner pass wanted:** the menu/dialogs read naturally in Japanese (no tofu, Yu Gothic UI); the gear looks
+  right; a Japanese-Windows install comes up Japanese with no toggle; switching language + restart applies it.
 
 **TV Guide loading box** (`onEpgGuide`, `MainWindowCommands.cpp`). The FIRST guide open is slow (reopen via
 `revealEpgGuide` is instant) — a synchronous per-playlist `programmesInWindow` build on the UI thread, with
