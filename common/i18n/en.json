@@ -372,5 +372,9 @@
   "AppName": "RabbitEars",
   "CategoriesTitle": "Categories",
   "CategoriesNoneHeading": "No categories to filter",
-  "CategoriesNoneBody": "The channels in your library have no group titles, so there are no categories to include or exclude.\\r\\n\\r\\nAdd a playlist whose #EXTINF lines carry group-title tags to use this filter.\\r\\n"
+  "CategoriesNoneBody": "The channels in your library have no group titles, so there are no categories to include or exclude.\\r\\n\\r\\nAdd a playlist whose #EXTINF lines carry group-title tags to use this filter.\\r\\n",
+  "LangRestartInstruction": "Restart to change the display language",
+  "LangRestartBody": "RabbitEars needs to restart to apply the new language.",
+  "LangRestartNow": "Restart now",
+  "LangRestartLater": "Later"
 }

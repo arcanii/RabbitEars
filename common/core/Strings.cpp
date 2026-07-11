@@ -64,6 +64,10 @@ constexpr std::array<const char*, N> kEn = {{
     "日本語",  // LangJapanese
     "Channels",  // MenuChannels
     "Recording",  // MenuRecording
+    "Restart to change the display language",  // LangRestartInstruction
+    "RabbitEars needs to restart to apply the new language.",  // LangRestartBody
+    "Restart now",  // LangRestartNow
+    "Later",  // LangRestartLater
     // --- Nav ---
     "Set Guide URL…",  // MenuSetGuideUrl
     "Set Guide URL… (no playlists)",  // MenuGuideSetUrlNoPlaylists
@@ -456,6 +460,10 @@ constexpr std::array<const char*, N> kJa = {{
     "日本語",  // LangJapanese
     "チャンネル",  // MenuChannels
     "録画",  // MenuRecording
+    "表示言語を変更するには再起動してください",  // LangRestartInstruction
+    "新しい言語を適用するには RabbitEars を再起動する必要があります。",  // LangRestartBody
+    "今すぐ再起動",  // LangRestartNow
+    "後で",  // LangRestartLater
     // --- Nav ---
     "番組表URLを設定…",  // MenuSetGuideUrl
     "番組表URLを設定…（プレイリストなし）",  // MenuGuideSetUrlNoPlaylists

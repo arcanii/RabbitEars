@@ -65,6 +65,10 @@ enum class StringId {
     LangJapanese,
     MenuChannels,
     MenuRecording,
+    LangRestartInstruction,
+    LangRestartBody,
+    LangRestartNow,
+    LangRestartLater,
     // --- Nav ---
     MenuSetGuideUrl,
     MenuGuideSetUrlNoPlaylists,

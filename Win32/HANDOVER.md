@@ -737,7 +737,11 @@ ARM64, selftest ALL PASS, adversarially reviewed. **Owner runtime/visual pass ow
 launch the GUI).
 
 **Localization — Japanese first (commit `c9c2504`).** The app is fully localizable and ships English + 日本語,
-defaulting to the system language with a Settings ▸ Language toggle (System / English / 日本語, restart-to-apply).
+defaulting to the system language with a Settings ▸ Language toggle (System / English / 日本語). Changing it
+prompts a themed **TaskDialog** (Restart now / Later, localized to the chosen language); "Restart now"
+self-relaunches — a new instance is spawned with **`--restart`** (which WAITS on the single-instance mutex
+for the outgoing instance to exit instead of bouncing), then the current one tears down. The active language
+is left unchanged until the restart, so the session never shows a half-translated mix.
 - **The pipeline is the point (sustainable).** Source of truth = JSON under **`common/i18n/`** (`languages.json`
   + `keys.json` + one `<code>.json` per language). **`tools/i18n/gen_i18n.py`** generates the pure catalog
   `common/core/Strings.{h,cpp}` (enum `StringId` indexing a per-language table → "every key in every language"

@@ -1668,7 +1668,7 @@ void registerClasses(HINSTANCE hInst) {
 
 }  // namespace mw
 
-int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake) {
+int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
     using namespace mw;  // the window internals now live in rabbitears::mw
     // Single-instance guard (before diag::init, so a second launch doesn't rotate the
     // running instance's log). The mutex name matches the installer's AppMutex, so the
@@ -1676,17 +1676,24 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake) {
     // lifetime (released on exit); a second launch just focuses the existing window.
     HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"RabbitEars.SingleInstance");
     if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
-        // A wake-launch that finds us already running has nothing to do: the live instance's
-        // scheduler tick will start the recording. Yanking its window to the foreground (and
-        // over whatever the user is doing) would be the opposite of unattended.
-        if (!scheduledWake) {
-            if (HWND existing = FindWindowW(kMainClass, nullptr)) {
-                if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
-                SetForegroundWindow(existing);
+        // A self-restart (Settings ▸ Language ▸ Restart now) launches us with --restart while the
+        // outgoing instance is still tearing down. Wait for it to release the mutex (it exits within
+        // the WM_DESTROY watchdog's 4 s), then fall through to a normal, single-owner startup.
+        if (restart) {
+            WaitForSingleObject(instanceMutex, 6000);  // WAIT_ABANDONED when the old instance exits
+        } else {
+            // A wake-launch that finds us already running has nothing to do: the live instance's
+            // scheduler tick will start the recording. Yanking its window to the foreground (and
+            // over whatever the user is doing) would be the opposite of unattended.
+            if (!scheduledWake) {
+                if (HWND existing = FindWindowW(kMainClass, nullptr)) {
+                    if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+                    SetForegroundWindow(existing);
+                }
             }
+            CloseHandle(instanceMutex);
+            return 0;
         }
-        CloseHandle(instanceMutex);
-        return 0;
     }
 
     diag::init(RE_VERSION_DISPLAY_W);

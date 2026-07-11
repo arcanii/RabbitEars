@@ -20,6 +20,7 @@
 #include <commdlg.h>
 #include <dwmapi.h>
 #include <shlobj.h>  // SHGetKnownFolderPath (Videos folder for recordings)
+#include <shellapi.h>  // ShellExecuteW (self-restart on a language change)
 #include <objidl.h>  // IStream — required by gdiplus.h below
 #include <windowsx.h>
 // gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the
@@ -1321,17 +1322,55 @@ void onMeters(AppState* st) {
     layout(st->hwnd, st);  // show/hide meters per the new enables
 }
 
-// Settings ▸ Language: persist the choice and tell the user it applies on restart. We deliberately
-// do NOT re-render live — the built-once chrome (nav tree, cue banner, buffer label) plus the cached
-// Direct2D text formats would need a full rebuild + font-remake; restart-to-apply is the pragmatic
-// first pass (the live upgrade is backlogged). setActiveLang here keeps any menu/dialog opened before
-// the restart consistent with the choice.
+// Relaunch the app to apply a setting that only takes effect at startup (the display language). A
+// fresh instance is launched with --restart (it WAITS on the single-instance mutex for us to exit,
+// rather than bouncing), then we tear down — which releases the mutex and lets the new one take over.
+void restartApp(AppState* st) {
+    wchar_t exe[MAX_PATH] = L"";
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const HINSTANCE r = ShellExecuteW(nullptr, L"open", exe, L"--restart", nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(r) > 32) {  // > 32 == launched OK (ShellExecute's success contract)
+        DestroyWindow(st->hwnd);  // WM_DESTROY tears down cleanly (reaper threads + libVLC + the mutex)
+    } else {
+        // Couldn't spawn the new instance — stay open rather than close with no relaunch. The choice
+        // is already persisted, so it still applies the next time the user launches RabbitEars.
+        diag::warn(L"language restart: relaunch failed (ShellExecute), staying open");
+    }
+}
+
+// Settings ▸ Language: persist the choice, then prompt (Restart now / Later). We deliberately do NOT
+// re-render live — the built-once chrome + the cached Direct2D text formats would need a full rebuild
+// + font-remake; restart-to-apply is the pragmatic first pass (live upgrade is backlogged). The
+// active language is left UNCHANGED until the restart, so the current session stays fully consistent
+// in the old language rather than showing a half-translated mix.
 void setLanguageSelection(AppState* st, const wchar_t* pref) {
-    if (st->uiLanguage == pref) return;
+    if (st->uiLanguage == pref) return;  // already selected — nothing to change or prompt
     st->uiLanguage = pref;
     st->db.setSetting(L"ui_language", pref);
-    i18n::setActiveLang(resolveLang(st->uiLanguage));
-    setStatus(st, tr(i18n::StringId::StatusLanguageRestart));
+
+    // A themed TaskDialog with custom buttons — its text is localized to the JUST-CHOSEN language
+    // (a preview of what the restart brings), via a temporary active-language switch for the lookups.
+    const i18n::Lang shown = resolveLang(st->uiLanguage);
+    const std::wstring title = wideFromUtf8(i18n::trU8(i18n::StringId::AppName, shown));
+    const std::wstring instr = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartInstruction, shown));
+    const std::wstring body = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartBody, shown));
+    const std::wstring now = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartNow, shown));
+    const std::wstring later = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartLater, shown));
+    const TASKDIALOG_BUTTON btns[] = {{IDYES, now.c_str()}, {IDNO, later.c_str()}};
+    TASKDIALOGCONFIG cfg{};
+    cfg.cbSize = sizeof(cfg);
+    cfg.hwndParent = st->hwnd;
+    cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+    cfg.pszWindowTitle = title.c_str();
+    cfg.pszMainIcon = TD_INFORMATION_ICON;
+    cfg.pszMainInstruction = instr.c_str();
+    cfg.pszContent = body.c_str();
+    cfg.pButtons = btns;
+    cfg.cButtons = ARRAYSIZE(btns);
+    cfg.nDefaultButton = IDYES;
+    int pressed = 0;
+    if (SUCCEEDED(TaskDialogIndirect(&cfg, &pressed, nullptr, nullptr)) && pressed == IDYES)
+        restartApp(st);  // else "Later" / dismissed — the choice is persisted, applies next launch
 }
 
 // Command-bar Settings (gear) menu — grouped submenus mirroring the mac gear menu's curation.

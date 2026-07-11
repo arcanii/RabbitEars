@@ -16,5 +16,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR lpCmdLine, int nCmdShow) {
     // at a modal Terms re-prompt). A plain substring test is enough — the flag is ours and
     // the app takes no other arguments.
     const bool scheduledWake = lpCmdLine && wcsstr(lpCmdLine, L"--scheduled-wake") != nullptr;
-    return rabbitears::runApp(hInst, nCmdShow, scheduledWake);
+    // --restart is passed by a self-restart (Settings ▸ Language ▸ Restart now). It tells runApp to
+    // WAIT for the outgoing instance to release the single-instance mutex instead of bouncing.
+    const bool restart = lpCmdLine && wcsstr(lpCmdLine, L"--restart") != nullptr;
+    return rabbitears::runApp(hInst, nCmdShow, scheduledWake, restart);
 }

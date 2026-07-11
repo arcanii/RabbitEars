@@ -9,6 +9,6 @@ namespace rabbitears {
 // `scheduledWake` == launched by the Windows Scheduled Task that wakes this PC for a
 // recording (see platform/WakeScheduler): the launch is unattended, so it must not steal
 // focus and must not block on the post-update Terms re-prompt.
-int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake = false);
+int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake = false, bool restart = false);
 
 }  // namespace rabbitears

@@ -294,6 +294,30 @@
     "comment": ""
   },
   {
+    "id": "LangRestartInstruction",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LangRestartBody",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LangRestartNow",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LangRestartLater",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
     "id": "MenuSetGuideUrl",
     "cluster": "Nav",
     "placeholders": [],

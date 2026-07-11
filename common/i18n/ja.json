@@ -372,5 +372,9 @@
   "AppName": "RabbitEars",
   "CategoriesTitle": "カテゴリ",
   "CategoriesNoneHeading": "フィルターするカテゴリがありません",
-  "CategoriesNoneBody": "ライブラリのチャンネルにグループタイトルがないため、含めたり除外したりするカテゴリがありません。\\r\\n\\r\\nこのフィルターを使うには、#EXTINF 行に group-title タグを持つプレイリストを追加してください。\\r\\n"
+  "CategoriesNoneBody": "ライブラリのチャンネルにグループタイトルがないため、含めたり除外したりするカテゴリがありません。\\r\\n\\r\\nこのフィルターを使うには、#EXTINF 行に group-title タグを持つプレイリストを追加してください。\\r\\n",
+  "LangRestartInstruction": "表示言語を変更するには再起動してください",
+  "LangRestartBody": "新しい言語を適用するには RabbitEars を再起動する必要があります。",
+  "LangRestartNow": "今すぐ再起動",
+  "LangRestartLater": "後で"
 }
