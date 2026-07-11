@@ -13,9 +13,10 @@ set(APP_VERSION "0.2.8")
 # overrides it here, feeding both CFBundleShortVersionString and the generated version.h.
 # Windows (the .exe / windows-core CI) is unaffected and stays on its own 0.2.x line.
 #
-# mac 0.2.0 opens the parity line: multi-view (Split/2x2), Picture-in-Picture, and the
-# TV Guide (EPG) — catching up to the Windows 0.2.x feature set. (mac history: 0.1.7 first
-# release → 0.1.10 meters/playlists/ToU.)
+# mac 0.2.7 continues the parity line: 0.2.0 landed multi-view (Split/2x2), Picture-in-Picture
+# and the TV Guide (EPG); 0.2.7 adds the Windows 0.2.6/0.2.7 parity set — favourites import/export
+# + Show-in-Guide, PiP inset resize/persist, named saved layouts, per-pane recording, and the
+# recording scheduler with EPG series rules. (mac history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7.)
 if(APPLE)
-  set(APP_VERSION "0.2.0")
+  set(APP_VERSION "0.2.7")
 endif()
