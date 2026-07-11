@@ -428,6 +428,26 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
                        const std::wstring& title, long long startUtc, long long stopUtc);
 
 void onEpgGuide(AppState* st) {
+    // Opening the guide is the SLOW path (reopen — revealEpgGuide — is instant): it runs a
+    // per-playlist programmesInWindow query + grouping synchronously on the UI thread, and the guide
+    // window only appears at the very end. Put a "Loading TV guide…" box up first so the click has an
+    // immediate, visible response (with the busy-spinner cursor) instead of a frozen window the user
+    // assumes has hung. The box is painted synchronously (showLoadingDialog ends with UpdateWindow)
+    // and torn down on EVERY exit below. It is a LOCAL HWND — it lives only for this synchronous call,
+    // so it must NOT reuse st->loadingDlg (that belongs to the async EPG fetch; borrowing it would
+    // orphan the fetch's box and leave onEpgDone closing the wrong window). No busy guard for the same
+    // reason: the build only READS the DB on the UI thread, so it's safe to run during a fetch/playlist
+    // load, and the fetch's own box is topmost so it still floats over the opened guide.
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    HWND loadDlg = showLoadingDialog(st->hwnd, hInst, st->dpi, L"TV Guide",
+                                     L"Building the guide from stored programmes…");
+    // No diag timer exists on this path, so the absolute first-open cost is unmeasured; bracket it
+    // (owner can't profile the GUI from the build sandbox). If builds run past ~2-3 s on real guides,
+    // the fix is a worker with its OWN sqlite connection — see Win32/BACKLOG.md.
+    LARGE_INTEGER freq, tBuild0, tBuild1, tShow0, tShow1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&tBuild0);
+
     const long long now = static_cast<long long>(time(nullptr));
     const long long winStart = now - 6 * 3600;    // a little history
     const long long winEnd = now + 72 * 3600;     // three days ahead
@@ -474,8 +494,9 @@ void onEpgGuide(AppState* st) {
         }
         flush();
     }
-    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    QueryPerformanceCounter(&tBuild1);
     if (rows.empty()) {
+        closeLoadingDialog(loadDlg);  // dismiss before the modal info box, or it stacks on top
         showInfoDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"No guide to show",
                        L"No stored programmes match a channel in your playlists.\r\n\r\n"
                        L"Either run Settings ▸ Refresh Guide… first, or the guide's channel IDs don't "
@@ -528,7 +549,15 @@ void onEpgGuide(AppState* st) {
         setStatus(st, (ch->favourite ? L"Removed from Favourites: " : L"Added to Favourites: ") +
                           channelName);
     };
+    closeLoadingDialog(loadDlg);  // dismiss the box before the guide window paints
+    const size_t nRows = rows.size();  // capture before the move below empties `rows`
+    QueryPerformanceCounter(&tShow0);
     showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
+    QueryPerformanceCounter(&tShow1);
+    auto ms = [&](LONGLONG a, LONGLONG b) { return std::to_wstring((b - a) * 1000 / freq.QuadPart); };
+    diag::info(L"TV guide first-open: DB+build " + ms(tBuild0.QuadPart, tBuild1.QuadPart) +
+               L" ms, window " + ms(tShow0.QuadPart, tShow1.QuadPart) + L" ms (" +
+               std::to_wstring(nRows) + L" channels)");
 }
 
 // Prompt for a playlist's XMLTV guide URL (seeded with its current one), save the override,
