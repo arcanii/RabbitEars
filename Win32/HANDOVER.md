@@ -765,8 +765,10 @@ is left unchanged until the restart, so the session never shows a half-translate
   worker thread starts — fixing a data race + an English flash on the localized splash.
 - **⚠️ Japanese is a glossary-consistent MACHINE DRAFT** pending a native review (Terms-of-Use especially).
   The pipeline exists precisely so that review is a clean `ja.json` diff.
-- **Owner pass wanted:** the menu/dialogs read naturally in Japanese (no tofu, Yu Gothic UI); the gear looks
-  right; a Japanese-Windows install comes up Japanese with no toggle; switching language + restart applies it.
+- **Owner pass:** ✅ **language shift confirmed** (2026-07-11) — switching language + the Restart-now prompt
+  brings the app back up in the chosen language, on-device. Still worth an eyeball: the gear/menu look, that
+  Japanese reads naturally (no tofu), and that a Japanese-Windows install comes up Japanese with no toggle.
+  The **native Japanese review** (`gen_i18n.py --review ja`) remains the gate before advertising JP support.
 
 **TV Guide loading box** (`onEpgGuide`, `MainWindowCommands.cpp`). The FIRST guide open is slow (reopen via
 `revealEpgGuide` is instant) — a synchronous per-playlist `programmesInWindow` build on the UI thread, with
