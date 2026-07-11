@@ -31,7 +31,22 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.7 SHIPPED (DVR: wake-to-record + series rules)** · 0.2.8-dev: wake-timer preflight · macOS Phase-1
+## Current state — **v0.2.8 SHIPPED (localization: EN + 日本語 · wake preflight · guide loading box)** · macOS 0.2.0
+
+**Released:** **`v0.2.8`** (2026-07-11), tag `v0.2.8` @ `e45adb6`, full version **`0.2.8.217`** (tag count ==
+shipped build number), three signed installers on GitHub release `v0.2.8` (x64 / native ARM64 / universal),
+**two appcasts** (`0.2.8.217`) committed @ `5404004` and LIVE (raw feeds serve 0.2.8.217; all three enclosures
+HTTP 200). Owner-signed on the Mac (`sign_update --account SQLTerminal`). **Three headline features:**
+(1) **Localization** — the app is fully localizable and ships **English + 日本語**, defaulting to the system
+language with a Settings ▸ Language toggle (gear-icon menu, regrouped; Yu Gothic UI for CJK; restart-to-apply
+via a themed prompt). The source of truth is JSON under `common/i18n/` → `tools/i18n/gen_i18n.py` generates
+`common/core/Strings.{h,cpp}` (**never hand-edit them**); CI `--check` + selftest guard drift. (2) **Wake-timer
+preflight** — warns when the power plan won't wake the PC for a recording, + "Run wake task now". (3) **TV Guide
+loading box.** Built green (x64 BOTH theme flags + native ARM64 + selftest); each feature adversarially reviewed
+(the localization pass alone fixed 3 confirmed bugs). **Owner pass:** ✅ language shift confirmed on-device;
+the wake-preflight banner + guide loading box are **low-risk, delegated to testers** (owner's call).
+**⚠️ Japanese is a machine draft** pending a native review (`gen_i18n.py --review ja`) — the gate before
+*advertising* JP support; it ships now as an initial translation.
 
 **Released:** **`v0.2.7`** (2026-07-10), tag `v0.2.7` @ `cc9f9e4`, full version **`0.2.7.184`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.7` (x64 / native ARM64 / universal),
@@ -731,10 +746,12 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-🚧 **0.2.8-dev** (UNRELEASED; committed to `main`) — three things so far: the **wake-timer preflight**, a
-**TV Guide loading box**, and **localization (Japanese first)**. Built green x64 BOTH theme flags + native
-ARM64, selftest ALL PASS, adversarially reviewed. **Owner runtime/visual pass owed** (the sandbox can't
-launch the GUI).
+✅ **0.2.8 SHIPPED** (2026-07-11) — tag `v0.2.8` @ `e45adb6`, `0.2.8.217`, three signed installers on GitHub
+release `v0.2.8`, two appcasts LIVE @ `5404004`. Three features: the **wake-timer preflight**, a **TV Guide
+loading box**, and **localization (English + 日本語)**. Built green x64 BOTH theme flags + native ARM64,
+selftest ALL PASS, adversarially reviewed. Owner pass: ✅ language shift confirmed on-device; the wake
+preflight banner + guide loading box are low-risk, **delegated to testers**. Japanese is a machine draft —
+native review is the gate before advertising JP support. (Details of the three features below.)
 
 **Localization — Japanese first (commit `c9c2504`).** The app is fully localizable and ships English + 日本語,
 defaulting to the system language with a Settings ▸ Language toggle (System / English / 日本語). Changing it
@@ -1126,9 +1143,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.7 block)
 > — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
-> **State: last SHIPPED = `v0.2.7`** (2026-07-10, tag @ `cc9f9e4`, `0.2.7.184`, appcasts @ `438c83d`).
-> Everything shipped is LIVE and auto-updating. **On `main`, UNRELEASED: the 0.2.8-dev wake-timer
-> preflight** (see its block under "Immediate next steps").
+> **State: last SHIPPED = `v0.2.8`** (2026-07-11, tag @ `e45adb6`, `0.2.8.217`, appcasts @ `5404004`).
+> `main` is clean. Everything shipped is LIVE and auto-updating (raw feeds serve 0.2.8.217, enclosures
+> HTTP 200). 0.2.8 = **localization (EN + 日本語)** + wake-timer preflight + TV Guide loading box. i18n
+> source of truth is `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*`
+> (never hand-edit). **Japanese is a machine draft** — native review (`gen_i18n.py --review ja`) is the
+> gate before advertising JP support.
 >
 > **The app.** `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = a video
 > HWND + `VlcPlayer` + channel; `AppState` holds the vector + `active` + `ViewMode`). Single / Split (2×2
