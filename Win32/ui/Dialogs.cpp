@@ -22,6 +22,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/BufferMeter.h"  // the Data-flow row's preview (createBufferMeter / bufferMeterSet*)
 #include "ui/MiniMeter.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"
 #include "version.h"
 
 #pragma comment(lib, "gdiplus.lib")
@@ -53,7 +54,6 @@ constexpr int ID_CHECK_UPDATES = 1201;
 
 // The project's GitHub — shown as a clickable link in the About box.
 constexpr wchar_t kGithubUrl[] = L"https://github.com/arcanii/RabbitEars";
-constexpr wchar_t kGithubLabel[] = L"github.com/arcanii/RabbitEars";
 
 // The architecture this build actually runs as, for the About box — distinguishes the native
 // ARM64 build from the x64 build, and flags an x64 build running under emulation on an ARM64
@@ -62,13 +62,13 @@ constexpr wchar_t kGithubLabel[] = L"github.com/arcanii/RabbitEars";
 // GetProcAddress so the app still loads on the (older) Windows that lack it.
 std::wstring runningArchLabel() {
 #if defined(_M_ARM64)
-    const wchar_t* proc = L"ARM64";
+    const std::wstring proc = tr(i18n::StringId::AboutArchArm64);
 #elif defined(_M_X64)
-    const wchar_t* proc = L"x64";
+    const std::wstring proc = tr(i18n::StringId::AboutArchX64);
 #elif defined(_M_IX86)
-    const wchar_t* proc = L"x86";
+    const std::wstring proc = tr(i18n::StringId::AboutArchX86);
 #else
-    const wchar_t* proc = L"unknown";
+    const std::wstring proc = tr(i18n::StringId::AboutArchUnknown);
 #endif
     using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
     if (auto fn = reinterpret_cast<IsWow64Process2Fn>(
@@ -77,7 +77,8 @@ std::wstring runningArchLabel() {
         if (fn(GetCurrentProcess(), &procMach, &nativeMach) &&
             procMach != IMAGE_FILE_MACHINE_UNKNOWN) {  // != UNKNOWN => running emulated
             return std::wstring(proc) +
-                   (nativeMach == IMAGE_FILE_MACHINE_ARM64 ? L" (emulated on ARM64)" : L" (emulated)");
+                   (nativeMach == IMAGE_FILE_MACHINE_ARM64 ? tr(i18n::StringId::AboutArchEmulatedOnArm64)
+                                                           : tr(i18n::StringId::AboutArchEmulated));
         }
     }
     return proc;  // native (or pre-1709 Windows, where we can't tell — show the build arch)
@@ -167,25 +168,27 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HGDIOBJ oldFont = SelectObject(mem, st->titleFont);
             SetTextColor(mem, th.textPrimary);
             RECT tr{tx, m, rc.right - m, m + dp(36, st->dpi)};
-            DrawTextW(mem, L"RabbitEars", -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            DrawTextW(mem, rabbitears::tr(i18n::StringId::AppName).c_str(), -1, &tr,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE);
             SelectObject(mem, st->bodyFont);
             SetTextColor(mem, th.textSecondary);
             RECT br{tx, tr.bottom + dp(6, st->dpi), rc.right - m, tr.bottom + dp(80, st->dpi)};
-            const std::wstring verLine = L"A simple IPTV viewer for Windows.\r\nVersion "
-                                         RE_VERSION_DISPLAY_W L"  ·  " + runningArchLabel();
+            const std::wstring verLine =
+                trf(i18n::StringId::AboutVersionLine, {RE_VERSION_DISPLAY_W, runningArchLabel()});
             DrawTextW(mem, verLine.c_str(), -1, &br, DT_LEFT | DT_TOP | DT_WORDBREAK);
             SetTextColor(mem, th.textMuted);
             RECT ar{tx, br.bottom + dp(10, st->dpi), rc.right - m, br.bottom + dp(58, st->dpi)};
-            DrawTextW(mem, L"Plays media with libVLC (LGPL-2.1)\r\n© VideoLAN and the VLC contributors.",
+            DrawTextW(mem, rabbitears::tr(i18n::StringId::AboutLibVlcCredit).c_str(),
                       -1, &ar, DT_LEFT | DT_TOP | DT_WORDBREAK);
             // Clickable link to the project on GitHub: accent-coloured + underlined, opened in
             // WM_LBUTTONDOWN; a hand cursor shows over it (WM_SETCURSOR). linkRect is the hit-test.
             SetTextColor(mem, th.accent);
             SIZE lsz{};
-            GetTextExtentPoint32W(mem, kGithubLabel, lstrlenW(kGithubLabel), &lsz);
+            const std::wstring githubLabel = rabbitears::tr(i18n::StringId::AboutGithubLinkLabel);
+            GetTextExtentPoint32W(mem, githubLabel.c_str(), static_cast<int>(githubLabel.size()), &lsz);
             const int ly = ar.bottom + dp(8, st->dpi);
             st->linkRect = {tx, ly, tx + lsz.cx, ly + lsz.cy};
-            DrawTextW(mem, kGithubLabel, -1, &st->linkRect, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            DrawTextW(mem, githubLabel.c_str(), -1, &st->linkRect, DT_LEFT | DT_TOP | DT_SINGLELINE);
             RECT ul{tx, ly + lsz.cy, tx + lsz.cx, ly + lsz.cy + dp(1, st->dpi)};
             FillRect(mem, &ul, themeBrush(th.accent));
             // Full-width legal disclaimer below the artwork, above the buttons.
@@ -194,10 +197,7 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             FillRect(mem, &sep, themeBrush(th.border));
             RECT dr{m, discTop, rc.right - m, discTop + dp(96, st->dpi)};
             SetTextColor(mem, th.textSecondary);
-            DrawTextW(mem,
-                      L"Rabbit Ears is provided only for educational purposes, and does not "
-                      L"represent supporting any illegal activity that you do with it. "
-                      L"We don't know, we don't care.",
+            DrawTextW(mem, rabbitears::tr(i18n::StringId::AboutEducationalDisclaimer).c_str(),
                       -1, &dr, DT_LEFT | DT_TOP | DT_WORDBREAK);
             SelectObject(mem, oldFont);
             BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
@@ -344,7 +344,8 @@ void catUpdateCount(CategoriesState* st) {
     for (const auto& it : st->items)
         if (it.second) ++on;
     wchar_t b[64];
-    swprintf_s(b, L"%d of %d categories selected", on, static_cast<int>(st->items.size()));
+    swprintf_s(b, tr(i18n::StringId::CategoriesSelectedCount).c_str(), on,
+               static_cast<int>(st->items.size()));
     SetWindowTextW(st->count, b);
 }
 
@@ -401,7 +402,7 @@ LRESULT CALLBACK CategoriesProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             HGDIOBJ of = SelectObject(dc, st->font);
             SetTextColor(dc, currentTheme().textPrimary);
             RECT lr{dp(18, st->dpi), dp(14, st->dpi), 100000, dp(38, st->dpi)};
-            DrawTextW(dc, L"Show channels only from the checked categories:", -1, &lr,
+            DrawTextW(dc, tr(i18n::StringId::CategoriesPrompt).c_str(), -1, &lr,
                       DT_LEFT | DT_TOP | DT_SINGLELINE);
             SelectObject(dc, of);
             EndPaint(hwnd, &ps);
@@ -460,27 +461,6 @@ LRESULT CALLBACK CategoriesProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 // ---- first-run Terms of Use -------------------------------------------------
 
 constexpr int ID_TERMS_ACCEPT = 1401;
-
-constexpr wchar_t kTermsText[] =
-    L"Please read these terms before using RabbitEars. By choosing “I Accept” you "
-    L"agree to them. If you do not agree, choose “Decline” and the application will "
-    L"close.\r\n\r\n"
-    L"1.  Educational purpose.  RabbitEars is a media player provided for educational and "
-    L"personal use only. It is offered “as is”, without warranty of any kind, and you "
-    L"use it entirely at your own risk.\r\n\r\n"
-    L"2.  No content is included.  RabbitEars ships with no channels, playlists, or media of "
-    L"any kind. It plays only the playlists that you choose to add. You are solely responsible "
-    L"for obtaining your playlists from lawful sources and for ensuring that your use complies "
-    L"with all applicable laws and the rights of content owners in your jurisdiction.\r\n\r\n"
-    L"3.  No endorsement.  The authors of RabbitEars do not provide, host, recommend, or "
-    L"endorse any stream or content, and have no knowledge of or control over what you choose "
-    L"to play. As the project puts it: we don’t know, and we don’t care.\r\n\r\n"
-    L"4.  Your responsibility.  Any illegal activity carried out with this software is yours "
-    L"alone and is not supported, encouraged, or condoned by the authors.\r\n\r\n"
-    L"5.  Open source.  RabbitEars plays media using libVLC, © VideoLAN and the VLC "
-    L"contributors, under the GNU LGPL v2.1.\r\n\r\n"
-    L"By clicking “I Accept”, you confirm that you have read, understood, and agree to "
-    L"these terms.";
 
 struct TermsState {
     HWND  edit = nullptr;
@@ -586,7 +566,8 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;
     const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsAbout", L"About RabbitEars",
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsAbout",
+                               tr(i18n::StringId::AboutWindowTitle).c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
     if (dlg) {
@@ -594,11 +575,13 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
         const int bw = dp(90, dpi), bh = dp(30, dpi);
         RECT cr;
         GetClientRect(dlg, &cr);
-        HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+        HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
+                                  WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
                                   cr.right - bw - dp(20, dpi), cr.bottom - bh - dp(14, dpi), bw, bh,
                                   dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
         const int uw = dp(140, dpi);
-        HWND upd = CreateWindowExW(0, L"BUTTON", L"Check for Updates…", WS_CHILD | WS_VISIBLE,
+        HWND upd = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::AboutCheckForUpdatesButton).c_str(),
+                                   WS_CHILD | WS_VISIBLE,
                                    dp(20, dpi), cr.bottom - bh - dp(14, dpi), uw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CHECK_UPDATES)),
                                    hInst, nullptr);
@@ -675,10 +658,12 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
                               dp(48, dpi), cr.right - dp(36, dpi), dp(28, dpi), dlg, nullptr, hInst,
                               nullptr);
     const int bw = dp(90, dpi), bh = dp(30, dpi);
-    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - 2 * bw - dp(28, dpi), cr.bottom - bh - dp(16, dpi), bw, bh,
                               dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
-    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND cancel = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonCancel).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                   cr.right - bw - dp(18, dpi), cr.bottom - bh - dp(16, dpi), bw, bh,
                                   dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
                                   nullptr);
@@ -729,7 +714,8 @@ bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;
     const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsCategories", L"Categories",
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsCategories",
+                               tr(i18n::StringId::CategoriesTitle).c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
     if (!dlg) {
@@ -751,7 +737,8 @@ bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
                                 cr.right - 2 * m, dp(26, dpi), dlg,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_FILTER)), hInst,
                                 nullptr);
-    SendMessageW(st.filter, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Filter categories…"));
+    SendMessageW(st.filter, EM_SETCUEBANNER, TRUE,
+                 reinterpret_cast<LPARAM>(tr(i18n::StringId::CategoriesFilterCue).c_str()));
 
     st.lv = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_NOCOLUMNHEADER |
@@ -770,19 +757,22 @@ bool chooseCategories(HWND parent, HINSTANCE hInst, UINT dpi,
     st.count = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m,
                                countY, cr.right - 2 * m, dp(20, dpi), dlg, nullptr, hInst, nullptr);
 
-    HWND all = CreateWindowExW(0, L"BUTTON", L"Select All", WS_CHILD | WS_VISIBLE | WS_TABSTOP, m,
+    HWND all = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::CategoriesSelectAllButton).c_str(),
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP, m,
                                btnY, dp(96, dpi), bh, dlg,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_ALL)), hInst,
                                nullptr);
-    HWND none = CreateWindowExW(0, L"BUTTON", L"Clear", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND none = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::CategoriesClearButton).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                 m + dp(96, dpi) + dp(8, dpi), btnY, dp(74, dpi), bh, dlg,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CAT_NONE)), hInst,
                                 nullptr);
-    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - 2 * bw - dp(28, dpi), btnY, bw, bh, dlg,
                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
-    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND cancel = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonCancel).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                   cr.right - bw - dp(18, dpi), btnY, bw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
                                   nullptr);
@@ -843,7 +833,8 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi) {
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;
     const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsTerms", L"RabbitEars — Terms of Use",
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsTerms",
+                               tr(i18n::StringId::TermsWindowTitle).c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
     if (!dlg) {
@@ -857,20 +848,22 @@ bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi) {
     const int m = dp(20, dpi), bw = dp(110, dpi), bh = dp(30, dpi);
     const int btnY = cr.bottom - bh - dp(16, dpi);
 
-    HWND head = CreateWindowExW(0, L"STATIC", L"Terms of Use", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+    HWND head = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::TermsHeading).c_str(),
+                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
                                 m, dp(16, dpi), cr.right - 2 * m, dp(28, dpi), dlg, nullptr, hInst,
                                 nullptr);
-    st.edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", kTermsText,
+    st.edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", tr(i18n::StringId::TermsBodyText).c_str(),
                               WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE |
                                   ES_READONLY | ES_AUTOVSCROLL,
                               m, dp(52, dpi), cr.right - 2 * m, btnY - dp(66, dpi), dlg, nullptr,
                               hInst, nullptr);
-    HWND accept = CreateWindowExW(0, L"BUTTON", L"I Accept",
+    HWND accept = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::TermsAcceptButton).c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   cr.right - bw - m, btnY, bw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TERMS_ACCEPT)),
                                   hInst, nullptr);
-    HWND decline = CreateWindowExW(0, L"BUTTON", L"Decline", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND decline = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::TermsDeclineButton).c_str(),
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                    cr.right - 2 * bw - m - dp(8, dpi), btnY, bw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
                                    nullptr);
@@ -943,7 +936,7 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
                                     ES_READONLY | ES_AUTOVSCROLL,
                                 m, dp(48, dpi), cr.right - 2 * m, btnY - dp(60, dpi), dlg, nullptr,
                                 hInst, nullptr);
-    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - bw - m, btnY, bw, bh, dlg,
                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_IMPORT_OK)), hInst,
@@ -1033,7 +1026,8 @@ HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstrin
     const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
     // Topmost so it stays visible over the (large, non-topmost) TV Guide window during a fetch.
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, L"RabbitEarsLoading",
-                               title.empty() ? L"Loading" : title.c_str(), WS_POPUP | WS_CAPTION, x, y,
+                               title.empty() ? tr(i18n::StringId::LoadingWindowTitle).c_str() : title.c_str(),
+                               WS_POPUP | WS_CAPTION, x, y,
                                W, H, parent, nullptr, hInst, nullptr);
     if (!dlg) return nullptr;
     auto* ls = new LoadingState();
@@ -1043,7 +1037,7 @@ HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstrin
     RECT cr;
     GetClientRect(dlg, &cr);
     const int m = dp(24, dpi);
-    HWND head = CreateWindowExW(0, L"STATIC", L"Loading TV guide…",
+    HWND head = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::LoadingHeading).c_str(),
                                 WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(22, dpi),
                                 cr.right - 2 * m, dp(24, dpi), dlg, nullptr, hInst, nullptr);
     HWND body = CreateWindowExW(0, L"STATIC", message.c_str(),
@@ -1126,7 +1120,7 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsProgramme",
-                               title.empty() ? L"Programme" : title.c_str(),
+                               title.empty() ? tr(i18n::StringId::ProgrammeWindowTitle).c_str() : title.c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
     if (!dlg) {
@@ -1149,20 +1143,23 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
                                 nullptr);
     const int pw = dp(116, dpi), sw = dp(104, dpi), rw = dp(124, dpi), cw = dp(84, dpi),
               gap = dp(8, dpi);
-    HWND play = CreateWindowExW(0, L"BUTTON", L"Play channel",
+    HWND play = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ProgrammePlayButton).c_str(),
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, m, btnY, pw, bh,
                                 dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_PLAY)), hInst,
                                 nullptr);
-    HWND sched = CreateWindowExW(0, L"BUTTON", L"Schedule…", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND sched = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ProgrammeScheduleButton).c_str(),
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                  m + pw + gap, btnY, sw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SCHED)), hInst,
                                  nullptr);
     // "Record series" = a standing rule for every future airing of this title on this channel.
-    HWND series = CreateWindowExW(0, L"BUTTON", L"Record series", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND series = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::RecordSeriesTitle).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                   m + pw + gap + sw + gap, btnY, rw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SERIES)), hInst,
                                   nullptr);
-    HWND close = CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND close = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonClose).c_str(),
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                  cr.right - cw - m, btnY, cw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
     SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
@@ -1290,7 +1287,7 @@ void meterFeedPreviews(MetersDlgState* st) {
                              50 + static_cast<int>(std::lround(34.0 * std::sin(t * 0.5f))));
         bufferMeterSetFlow(st->bufPreview, std::clamp(0.6f + 0.35f * std::sin(t * 0.8f), 0.0f, 1.0f),
                            (std::sin(t * 0.5f) > 0.85f) ? 0.5f : 0.0f);
-        bufferMeterSetMetrics(st->bufPreview, L"12.4 Mb/s");
+        bufferMeterSetMetrics(st->bufPreview, tr(i18n::StringId::MeterPreviewSampleBitrate).c_str());
     }
 }
 
@@ -1478,7 +1475,8 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
     int x = pr.left + ((pr.right - pr.left) - W) / 2;
     int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
     clampToWorkArea(parent, W, H, x, y);  // keep the (tall) dialog fully on-screen
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsMeters", L"Meters",
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsMeters",
+                               tr(i18n::StringId::MetersWindowTitle).c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
     if (!dlg) {
@@ -1491,21 +1489,33 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
     GetClientRect(dlg, &cr);
     const int m = dp(18, dpi);
 
-    HWND head = CreateWindowExW(0, L"STATIC", L"Enable each meter, pick its look, and set its colours.",
+    HWND head = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::MetersHeading).c_str(),
                                 WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(14, dpi),
                                 cr.right - 2 * m, dp(22, dpi), dlg, nullptr, hInst, nullptr);
     SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(st.bold), TRUE);
 
-    const wchar_t* kNames[4] = {L"Audio spectrum", L"Signal strength", L"Bitrate", L"Frame rate"};
-    const wchar_t* kLooks[4] = {L"LED", L"Vacuum tube", L"LCD", L"Oscilloscope"};
-    const wchar_t* kRoles[kMtrRoles] = {L"Bg", L"Dim", L"Low", L"Mid", L"High", L"Accent", L"Peak"};
+    const std::wstring kNames[4] = {tr(i18n::StringId::MeterNameAudioSpectrum),
+                                    tr(i18n::StringId::MeterNameSignalStrength),
+                                    tr(i18n::StringId::MeterNameBitrate),
+                                    tr(i18n::StringId::MeterNameFrameRate)};
+    const std::wstring kLooks[4] = {tr(i18n::StringId::MeterLookLed),
+                                    tr(i18n::StringId::MeterLookVacuumTube),
+                                    tr(i18n::StringId::MeterLookLcd),
+                                    tr(i18n::StringId::MeterLookOscilloscope)};
+    const std::wstring kRoles[kMtrRoles] = {tr(i18n::StringId::MeterRoleBg),
+                                            tr(i18n::StringId::MeterRoleDim),
+                                            tr(i18n::StringId::MeterRoleLow),
+                                            tr(i18n::StringId::MeterRoleMid),
+                                            tr(i18n::StringId::MeterRoleHigh),
+                                            tr(i18n::StringId::MeterRoleAccent),
+                                            tr(i18n::StringId::MeterPeak)};
     const int top0 = dp(44, dpi);
     const int sw = dp(30, dpi), sgap = dp(6, dpi);
 
     for (int r = 0; r < 4; ++r) {
         const int y0 = top0 + r * rowH;
         st.enable[r] = CreateWindowExW(
-            0, L"BUTTON", kNames[r], WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, y0,
+            0, L"BUTTON", kNames[r].c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, y0,
             dp(150, dpi), dp(22, dpi), dlg,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16)), hInst, nullptr);
         SendMessageW(st.enable[r], BM_SETCHECK, st.cfg[r].enabled ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1524,7 +1534,7 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
             m + dp(162, dpi), y0 + dp(28, dpi), dp(140, dpi), dp(180, dpi), dlg,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 1)), hInst, nullptr);
         for (int s = 0; s < 4; ++s)
-            SendMessageW(st.combo[r], CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kLooks[s]));
+            SendMessageW(st.combo[r], CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kLooks[s].c_str()));
         SendMessageW(st.combo[r], CB_SETCURSEL, static_cast<int>(st.cfg[r].style), 0);
         SendMessageW(st.combo[r], WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
 
@@ -1535,7 +1545,7 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
                 0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, sx, sy, sw, sw,
                 dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 3 + j)),
                 hInst, nullptr);
-            HWND lbl = CreateWindowExW(0, L"STATIC", kRoles[j], WS_CHILD | WS_VISIBLE | SS_CENTER,
+            HWND lbl = CreateWindowExW(0, L"STATIC", kRoles[j].c_str(), WS_CHILD | WS_VISIBLE | SS_CENTER,
                                        sx - dp(4, dpi), sy + sw + dp(2, dpi), sw + dp(8, dpi),
                                        dp(14, dpi), dlg, nullptr, hInst, nullptr);
             SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
@@ -1547,7 +1557,16 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
             const KnobDesc& kd = kMtrKnobDesc[r][j];
             if (kd.field < 0) continue;
             const int kx = kx0 + j * (kw + dp(8, dpi));
-            HWND klbl = CreateWindowExW(0, L"STATIC", kd.label, WS_CHILD | WS_VISIBLE | SS_CENTER, kx,
+            // Each knob's label comes from the catalog, keyed off its tuning field (the English
+            // strings in kMtrKnobDesc are now only a fallback for an unmapped field).
+            const std::wstring klabel =
+                (kd.field == 0)   ? tr(i18n::StringId::MeterKnobGlow)
+                : (kd.field == 1) ? tr(i18n::StringId::MeterKnobSmooth)
+                : (kd.field == 2) ? tr(i18n::StringId::MeterKnobSens)
+                : (kd.field == 3) ? tr(i18n::StringId::MeterPeak)
+                : (kd.field == 4) ? tr(i18n::StringId::MeterKnobBreathe)
+                                  : std::wstring(kd.label);
+            HWND klbl = CreateWindowExW(0, L"STATIC", klabel.c_str(), WS_CHILD | WS_VISIBLE | SS_CENTER, kx,
                                         ky, kw, dp(14, dpi), dlg, nullptr, hInst, nullptr);
             SendMessageW(klbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
             st.slider[r][j] = CreateWindowExW(
@@ -1568,7 +1587,8 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
     {
         const int y0 = top0 + 4 * rowH;
         st.bufEnable = CreateWindowExW(
-            0, L"BUTTON", L"Data flow", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, y0,
+            0, L"BUTTON", tr(i18n::StringId::MeterDataFlowCheckbox).c_str(),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, y0,
             dp(150, dpi), dp(22, dpi), dlg,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + 4 * 16)), hInst, nullptr);
         SendMessageW(st.bufEnable, BM_SETCHECK, st.bufOn ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1587,24 +1607,23 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
         });
 
         HWND note = CreateWindowExW(
-            0, L"STATIC",
-            L"The buffering tank shown at the far right of the transport bar. You can also hide it "
-            L"by right-clicking the meter itself.",
+            0, L"STATIC", tr(i18n::StringId::MeterDataFlowNote).c_str(),
             WS_CHILD | WS_VISIBLE, m + dp(190, dpi), y0 + dp(30, dpi),
             cr.right - dp(190, dpi) - 2 * m, dp(72, dpi), dlg, nullptr, hInst, nullptr);
         SendMessageW(note, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
     }
 
     const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
-    HWND reset = CreateWindowExW(0, L"BUTTON", L"Reset to defaults",
+    HWND reset = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::MetersResetButton).c_str(),
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, dp(150, dpi), bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_RESET)), hInst,
                                  nullptr);
-    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - 2 * bw - dp(26, dpi), btnY, bw, bh, dlg,
                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
-    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND cancel = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonCancel).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                   cr.right - bw - dp(16, dpi), btnY, bw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
                                   nullptr);
@@ -1691,11 +1710,14 @@ LRESULT CALLBACK ScheduleDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             SetBkMode(dc, TRANSPARENT);
             HGDIOBJ of = SelectObject(dc, st->font);
             SetTextColor(dc, currentTheme().textPrimary);
-            const wchar_t* labels[4] = {L"Channel:", L"Title:", L"Start:", L"Stop:"};
+            const std::wstring labels[4] = {tr(i18n::StringId::ScheduleFieldChannel),
+                                            tr(i18n::StringId::ScheduleFieldTitle),
+                                            tr(i18n::StringId::ScheduleFieldStart),
+                                            tr(i18n::StringId::ScheduleFieldStop)};
             const int ys[4] = {18, 76, 134, 192};
             for (int i = 0; i < 4; ++i) {
                 RECT r{dp(18, st->dpi), dp(ys[i], st->dpi), dp(86, st->dpi), dp(ys[i] + 20, st->dpi)};
-                DrawTextW(dc, labels[i], -1, &r, DT_LEFT | DT_TOP | DT_SINGLELINE);
+                DrawTextW(dc, labels[i].c_str(), -1, &r, DT_LEFT | DT_TOP | DT_SINGLELINE);
             }
             SelectObject(dc, of);
             EndPaint(hwnd, &ps);
@@ -1770,7 +1792,8 @@ bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Ch
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsSchedule",
-                               out.channelName.empty() ? L"New Recording Schedule" : L"Schedule Recording",
+                               out.channelName.empty() ? tr(i18n::StringId::ScheduleNewWindowTitle).c_str()
+                                                       : tr(i18n::StringId::ScheduleEditWindowTitle).c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
                                nullptr);
     if (!dlg) {
@@ -1818,10 +1841,12 @@ bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Ch
     DateTime_SetSystemtime(st.stop, GDT_VALID, &s1);
 
     const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
-    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - 2 * bw - dp(28, dpi), btnY, bw, bh, dlg,
                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
-    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND cancel = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonCancel).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                   cr.right - bw - dp(18, dpi), btnY, bw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
     for (HWND h : {st.combo, st.title, st.start, st.stop, ok, cancel})
@@ -1877,16 +1902,16 @@ int wrappedTextHeight(HWND dlg, HFONT font, const std::wstring& text, int width)
     return r.bottom - r.top;
 }
 
-const wchar_t* scheduleStatusText(ScheduleStatus s) {
+std::wstring scheduleStatusText(ScheduleStatus s) {
     switch (s) {
-        case ScheduleStatus::Pending: return L"Pending";
-        case ScheduleStatus::Recording: return L"● Recording";
-        case ScheduleStatus::Done: return L"Done";
-        case ScheduleStatus::Missed: return L"Missed";
-        case ScheduleStatus::Failed: return L"Failed";
-        case ScheduleStatus::Cancelled: return L"Cancelled";
+        case ScheduleStatus::Pending: return tr(i18n::StringId::ScheduleStatusPending);
+        case ScheduleStatus::Recording: return tr(i18n::StringId::ScheduleStatusRecording);
+        case ScheduleStatus::Done: return tr(i18n::StringId::ScheduleStatusDone);
+        case ScheduleStatus::Missed: return tr(i18n::StringId::ScheduleStatusMissed);
+        case ScheduleStatus::Failed: return tr(i18n::StringId::ScheduleStatusFailed);
+        case ScheduleStatus::Cancelled: return tr(i18n::StringId::ScheduleStatusCancelled);
     }
-    return L"";
+    return {};
 }
 
 std::wstring scheduleWhen(long long start, long long stop) {
@@ -1916,7 +1941,7 @@ void mgRepopulate(ManageDlgState* st) {
     ListView_DeleteAllItems(st->lv);
     for (int i = 0; i < static_cast<int>(st->rows.size()); ++i) {
         const ScheduledRecording& s = st->rows[i];
-        std::wstring title = s.title.empty() ? L"(untitled)" : s.title;
+        std::wstring title = s.title.empty() ? tr(i18n::StringId::ScheduleUntitledPlaceholder) : s.title;
         LVITEMW it{};
         it.mask = LVIF_TEXT | LVIF_PARAM;
         it.iItem = i;
@@ -1926,7 +1951,7 @@ void mgRepopulate(ManageDlgState* st) {
         ListView_SetItemText(st->lv, row, 1, const_cast<LPWSTR>(s.channelName.c_str()));
         std::wstring when = scheduleWhen(s.startUtc, s.stopUtc);
         ListView_SetItemText(st->lv, row, 2, const_cast<LPWSTR>(when.c_str()));
-        ListView_SetItemText(st->lv, row, 3, const_cast<LPWSTR>(scheduleStatusText(s.status)));
+        ListView_SetItemText(st->lv, row, 3, const_cast<LPWSTR>(scheduleStatusText(s.status).c_str()));
     }
     SendMessageW(st->lv, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(st->lv, nullptr, TRUE);
@@ -2027,7 +2052,8 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
     int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
     clampToWorkArea(parent, W, H, x, y);
     HWND dlg =
-        CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsScheduleMgr", L"Scheduled Recordings",
+        CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsScheduleMgr",
+                        tr(i18n::StringId::ScheduleManagerWindowTitle).c_str(),
                         WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst, nullptr);
     if (!dlg) {
         DeleteObject(st.font);
@@ -2068,8 +2094,14 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_LV)), hInst, nullptr);
     ListView_SetExtendedListViewStyle(st.lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
     const int lvW = cr.right - 2 * m - GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+    // Hoisted so their .c_str() outlives the cols[] reads below (a bare tr(...).c_str() in the
+    // array initializer would dangle once the temporaries died).
+    const std::wstring colTitle = tr(i18n::StringId::ScheduleColTitle);
+    const std::wstring colChannel = tr(i18n::StringId::LabelChannel);
+    const std::wstring colWhen = tr(i18n::StringId::ScheduleColWhen);
+    const std::wstring colStatus = tr(i18n::StringId::ScheduleColStatus);
     const struct { const wchar_t* h; int pct; } cols[4] = {
-        {L"Title", 34}, {L"Channel", 26}, {L"When", 28}, {L"Status", 12}};
+        {colTitle.c_str(), 34}, {colChannel.c_str(), 26}, {colWhen.c_str(), 28}, {colStatus.c_str(), 12}};
     for (int i = 0; i < 4; ++i) {
         LVCOLUMNW col{};
         col.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -2079,18 +2111,20 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
     }
 
     const int bw = dp(96, dpi), gap = dp(8, dpi);
-    HWND newB = CreateWindowExW(0, L"BUTTON", L"New…", WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, bw,
+    HWND newB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ScheduleManagerNewButton).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, bw,
                                 bh, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_NEW)), hInst,
                                 nullptr);
-    HWND cancelB = CreateWindowExW(0, L"BUTTON", L"Cancel recording",
+    HWND cancelB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ScheduleManagerCancelButton).c_str(),
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + bw + gap, btnY, dp(140, dpi),
                                    bh, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_CANCEL)),
                                    hInst, nullptr);
-    HWND delB = CreateWindowExW(0, L"BUTTON", L"Delete", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND delB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonDelete).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                 m + bw + gap + dp(140, dpi) + gap, btnY, bw, bh, dlg,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MG_DELETE)), hInst,
                                 nullptr);
-    HWND closeB = CreateWindowExW(0, L"BUTTON", L"Close",
+    HWND closeB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonClose).c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   cr.right - bw - dp(16, dpi), btnY, bw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
@@ -2143,19 +2177,21 @@ void rmRepopulate(RuleDlgState* st) {
     ListView_DeleteAllItems(st->lv);
     for (int i = 0; i < static_cast<int>(st->rows.size()); ++i) {
         const RecordingRule& r = st->rows[i];
-        std::wstring show = r.titleMatch.empty() ? L"(any)" : r.titleMatch;
+        std::wstring show = r.titleMatch.empty() ? tr(i18n::StringId::RuleAnyTitlePlaceholder) : r.titleMatch;
         LVITEMW it{};
         it.mask = LVIF_TEXT | LVIF_PARAM;
         it.iItem = i;
         it.lParam = i;
         it.pszText = const_cast<LPWSTR>(show.c_str());
         const int row = ListView_InsertItem(st->lv, &it);
-        std::wstring chan = r.channelName.empty() ? L"(any channel)" : r.channelName;
+        std::wstring chan = r.channelName.empty() ? tr(i18n::StringId::RuleAnyChannelPlaceholder) : r.channelName;
         ListView_SetItemText(st->lv, row, 1, const_cast<LPWSTR>(chan.c_str()));
-        const wchar_t* kind = (r.match == RuleMatch::Exact) ? L"Exact title" : L"Title contains";
-        ListView_SetItemText(st->lv, row, 2, const_cast<LPWSTR>(kind));
-        const wchar_t* state = r.enabled ? L"Enabled" : L"Disabled";
-        ListView_SetItemText(st->lv, row, 3, const_cast<LPWSTR>(state));
+        const std::wstring kind = (r.match == RuleMatch::Exact) ? tr(i18n::StringId::RuleMatchExact)
+                                                                : tr(i18n::StringId::RuleMatchContains);
+        ListView_SetItemText(st->lv, row, 2, const_cast<LPWSTR>(kind.c_str()));
+        const std::wstring state = r.enabled ? tr(i18n::StringId::RuleStateEnabled)
+                                             : tr(i18n::StringId::RuleStateDisabled);
+        ListView_SetItemText(st->lv, row, 3, const_cast<LPWSTR>(state.c_str()));
     }
     SendMessageW(st->lv, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(st->lv, nullptr, TRUE);
@@ -2196,10 +2232,9 @@ LRESULT CALLBACK RuleDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
                 case ID_RM_DELETE:
                     if (const int i = rmSelectedIndex(st); i >= 0 && st->cb.remove) {
                         // Deleting drops the rule's still-pending recordings — say so.
-                        std::wstring msgText = L"Delete the rule for \"" + st->rows[i].titleMatch +
-                                               L"\"?\r\n\r\nUpcoming recordings it queued will be "
-                                               L"removed. Recordings that already ran are kept.";
-                        if (MessageBoxW(hwnd, msgText.c_str(), L"Recording Rules",
+                        std::wstring msgText =
+                            trf(i18n::StringId::RuleDeleteConfirm, {st->rows[i].titleMatch});
+                        if (MessageBoxW(hwnd, msgText.c_str(), tr(i18n::StringId::RecordingRulesTitle).c_str(),
                                         MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) == IDYES) {
                             st->cb.remove(st->rows[i].id);
                             rmRepopulate(st);
@@ -2244,8 +2279,9 @@ void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb
     int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
     clampToWorkArea(parent, W, H, x, y);
     HWND dlg =
-        CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsRuleMgr", L"Recording Rules",
-                        WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst, nullptr);
+        CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsRuleMgr",
+                        tr(i18n::StringId::RecordingRulesTitle).c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU,
+                        x, y, W, H, parent, nullptr, hInst, nullptr);
     if (!dlg) {
         DeleteObject(st.font);
         return;
@@ -2264,8 +2300,14 @@ void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb
                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_LV)), hInst, nullptr);
     ListView_SetExtendedListViewStyle(st.lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
     const int lvW = cr.right - 2 * m - GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+    // Hoisted so their .c_str() outlives the cols[] reads below (a bare tr(...).c_str() in the
+    // array initializer would dangle once the temporaries died).
+    const std::wstring colShow = tr(i18n::StringId::RuleColShow);
+    const std::wstring colChan = tr(i18n::StringId::LabelChannel);
+    const std::wstring colMatch = tr(i18n::StringId::RuleColMatch);
+    const std::wstring colState = tr(i18n::StringId::RuleColState);
     const struct { const wchar_t* h; int pct; } cols[4] = {
-        {L"Show", 40}, {L"Channel", 28}, {L"Match", 18}, {L"State", 14}};
+        {colShow.c_str(), 40}, {colChan.c_str(), 28}, {colMatch.c_str(), 18}, {colState.c_str(), 14}};
     for (int i = 0; i < 4; ++i) {
         LVCOLUMNW col{};
         col.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -2274,22 +2316,20 @@ void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb
         ListView_InsertColumn(st.lv, i, &col);
     }
     // Rules are created from the guide, so an empty list needs to say where they come from.
-    HWND hint = CreateWindowExW(0, L"STATIC",
-                                L"Rules are created from the TV Guide: click a programme, then "
-                                L"“Record series”. Every future airing is queued automatically.",
+    HWND hint = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::RulesEmptyHint).c_str(),
                                 WS_CHILD | WS_VISIBLE, m, listBottom + dp(4, dpi), cr.right - 2 * m,
                                 hintH, dlg, nullptr, hInst, nullptr);
 
     const int bw = dp(150, dpi), dw = dp(96, dpi), gap = dp(8, dpi);
-    HWND toggleB = CreateWindowExW(0, L"BUTTON", L"Enable / Disable", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+    HWND toggleB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::RuleToggleButton).c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                    m, btnY, bw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_TOGGLE)), hInst,
                                    nullptr);
-    HWND delB = CreateWindowExW(0, L"BUTTON", L"Delete", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                m + bw + gap, btnY, dw, bh, dlg,
+    HWND delB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonDelete).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + bw + gap, btnY, dw, bh, dlg,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_DELETE)), hInst,
                                 nullptr);
-    HWND closeB = CreateWindowExW(0, L"BUTTON", L"Close",
+    HWND closeB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonClose).c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   cr.right - dw - m, btnY, dw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);

@@ -14,6 +14,7 @@ namespace Gdiplus { using std::min; using std::max; }
 
 #include "resource.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"
 #include "version.h"  // RE_VERSION_DISPLAY_W
 
 namespace rabbitears {
@@ -26,20 +27,20 @@ int sdpx(UINT dpi, int v) { return MulDiv(v, static_cast<int>(dpi), 96); }
 // Rotating, tongue-in-cheek "what the antenna is doing" captions, cycled while the
 // (slow) libVLC init blocks the main thread. The splash runs on its own thread, so
 // these keep animating even though the UI thread is stuck in WM_CREATE.
-constexpr const wchar_t* kMessages[] = {
-    L"Finding the power plug…",
-    L"Connecting wires to the antenna…",
-    L"Bending the left ear to the right…",
-    L"Triangulating the wave-motion receptors…",
-    L"Warming up the vacuum tubes…",
-    L"Untangling the coaxial cable…",
-    L"Polishing the rabbit ears…",
-    L"Shooing off the static gremlins…",
-    L"Finding where Arch keeps his cookies…",
-    L"Locking onto the nearest tower…",
-    L"Tuning the horizontal hold…",
-    L"Nudging the aerial a smidge…",
-    L"Almost picking up a signal…",
+constexpr i18n::StringId kMessages[] = {
+    i18n::StringId::SplashFindingPowerPlug,
+    i18n::StringId::SplashConnectingWires,
+    i18n::StringId::SplashBendingLeftEar,
+    i18n::StringId::SplashTriangulatingReceptors,
+    i18n::StringId::SplashWarmingVacuumTubes,
+    i18n::StringId::SplashUntanglingCoax,
+    i18n::StringId::SplashPolishingRabbitEars,
+    i18n::StringId::SplashShooingStaticGremlins,
+    i18n::StringId::SplashFindingArchCookies,
+    i18n::StringId::SplashLockingOntoTower,
+    i18n::StringId::SplashTuningHorizontalHold,
+    i18n::StringId::SplashNudgingAerial,
+    i18n::StringId::SplashAlmostSignal,
 };
 
 // Load a PNG from an RCDATA resource into a GDI+ Image. The returned stream must
@@ -160,7 +161,8 @@ void renderFrame(const SplashState& s, const wchar_t* message) {
         const int vpad = sdpx(s.dpi, 8);
         Gdiplus::RectF vr(0.0f, 0.0f, static_cast<Gdiplus::REAL>(s.W - vpad),
                           static_cast<Gdiplus::REAL>(s.H - vpad));
-        g.DrawString(L"v" RE_VERSION_DISPLAY_W, -1, &vfont, vr, &vsf, &vb);
+        g.DrawString(trf(i18n::StringId::SplashVersionLabel, { RE_VERSION_DISPLAY_W }).c_str(),
+                     -1, &vfont, vr, &vsf, &vb);
     }
 
     HDC memDC = CreateCompatibleDC(screen);
@@ -193,7 +195,7 @@ void splashThread(SplashState* s, HANDLE created) {
     std::mt19937 rng(std::random_device{}());
     std::shuffle(order, order + kN, rng);
     int i = 0;
-    renderFrame(*s, kMessages[order[0]]);
+    renderFrame(*s, tr(kMessages[order[0]]).c_str());
     for (;;) {
         const DWORD w = MsgWaitForMultipleObjects(1, &s->stop, FALSE, 1200, QS_ALLINPUT);
         if (w == WAIT_OBJECT_0) break;  // closeSplash signalled
@@ -202,7 +204,7 @@ void splashThread(SplashState* s, HANDLE created) {
         if (w == WAIT_TIMEOUT) {
             i = (i + 1) % kN;
             if (i == 0) std::shuffle(order, order + kN, rng);  // fresh order on each wrap
-            renderFrame(*s, kMessages[order[i]]);
+            renderFrame(*s, tr(kMessages[order[i]]).c_str());
         }
     }
     DestroyWindow(s->hwnd);

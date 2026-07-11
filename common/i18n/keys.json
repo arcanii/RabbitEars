@@ -1,0 +1,2402 @@
+[
+  {
+    "id": "LabelPlay",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuChannelPlayInPip",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuChannelShowInGuide",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "Fullscreen",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuVideoOnlyPlain",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuSingleView",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuSplitView",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuFormatMpegTs",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuFormatMatroska",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuFormatMp4",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuOpenFile",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuRecordingFormat",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuHideUnavailable",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuCategories",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuExportFavourites",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuImportFavourites",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuRefreshGuide",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuScheduledRecordings",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuRecordingRules",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuWakeToRecord",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuRunWakeTaskNow",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuMeters",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuVideoOnly",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuResumeLastChannel",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuViewSingle",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuViewSplit",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuPictureInPicture",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuView",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuLayoutResetDefault",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuMoveSidebar",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuMoveVideo",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuMoveChannels",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuDockToLeft",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuDockToRight",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuDockToTop",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuDockToBottom",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuSaveLayoutAs",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuApplySavedLayout",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuDeleteSavedLayout",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuLayout",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuThemeFollowSystem",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuTheme",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuAbout",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuLanguage",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LangSystemDefault",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LangEnglish",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LangJapanese",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuChannels",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuRecording",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuSetGuideUrl",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuGuideSetUrlNoPlaylists",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryUnitedStates",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryUnitedKingdom",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryCanada",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryAustralia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryNewZealand",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryIreland",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryGermany",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryFrance",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySpain",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryItaly",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryPortugal",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryNetherlands",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryBelgium",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySwitzerland",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryAustria",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySweden",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryNorway",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryDenmark",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryFinland",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryPoland",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryCzechia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySlovakia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryHungary",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryRomania",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryBulgaria",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryGreece",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryTurkey",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryRussia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryUkraine",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySerbia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryCroatia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySlovenia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryAlbania",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryBrazil",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryMexico",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryArgentina",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryChile",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryColombia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryPeru",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryVenezuela",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryIndia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryPakistan",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryBangladesh",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryChina",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryJapan",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySouthKorea",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryIndonesia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryMalaysia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySingapore",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryThailand",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryVietnam",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryPhilippines",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySaudiArabia",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryUae",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryQatar",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryIsrael",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryEgypt",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryMorocco",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryAlgeria",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountrySouthAfrica",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryNigeria",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CountryKenya",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavAllChannels",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavFavourites",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavTvGuide",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavGroups",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavCountries",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavPlaylists",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "NavPlaylistNameCount",
+    "cluster": "Nav",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "BufferMeterShow",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "BufferMeterHide",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusChannelNoTvgId",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusNoGuideRowForChannel",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusNoChannelsYet",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusStopped",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusPlaylistRenamed",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusPlaylistDeleted",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusOpening",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusBuffering",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusPlaying",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusPaused",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusStreamEnded",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusUnavailable",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusPlaylistLoadingWait",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusExportedFavourites",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusLayoutLimitReached",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusLayoutSaved",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusAddPlaylistFailedDb",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusAddedChannels",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusAddPlaylistFailed",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusBusyWait",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusDownloadingGuide",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusRemovedFavourite",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusAddedFavourite",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusGuideUrlCleared",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusGuideUrlSaved",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusScheduleOwnsPane",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusRecordingSaved",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusPlayChannelFirst",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusRecordingNow",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusScheduledRecordingSaved",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusRecordingScheduledNow",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusAiringCancelledRule",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusNoCategories",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusLayoutApplied",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusLayoutDeleted",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusWakeToRecordOff",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusWakeWillWake",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusWakeTaskStarted",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusWakeTaskFailed",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusChannelCount",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusPipChannel",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusDownloadingPlaylist",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusLoadingPlaylist",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusLanguageRestart",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusActivePane",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusActiveChannel",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "GridHeaderGroup",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LabelChannel",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuPlaylistRename",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "DeletePlaylistTitle",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "DialogRenamePlaylistTitle",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "DialogRenamePlaylistLabel",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "DialogDeletePlaylistBody",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "AddPlaylistDialogTitle",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AddPlaylistUrlPrompt",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistSourceLine",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistImportFailedHeading",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistDbSaveProblem",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistImportedHeading",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistChannelsParsedLine",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistChannelsImportedLine",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistSkippedLine",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistGroupsLine",
+    "cluster": "Playlist",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistNoChannelsMsg",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "PlaylistNoChannelsFoundMsg",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ImportResultsTitle",
+    "cluster": "Playlist",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBufferReceivedBuffered",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.2f",
+      "%.1f"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBufferConsumption",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.2f",
+      "%.1f",
+      "%d",
+      "%s"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBufferNotPlaying",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.1f"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "TooltipNetworkBuffer",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.1f"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "TooltipMeterSpectrum",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipMeterSignal",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipMeterBitrate",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipMeterFrames",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBtnPause",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBtnStop",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBtnStopRecording",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipBtnRecord",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipVolume",
+    "cluster": "Transport",
+    "placeholders": [
+      "%d"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MeterOverlayMbps",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.1f"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MeterOverlayKbps",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.0f"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "TransportBufferSeconds",
+    "cluster": "Transport",
+    "placeholders": [
+      "%.1f"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "CmdAddPlaylist",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TooltipSettings",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ProgrammeWindowTitle",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ProgrammePlayButton",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ProgrammeScheduleButton",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideTimeRange",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "GuideRemoveFromFavourites",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideAddToFavourites",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideWindowTitle",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RefreshGuideTitle",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RefreshGuideNoSourceHeading",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RefreshGuideNoSourceBody",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TvGuideTitle",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LoadingContactingGuide",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LoadingProgressTag",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "LoadingDownloadingName",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "LoadingParsingName",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "EpgDetailProgrammesLine",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "EpgStoredSummary",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "EpgRefreshFailedSummary",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "EpgQueuedByRulesSummary",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "LoadingBuildingGuide",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideNoGuideHeading",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideNoGuideBody",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideNoMatchHeading",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "GuideNoMatchBody",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "SetGuideUrlTitle",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SetGuideUrlPrompt",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SetGuideUrlSavedPrompt",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleFieldChannel",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleFieldTitle",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleFieldStart",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleFieldStop",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleNewWindowTitle",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleEditWindowTitle",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleStatusPending",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleStatusRecording",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleStatusDone",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleStatusMissed",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleStatusFailed",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleStatusCancelled",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleUntitledPlaceholder",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleManagerWindowTitle",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleColTitle",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleColWhen",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleColStatus",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleManagerNewButton",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleManagerCancelButton",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ViewSwitchStopRecordingConfirm",
+    "cluster": "DialogSchedule",
+    "placeholders": [
+      "%d"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleRecordingTitle",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ChannelNotFoundHeading",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleChannelNotFoundBody",
+    "cluster": "DialogSchedule",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleRecordingScheduledHeading",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleRecordingScheduledBody",
+    "cluster": "DialogSchedule",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleCouldNotHeading",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ScheduleCouldNotBody",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleAnyTitlePlaceholder",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleAnyChannelPlaceholder",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleMatchExact",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleMatchContains",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleStateEnabled",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleStateDisabled",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleDeleteConfirm",
+    "cluster": "DialogRules",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "RecordingRulesTitle",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleColShow",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleColMatch",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleColState",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RulesEmptyHint",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RuleToggleButton",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "EpgRulesQueuedDetail",
+    "cluster": "DialogRules",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesTitle",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesChannelNotFoundBody",
+    "cluster": "DialogRules",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesAlreadyHeading",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesAlreadyBody",
+    "cluster": "DialogRules",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesCouldNotSaveHeading",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesCouldNotSaveBody",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesEveryAiringHeading",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "RecordSeriesEveryAiringBody",
+    "cluster": "DialogRules",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MeterKnobGlow",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterKnobSmooth",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterKnobSens",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterPeak",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterKnobBreathe",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterPreviewSampleBitrate",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MetersWindowTitle",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MetersHeading",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterNameAudioSpectrum",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterNameSignalStrength",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterNameBitrate",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterNameFrameRate",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterLookLed",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterLookVacuumTube",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterLookLcd",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterLookOscilloscope",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterRoleBg",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterRoleDim",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterRoleLow",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterRoleMid",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterRoleHigh",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterRoleAccent",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterDataFlowCheckbox",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MeterDataFlowNote",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MetersResetButton",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutGithubLinkLabel",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutArchArm64",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutArchX64",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutArchX86",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutArchUnknown",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutArchEmulatedOnArm64",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutArchEmulated",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutVersionLine",
+    "cluster": "DialogAbout",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "AboutLibVlcCredit",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutEducationalDisclaimer",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutWindowTitle",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutCheckForUpdatesButton",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TermsBodyText",
+    "cluster": "DialogTerms",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TermsWindowTitle",
+    "cluster": "DialogTerms",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TermsHeading",
+    "cluster": "DialogTerms",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TermsAcceptButton",
+    "cluster": "DialogTerms",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "TermsDeclineButton",
+    "cluster": "DialogTerms",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LoadingWindowTitle",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "LoadingHeading",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashFindingPowerPlug",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashConnectingWires",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashBendingLeftEar",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashTriangulatingReceptors",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashWarmingVacuumTubes",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashUntanglingCoax",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashPolishingRabbitEars",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashShooingStaticGremlins",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashFindingArchCookies",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashLockingOntoTower",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashTuningHorizontalHold",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashNudgingAerial",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashAlmostSignal",
+    "cluster": "Splash",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SplashVersionLabel",
+    "cluster": "Splash",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "StatusDatabaseError",
+    "cluster": "Error",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ExportFavouritesWriteFailHeading",
+    "cluster": "Error",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ExportFavouritesPathLine",
+    "cluster": "Error",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ProblemLineDetail",
+    "cluster": "Error",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "EpgErrorDownloadFailed",
+    "cluster": "Error",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "EpgErrorEmptyAfterDecompress",
+    "cluster": "Error",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesSelectedCount",
+    "cluster": "Misc",
+    "placeholders": [
+      "%d",
+      "%d"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesPrompt",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ButtonOk",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesFilterCue",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesSelectAllButton",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesClearButton",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ButtonCancel",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ButtonClose",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ButtonDelete",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SearchChannelsPlaceholder",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "HintEmptyPip",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ExportFavouritesTitle",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ExportFavouritesNoneHeading",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ExportFavouritesNoneBody",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ExportFavouritesDoneHeading",
+    "cluster": "Misc",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "FileLineDetail",
+    "cluster": "Misc",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ImportFavouritesTitle",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ImportFavouritesNoChannelsHeading",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "ImportFavouritesDetails",
+    "cluster": "Misc",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ImportFavouritesSkippedLine",
+    "cluster": "Misc",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "ImportFavouritesStarredHeading",
+    "cluster": "Misc",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "LayoutDefaultName",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SaveLayoutDialogTitle",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SaveLayoutNamePrompt",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AppName",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesTitle",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesNoneHeading",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "CategoriesNoneBody",
+    "cluster": "Misc",
+    "placeholders": [],
+    "comment": ""
+  }
+]

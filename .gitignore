@@ -27,3 +27,6 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# i18n review sheets are generated on demand from the JSON (tools/i18n/gen_i18n.py --review <code>)
+common/i18n/review-*.md

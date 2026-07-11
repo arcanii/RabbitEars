@@ -17,6 +17,7 @@
 
 #include "audio/SpectrumTap.h"   // SpectrumTap (AppState)
 #include "core/M3uParser.h"      // M3uDocument (PlaylistResult)
+#include "core/Strings.h"        // i18n::StringId (CmdBtn labels)
 #include "core/XmltvParser.h"    // Programme (EpgFetch)
 #include "db/Database.h"         // Database, Channel
 #include "ui/DockLayout.h"       // DockLayout, Panel, DockSide, kPanelCount
@@ -94,6 +95,9 @@ constexpr int ID_DOCK_BASE = 2051;     // + panel*4 + side  (12 ids: 2051..2062)
 constexpr int ID_WAKE_RECORD = 2063;   // Settings → Wake this PC to record (Task Scheduler)
 constexpr int ID_RULES = 2064;         // Settings → Recording Rules… (series rules manager)
 constexpr int ID_WAKE_RUN_NOW = 2065;  // Settings → Run wake task now (fires --scheduled-wake)
+constexpr int ID_LANG_SYSTEM = 2066;   // Settings → Language → System default (ui_language="system")
+constexpr int ID_LANG_EN = 2067;       // Settings → Language → English ("en")
+constexpr int ID_LANG_JA = 2068;       // Settings → Language → 日本語 ("ja")  (2069 spare)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
@@ -120,14 +124,19 @@ struct ViewFilter {
     std::wstring country;  // ISO code when kind == Country
 };
 
+// Segoe MDL2 Assets "Setting" gear glyph — the command-bar Settings button is an icon now (mac
+// parity). Symbol role, so it is exempt from the Japanese font swap and never becomes tofu.
+constexpr wchar_t kGlyphSettings[] = L"";
+
 struct CmdBtn {
-    int          id;
-    const wchar_t* label;
-    bool         accent;
+    int            id;
+    i18n::StringId label;  // localized text label (ignored when `glyph` is set)
+    const wchar_t* glyph;  // non-null => draw this MDL2 glyph (square button) instead of the label
+    bool           accent;
 };
 constexpr CmdBtn kCmdBtns[] = {
-    {ID_ADD_URL, L"+  Add Playlist", true},
-    {ID_SETTINGS, L"Settings  ▾", false},
+    {ID_ADD_URL, i18n::StringId::CmdAddPlaylist, nullptr, true},
+    {ID_SETTINGS, i18n::StringId::Count, kGlyphSettings, false},  // gear icon; label unused
 };
 struct PlaylistResult {
     bool         ok = false;
@@ -253,6 +262,8 @@ struct AppState {
                                       // start so the ~30s tick doesn't re-register COM every pass.
     long long  rulesExpandedAt = 0;   // last EPG->schedule rule expansion (unix s); throttles the tick
     std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv" | "mp4"
+    std::wstring uiLanguage = L"system";  // "system" | "en" | "ja" (setting "ui_language"); applied
+                                          // to i18n::setActiveLang at startup (restart to change)
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
     bool       categoryActive = false;    // is the Categories include-filter on?
     std::set<std::wstring> categories;    // included group titles when active

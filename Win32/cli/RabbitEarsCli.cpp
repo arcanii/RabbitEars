@@ -23,6 +23,7 @@
 #include "core/M3uWriter.h"
 #include "core/PowerPolicy.h"
 #include "core/RecordingRules.h"
+#include "core/Strings.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
@@ -887,6 +888,36 @@ int selftest() {
         expect(mdb.addRule(mr) > 0, "recording_rules table added by migration (v5)");
         expect(mdb.listSchedules().size() == 1 && mdb.listSchedules()[0].ruleId == 0,
                "rule_id column added by migration; pre-v5 rows read back as 0");
+    }
+
+    out("== i18n string catalog (en/ja) ==\n");
+    {
+        using namespace i18n;
+        StringId missing = StringId::Count;
+        expect(catalogIsComplete(&missing),
+               "every StringId is non-empty in both English and Japanese");
+        // Placeholder parity: en and ja must carry the same number of {n}/%d/%s tokens per key, or
+        // trf()/swprintf break at runtime (a translator dropping a {0} or %d).
+        int mismatches = 0;
+        StringId firstBad = StringId::Count;
+        for (int k = 0; k < static_cast<int>(StringId::Count); ++k) {
+            const StringId id = static_cast<StringId>(k);
+            if (placeholderCount(id, Lang::En) != placeholderCount(id, Lang::Ja)) {
+                if (mismatches++ == 0) firstBad = id;
+            }
+        }
+        expect(mismatches == 0, "placeholder tokens match between en and ja for every key");
+        if (mismatches) out("  first parity mismatch at StringId #" +
+                            std::to_string(static_cast<int>(firstBad)) + "\n");
+        // The catalog is a fixed-size array indexed by the enum, so a real lookup must be non-null
+        // and language selection must actually switch the returned bytes.
+        setActiveLang(Lang::Ja);
+        expect(trU8(StringId::ButtonCancel) != nullptr && trU8(StringId::ButtonCancel)[0] != '\0',
+               "active-language lookup returns a real string");
+        expect(std::string(trU8(StringId::ButtonCancel, Lang::En)) !=
+                   std::string(trU8(StringId::ButtonCancel, Lang::Ja)),
+               "en and ja differ for a translated key (Cancel)");
+        setActiveLang(Lang::En);  // leave the process back on English for any later test
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");

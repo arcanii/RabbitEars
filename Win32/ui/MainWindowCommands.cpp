@@ -50,6 +50,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"  // tr()/trf() localization + systemLang()/resolveLang()
 #include "ui/VideoGrid.h"
 #include "ui/VlcEngine.h"
 #include "ui/VlcPlayer.h"
@@ -76,13 +77,14 @@ namespace mw {
 
 void onAddUrl(AppState* st) {
     if (st->busy) {
-        setStatus(st, L"A playlist is still loading — please wait…");
+        setStatus(st, tr(i18n::StringId::StatusPlaylistLoadingWait));
         diag::warn(L"Add Playlist ignored: a playlist load is already in progress");
         return;
     }
     std::wstring url;  // no bundled/default playlist — users supply their own source
     if (!promptText(st->hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
-                    st->dpi, L"Add Playlist", L"Playlist URL (.m3u / .m3u8):", url))
+                    st->dpi, tr(i18n::StringId::AddPlaylistDialogTitle),
+                    tr(i18n::StringId::AddPlaylistUrlPrompt), url))
         return;
     if (url.empty()) return;
     startPlaylistWorker(st, url, true, nameFromSource(url, true));
@@ -90,7 +92,7 @@ void onAddUrl(AppState* st) {
 
 void onOpenFile(AppState* st) {
     if (st->busy) {
-        setStatus(st, L"A playlist is still loading — please wait…");
+        setStatus(st, tr(i18n::StringId::StatusPlaylistLoadingWait));
         return;
     }
     wchar_t path[MAX_PATH] = L"";
@@ -113,9 +115,9 @@ void onExportFavourites(AppState* st) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
     const std::vector<Channel> favs = st->db.favourites();
     if (favs.empty()) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Export favourites", L"No favourites yet",
-                       L"Star some channels first (the ★ column in the channel list, or "
-                       L"right-click a TV-Guide row), then export.\r\n");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ExportFavouritesTitle),
+                       tr(i18n::StringId::ExportFavouritesNoneHeading),
+                       tr(i18n::StringId::ExportFavouritesNoneBody));
         return;
     }
     wchar_t path[MAX_PATH] = L"favourites.m3u";
@@ -153,18 +155,18 @@ void onExportFavourites(AppState* st) {
     f.flush();
     if (!f) {
         diag::error(L"favourites export failed to write: " + std::wstring(path));
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Export favourites", L"Could not write the file",
-                       L"Path:  " + std::wstring(path) + L"\r\n");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ExportFavouritesTitle),
+                       tr(i18n::StringId::ExportFavouritesWriteFailHeading),
+                       trf(i18n::StringId::ExportFavouritesPathLine, { std::wstring(path) }));
         return;
     }
     f.close();
     diag::info(L"favourites exported: " + std::to_wstring(favs.size()) + L" -> " +
                std::wstring(path));
-    setStatus(st, L"Exported " + std::to_wstring(favs.size()) + L" favourites.");
-    showInfoDialog(st->hwnd, hInst, st->dpi, L"Export favourites",
-                   L"Exported " + std::to_wstring(favs.size()) + L" favourite" +
-                       (favs.size() == 1 ? L"" : L"s"),
-                   L"File:  " + std::wstring(path) + L"\r\n");
+    setStatus(st, trf(i18n::StringId::StatusExportedFavourites, { std::to_wstring(favs.size()) }));
+    showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ExportFavouritesTitle),
+                   trf(i18n::StringId::ExportFavouritesDoneHeading, { std::to_wstring(favs.size()) }),
+                   trf(i18n::StringId::FileLineDetail, { std::wstring(path) }));
 }
 
 void onImportFavourites(AppState* st) {
@@ -182,9 +184,10 @@ void onImportFavourites(AppState* st) {
     std::wstring err;
     const M3uDocument doc = parseM3uFile(path, &err);
     if (doc.channels.empty()) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Import favourites", L"No channels found",
-                       L"File:  " + std::wstring(path) + L"\r\n" +
-                           (err.empty() ? L"" : L"Problem:  " + err + L"\r\n"));
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ImportFavouritesTitle),
+                       tr(i18n::StringId::ImportFavouritesNoChannelsHeading),
+                       trf(i18n::StringId::FileLineDetail, { std::wstring(path) }) +
+                           (err.empty() ? L"" : trf(i18n::StringId::ProblemLineDetail, { err })));
         return;
     }
     // One pass over the library builds both match keys; the file may star a channel that
@@ -211,14 +214,13 @@ void onImportFavourites(AppState* st) {
     loadForFilter(st);  // refresh the grid (★ column / the Favourites view)
     diag::info(L"favourites imported: " + std::to_wstring(ids.size()) + L" starred, " +
                std::to_wstring(missed) + L" not in the library");
-    std::wstring details = L"File:  " + std::wstring(path) + L"\r\nEntries in file:  " +
-                           std::to_wstring(doc.channels.size()) + L"\r\nChannels starred:  " +
-                           std::to_wstring(ids.size()) + L"\r\n";
+    std::wstring details = trf(i18n::StringId::ImportFavouritesDetails,
+                               { std::wstring(path), std::to_wstring(doc.channels.size()),
+                                 std::to_wstring(ids.size()) });
     if (missed > 0)
-        details += L"Not in your library (skipped):  " + std::to_wstring(missed) + L"\r\n";
-    showInfoDialog(st->hwnd, hInst, st->dpi, L"Import favourites",
-                   L"Starred " + std::to_wstring(ids.size()) + L" channel" +
-                       (ids.size() == 1 ? L"" : L"s"),
+        details += trf(i18n::StringId::ImportFavouritesSkippedLine, { std::to_wstring(missed) });
+    showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ImportFavouritesTitle),
+                   trf(i18n::StringId::ImportFavouritesStarredHeading, { std::to_wstring(ids.size()) }),
                    details);
 }
 
@@ -256,66 +258,72 @@ void storeLayoutNames(AppState* st, const std::vector<std::wstring>& names) {
 
 void onLayoutSave(HWND hwnd, AppState* st) {
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-    std::wstring name = L"My layout";
-    if (!promptText(hwnd, hInst, st->dpi, L"Save Layout", L"Layout name:", name) || name.empty())
+    std::wstring name = tr(i18n::StringId::LayoutDefaultName);
+    if (!promptText(hwnd, hInst, st->dpi, tr(i18n::StringId::SaveLayoutDialogTitle),
+                    tr(i18n::StringId::SaveLayoutNamePrompt), name) ||
+        name.empty())
         return;
     for (wchar_t& c : name)
         if (c == L'\n' || c == L'\r') c = L' ';  // the index is newline-joined
     auto names = savedLayoutNames(st);
     if (std::find(names.begin(), names.end(), name) == names.end()) {
         if (names.size() >= static_cast<size_t>(kMaxSavedLayouts)) {
-            setStatus(st, L"Layout limit reached (" + std::to_wstring(kMaxSavedLayouts) +
-                              L") — delete one first.");
+            setStatus(st, trf(i18n::StringId::StatusLayoutLimitReached,
+                              { std::to_wstring(kMaxSavedLayouts) }));
             return;
         }
         names.push_back(name);
         storeLayoutNames(st, names);
     }  // an existing name is simply overwritten below
     st->db.setSetting(L"layout_saved_" + name, st->dock.serialize());
-    setStatus(st, L"Layout saved: " + name);
+    setStatus(st, trf(i18n::StringId::StatusLayoutSaved, { name }));
 }
 
 void onPlaylistDone(AppState* st, PlaylistResult* res) {
     st->busy = false;
     std::wstring summary, details;
-    const std::wstring src = L"Source:  " + res->source + L"\r\n\r\n";
+    const std::wstring src = trf(i18n::StringId::PlaylistSourceLine, { res->source });
     if (res->ok && !res->doc.channels.empty()) {
         const long long now = static_cast<long long>(time(nullptr));
         const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now, res->doc.epgUrl);
         if (pid == 0) {
-            setStatus(st, L"Add playlist failed: could not save to the database");
+            setStatus(st, tr(i18n::StringId::StatusAddPlaylistFailedDb));
             diag::error(L"playlist add failed: addPlaylist returned 0 for " + res->source);
-            summary = L"Could not import the playlist";
-            details = src + L"Problem:  the playlist could not be saved to the database.\r\n";
+            summary = tr(i18n::StringId::PlaylistImportFailedHeading);
+            details = src + tr(i18n::StringId::PlaylistDbSaveProblem);
         } else {
             const int n = st->db.bulkInsertChannels(pid, res->doc.channels, now);
             res->imported = n;
             refreshNav(st);
             st->filter = {ViewKind::Playlist, L"", pid};
             loadForFilter(st);
-            setStatus(st, L"Added " + std::to_wstring(n) + L" channels from " + res->name);
+            setStatus(st, trf(i18n::StringId::StatusAddedChannels, { std::to_wstring(n), res->name }));
             diag::info(L"playlist added: \"" + res->name + L"\" (" + std::to_wstring(n) +
                        L" channels) from " + res->source);
             const int skipped = res->parsed - res->imported;
-            summary = L"Imported " + std::to_wstring(res->imported) + L" channels from " + res->name;
-            details = src + L"Channels parsed:  " + std::to_wstring(res->parsed) + L"\r\n" +
-                      L"Channels imported:  " + std::to_wstring(res->imported) + L"\r\n";
+            summary = trf(i18n::StringId::PlaylistImportedHeading,
+                          { std::to_wstring(res->imported), res->name });
+            details = src +
+                      trf(i18n::StringId::PlaylistChannelsParsedLine, { std::to_wstring(res->parsed) }) +
+                      trf(i18n::StringId::PlaylistChannelsImportedLine,
+                          { std::to_wstring(res->imported) });
             if (skipped > 0)
-                details += L"Skipped (blank or duplicate URLs):  " + std::to_wstring(skipped) + L"\r\n";
-            details += L"Groups:  " + std::to_wstring(res->groups) + L"\r\n";
+                details += trf(i18n::StringId::PlaylistSkippedLine, { std::to_wstring(skipped) });
+            details += trf(i18n::StringId::PlaylistGroupsLine, { std::to_wstring(res->groups) });
         }
     } else {
         std::wstring msg = res->error;
         if (msg.empty())
-            msg = res->ok ? L"The playlist contained no channels." : L"No channels found.";
-        setStatus(st, L"Add playlist failed: " + msg);
+            msg = res->ok ? tr(i18n::StringId::PlaylistNoChannelsMsg)
+                          : tr(i18n::StringId::PlaylistNoChannelsFoundMsg);
+        setStatus(st, trf(i18n::StringId::StatusAddPlaylistFailed, { msg }));
         diag::error(L"playlist add failed from " + res->source + L": " + msg);
-        summary = L"Could not import the playlist";
-        details = src + L"Problem:  " + msg + L"\r\n";
+        summary = tr(i18n::StringId::PlaylistImportFailedHeading);
+        details = src + trf(i18n::StringId::ProblemLineDetail, { msg });
     }
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
-                   st->dpi, L"Import results", summary, details);
+                   st->dpi, tr(i18n::StringId::ImportResultsTitle), summary, details);
     delete res;
 }
 
@@ -324,7 +332,7 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
 // (busy-guarded), then WM_APP_EPG_DONE stores the parsed programmes on the UI thread.
 void onEpgRefresh(AppState* st) {
     if (st->busy) {
-        setStatus(st, L"Busy — please wait…");
+        setStatus(st, tr(i18n::StringId::StatusBusyWait));
         return;
     }
     std::vector<EpgTarget> targets;
@@ -333,15 +341,16 @@ void onEpgRefresh(AppState* st) {
 
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
     if (targets.empty()) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Refresh Guide", L"No guide source found",
-                       L"None of your enabled playlists carry an XMLTV guide URL (x-tvg-url in the "
-                       L"#EXTM3U header).\r\n\r\nAdd a playlist that includes one, then try again.");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::RefreshGuideTitle),
+                       tr(i18n::StringId::RefreshGuideNoSourceHeading),
+                       tr(i18n::StringId::RefreshGuideNoSourceBody));
         return;
     }
     st->busy = true;
-    setStatus(st, L"Downloading guide…");
+    setStatus(st, tr(i18n::StringId::StatusDownloadingGuide));
     st->loadingDlg =
-        showLoadingDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"Contacting guide source…");
+        showLoadingDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::TvGuideTitle),
+                          tr(i18n::StringId::LoadingContactingGuide));
     diag::info(L"EPG refresh start: " + std::to_wstring(targets.size()) + L" playlist(s)");
     HWND hwnd = st->hwnd;
     std::thread([hwnd, targets]() {
@@ -357,18 +366,20 @@ void onEpgRefresh(AppState* st) {
             f.playlistId = t.id;
             f.name = t.name;
             const std::wstring tag =
-                n > 1 ? L" (" + std::to_wstring(i + 1) + L" of " + std::to_wstring(n) + L")" : L"";
+                n > 1 ? trf(i18n::StringId::LoadingProgressTag,
+                            { std::to_wstring(i + 1), std::to_wstring(n) })
+                      : L"";
             std::string bytes;
             std::wstring err;
-            post(L"Downloading " + t.name + L"…" + tag);
+            post(trf(i18n::StringId::LoadingDownloadingName, { t.name, tag }));
             if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60 s
-                f.error = err.empty() ? L"download failed" : err;
+                f.error = err.empty() ? tr(i18n::StringId::EpgErrorDownloadFailed) : err;
             } else {
-                post(L"Parsing " + t.name + L" (" + std::to_wstring(bytes.size() / 1024) + L" KB)…" +
-                     tag);
+                post(trf(i18n::StringId::LoadingParsingName,
+                         { t.name, std::to_wstring(bytes.size() / 1024), tag }));
                 const std::string xml = gunzipIfNeeded(bytes);
                 if (xml.empty())
-                    f.error = L"empty or invalid after decompression";
+                    f.error = tr(i18n::StringId::EpgErrorEmptyAfterDecompress);
                 else
                     f.programmes = parseXmltv(xml).programmes;
             }
@@ -396,26 +407,26 @@ void onEpgDone(AppState* st, EpgResult* res) {
         ++okCount;
         totalProg += stored;
         for (const auto& p : f.programmes) chans.insert(p.channelId);
-        detail += f.name + L":  " + std::to_wstring(stored) + L" programmes\r\n";
+        detail += trf(i18n::StringId::EpgDetailProgrammesLine, { f.name, std::to_wstring(stored) });
         diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
     }
     std::wstring summary =
-        okCount > 0 ? L"Stored " + std::to_wstring(totalProg) + L" programmes across " +
-                          std::to_wstring(chans.size()) + L" channels"
-                    : L"Could not refresh the guide";
+        okCount > 0 ? trf(i18n::StringId::EpgStoredSummary,
+                          { std::to_wstring(totalProg), std::to_wstring(chans.size()) })
+                    : tr(i18n::StringId::EpgRefreshFailedSummary);
     // A fresh guide is exactly when a series rule learns about next week's airings — force it.
     if (okCount > 0) {
         const int queued = expandRecordingRules(st, /*force=*/true);
         syncWakeFromSchedules(st);
         if (queued > 0) {
-            detail += L"\r\nRecording rules queued " + std::to_wstring(queued) + L" new airing(s).\r\n";
-            summary += L" · " + std::to_wstring(queued) + L" queued by rules";
+            detail += trf(i18n::StringId::EpgRulesQueuedDetail, { std::to_wstring(queued) });
+            summary += trf(i18n::StringId::EpgQueuedByRulesSummary, { std::to_wstring(queued) });
         }
     }
     setStatus(st, summary);
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
-                   st->dpi, L"Refresh Guide", summary, detail);
+                   st->dpi, tr(i18n::StringId::RefreshGuideTitle), summary, detail);
     delete res;
 }
 
@@ -439,8 +450,8 @@ void onEpgGuide(AppState* st) {
     // reason: the build only READS the DB on the UI thread, so it's safe to run during a fetch/playlist
     // load, and the fetch's own box is topmost so it still floats over the opened guide.
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
-    HWND loadDlg = showLoadingDialog(st->hwnd, hInst, st->dpi, L"TV Guide",
-                                     L"Building the guide from stored programmes…");
+    HWND loadDlg = showLoadingDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::TvGuideTitle),
+                                     tr(i18n::StringId::LoadingBuildingGuide));
     // No diag timer exists on this path, so the absolute first-open cost is unmeasured; bracket it
     // (owner can't profile the GUI from the build sandbox). If builds run past ~2-3 s on real guides,
     // the fix is a worker with its OWN sqlite connection — see Win32/BACKLOG.md.
@@ -497,11 +508,8 @@ void onEpgGuide(AppState* st) {
     QueryPerformanceCounter(&tBuild1);
     if (rows.empty()) {
         closeLoadingDialog(loadDlg);  // dismiss before the modal info box, or it stacks on top
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"TV Guide", L"No guide to show",
-                       L"No stored programmes match a channel in your playlists.\r\n\r\n"
-                       L"Either run Settings ▸ Refresh Guide… first, or the guide's channel IDs don't "
-                       L"match your playlist — point it at a guide whose tvg-ids line up (right-click a "
-                       L"playlist ▸ Set Guide URL…).");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::TvGuideTitle),
+                       tr(i18n::StringId::GuideNoGuideHeading), tr(i18n::StringId::GuideNoGuideBody));
         return;
     }
     std::sort(rows.begin(), rows.end(),
@@ -529,12 +537,9 @@ void onEpgGuide(AppState* st) {
             // setStatus lands in the status bar, which is behind the guide — the user never saw
             // it. Say why loudly instead (almost always a tvg-id mismatch, per the guide caveat).
             HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
-            showInfoDialog(st->hwnd, hi, st->dpi, L"TV Guide", L"No matching channel",
-                           L"Couldn't find a channel for \"" + channelName +
-                               L"\" in your playlist.\r\n\r\nThe guide matches programmes to channels "
-                               L"by tvg-id — this programme's channel ID has no match. Point the "
-                               L"playlist at a guide whose IDs match it (right-click the playlist "
-                               L"▸ Set Guide URL…).");
+            showInfoDialog(st->hwnd, hi, st->dpi, tr(i18n::StringId::TvGuideTitle),
+                           tr(i18n::StringId::GuideNoMatchHeading),
+                           trf(i18n::StringId::GuideNoMatchBody, { channelName }));
         }
     };
     cb.isFavourite = [st](const std::wstring& channelId) {
@@ -546,8 +551,8 @@ void onEpgGuide(AppState* st) {
         if (!ch) return;
         st->db.toggleFavourite(ch->id);        // ch->favourite is the pre-toggle state
         loadForFilter(st);                     // refresh the grid's favourite column / Favourites view
-        setStatus(st, (ch->favourite ? L"Removed from Favourites: " : L"Added to Favourites: ") +
-                          channelName);
+        setStatus(st, ch->favourite ? trf(i18n::StringId::StatusRemovedFavourite, { channelName })
+                                    : trf(i18n::StringId::StatusAddedFavourite, { channelName }));
     };
     closeLoadingDialog(loadDlg);  // dismiss the box before the guide window paints
     const size_t nRows = rows.size();  // capture before the move below empties `rows`
@@ -567,19 +572,20 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
     for (const auto& pl : st->db.listPlaylists())
         if (pl.id == pid) { url = pl.epgUrl; break; }
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-    if (!promptText(hwnd, hInst, st->dpi, L"Set Guide URL",
-                    L"XMLTV guide URL (.xml or .xml.gz; blank to clear):", url))
+    if (!promptText(hwnd, hInst, st->dpi, tr(i18n::StringId::SetGuideUrlTitle),
+                    tr(i18n::StringId::SetGuideUrlPrompt), url))
         return;
     st->db.setPlaylistEpgUrl(pid, url);
     diag::info(L"set epg_url for playlist id=" + std::to_wstring(pid) +
                (url.empty() ? L" (cleared)" : L" to \"" + url + L"\""));
     if (url.empty()) {
-        setStatus(st, L"Guide URL cleared");
-    } else if (MessageBoxW(hwnd, L"Guide URL saved.\n\nDownload the guide now?", L"Set Guide URL",
+        setStatus(st, tr(i18n::StringId::StatusGuideUrlCleared));
+    } else if (MessageBoxW(hwnd, tr(i18n::StringId::SetGuideUrlSavedPrompt).c_str(),
+                           tr(i18n::StringId::SetGuideUrlTitle).c_str(),
                            MB_YESNO | MB_ICONQUESTION) == IDYES) {
         onEpgRefresh(st);  // fetches every enabled playlist that has a URL
     } else {
-        setStatus(st, L"Guide URL saved — run Settings ▸ Refresh Guide to fetch it");
+        setStatus(st, tr(i18n::StringId::StatusGuideUrlSaved));
     }
 }
 
@@ -691,8 +697,8 @@ void setActivePane(AppState* st, int idx) {
     SetWindowTextW(st->btnRec, st->ap().player.isRecording() ? kGlyphStop : kGlyphRecord);
     resetStatMeters(st);  // the previous pane's readings don't apply to the newly-active stream
     setStatus(st, st->ap().nowPlayingName.empty()
-                      ? L"Active pane " + std::to_wstring(idx + 1)
-                      : L"Active: " + st->ap().nowPlayingName);
+                      ? trf(i18n::StringId::StatusActivePane, { std::to_wstring(idx + 1) })
+                      : trf(i18n::StringId::StatusActiveChannel, { st->ap().nowPlayingName }));
     // erase=TRUE: the active-pane accent border is drawn in the inter-pane gap, so the PREVIOUS
     // active pane's border must be cleared (windowBg fill via WM_ERASEBKGND) — otherwise borders
     // accumulate and every tile ends up looking "active". WS_CLIPCHILDREN keeps the fill off the
@@ -731,10 +737,10 @@ void applyViewMode(AppState* st, ViewMode mode) {
             if (st->panes[i]->player.isRecording()) ++recCount;
         if (recCount > 0) {
             wchar_t msg[160];
-            swprintf_s(msg, L"Switching the view stops %d background recording%s (the file will be "
-                            L"finalized). Continue?",
-                       recCount, recCount == 1 ? L"" : L"s");
-            if (MessageBoxW(st->hwnd, msg, L"RabbitEars",
+            // The count is baked as "(s)" in the template — Japanese has no plural and the old
+            // runtime %s "s" suffix leaked a stray Latin s into the Japanese string.
+            swprintf_s(msg, tr(i18n::StringId::ViewSwitchStopRecordingConfirm).c_str(), recCount);
+            if (MessageBoxW(st->hwnd, msg, tr(i18n::StringId::AppName).c_str(),
                             MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
                 return;
             if (st->activeScheduleId != 0 && st->schedulePane >= 1) {
@@ -832,19 +838,19 @@ void onToggleRecord(AppState* st) {
     // recording only blocks the pane it is recording on — that pane's recorder belongs to the
     // scheduler, but any other pane records freely alongside it.
     if (st->activeScheduleId != 0 && st->schedulePane == st->active) {
-        setStatus(st, L"A scheduled recording owns this pane — manage it in Scheduled Recordings.");
+        setStatus(st, tr(i18n::StringId::StatusScheduleOwnsPane));
         return;
     }
     if (st->ap().player.isRecording()) {
         const std::wstring file = st->ap().player.recordingFile();
         st->ap().player.stopRecording();
         SetWindowTextW(st->btnRec, kGlyphRecord);
-        setStatus(st, L"Recording saved: " + file);
+        setStatus(st, trf(i18n::StringId::StatusRecordingSaved, { file }));
         syncKeepAwake(st);  // another pane may still be recording — re-derive, don't assume
         return;
     }
     if (st->ap().nowPlaying.id == 0) {
-        setStatus(st, L"Play a channel first, then Record.");
+        setStatus(st, tr(i18n::StringId::StatusPlayChannelFirst));
         return;
     }
     std::wstring ext;
@@ -854,7 +860,7 @@ void onToggleRecord(AppState* st) {
     if (st->ap().player.startRecording(st->ap().nowPlaying.streamUrl, st->ap().nowPlaying.userAgent,
                                   st->ap().nowPlaying.referrer, path, mux)) {
         SetWindowTextW(st->btnRec, kGlyphStop);
-        setStatus(st, L"● Recording " + st->ap().nowPlaying.name + L"  →  " + path);
+        setStatus(st, trf(i18n::StringId::StatusRecordingNow, { st->ap().nowPlaying.name, path }));
         syncKeepAwake(st);  // don't let the machine sleep out from under a manual recording
     }
 }
@@ -925,7 +931,7 @@ void onSchedulerTick(AppState* st) {
         if (id == st->activeScheduleId) stopScheduledRecorder(st);
         st->db.updateScheduleStatus(id, ScheduleStatus::Done);
         diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
-        setStatus(st, L"Scheduled recording saved.");
+        setStatus(st, tr(i18n::StringId::StatusScheduledRecordingSaved));
     }
     for (long long id : plan.miss) {
         st->db.updateScheduleStatus(id, ScheduleStatus::Missed);
@@ -946,7 +952,7 @@ void onSchedulerTick(AppState* st) {
             st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path);
             SetWindowTextW(st->btnRec, kGlyphStop);  // the active pane's recorder just engaged
             diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
-            setStatus(st, L"● Recording (scheduled) " + s->channelName);
+            setStatus(st, trf(i18n::StringId::StatusRecordingScheduledNow, { s->channelName }));
         } else {
             st->db.updateScheduleStatus(id, ScheduleStatus::Failed);
             diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
@@ -1044,9 +1050,9 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
     std::optional<Channel> ch;
     if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
     if (!ch) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Channel not found",
-                       L"Couldn't match \"" + channelName + L"\" to a playable channel in your "
-                       L"library (its tvg-id isn't in an enabled playlist).");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ScheduleRecordingTitle),
+                       tr(i18n::StringId::ChannelNotFoundHeading),
+                       trf(i18n::StringId::ScheduleChannelNotFoundBody, { channelName }));
         return;
     }
     ScheduledRecording s;
@@ -1062,12 +1068,13 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
     s.createdAt = static_cast<long long>(time(nullptr));
     if (st->db.addSchedule(s) > 0) {
         onSchedulerTick(st);  // start immediately if the programme is already on air
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Recording scheduled",
-                       title + L"\r\n" + s.channelName +
-                           L"\r\n\r\nThe app must be running at the scheduled time.");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ScheduleRecordingTitle),
+                       tr(i18n::StringId::ScheduleRecordingScheduledHeading),
+                       trf(i18n::StringId::ScheduleRecordingScheduledBody, { title, s.channelName }));
     } else {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Schedule recording", L"Could not schedule",
-                       L"The recording could not be saved.");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::ScheduleRecordingTitle),
+                       tr(i18n::StringId::ScheduleCouldNotHeading),
+                       tr(i18n::StringId::ScheduleCouldNotBody));
     }
 }
 
@@ -1080,18 +1087,18 @@ void recordSeriesFromGuide(AppState* st, const std::wstring& channelId,
     std::optional<Channel> ch;
     if (!channelId.empty()) ch = st->db.channelByTvgId(channelId);
     if (!ch) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Channel not found",
-                       L"Couldn't match \"" + channelName +
-                           L"\" to a playable channel in your library.");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::RecordSeriesTitle),
+                       tr(i18n::StringId::ChannelNotFoundHeading),
+                       trf(i18n::StringId::RecordSeriesChannelNotFoundBody, { channelName }));
         return;
     }
     // Reject an exact duplicate so mashing the button doesn't pile up identical rules.
     for (const RecordingRule& r : st->db.listRules())
         if (normaliseTvgId(r.channelId) == normaliseTvgId(channelId) && r.titleMatch == title &&
             r.match == RuleMatch::Exact) {
-            showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Already recording this series",
-                           L"A rule for \"" + title + L"\" on " + ch->name +
-                               L" already exists.\r\nSee Settings ▸ Recording Rules….");
+            showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::RecordSeriesTitle),
+                           tr(i18n::StringId::RecordSeriesAlreadyHeading),
+                           trf(i18n::StringId::RecordSeriesAlreadyBody, { title, ch->name }));
             return;
         }
 
@@ -1103,19 +1110,19 @@ void recordSeriesFromGuide(AppState* st, const std::wstring& channelId,
     r.mux = st->recFormat;
     r.createdAt = static_cast<long long>(time(nullptr));
     if (st->db.addRule(r) == 0) {
-        showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Could not save the rule",
-                       L"The recording rule could not be stored.");
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::RecordSeriesTitle),
+                       tr(i18n::StringId::RecordSeriesCouldNotSaveHeading),
+                       tr(i18n::StringId::RecordSeriesCouldNotSaveBody));
         return;
     }
     const int added = expandRecordingRules(st, /*force=*/true);  // a brand-new rule must queue now
     syncWakeFromSchedules(st);
     onSchedulerTick(st);  // catch an airing that is already on
     diag::info(L"series rule added: \"" + title + L"\" on " + r.channelName);
-    showInfoDialog(st->hwnd, hInst, st->dpi, L"Record series", L"Recording every airing of this show",
-                   title + L"\r\n" + r.channelName + L"\r\n\r\n" + std::to_wstring(added) +
-                       L" upcoming airing(s) queued from the guide.\r\n"
-                       L"New airings are picked up automatically as the guide refreshes.\r\n\r\n"
-                       L"Manage rules in Settings ▸ Recording Rules….");
+    showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::RecordSeriesTitle),
+                   tr(i18n::StringId::RecordSeriesEveryAiringHeading),
+                   trf(i18n::StringId::RecordSeriesEveryAiringBody,
+                       { title, r.channelName, std::to_wstring(added) }));
 }
 
 // Settings → Recording Rules…: list the standing series rules, with enable/disable + delete.
@@ -1169,8 +1176,7 @@ void onManageSchedules(AppState* st) {
             }
         if (ruleTombstone) {
             st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
-            setStatus(st, L"Airing cancelled — it came from a series rule, so it stays listed as "
-                          L"Cancelled. Delete the rule to stop the series.");
+            setStatus(st, tr(i18n::StringId::StatusAiringCancelledRule));
         } else {
             st->db.deleteSchedule(id);
         }
@@ -1220,14 +1226,12 @@ std::set<std::wstring> splitCategories(const std::wstring& s) {
 void onCategories(AppState* st) {
     std::vector<std::wstring> groups = st->db.listGroups();
     if (groups.empty()) {
-        setStatus(st, L"No categories to filter — this library has no group titles.");
+        setStatus(st, tr(i18n::StringId::StatusNoCategories));
         showInfoDialog(st->hwnd,
                        reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
-                       st->dpi, L"Categories", L"No categories to filter",
-                       L"The channels in your library have no group titles, so there are no "
-                       L"categories to include or exclude.\r\n\r\n"
-                       L"Add a playlist whose #EXTINF lines carry group-title tags to use this "
-                       L"filter.\r\n");
+                       st->dpi, tr(i18n::StringId::CategoriesTitle),
+                       tr(i18n::StringId::CategoriesNoneHeading),
+                       tr(i18n::StringId::CategoriesNoneBody));
         return;
     }
     std::set<std::wstring> checked;
@@ -1317,71 +1321,87 @@ void onMeters(AppState* st) {
     layout(st->hwnd, st);  // show/hide meters per the new enables
 }
 
-// Command-bar Settings menu: Open File, About, recording format, and view toggles.
+// Settings ▸ Language: persist the choice and tell the user it applies on restart. We deliberately
+// do NOT re-render live — the built-once chrome (nav tree, cue banner, buffer label) plus the cached
+// Direct2D text formats would need a full rebuild + font-remake; restart-to-apply is the pragmatic
+// first pass (the live upgrade is backlogged). setActiveLang here keeps any menu/dialog opened before
+// the restart consistent with the choice.
+void setLanguageSelection(AppState* st, const wchar_t* pref) {
+    if (st->uiLanguage == pref) return;
+    st->uiLanguage = pref;
+    st->db.setSetting(L"ui_language", pref);
+    i18n::setActiveLang(resolveLang(st->uiLanguage));
+    setStatus(st, tr(i18n::StringId::StatusLanguageRestart));
+}
+
+// Command-bar Settings (gear) menu — grouped submenus mirroring the mac gear menu's curation.
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
+    using namespace i18n;
+    const UINT chk = MF_CHECKED;
+
+    // Recording-format submenu (nested under Recording).
     HMENU fmt = CreatePopupMenu();
-    AppendMenuW(fmt,
-                MF_STRING | (st->recFormat != L"mkv" && st->recFormat != L"mp4" ? MF_CHECKED : 0u),
-                ID_FMT_TS, L"MPEG-TS  (.ts)");
-    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mkv" ? MF_CHECKED : 0u), ID_FMT_MKV,
-                L"Matroska  (.mkv)");
-    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mp4" ? MF_CHECKED : 0u), ID_FMT_MP4,
-                L"MP4  (.mp4)");
+    AppendMenuW(fmt, MF_STRING | (st->recFormat != L"mkv" && st->recFormat != L"mp4" ? chk : 0u),
+                ID_FMT_TS, tr(StringId::MenuFormatMpegTs).c_str());
+    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mkv" ? chk : 0u), ID_FMT_MKV,
+                tr(StringId::MenuFormatMatroska).c_str());
+    AppendMenuW(fmt, MF_STRING | (st->recFormat == L"mp4" ? chk : 0u), ID_FMT_MP4,
+                tr(StringId::MenuFormatMp4).c_str());
 
-    HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, ID_OPEN_FILE, L"Open File…");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(fmt), L"Recording format");
-    AppendMenuW(m, MF_STRING | (st->hideDead ? MF_CHECKED : 0u), ID_HIDE_DEAD,
-                L"Hide unavailable channels");
-    std::wstring catLabel = L"Categories…";
+    // Channels submenu: hide-unavailable + categories | import/export favourites.
+    HMENU chan = CreatePopupMenu();
+    AppendMenuW(chan, MF_STRING | (st->hideDead ? chk : 0u), ID_HIDE_DEAD,
+                tr(StringId::MenuHideUnavailable).c_str());
+    std::wstring catLabel = tr(StringId::MenuCategories);
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
-    AppendMenuW(m, MF_STRING | (st->categoryActive ? MF_CHECKED : 0u), ID_CATEGORIES,
-                catLabel.c_str());
-    AppendMenuW(m, MF_STRING, ID_FAV_EXPORT, L"Export favourites…");
-    AppendMenuW(m, MF_STRING, ID_FAV_IMPORT, L"Import favourites…");
-    AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, L"TV Guide");
-    AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, L"Refresh Guide…");
-    AppendMenuW(m, MF_STRING, ID_SCHEDULES, L"Scheduled Recordings…");
-    AppendMenuW(m, MF_STRING, ID_RULES, L"Recording Rules…");
-    AppendMenuW(m, MF_STRING | (st->wakeToRecord ? MF_CHECKED : 0u), ID_WAKE_RECORD,
-                L"Wake this PC to record");
-    // Greyed with the feature off, or with nothing queued: in both cases no task is registered,
-    // so there is nothing to demand-start. (wakeTaskFor is the start the task currently targets.)
-    AppendMenuW(m, MF_STRING | ((st->wakeToRecord && st->wakeTaskFor > 0) ? 0u : MF_GRAYED),
-                ID_WAKE_RUN_NOW, L"Run wake task now");
+    AppendMenuW(chan, MF_STRING | (st->categoryActive ? chk : 0u), ID_CATEGORIES, catLabel.c_str());
+    AppendMenuW(chan, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(chan, MF_STRING, ID_FAV_IMPORT, tr(StringId::MenuImportFavourites).c_str());
+    AppendMenuW(chan, MF_STRING, ID_FAV_EXPORT, tr(StringId::MenuExportFavourites).c_str());
 
-    // Meters… opens the full setup dialog (per-meter enable + look + colours + the data-flow
-    // row live there now — the old inline quick-toggle checkboxes were redundant).
-    AppendMenuW(m, MF_STRING, ID_METERS_SETUP, L"Meters…");
-    AppendMenuW(m, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), ID_VIDEO_ONLY,
-                L"Video only\tCtrl+Shift+V");
-    AppendMenuW(m, MF_STRING | (st->resumeLast ? MF_CHECKED : 0u), ID_RESUME_LAST,
-                L"Resume last channel");
+    // Recording submenu: scheduled + rules | format | wake-to-record + run-now.
+    HMENU rec = CreatePopupMenu();
+    AppendMenuW(rec, MF_STRING, ID_SCHEDULES, tr(StringId::MenuScheduledRecordings).c_str());
+    AppendMenuW(rec, MF_STRING, ID_RULES, tr(StringId::MenuRecordingRules).c_str());
+    AppendMenuW(rec, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(rec, MF_POPUP, reinterpret_cast<UINT_PTR>(fmt), tr(StringId::MenuRecordingFormat).c_str());
+    AppendMenuW(rec, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(rec, MF_STRING | (st->wakeToRecord ? chk : 0u), ID_WAKE_RECORD,
+                tr(StringId::MenuWakeToRecord).c_str());
+    // Greyed with the feature off, or nothing queued: no task is registered, nothing to demand-start.
+    AppendMenuW(rec, MF_STRING | ((st->wakeToRecord && st->wakeTaskFor > 0) ? 0u : MF_GRAYED),
+                ID_WAKE_RUN_NOW, tr(StringId::MenuRunWakeTaskNow).c_str());
 
+    // View submenu: the three view modes | video-only.
     HMENU viewMenu = CreatePopupMenu();
-    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Single ? MF_CHECKED : 0u),
-                ID_VIEW_SINGLE, L"Single");
-    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Split ? MF_CHECKED : 0u),
-                ID_VIEW_SPLIT, L"Split (2×2)");
-    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Pip ? MF_CHECKED : 0u),
-                ID_VIEW_PIP, L"Picture-in-picture");
-    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(viewMenu), L"View");
+    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Single ? chk : 0u), ID_VIEW_SINGLE,
+                tr(StringId::MenuViewSingle).c_str());
+    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Split ? chk : 0u), ID_VIEW_SPLIT,
+                tr(StringId::MenuViewSplit).c_str());
+    AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Pip ? chk : 0u), ID_VIEW_PIP,
+                tr(StringId::MenuPictureInPicture).c_str());
+    AppendMenuW(viewMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(viewMenu, MF_STRING | (st->videoOnly ? chk : 0u), ID_VIDEO_ONLY,
+                tr(StringId::MenuVideoOnly).c_str());  // carries the \tCtrl+Shift+V accelerator hint
 
+    // Layout submenu: reset | dock moves | save/apply/delete named layouts.
     HMENU layoutMenu = CreatePopupMenu();
-    AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, L"Reset to default");
+    AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, tr(StringId::MenuLayoutResetDefault).c_str());
     AppendMenuW(layoutMenu, MF_SEPARATOR, 0, nullptr);
-    const struct { const wchar_t* name; Panel p; } dockPanels[] = {
-        {L"Move sidebar", Panel::Nav}, {L"Move video", Panel::Video}, {L"Move channels", Panel::Grid}};
-    const wchar_t* dockSides[] = {L"To left", L"To right", L"To top", L"To bottom"};
+    const struct { StringId name; Panel p; } dockPanels[] = {{StringId::MenuMoveSidebar, Panel::Nav},
+                                                             {StringId::MenuMoveVideo, Panel::Video},
+                                                             {StringId::MenuMoveChannels, Panel::Grid}};
+    const StringId dockSides[] = {StringId::MenuDockToLeft, StringId::MenuDockToRight,
+                                  StringId::MenuDockToTop, StringId::MenuDockToBottom};
     for (const auto& pn : dockPanels) {
         HMENU sub = CreatePopupMenu();
         for (int s = 0; s < 4; ++s)
-            AppendMenuW(sub, MF_STRING, ID_DOCK_BASE + static_cast<int>(pn.p) * 4 + s, dockSides[s]);
-        AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), pn.name);
+            AppendMenuW(sub, MF_STRING, ID_DOCK_BASE + static_cast<int>(pn.p) * 4 + s,
+                        tr(dockSides[s]).c_str());
+        AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), tr(pn.name).c_str());
     }
     AppendMenuW(layoutMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_SAVE, L"Save layout as…");
+    AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_SAVE, tr(StringId::MenuSaveLayoutAs).c_str());
     const std::vector<std::wstring> savedNames = savedLayoutNames(st);
     if (!savedNames.empty()) {
         HMENU applyMenu = CreatePopupMenu(), delMenu = CreatePopupMenu();
@@ -1392,27 +1412,51 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                         savedNames[i].c_str());
         }
         AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(applyMenu),
-                    L"Apply saved layout");
+                    tr(StringId::MenuApplySavedLayout).c_str());
         AppendMenuW(layoutMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(delMenu),
-                    L"Delete saved layout");
+                    tr(StringId::MenuDeleteSavedLayout).c_str());
     }
-    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), L"Layout");
 
+    // Language submenu: System default / English / 日本語 (restart-to-apply).
+    HMENU langMenu = CreatePopupMenu();
+    AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"system" ? chk : 0u), ID_LANG_SYSTEM,
+                tr(StringId::LangSystemDefault).c_str());
+    AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"en" ? chk : 0u), ID_LANG_EN,
+                tr(StringId::LangEnglish).c_str());
+    AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"ja" ? chk : 0u), ID_LANG_JA,
+                tr(StringId::LangJapanese).c_str());
+
+    // ---- assemble the top-level menu (grouped, mac-style) ----
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, ID_OPEN_FILE, tr(StringId::MenuOpenFile).c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(chan), tr(StringId::MenuChannels).c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, ID_EPG_GUIDE, tr(StringId::TvGuideTitle).c_str());
+    AppendMenuW(m, MF_STRING, ID_EPG_REFRESH, tr(StringId::MenuRefreshGuide).c_str());
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(rec), tr(StringId::MenuRecording).c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(viewMenu), tr(StringId::MenuView).c_str());
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), tr(StringId::MenuLayout).c_str());
+    AppendMenuW(m, MF_STRING, ID_METERS_SETUP, tr(StringId::MenuMeters).c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(langMenu), tr(StringId::MenuLanguage).c_str());
 #ifdef RABBITEARS_THEME_ENGINE
     HMENU themeMenu = CreatePopupMenu();
     const std::string& skinSel = activeSkinSelection();
-    AppendMenuW(themeMenu, MF_STRING | (skinSel == "system" ? MF_CHECKED : 0u), ID_THEME_SYSTEM,
-                L"Follow System");
+    AppendMenuW(themeMenu, MF_STRING | (skinSel == "system" ? chk : 0u), ID_THEME_SYSTEM,
+                tr(StringId::MenuThemeFollowSystem).c_str());
     AppendMenuW(themeMenu, MF_SEPARATOR, 0, nullptr);
     const auto& skins = builtinSkins();  // one item per registered skin (auto-grows in Phase 4)
     for (size_t i = 0; i < skins.size(); ++i)
-        AppendMenuW(themeMenu, MF_STRING | (skinSel == skins[i].id ? MF_CHECKED : 0u),
+        AppendMenuW(themeMenu, MF_STRING | (skinSel == skins[i].id ? chk : 0u),
                     ID_THEME_SKIN_BASE + static_cast<int>(i), wideFromUtf8(skins[i].name).c_str());
-    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), L"Theme");
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(themeMenu), tr(StringId::MenuTheme).c_str());
 #endif
-
+    AppendMenuW(m, MF_STRING | (st->resumeLast ? chk : 0u), ID_RESUME_LAST,
+                tr(StringId::MenuResumeLastChannel).c_str());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, ID_ABOUT, L"About…");  // last item, ellipsis to match siblings
+    AppendMenuW(m, MF_STRING, ID_ABOUT, tr(StringId::MenuAbout).c_str());
 
     POINT pt{anchor.left, anchor.bottom};
     ClientToScreen(hwnd, &pt);
@@ -1440,7 +1484,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             if (auto s = st->db.getSetting(L"layout_saved_" + names[i]); s && !s->empty()) {
                 st->dock = DockLayout::parse(*s);  // malformed input degrades to the default tree
                 applyDockChange(hwnd, st);         // applies + re-persists the live dock_layout
-                setStatus(st, L"Layout applied: " + names[i]);
+                setStatus(st, trf(i18n::StringId::StatusLayoutApplied, { names[i] }));
             }
         }
         return;
@@ -1453,7 +1497,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             const std::wstring gone = names[i];
             names.erase(names.begin() + static_cast<ptrdiff_t>(i));
             storeLayoutNames(st, names);
-            setStatus(st, L"Layout deleted: " + gone);
+            setStatus(st, trf(i18n::StringId::StatusLayoutDeleted, { gone }));
         }
         return;
     }
@@ -1500,21 +1544,21 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             st->db.setSetting(L"wake_to_record", st->wakeToRecord ? L"1" : L"0");
             syncWakeFromSchedules(st);  // register or tear down the Windows task right away
             if (!st->wakeToRecord) {
-                setStatus(st, L"Wake-to-record off — recordings need the app running.");
+                setStatus(st, tr(i18n::StringId::StatusWakeToRecordOff));
                 break;
             }
             // Switching it on is exactly when a promise is made. Keep it honest: if the power plan
             // won't arm an RTC wake, say so here instead of at 3am when the recording didn't run.
             const std::wstring warn = wakeVerdictText(queryWakePolicy());
-            setStatus(st, warn.empty() ? L"This PC will wake for scheduled recordings." : warn);
+            setStatus(st, warn.empty() ? tr(i18n::StringId::StatusWakeWillWake) : warn);
             break;
         }
         case ID_WAKE_RUN_NOW:
             // The honest end-to-end test on a machine you can't put to sleep (a VM, a remote box):
             // this runs the registered task for real, --scheduled-wake and all.
             setStatus(st, runWakeTaskNow()
-                              ? L"Wake task started — the scheduled-wake launch path is running now."
-                              : L"Could not start the wake task. Check the log; is one queued?");
+                              ? tr(i18n::StringId::StatusWakeTaskStarted)
+                              : tr(i18n::StringId::StatusWakeTaskFailed));
             break;
         case ID_FAV_EXPORT:
             onExportFavourites(st);
@@ -1553,6 +1597,15 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_VIEW_PIP:
             applyViewMode(st, ViewMode::Pip);
+            break;
+        case ID_LANG_SYSTEM:
+            setLanguageSelection(st, L"system");
+            break;
+        case ID_LANG_EN:
+            setLanguageSelection(st, L"en");
+            break;
+        case ID_LANG_JA:
+            setLanguageSelection(st, L"ja");
             break;
     }
 }

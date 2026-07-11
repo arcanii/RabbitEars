@@ -42,6 +42,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # full history so version.h's BUILD_NUMBER (git commit count) is real
+      - name: i18n catalog is up to date (common/core/Strings.* == common/i18n/*.json)
+        run: python tools/i18n/gen_i18n.py --check
       - name: Configure (core + Win32 platform + CLI; GUI off)
         run: cmake -S . -B build -DRABBITEARS_BUILD_GUI=OFF
       - name: Build

@@ -13,6 +13,7 @@
 #include "ui/D2DSupport.h"
 #include "ui/Dialogs.h"   // showInfoDialog
 #include "ui/Theme.h"     // currentTheme + applyDialogDarkMode
+#include "ui/Tr.h"        // tr / trf
 
 // windows.h maps DrawText -> DrawTextW and d2d1.h declares ID2D1RenderTarget::DrawText
 // through that same macro, so rt->DrawText(...) resolves to DrawTextW consistently
@@ -242,7 +243,7 @@ void paint(HWND hwnd, GuideState* st) {
                 const COLORREF sc = airing ? th.selectionText : th.textSecondary;
                 text(p.title, st->fmtProg, tx, rowY + dpx(st->dpi, 5), tw,
                      static_cast<float>(dpx(st->dpi, 18)), tc);
-                text(hm(p.startUtc) + L" – " + hm(p.stopUtc), st->fmtSub, tx,
+                text(trf(i18n::StringId::GuideTimeRange, {hm(p.startUtc), hm(p.stopUtc)}), st->fmtSub, tx,
                      rowY + static_cast<float>(dpx(st->dpi, 23)), tw, static_cast<float>(dpx(st->dpi, 16)),
                      sc);
             }
@@ -298,7 +299,7 @@ void paint(HWND hwnd, GuideState* st) {
                      D2D1::Point2F(mcx + mr * 1.7f, mcy + mr * 1.7f), st->brush, 1.5f);
         // query text, or a dim placeholder when empty.
         const float tx = mcx + mr + static_cast<float>(dpx(st->dpi, 6));
-        text(active ? st->filter : std::wstring(L"Search channels…"), st->fmtSub, tx,
+        text(active ? st->filter : tr(i18n::StringId::SearchChannelsPlaceholder), st->fmtSub, tx,
              static_cast<float>(dpx(st->dpi, 8)), (colW - fm) - tx, static_cast<float>(dpx(st->dpi, 18)),
              active ? th.textPrimary : th.textSecondary);
     }
@@ -341,7 +342,8 @@ void onClick(HWND hwnd, GuideState* st, int x, int y) {
     const std::wstring channelId = st->rows[r].channelId, channelName = st->rows[r].channelName,
                        title = p->title;
     const long long startUtc = p->startUtc, stopUtc = p->stopUtc;
-    std::wstring info = channelName + L"\r\n" + hm(startUtc) + L" – " + hm(stopUtc) + L"\r\n";
+    std::wstring info = channelName + L"\r\n" +
+                        trf(i18n::StringId::GuideTimeRange, {hm(startUtc), hm(stopUtc)}) + L"\r\n";
     if (!p->descr.empty()) info += L"\r\n" + p->descr;
 
     const ProgrammeAction act = programmeDialog(hwnd, st->hInst, st->dpi, title, info);
@@ -362,7 +364,9 @@ void onGuideContextMenu(HWND hwnd, GuideState* st, int x, int y) {
     if (channelId.empty()) return;  // no tvg-id -> not a resolvable channel to favourite
     const bool fav = st->cb.isFavourite && st->cb.isFavourite(channelId);
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, 1, fav ? L"Remove from Favourites" : L"★  Add to Favourites");
+    AppendMenuW(m, MF_STRING, 1,
+                fav ? tr(i18n::StringId::GuideRemoveFromFavourites).c_str()
+                    : tr(i18n::StringId::GuideAddToFavourites).c_str());
     POINT pt{x, y};
     ClientToScreen(hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
@@ -653,7 +657,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
         return;
     }
     const int w = dpx(dpi, 1100), h = dpx(dpi, 680);
-    HWND hwnd = CreateWindowExW(0, kClass, L"TV Guide — RabbitEars",
+    HWND hwnd = CreateWindowExW(0, kClass, tr(i18n::StringId::GuideWindowTitle).c_str(),
                                 WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL, CW_USEDEFAULT,
                                 CW_USEDEFAULT, w, h, owner, nullptr, hInst, nullptr);
     if (!hwnd) return;

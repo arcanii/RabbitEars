@@ -13,6 +13,8 @@
 
 #include <string>  // std::wstring — role font-family names (themeFontFamily / themeTextFormat)
 
+#include "core/Strings.h"  // i18n::activeLang() — switch to a Japanese face when the UI is Japanese
+
 #ifdef RABBITEARS_THEME_ENGINE
 #include <unordered_map>
 
@@ -207,23 +209,31 @@ inline const SkinFont& skinFontForRole(FontRole role) {
 }
 #endif
 
-// The role's typeface family, wide (skin-driven flag-on; hardwired flag-off). Shared
-// by the GDI themeFont() below and the DirectWrite themeTextFormat() (D2DSupport.h).
-inline std::wstring themeFontFamily(FontRole role) {
-#ifdef RABBITEARS_THEME_ENGINE
-    return wideFromUtf8(skinFontForRole(role).family);
-#else
-    return role == FontRole::Glyph ? std::wstring(L"Segoe MDL2 Assets") : std::wstring(L"Segoe UI");
-#endif
-}
-
-// Whether the role is a symbol/icon face (drives the GDI pitch hint below).
+// Whether the role is a symbol/icon face (drives the GDI pitch hint below + the JP-font opt-out).
 inline bool themeFontIsSymbol(FontRole role) {
 #ifdef RABBITEARS_THEME_ENGINE
     return skinFontForRole(role).symbol;
 #else
     return role == FontRole::Glyph;
 #endif
+}
+
+// The role's typeface family, wide (skin-driven flag-on; hardwired flag-off). Shared by the GDI
+// themeFont() below and the DirectWrite themeTextFormat() (D2DSupport.h). When the UI language is
+// Japanese, every NON-symbol role switches to a Japanese UI face: "Segoe UI" carries no CJK glyphs,
+// so GDI menus/dialogs would render tofu (DirectWrite falls back on its own, but pinning the face
+// keeps both stacks consistent). The MDL2 glyph (symbol) role is never touched, and this override
+// deliberately wins over a skin's display face so Japanese stays legible under every skin.
+inline std::wstring themeFontFamily(FontRole role) {
+    std::wstring fam =
+#ifdef RABBITEARS_THEME_ENGINE
+        wideFromUtf8(skinFontForRole(role).family);
+#else
+        role == FontRole::Glyph ? std::wstring(L"Segoe MDL2 Assets") : std::wstring(L"Segoe UI");
+#endif
+    if (i18n::activeLang() == i18n::Lang::Ja && !themeFontIsSymbol(role))
+        fam = L"Yu Gothic UI";  // Win10/11 Japanese UI face (Meiryo UI is the documented fallback)
+    return fam;
 }
 
 // Build an HFONT in the role's typeface at an explicit 96-dpi pixel size + weight

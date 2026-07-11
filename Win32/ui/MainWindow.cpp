@@ -48,6 +48,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"  // tr()/trf() + systemLang()/resolveLang() for localization
 #include "ui/VideoGrid.h"
 #include "ui/VlcEngine.h"
 #include "ui/VlcPlayer.h"
@@ -311,7 +312,8 @@ void createChildren(HWND hwnd, AppState* st) {
                                  WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 0, 0, 10, 10, hwnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SEARCH)), hInst,
                                  nullptr);
-    SendMessageW(st->search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search channels…"));
+    SendMessageW(st->search, EM_SETCUEBANNER, TRUE,
+                 reinterpret_cast<LPARAM>(tr(i18n::StringId::SearchChannelsPlaceholder).c_str()));
 
     st->btnPlay = CreateWindowExW(0, L"BUTTON", kGlyphPlay, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_PLAY)), hInst, nullptr);
@@ -407,9 +409,9 @@ void createChildren(HWND hwnd, AppState* st) {
     cb.onSetNumber = [st](const Channel& c) { st->db.setChannelNumber(c.id, c.lcn); };
     cb.onContextMenu = [st](const Channel& c, POINT pt) {
         HMENU m = CreatePopupMenu();
-        AppendMenuW(m, MF_STRING, 1, L"Play");
-        AppendMenuW(m, MF_STRING, 2, L"Play in PIP");
-        AppendMenuW(m, MF_STRING, 3, L"Show in TV Guide");
+        AppendMenuW(m, MF_STRING, 1, tr(i18n::StringId::LabelPlay).c_str());
+        AppendMenuW(m, MF_STRING, 2, tr(i18n::StringId::MenuChannelPlayInPip).c_str());
+        AppendMenuW(m, MF_STRING, 3, tr(i18n::StringId::MenuChannelShowInGuide).c_str());
         const int cmd =
             TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, st->hwnd, nullptr);
         DestroyMenu(m);
@@ -425,8 +427,8 @@ void createChildren(HWND hwnd, AppState* st) {
             if (!epgGuideOpen()) onEpgGuide(st);
             if (!epgGuideShowChannel(c.tvgId, static_cast<long long>(time(nullptr))))
                 setStatus(st, c.tvgId.empty()
-                                  ? L"This channel has no tvg-id — the guide can't match it."
-                                  : L"No guide row for " + c.name + L" — try Refresh Guide…");
+                                  ? tr(i18n::StringId::StatusChannelNoTvgId)
+                                  : trf(i18n::StringId::StatusNoGuideRowForChannel, {c.name}));
         }
     };
     channelGridSetCallbacks(st->grid, cb);
@@ -448,12 +450,26 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             st->sidebarW = navWidth(st->dpi);
             applyDarkChrome(hwnd);
             st->engine.init();            // one shared libVLC instance backs every player
-            createChildren(hwnd, st);     // creates pane 0 (its window + player, bound to the engine)
-            st->dock = DockLayout::makeDefault();  // valid tree even if the DB fails below
 
+            // Resolve the UI language BEFORE building the chrome, so the built-once surfaces (nav
+            // tree, cue banner, buffer label) come up in the right language. Default to the system
+            // language, then let a persisted "ui_language" override it. That one setting is read
+            // early; the rest load after createChildren (which the child windows must exist for).
             const std::wstring dbPath = Database::defaultDbPath();
             std::wstring err;
-            if (st->db.open(dbPath, &err)) {
+            const bool dbOk = st->db.open(dbPath, &err);
+            i18n::setActiveLang(systemLang());
+            if (dbOk) {
+                if (auto lg = st->db.getSetting(L"ui_language");
+                    lg && (*lg == L"system" || *lg == L"en" || *lg == L"ja"))
+                    st->uiLanguage = *lg;
+                i18n::setActiveLang(resolveLang(st->uiLanguage));
+            }
+
+            createChildren(hwnd, st);     // creates pane 0 (window + player); built in the UI language
+            st->dock = DockLayout::makeDefault();  // valid tree even if the DB failed above
+
+            if (dbOk) {
                 if (auto sw = st->db.getSetting(L"sidebar_w")) st->sidebarW = _wtoi(sw->c_str());
                 if (auto bh = st->db.getSetting(L"buffer_hidden"); bh && *bh == L"1")
                     bufferMeterSetHidden(st->bufferMeter, true);
@@ -524,7 +540,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 loadForFilter(st);
                 int total = 0;
                 channelGridGetCounts(st->grid, nullptr, &total);
-                if (total == 0) setStatus(st, L"No channels yet — click “+ Add Playlist”.");
+                if (total == 0) setStatus(st, tr(i18n::StringId::StatusNoChannelsYet));
                 diag::info(L"db opened: " + dbPath + L" (" + std::to_wstring(total) + L" channels)");
                 // Resume the last-watched channel (Settings → Resume last channel, default on).
                 // channelById returns nullopt if the channel/playlist was deleted — just skip.
@@ -537,7 +553,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                 }
             } else {
-                setStatus(st, L"Database error: " + err);
+                setStatus(st, trf(i18n::StringId::StatusDatabaseError, {err}));
                 diag::error(L"db open FAILED: " + dbPath + L" — " + err);
             }
             layout(hwnd, st);
@@ -855,7 +871,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     channelGridSetNowPlaying(st->grid, 0);
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
-                    setStatus(st, L"Stopped");
+                    setStatus(st, tr(i18n::StringId::StatusStopped));
                     return 0;
                 case ID_BTN_REC: onToggleRecord(st); return 0;
                 case ID_BTN_FULL: toggleFullscreen(st); return 0;
@@ -885,59 +901,81 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             const double delay = fs.demuxBytesPerSec > 1000.0
                                                      ? fs.bufferedBytes / fs.demuxBytesPerSec
                                                      : 0.0;
-                            swprintf_s(extra, L"\r\nReceived: %.2f Mb/s\r\nBuffered: %.1f s", rcv, delay);
+                            swprintf_s(extra, tr(i18n::StringId::TooltipBufferReceivedBuffered).c_str(),
+                                       rcv, delay);
                         }
-                        swprintf_s(
-                            buf, L"Consumption: %.2f Mb/s\r\nBuffer (latency): %.1f s\r\nRecent loss: %d%s",
-                            cons, bufS, loss, extra);
+                        swprintf_s(buf, tr(i18n::StringId::TooltipBufferConsumption).c_str(), cons, bufS,
+                                   loss, extra);
                     } else {
-                        swprintf_s(buf, L"Not playing\r\nBuffer (latency): %.1f s", bufS);
+                        swprintf_s(buf, tr(i18n::StringId::TooltipBufferNotPlaying).c_str(), bufS);
                     }
                     di->lpszText = buf;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->bufBar)) {
                     static wchar_t buf[96];
-                    swprintf_s(buf, L"Network buffer: %.1f s (receive->show delay)",
+                    swprintf_s(buf, tr(i18n::StringId::TooltipNetworkBuffer).c_str(),
                                st->ap().player.networkCaching() / 1000.0);
                     di->lpszText = buf;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterSpectrum)) {
-                    di->lpszText = const_cast<LPWSTR>(L"Audio spectrum (this app's sound)");
+                    lstrcpynW(di->szText, tr(i18n::StringId::TooltipMeterSpectrum).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterSignal)) {
-                    di->lpszText = const_cast<LPWSTR>(L"Signal strength (stream health)");
+                    lstrcpynW(di->szText, tr(i18n::StringId::TooltipMeterSignal).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterBitrate)) {
-                    di->lpszText = const_cast<LPWSTR>(L"Stream bitrate history");
+                    lstrcpynW(di->szText, tr(i18n::StringId::TooltipMeterBitrate).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->meterFrames)) {
-                    di->lpszText = const_cast<LPWSTR>(L"Frame rate (flares red on dropped frames)");
+                    lstrcpynW(di->szText, tr(i18n::StringId::TooltipMeterFrames).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnPlay)) {
-                    di->lpszText = const_cast<LPWSTR>(st->ap().player.isPlaying() ? L"Pause" : L"Play");
+                    lstrcpynW(di->szText,
+                              (st->ap().player.isPlaying() ? tr(i18n::StringId::TooltipBtnPause)
+                                                           : tr(i18n::StringId::LabelPlay))
+                                  .c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnStop)) {
-                    di->lpszText = const_cast<LPWSTR>(L"Stop");
+                    lstrcpynW(di->szText, tr(i18n::StringId::TooltipBtnStop).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnRec)) {
-                    di->lpszText = const_cast<LPWSTR>(st->ap().player.isRecording() ? L"Stop recording"
-                                                                               : L"Record");
+                    lstrcpynW(di->szText,
+                              (st->ap().player.isRecording()
+                                   ? tr(i18n::StringId::TooltipBtnStopRecording)
+                                   : tr(i18n::StringId::TooltipBtnRecord))
+                                  .c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnFull)) {
-                    di->lpszText = const_cast<LPWSTR>(L"Fullscreen");
+                    lstrcpynW(di->szText, tr(i18n::StringId::Fullscreen).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
                     return 0;
                 }
                 const int vol = static_cast<int>(SendMessageW(st->volBar, TBM_GETPOS, 0, 0));
-                swprintf_s(di->szText, L"Volume: %d%%", vol);
+                swprintf_s(di->szText, tr(i18n::StringId::TooltipVolume).c_str(), vol);
                 di->lpszText = di->szText;
                 return 0;
             }
@@ -962,10 +1000,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         st->navFilters[fi].kind == ViewKind::Playlist) {
                         TreeView_SelectItem(st->nav, item);
                         HMENU menu = CreatePopupMenu();
-                        AppendMenuW(menu, MF_STRING, 2, L"Rename…");
-                        AppendMenuW(menu, MF_STRING, 3, L"Set Guide URL…");
+                        AppendMenuW(menu, MF_STRING, 2, tr(i18n::StringId::MenuPlaylistRename).c_str());
+                        AppendMenuW(menu, MF_STRING, 3, tr(i18n::StringId::MenuSetGuideUrl).c_str());
                         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-                        AppendMenuW(menu, MF_STRING, 1, L"Delete Playlist");
+                        AppendMenuW(menu, MF_STRING, 1, tr(i18n::StringId::DeletePlaylistTitle).c_str());
                         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
                                                        scr.y, 0, hwnd, nullptr);
                         DestroyMenu(menu);
@@ -975,20 +1013,22 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             if (promptText(hwnd,
                                            reinterpret_cast<HINSTANCE>(
                                                GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
-                                           st->dpi, L"Rename Playlist", L"Playlist name:", name) &&
+                                           st->dpi, tr(i18n::StringId::DialogRenamePlaylistTitle),
+                                           tr(i18n::StringId::DialogRenamePlaylistLabel), name) &&
                                 !name.empty()) {
                                 st->db.renamePlaylist(pid, name);
                                 diag::info(L"renamed playlist id=" + std::to_wstring(pid) + L" to \"" +
                                            name + L"\"");
                                 refreshNav(st);
-                                setStatus(st, L"Playlist renamed to \"" + name + L"\"");
+                                setStatus(st, trf(i18n::StringId::StatusPlaylistRenamed, {name}));
                             }
                         } else if (cmd == 3) {  // Set Guide URL… — override this playlist's XMLTV URL
                             promptSetGuideUrl(hwnd, st, pid);
                         } else if (cmd == 1) {  // Delete Playlist
-                            const std::wstring m = L"Delete playlist \"" + std::wstring(label) +
-                                                   L"\"?\n\nThis removes its channels from RabbitEars.";
-                            if (MessageBoxW(hwnd, m.c_str(), L"Delete Playlist",
+                            const std::wstring m =
+                                trf(i18n::StringId::DialogDeletePlaylistBody, {label});
+                            if (MessageBoxW(hwnd, m.c_str(),
+                                            tr(i18n::StringId::DeletePlaylistTitle).c_str(),
                                             MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
                                 st->db.deletePlaylist(pid);
                                 diag::info(L"deleted playlist id=" + std::to_wstring(pid) + L" (" +
@@ -996,7 +1036,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                 st->filter = {ViewKind::All};
                                 refreshNav(st);
                                 loadForFilter(st);
-                                setStatus(st, L"Playlist deleted");
+                                setStatus(st, tr(i18n::StringId::StatusPlaylistDeleted));
                             }
                         }
                     } else if (fi >= 0 && fi < static_cast<LPARAM>(st->navFilters.size()) &&
@@ -1004,19 +1044,21 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         // TV Guide node: EPG management — Refresh + a custom guide URL per playlist.
                         // (Don't TreeView_SelectItem it: selecting the Guide node opens the window.)
                         HMENU menu = CreatePopupMenu();
-                        AppendMenuW(menu, MF_STRING, 100, L"Refresh Guide");
+                        AppendMenuW(menu, MF_STRING, 100, tr(i18n::StringId::RefreshGuideTitle).c_str());
                         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                         const auto pls = st->db.listPlaylists();
                         if (pls.empty()) {
-                            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Set Guide URL… (no playlists)");
+                            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
+                                        tr(i18n::StringId::MenuGuideSetUrlNoPlaylists).c_str());
                         } else if (pls.size() == 1) {
-                            AppendMenuW(menu, MF_STRING, 200, L"Set Guide URL…");
+                            AppendMenuW(menu, MF_STRING, 200, tr(i18n::StringId::MenuSetGuideUrl).c_str());
                         } else {
                             HMENU sub = CreatePopupMenu();
                             for (size_t i = 0; i < pls.size() && i < 64; ++i)
                                 AppendMenuW(sub, MF_STRING, 200 + static_cast<int>(i),
                                             (pls[i].name + L"…").c_str());
-                            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub), L"Set Guide URL");
+                            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sub),
+                                        tr(i18n::StringId::SetGuideUrlTitle).c_str());
                         }
                         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
                                                        scr.y, 0, hwnd, nullptr);
@@ -1106,19 +1148,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             switch (pe) {
                 case PlayerEvent::Opening:
                     bufferMeterSetHealth(st->bufferMeter, 15);
-                    setStatus(st, L"Opening: " + st->ap().nowPlayingName);
+                    setStatus(st, trf(i18n::StringId::StatusOpening, {st->ap().nowPlayingName}));
                     diag::info(L"event: Opening — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Buffering: {
                     const int pct = static_cast<int>(lParam);
                     bufferMeterSetHealth(st->bufferMeter, pct);
-                    setStatus(st, L"Buffering " + std::to_wstring(pct) + L"%  —  " + st->ap().nowPlayingName);
+                    setStatus(st, trf(i18n::StringId::StatusBuffering,
+                                      {std::to_wstring(pct), st->ap().nowPlayingName}));
                     break;
                 }
                 case PlayerEvent::Playing:
                     bufferMeterSetHealth(st->bufferMeter, 100);
                     SetWindowTextW(st->btnPlay, kGlyphPause);
-                    setStatus(st, L"Playing: " + st->ap().nowPlayingName);
+                    setStatus(st, trf(i18n::StringId::StatusPlaying, {st->ap().nowPlayingName}));
                     diag::info(L"event: Playing — " + st->ap().nowPlayingName);
                     if (st->ap().nowPlayingId) {
                         st->db.setDeadStatus(st->ap().nowPlayingId, DeadStatus::Alive,
@@ -1128,7 +1171,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     break;
                 case PlayerEvent::Paused:
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, L"Paused: " + st->ap().nowPlayingName);
+                    setStatus(st, trf(i18n::StringId::StatusPaused, {st->ap().nowPlayingName}));
                     diag::info(L"event: Paused — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Stats: {
@@ -1156,9 +1199,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     if (fs.playing && fs.demuxBytesPerSec > 0.0) {
                         const double bps = fs.demuxBytesPerSec * 8.0;
                         if (bps >= 1.0e6)
-                            swprintf_s(m, L"%.1f Mb/s", bps / 1.0e6);
+                            swprintf_s(m, tr(i18n::StringId::MeterOverlayMbps).c_str(), bps / 1.0e6);
                         else
-                            swprintf_s(m, L"%.0f kb/s", bps / 1.0e3);
+                            swprintf_s(m, tr(i18n::StringId::MeterOverlayKbps).c_str(), bps / 1.0e3);
                     }
                     bufferMeterSetMetrics(st->bufferMeter, m);
                     // Feed the modular stat meters off the same real snapshot.
@@ -1182,14 +1225,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, L"Stream ended");
+                    setStatus(st, tr(i18n::StringId::StatusStreamEnded));
                     diag::info(L"event: EndReached — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, L"Unavailable (offline or geo-locked): " + st->ap().nowPlayingName);
+                    setStatus(st, trf(i18n::StringId::StatusUnavailable, {st->ap().nowPlayingName}));
                     diag::error(L"event: PLAYBACK ERROR (offline / geo-locked / codec) — " +
                                 st->ap().nowPlayingName);
                     if (st->ap().nowPlayingId) {
@@ -1290,13 +1333,13 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetBkMode(dc, TRANSPARENT);
                 SetTextColor(dc, th.textSecondary);
                 HGDIOBJ of = SelectObject(dc, st->uiFont);
-                const wchar_t* hint = L"Picture-in-Picture\r\nRight-click a channel ▸ Play in PIP";
+                const std::wstring hint = tr(i18n::StringId::HintEmptyPip);
                 RECT tr = rc;
                 InflateRect(&tr, -dp(10, st->dpi), 0);
                 RECT calc = tr;
-                DrawTextW(dc, hint, -1, &calc, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
+                DrawTextW(dc, hint.c_str(), -1, &calc, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
                 tr.top = rc.top + ((rc.bottom - rc.top) - (calc.bottom - calc.top)) / 2;
-                DrawTextW(dc, hint, -1, &tr, DT_CENTER | DT_WORDBREAK);
+                DrawTextW(dc, hint.c_str(), -1, &tr, DT_CENTER | DT_WORDBREAK);
                 SelectObject(dc, of);
             }
             return 1;
@@ -1470,15 +1513,17 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             AppState* st = stateOf(GetParent(hwnd));
             if (!st) break;
             HMENU pm = CreatePopupMenu();
-            AppendMenuW(pm, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), 1, L"Video only");
-            AppendMenuW(pm, MF_STRING | (st->fullscreen ? MF_CHECKED : 0u), 2, L"Fullscreen");
+            AppendMenuW(pm, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), 1,
+                        tr(i18n::StringId::MenuVideoOnlyPlain).c_str());
+            AppendMenuW(pm, MF_STRING | (st->fullscreen ? MF_CHECKED : 0u), 2,
+                        tr(i18n::StringId::Fullscreen).c_str());
             AppendMenuW(pm, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(pm, MF_STRING | (st->viewMode == ViewMode::Single ? MF_CHECKED : 0u), 3,
-                        L"Single view");
+                        tr(i18n::StringId::MenuSingleView).c_str());
             AppendMenuW(pm, MF_STRING | (st->viewMode == ViewMode::Split ? MF_CHECKED : 0u), 4,
-                        L"Split view (2×2)");
+                        tr(i18n::StringId::MenuSplitView).c_str());
             AppendMenuW(pm, MF_STRING | (st->viewMode == ViewMode::Pip ? MF_CHECKED : 0u), 5,
-                        L"Picture-in-picture");
+                        tr(i18n::StringId::MenuPictureInPicture).c_str());
             POINT pt;
             GetCursorPos(&pt);
             const int cmd = TrackPopupMenu(pm, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
@@ -1649,6 +1694,12 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake) {
     Gdiplus::GdiplusStartupInput gdipInput;
     ULONG_PTR gdipToken = 0;
     Gdiplus::GdiplusStartup(&gdipToken, &gdipInput, nullptr);
+
+    // Resolve the UI language to the SYSTEM default before the splash starts — its worker thread
+    // localizes captions off i18n::activeLang(), so it must be set first (else an English flash),
+    // and set before the thread reads it. A persisted en/ja override is applied later in WM_CREATE
+    // once the DB is open (g_lang is atomic, so that write can't race the splash thread).
+    i18n::setActiveLang(systemLang());
 
     // Branded splash up front: the main window's WM_CREATE blocks for a few seconds
     // (libVLC init + DB load), so show something immediately. It's a layered window,

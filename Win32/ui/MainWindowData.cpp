@@ -45,6 +45,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"
 #include "ui/VideoGrid.h"
 #include "ui/VlcEngine.h"
 #include "ui/VlcPlayer.h"
@@ -72,7 +73,7 @@ namespace mw {
 void updateCounts(AppState* st) {
     int shown = 0, total = 0;
     channelGridGetCounts(st->grid, &shown, &total);
-    setStatus(st, std::to_wstring(shown) + L" channels");
+    setStatus(st, trf(i18n::StringId::StatusChannelCount, { std::to_wstring(shown) }));
 }
 
 // Apply the global view settings (currently: hide unavailable/geo-blocked). Reused
@@ -127,27 +128,27 @@ HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM
 // Friendly name for an ISO-3166 alpha-2 country code (from the tvg-id suffix); the
 // uppercased code itself for anything not in the (common-IPTV-countries) table.
 std::wstring countryLabel(const std::wstring& code) {
-    struct CC { const wchar_t* code; const wchar_t* name; };
+    struct CC { const wchar_t* code; i18n::StringId name; };
     static const CC kNames[] = {
-        {L"us", L"United States"}, {L"uk", L"United Kingdom"}, {L"gb", L"United Kingdom"},
-        {L"ca", L"Canada"}, {L"au", L"Australia"}, {L"nz", L"New Zealand"}, {L"ie", L"Ireland"},
-        {L"de", L"Germany"}, {L"fr", L"France"}, {L"es", L"Spain"}, {L"it", L"Italy"},
-        {L"pt", L"Portugal"}, {L"nl", L"Netherlands"}, {L"be", L"Belgium"}, {L"ch", L"Switzerland"},
-        {L"at", L"Austria"}, {L"se", L"Sweden"}, {L"no", L"Norway"}, {L"dk", L"Denmark"},
-        {L"fi", L"Finland"}, {L"pl", L"Poland"}, {L"cz", L"Czechia"}, {L"sk", L"Slovakia"},
-        {L"hu", L"Hungary"}, {L"ro", L"Romania"}, {L"bg", L"Bulgaria"}, {L"gr", L"Greece"},
-        {L"tr", L"Turkey"}, {L"ru", L"Russia"}, {L"ua", L"Ukraine"}, {L"rs", L"Serbia"},
-        {L"hr", L"Croatia"}, {L"si", L"Slovenia"}, {L"al", L"Albania"}, {L"br", L"Brazil"},
-        {L"mx", L"Mexico"}, {L"ar", L"Argentina"}, {L"cl", L"Chile"}, {L"co", L"Colombia"},
-        {L"pe", L"Peru"}, {L"ve", L"Venezuela"}, {L"in", L"India"}, {L"pk", L"Pakistan"},
-        {L"bd", L"Bangladesh"}, {L"cn", L"China"}, {L"jp", L"Japan"}, {L"kr", L"South Korea"},
-        {L"id", L"Indonesia"}, {L"my", L"Malaysia"}, {L"sg", L"Singapore"}, {L"th", L"Thailand"},
-        {L"vn", L"Vietnam"}, {L"ph", L"Philippines"}, {L"sa", L"Saudi Arabia"}, {L"ae", L"UAE"},
-        {L"qa", L"Qatar"}, {L"il", L"Israel"}, {L"eg", L"Egypt"}, {L"ma", L"Morocco"},
-        {L"dz", L"Algeria"}, {L"za", L"South Africa"}, {L"ng", L"Nigeria"}, {L"ke", L"Kenya"},
+        {L"us", i18n::StringId::CountryUnitedStates}, {L"uk", i18n::StringId::CountryUnitedKingdom}, {L"gb", i18n::StringId::CountryUnitedKingdom},
+        {L"ca", i18n::StringId::CountryCanada}, {L"au", i18n::StringId::CountryAustralia}, {L"nz", i18n::StringId::CountryNewZealand}, {L"ie", i18n::StringId::CountryIreland},
+        {L"de", i18n::StringId::CountryGermany}, {L"fr", i18n::StringId::CountryFrance}, {L"es", i18n::StringId::CountrySpain}, {L"it", i18n::StringId::CountryItaly},
+        {L"pt", i18n::StringId::CountryPortugal}, {L"nl", i18n::StringId::CountryNetherlands}, {L"be", i18n::StringId::CountryBelgium}, {L"ch", i18n::StringId::CountrySwitzerland},
+        {L"at", i18n::StringId::CountryAustria}, {L"se", i18n::StringId::CountrySweden}, {L"no", i18n::StringId::CountryNorway}, {L"dk", i18n::StringId::CountryDenmark},
+        {L"fi", i18n::StringId::CountryFinland}, {L"pl", i18n::StringId::CountryPoland}, {L"cz", i18n::StringId::CountryCzechia}, {L"sk", i18n::StringId::CountrySlovakia},
+        {L"hu", i18n::StringId::CountryHungary}, {L"ro", i18n::StringId::CountryRomania}, {L"bg", i18n::StringId::CountryBulgaria}, {L"gr", i18n::StringId::CountryGreece},
+        {L"tr", i18n::StringId::CountryTurkey}, {L"ru", i18n::StringId::CountryRussia}, {L"ua", i18n::StringId::CountryUkraine}, {L"rs", i18n::StringId::CountrySerbia},
+        {L"hr", i18n::StringId::CountryCroatia}, {L"si", i18n::StringId::CountrySlovenia}, {L"al", i18n::StringId::CountryAlbania}, {L"br", i18n::StringId::CountryBrazil},
+        {L"mx", i18n::StringId::CountryMexico}, {L"ar", i18n::StringId::CountryArgentina}, {L"cl", i18n::StringId::CountryChile}, {L"co", i18n::StringId::CountryColombia},
+        {L"pe", i18n::StringId::CountryPeru}, {L"ve", i18n::StringId::CountryVenezuela}, {L"in", i18n::StringId::CountryIndia}, {L"pk", i18n::StringId::CountryPakistan},
+        {L"bd", i18n::StringId::CountryBangladesh}, {L"cn", i18n::StringId::CountryChina}, {L"jp", i18n::StringId::CountryJapan}, {L"kr", i18n::StringId::CountrySouthKorea},
+        {L"id", i18n::StringId::CountryIndonesia}, {L"my", i18n::StringId::CountryMalaysia}, {L"sg", i18n::StringId::CountrySingapore}, {L"th", i18n::StringId::CountryThailand},
+        {L"vn", i18n::StringId::CountryVietnam}, {L"ph", i18n::StringId::CountryPhilippines}, {L"sa", i18n::StringId::CountrySaudiArabia}, {L"ae", i18n::StringId::CountryUae},
+        {L"qa", i18n::StringId::CountryQatar}, {L"il", i18n::StringId::CountryIsrael}, {L"eg", i18n::StringId::CountryEgypt}, {L"ma", i18n::StringId::CountryMorocco},
+        {L"dz", i18n::StringId::CountryAlgeria}, {L"za", i18n::StringId::CountrySouthAfrica}, {L"ng", i18n::StringId::CountryNigeria}, {L"ke", i18n::StringId::CountryKenya},
     };
     for (const CC& e : kNames)
-        if (code == e.code) return e.name;
+        if (code == e.code) return tr(e.name);
     std::wstring up = code;
     for (wchar_t& c : up)
         if (c >= L'a' && c <= L'z') c = static_cast<wchar_t>(c - 32);
@@ -159,18 +160,18 @@ void refreshNav(AppState* st) {
     TreeView_DeleteAllItems(st->nav);
 
     st->navFilters.push_back({ViewKind::All});
-    navInsert(st->nav, TVI_ROOT, L"All Channels", 0, false);
+    navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavAllChannels), 0, false);
     st->navFilters.push_back({ViewKind::Favourites});
-    navInsert(st->nav, TVI_ROOT, L"★ Favourites", 1, false);
+    navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavFavourites), 1, false);
     st->navFilters.push_back({ViewKind::Guide});
-    navInsert(st->nav, TVI_ROOT, L"📺 TV Guide", 2, false);  // selecting it opens the guide window
+    navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavTvGuide), 2, false);  // selecting it opens the guide window
 
-    HTREEITEM groups = navInsert(st->nav, TVI_ROOT, L"Groups", -1, true);
+    HTREEITEM groups = navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavGroups), -1, true);
     for (const std::wstring& g : st->db.listGroups()) {
         st->navFilters.push_back({ViewKind::Group, g, 0});
         navInsert(st->nav, groups, g, static_cast<LPARAM>(st->navFilters.size() - 1), false);
     }
-    HTREEITEM countries = navInsert(st->nav, TVI_ROOT, L"Countries", -1, true);
+    HTREEITEM countries = navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavCountries), -1, true);
     {
         std::vector<std::pair<std::wstring, std::wstring>> cs;  // (display name, code)
         for (const std::wstring& cc : st->db.listCountries()) cs.emplace_back(countryLabel(cc), cc);
@@ -180,10 +181,11 @@ void refreshNav(AppState* st) {
             navInsert(st->nav, countries, label, static_cast<LPARAM>(st->navFilters.size() - 1), false);
         }
     }
-    HTREEITEM playlists = navInsert(st->nav, TVI_ROOT, L"Playlists", -1, true);
+    HTREEITEM playlists = navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavPlaylists), -1, true);
     for (const Playlist& p : st->db.listPlaylists()) {
         st->navFilters.push_back({ViewKind::Playlist, L"", p.id});
-        navInsert(st->nav, playlists, p.name + L" (" + std::to_wstring(p.channelCount) + L")",
+        navInsert(st->nav, playlists,
+                  trf(i18n::StringId::NavPlaylistNameCount, { p.name, std::to_wstring(p.channelCount) }),
                   static_cast<LPARAM>(st->navFilters.size() - 1), false);
     }
     TreeView_Expand(st->nav, playlists, TVE_EXPAND);
@@ -215,9 +217,9 @@ void playChannelInPane(AppState* st, const Channel& c, int idx) {
         bufferMeterSetHealth(st->bufferMeter, 15);
         resetStatMeters(st);  // clear signal/bitrate/frames so switching to a dead/stalled stream
                               // can't leave the previous channel's readings frozen on the meters
-        setStatus(st, L"Opening: " + c.name);
+        setStatus(st, trf(i18n::StringId::StatusOpening, { c.name }));
     } else {
-        setStatus(st, L"PIP: " + c.name);
+        setStatus(st, trf(i18n::StringId::StatusPipChannel, { c.name }));
     }
 }
 
@@ -225,7 +227,7 @@ void playChannel(AppState* st, const Channel& c) { playChannelInPane(st, c, st->
 
 std::wstring bufLabelText(int ms) {
     wchar_t b[24];
-    swprintf_s(b, L"Buffer %.1f s", ms / 1000.0);
+    swprintf_s(b, tr(i18n::StringId::TransportBufferSeconds).c_str(), ms / 1000.0);
     return b;
 }
 
@@ -250,7 +252,7 @@ std::wstring nameFromSource(const std::wstring& src, bool isUrl) {
 void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl,
                          const std::wstring& name) {
     st->busy = true;
-    setStatus(st, isUrl ? L"Downloading playlist…" : L"Loading playlist…");
+    setStatus(st, isUrl ? tr(i18n::StringId::StatusDownloadingPlaylist) : tr(i18n::StringId::StatusLoadingPlaylist));
     diag::info((isUrl ? L"playlist download start: " : L"playlist load start: ") + source);
     HWND hwnd = st->hwnd;
     std::thread([hwnd, source, isUrl, name]() {

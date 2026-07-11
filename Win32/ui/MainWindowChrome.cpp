@@ -45,6 +45,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"  // tr() — localized command-bar labels
 #include "ui/VideoGrid.h"
 #include "ui/VlcEngine.h"
 #include "ui/VlcPlayer.h"
@@ -84,7 +85,9 @@ std::vector<BtnRect> cmdButtonRects(HWND hwnd, AppState* st) {
     const int y = (h - btnH) / 2;
     int x = dp(14, st->dpi) + measureText(hwnd, st->titleFont, L"RabbitEars") + dp(20, st->dpi);
     for (const CmdBtn& b : kCmdBtns) {
-        const int w = measureText(hwnd, st->uiFont, b.label) + dp(24, st->dpi);
+        // Glyph (icon) buttons are square; text buttons size to the localized label.
+        const int w = b.glyph ? btnH
+                              : measureText(hwnd, st->uiFont, tr(b.label).c_str()) + dp(24, st->dpi);
         out.push_back({RECT{x, y, x + w, y + btnH}, b.id});
         x += w + dp(8, st->dpi);
     }
@@ -131,27 +134,29 @@ void drawCmdBar(HWND hwnd, AppState* st, HDC target) {
     // title
     HGDIOBJ oldFont = SelectObject(dc, st->titleFont);
     SetTextColor(dc, th.accent);
-    RECT tr{dp(14, st->dpi), 0, W, H};
-    DrawTextW(dc, L"RabbitEars", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT titleRc{dp(14, st->dpi), 0, W, H};
+    DrawTextW(dc, L"RabbitEars", -1, &titleRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    // toolbar buttons
-    SelectObject(dc, st->uiFont);
+    // toolbar buttons — the Settings button is a gear glyph (drawn in the MDL2 font), Add Playlist
+    // is a localized text label.
     auto btns = cmdButtonRects(hwnd, st);
     for (size_t i = 0; i < btns.size(); ++i) {
         const RECT& b = btns[i].rc;
-        const bool accent = kCmdBtns[i].accent;
+        const CmdBtn& cb = kCmdBtns[i];
         const bool hover = (static_cast<int>(i) == st->cmdHover);
-        if (accent || hover) {
-            HBRUSH br = themeBrush(accent ? th.accent : th.hoverBg);
+        if (cb.accent || hover) {
+            HBRUSH br = themeBrush(cb.accent ? th.accent : th.hoverBg);
             HGDIOBJ ob = SelectObject(dc, br);
             HGDIOBJ op = SelectObject(dc, GetStockObject(NULL_PEN));
             RoundRect(dc, b.left, b.top, b.right, b.bottom, dp(8, st->dpi), dp(8, st->dpi));
             SelectObject(dc, ob);
             SelectObject(dc, op);
         }
-        SetTextColor(dc, accent ? th.accentText : th.textSecondary);
+        SetTextColor(dc, cb.accent ? th.accentText : th.textSecondary);
         RECT lr = b;
-        DrawTextW(dc, kCmdBtns[i].label, -1, &lr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, cb.glyph ? st->glyphFont : st->uiFont);
+        DrawTextW(dc, cb.glyph ? cb.glyph : tr(cb.label).c_str(), -1, &lr,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     // caption buttons

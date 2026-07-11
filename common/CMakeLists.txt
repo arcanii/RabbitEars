@@ -13,6 +13,7 @@ add_library(RabbitEarsCore STATIC
   core/M3uWriter.cpp  # M3U exporter symmetric with the parser (favourites export) — unit-tested
   core/PowerPolicy.cpp         # pure wake-timer preflight decision core — unit-tested headlessly
   core/RecordingRules.cpp      # pure EPG->schedule rule expander (series recording) — unit-tested
+  core/Strings.cpp             # pure i18n catalog (en/ja) — completeness + parity unit-tested
   core/RecordingScheduler.cpp  # pure recording-scheduler decision core — unit-tested headlessly
   core/XmltvParser.cpp  # XMLTV EPG parser — unit-tested headlessly
   db/Database.cpp

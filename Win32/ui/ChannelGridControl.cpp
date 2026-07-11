@@ -27,6 +27,7 @@
 #include "platform/Encoding.h"
 #include "ui/D2DSupport.h"
 #include "ui/Theme.h"
+#include "ui/Tr.h"
 
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "shell32.lib")
@@ -556,7 +557,10 @@ void paint(HWND hwnd, GridState* st) {
     // Header band on top.
     fill(0, 0, static_cast<float>(rc.right), static_cast<float>(st->headerH), th.panelElevBg);
     fill(0, static_cast<float>(st->headerH - 1), static_cast<float>(rc.right), 1, th.border);
-    const wchar_t* heads[COL_COUNT] = {L"#", L"", L"", L"Channel", L"Group"};
+    // groupHead / chanHead outlive the header loop below so their .c_str() stays valid.
+    const std::wstring groupHead = tr(i18n::StringId::GridHeaderGroup);
+    const std::wstring chanHead = tr(i18n::StringId::LabelChannel);
+    const wchar_t* heads[COL_COUNT] = {L"#", L"", L"", chanHead.c_str(), groupHead.c_str()};
     for (int c = 0; c < COL_COUNT; ++c) {
         if (!*heads[c]) continue;
         IDWriteTextFormat* hf = (c == COL_NUM) ? st->fmtRight : st->fmtHeader;

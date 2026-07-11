@@ -1,0 +1,13 @@
+[
+  {
+    "code": "en",
+    "enum": "En",
+    "endonym": "English",
+    "reference": true
+  },
+  {
+    "code": "ja",
+    "enum": "Ja",
+    "endonym": "日本語"
+  }
+]
