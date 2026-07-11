@@ -18,10 +18,59 @@ recording — the Windows team ships from `main`) and **mac 0.2.0** (the parity 
 recurring merge conflict** between the two teams — keep the Windows line and the `if(APPLE)` override intact.
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
 
-> **Scope caveat:** mac 0.2.0 reaches parity with the Windows **0.2.5** feature set. Windows has since shipped
-> 0.2.6/0.2.7/0.2.8 (per-pane recording + MP4, saved layouts, PiP resize/persist, favourites I/O,
-> Show-in-Guide, wake-to-record, EPG-driven series rules, wake-timer preflight). Those are **not ported to
-> mac** — that is the next parity push.
+> **Scope caveat:** the SHIPPED mac **0.2.0** (build 208) reaches parity with the Windows **0.2.5** feature
+> set. The **0.2.6/0.2.7 parity push is DONE but UNMERGED** — five stacked PRs (#25→#29, below) add favourites
+> I/O + Show-in-Guide, PiP resize/persist, saved layouts, per-pane recording, and the recording scheduler +
+> series rules. Only **wake-timer preflight** stays unported (a non-root mac app can't arm a wake — see the
+> wake note below). Windows itself is on 0.2.8.
+
+## IN FLIGHT — the 0.2.6/0.2.7 parity stack (5 PRs, all mac-core green, NONE merged)
+
+A **stacked** set of PRs, each based on the one below it (retarget each `--base` to `main` as the one below
+lands; merge in order). All pushed via the **git REST API** because `git push` hangs this session (see the
+Working-rules note). Zero `common/`/`Win32/` edits across the whole stack — every core (`VideoGrid`,
+`M3uWriter`, `RecordingScheduler`, `RecordingRules`, the schema-v5 `Database` methods) was **already compiled
+into the mac binary**; this was wiring, not porting.
+
+| PR | Branch | Phase | Reviewed | On-device |
+|----|--------|-------|----------|-----------|
+| [#25](https://github.com/arcanii/RabbitEars/pull/25) | `mac-favourites-io-guide` | Favourites import/export + Show in TV Guide | ✅ | ✅ |
+| [#26](https://github.com/arcanii/RabbitEars/pull/26) | `mac-pip-resize-persist` | PiP inset resize + persist (size/pos) | ✅ | ✅ |
+| [#27](https://github.com/arcanii/RabbitEars/pull/27) | `mac-saved-layouts` | Named saved multi-view layouts | ✅ | ✅ |
+| [#28](https://github.com/arcanii/RabbitEars/pull/28) | `mac-recording` | Per-pane recording to file (ts/mp4) | ✅ | ⏳ **PENDING** |
+| [#29](https://github.com/arcanii/RabbitEars/pull/29) | `mac-recording-scheduler` | Scheduled recordings + EPG series rules + honest wake | ✅ | ⏳ **PENDING** |
+
+Each phase got an **adversarial ObjC++ review** (multi-agent workflow) that found + fixed real bugs before
+merge — the reviews repeatedly earned their cost:
+- **P1** import used a last-wins map (a channel duplicated across playlists marked only one row) → set-based.
+- **P2** resize-taller-near-top overflowed the container, persisting `_pipPosY>1` (jumps on relaunch) → clamp to free space at the pinned corner.
+- **P3** empty-pane wasn't cleared on apply (a carried/pre-existing stream kept playing) + NaN survived the geometry clamp.
+- **P4** the **MKV format would ship broken** (bundled VLC has `libmux_ts`+`libmux_mp4` but **no mkv muxer** — `libmkv_plugin` is the DEMUXER; dropped mkv); a main-thread record-stop hung the UI on a stalled feed → `stopRecordingAsync` (reaper-thread peer); non-POSIX-locale timestamp; MRC formatter leak; same-second filename collision.
+- **P5-7** cancelling a rule-generated future airing **hard-deleted the dedup tombstone → next expansion resurrected it** (kept as Cancelled anchor, Win32-parity); series channels resolve by NORMALISED tvg-id (else `@feed` channels record nothing); Recordings table preserves selection by id across the ~30s reload.
+
+**Recording design (P4/P5):** each `VlcPlayerMac` gets a recorder = a SECOND headless libVLC media player
+muxing to `~/Movies/RabbitEars` via `:sout=#std{access=file,mux=ts|mp4,dst='…'}` + `:sout-keep` (stream-copy,
+no set_nsobject) — mac is PER-PANE (Win32 uses one shared recorder), so scheduled recordings run on a
+**dedicated headless recorder** driven by a ~30s `NSTimer` tick over the shared `planScheduler()`. A ~2nd
+connection per recording (breaks 1-connection IPTV accounts) is surfaced; ts is the crash-safe default (mp4
+loses its index on a hard crash). `stopRecordingAsync` is off-main; `-finalizeRecordingsForQuit` (from
+`applicationWillTerminate:`) flushes open recordings because the MRC app-lifetime objects don't destruct on quit.
+
+**Honest wake (P7):** an `IOPMAssertion(PreventUserIdleSystemSleep)` is held while any recording runs, but a
+non-root, hardened, Developer-ID app **CANNOT wake a sleeping Mac** — `IOPMSchedulePowerEvent` requires root
+(verified in the macOS 26 SDK `IOPMLib.h`). So scheduling shows the caveat up front and the Recordings window
+states it: records only while running + Mac awake (lid open). That is the deliberate degraded design, NOT a TODO.
+
+> **`mac-pip-switch-fix` (off main, PR-pending): a shipped-0.2.0 bug fix.** "Play in PiP" while already in PiP
+> (any re-play into a running pane) called `set_media` without stopping the current input — on some live IPTV
+> feeds the old inset wedges (frozen) and the new never starts. Fix: `libvlc_media_player_stop()` before
+> `set_media` in `VlcPlayerMac::play()`. **Could NOT reproduce with VOD test streams** (identical code to 208
+> switched them cleanly); verified no-regression, targets the likely cause — **needs confirmation on the
+> affected IPTV channels**. Commit `0ab8618`.
+
+**NEXT (on-device):** verify P4 recording (record a real HLS stream → the `.ts`/`.mp4` plays) and P5-7 scheduler
+(schedule ~1 min out, watch the ~30s tick fire a playable file) — these are the only unverified surfaces. Then
+confirm the PiP-switch fix on real IPTV. **On-device traps that cost hours are listed under Working rules.**
 
 ## Current state — v0.2.0-mac SHIPPED (PR #24 merged to main)
 
@@ -332,73 +381,63 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 ```
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
-SQLite). main carries BOTH platforms at decoupled versions: Windows 0.2.4 (theme engine + EPG/TV Guide,
-scheduled recordings, multi-view Split/PIP) and mac 0.2.0 (the parity line, on branch
-mac-multiview-tvguide; main still carries the shipped 0.1.10) — the split lives in cmake/AppVersion.cmake
-(APP_VERSION = Windows; an if(APPLE) override = mac). The mac app is SHIPPED + auto-updating (v0.1.10-mac,
-universal, notarized, self-contained; Sparkle path proven end-to-end). App min macOS 26 (LSMinimumSystemVersion
-only; deployment target unpinned so CI's older SDK builds; macOS 26 is Apple-Silicon-only). Build:
-scripts/build-mac.sh [--app] (needs VLC.app). Release recipe: scripts/package-mac.sh + the
-mac-release-deployment memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update
---account SQLTerminal; universal needs vlc-3.0.23-universal.dmg; ALWAYS xmllint appcast-mac.xml — an XML
-'--' in a comment broke the feed once; land the appcast on main via `gh api` PUT because git push hangs).
-GUI/audio can't be verified headlessly — real Mac testing required (computer-use MCP: open + screenshot).
-Branch off main, PR back; keep common/ edits Windows-safe. mac .mm are MRC-style (app-lifetime leaks OK);
--fobjc-arc per-file only (MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/TermsDialog/EpgGuideView/
-TvGuideWindowController). Run an adversarial ObjC++ review before merging. Dev testing: launch with
-RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a local m3u/XMLTV fixture over http://127.0.0.1
-(ATS-exempt loopback), and build with -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only).
+SQLite). main carries BOTH platforms at decoupled versions via cmake/AppVersion.cmake (APP_VERSION =
+Windows 0.2.8; an if(APPLE) override = mac 0.2.0) — that file is the recurring cross-team merge conflict,
+keep both lines. mac is SHIPPED + auto-updating: v0.2.0-mac (build 208, universal, notarized,
+self-contained; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
+scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only; the build-mac
+CMakeCache can hold a stale universal arch). Release: scripts/package-mac.sh + the mac-release-deployment
+memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal;
+universal needs vlc-3.0.23-universal.dmg; ALWAYS xmllint appcast-mac.xml). GUI/audio can't be verified
+headlessly — real Mac testing required (computer-use MCP). mac .mm are MRC-style (app-lifetime leaks OK);
+-fobjc-arc PER-FILE only (list in mac/CMakeLists.txt: MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/
+TermsDialog/EpgGuideView/TvGuideWindowController/RecordingsWindowController) — MainWindowController.mm &
+VlcPlayerMac.mm are MRC. Run an adversarial ObjC++ review before merging (it has caught a real bug in
+EVERY native phase). Dev testing: launch with RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a
+local m3u/XMLTV fixture over http://127.0.0.1 (ATS-exempt loopback).
 
-SHIPPED + MERGED to main (all mac features live): the METER system (unified MeterView, 4 kinds
-Spectrum/Signal/Bitrate/Frames × 4 styles LED/LCD/Tube/Scope from a mac-local MeterModel; SpectrumTap =
-Core Audio tap + vDSP FFT, opt-in; MetersDialog with Show/Style/7 colours/5 tuning sliders/live preview;
-draggable meter bar; Video Only); PLAYLIST management (Settings > Manage Playlists: enable/disable/rename/
-refresh/delete, backed by a user_version-gated Database::migrate() that added playlists.enabled + a
-kEnabledOnly predicate; friendly import names); MENU BAR (File/View) + a ⚙ gear; and the TERMS-OF-USE gate
-(TermsDialog, first-launch + version-change, tos_accepted keyed on RE_VERSION_FULL_W, mirrors Win32).
-KEY meter fact: only Spectrum needs audio capture; Signal/Bitrate/Frames run off FlowStats (no consent).
-BACKLOG (not blocking): on-device fine-tuning of the Tube glow / Scope trace / knob curves (fillCell/
-strokeScope in MeterView.mm); E3 = promote MeterModel -> common/ui under a neutral rabbitears::meter ns,
-owned by the Win32 team. NOTE: the Windows team added shared common/ code (XmltvParser, RecordingScheduler,
-Gzip, VideoGrid, miniz, Database schema v3/v4) — the mac build compiles + migrates cleanly against it.
+STATE: the mac 0.2.6/0.2.7 PARITY PUSH is DONE but UNMERGED — 5 STACKED PRs, each based on the prior, all
+mac-core green, all adversarially reviewed with real bugs fixed, ZERO common/Win32 edits (every core was
+already compiled into the mac binary — wiring, not porting):
+ #25 mac-favourites-io-guide  — favourites import/export (M3uWriter) + Show in TV Guide
+ #26 mac-pip-resize-persist    — PiP inset resize (top-left grip, pin bottom-right) + persist size/pos
+ #27 mac-saved-layouts         — named saved multi-view layouts (settings K/V, mac-local serialization)
+ #28 mac-recording             — per-pane recording (2nd headless libVLC player, :sout=#std, ts/mp4; NO
+                                 mkv — bundled VLC has no mkv muxer); Record button; IOKit keep-awake
+ #29 mac-recording-scheduler   — dedicated headless recorder + ~30s NSTimer tick over planScheduler();
+                                 schedule-from-guide; EPG series rules (expandRules); Recordings window;
+                                 honest wake messaging
+MERGE IN ORDER #25->#26->#27->#28->#29, retargeting each --base to main as the one below lands
+(`gh pr edit --base main`, no push needed). git push HANGS this session — all branches were pushed via the
+git REST API (blobs->tree->commit->ref; verify the API tree SHA == `git rev-parse HEAD^{tree}` before
+creating the ref; then `git fetch` + `git reset --hard FETCH_HEAD`; `git ls-remote` exits 0 even when a
+branch is ABSENT so check for a non-empty SHA). Details + the review findings are in the "IN FLIGHT" section
+above and the macos-port-strategy memory.
 
-IN FLIGHT on branch mac-multiview-tvguide (12 commits, NOT merged, tree clean, main already merged in): the
-mac 0.2.0 PARITY LINE. NO common/, Win32/ or third_party/ FILE IS TOUCHED — this was wiring, not porting; all
-the shared cores already compiled into the mac binary, so there is zero Windows risk.
-(1) ICON — icns now built from art/clockwork_icon3.png, the same art as the Windows .ico.
-(2) TV GUIDE / EPG — refreshGuide: (httpGet->gunzipIfNeeded->parseXmltv->bulkInsertProgrammes, GCD,
-newest-wins) + EpgGuideView (flipped custom NSView: frozen channel column + hour axis, programme blocks,
-now-line, airing highlight, hit-test) + TvGuideWindowController (DB->rows, normId strips the @feed tvg-id
-suffix, play-from-guide) + Set Guide URL per playlist + View menu TV Guide (Cmd-G) / Refresh Guide.
-FIXED: importDoc dropped doc.epgUrl so Refresh Guide had nothing to fetch.
-(3) MULTI-VIEW — new VlcEngineMac (ONE libvlc_instance; players borrow it via init(engine)); a MacVideoPane
-collection with _player/_videoView as raw ALIASES to the active pane; layout via the SHARED
-common/ui/VideoGrid computeVideoPanes (y-flipped for AppKit); single-audio active pane; accent focus border;
-click-to-activate; ASYNC GCD teardown; carryStream on collapse; View menu + gear menu Single/Split-2x2/PiP
-(Ctrl-Cmd-1/2/3). Validated with 4 SIMULTANEOUS HLS STREAMS in 2x2, no popout windows (mac needs no
-Win32-style vout-host pool).
-(4) PiP — full-bleed backdrop + draggable bottom-right inset, row menu "Play in PiP" (backdrop stays active
-and audible, Win32 parity).
-THREE REAL BUGS FOUND BY TESTING, all fixed + verified: (a) an ACTIVE pane could stay SILENT — unmute restored
-the audio-track id saved at mute time, but an ad break / HLS quality switch RENUMBERS the tracks so the stale
-id failed silently and nothing retried. setMuted is now idempotent both ways and validates the restore target
-against the tracks that exist right now; tickStats re-asserts the model on EVERY pane so a failed unmute
-self-heals. (b) the SPECTRUM meter was dead in EVERY shipped build — the hardened runtime silently blocks the
-Core Audio process tap without com.apple.security.device.audio-input (tap/aggregate/IOProc all return noErr,
-just deliver zeros; no prompt, nothing in the log). Entitlement added. (c) the "grant permission" placeholder
-could never appear (needed 32 CONSECUTIVE audible ticks; is_playing() dips and demux==0 samples reset it every
-few seconds) and its text was wider than the 180pt strip. Now cumulative + auto-shrinking, tooltip carries the
-full instruction.
-DO NOT REGRESS: the pane's NSView must be RETAINED across the async player stop (libVLC's vout still renders
-into it via set_nsobject); applyViewMode must re-point the _player/_videoView aliases at a SURVIVING pane
-before any teardown; Stop must clear the pane's channelId or a later collapse resurrects the stopped stream.
-TESTING TRAPS THAT COST HOURS: `open` can launch a DIFFERENT RabbitEars.app (several share the bundle id —
-/Applications, build-mac/, build-mac-universal/); ALWAYS confirm the version banner in rabbitears.log. A plain
-dev build is ad-hoc signed with no entitlements, so Spectrum is silently denied — codesign it with the Dev ID +
---options runtime + the entitlements file to test Spectrum. Launching the raw binary makes the SHELL the TCC
-responsible process (another silent-zeros path) — use `open <bundle>`.
-NEXT: push the branch + open the PR to main (git push hangs — use gh), then cut v0.2.0-mac per the
-mac-release-deployment memory (AppVersion.cmake already reads 0.2.0; universal build needs
-vlc-3.0.23-universal.dmg; ALWAYS xmllint appcast-mac.xml; land the appcast on main via `gh api` PUT).
+ALSO IN FLIGHT: branch mac-pip-switch-fix (off main, commit 0ab8618, NOT PR'd) — a shipped-0.2.0 bug fix.
+"Play in PiP" while already in PiP re-plays into a running pane via set_media WITHOUT stopping first; on
+some live IPTV feeds the old inset freezes and the new never starts. Fix = libvlc_media_player_stop() before
+set_media in VlcPlayerMac::play(). COULD NOT reproduce with VOD test streams (identical code to 208 switched
+cleanly) — no-regression verified, but NEEDS confirmation on the affected IPTV channels before PR.
+
+DO NOT REGRESS (multi-view): the pane's NSView must be RETAINED across the async player stop (libVLC's vout
+renders into it via set_nsobject); applyViewMode re-points the _player/_videoView aliases at a SURVIVING pane
+BEFORE any teardown; Stop clears the pane's channelId or a later collapse resurrects the stream. DB is
+MAIN-THREAD ONLY. Recording: destroy players (incl. recorders) before the engine; the borrowed libVLC
+instance + the engine LEAK on quit (so a detached async stop is safe past termination, but an open recording
+must be finalized in -finalizeRecordingsForQuit).
+
+ON-DEVICE TRAPS (each cost hours): `open` can launch a DIFFERENT RabbitEars.app (several share the bundle id
+— /Applications, build-mac/, build-mac-universal/) — ALWAYS confirm the banner "==== RabbitEars (macOS)
+X.Y.Z (build) ====" in rabbitears.log. Codesign a dev build (Dev ID + --options runtime + the entitlements
+file with com.apple.security.device.audio-input) to test Spectrum. The repo is under ~/Desktop which macOS
+TCC protects — access can be revoked MID-SESSION (every read incl. git EPERMs); fix:
+`tccutil reset SystemPolicyDesktopFolder com.anthropic.claude-code` (no relaunch). Closing the main window
+QUITS the app. The BUILD_NUMBER only refreshes on cmake RECONFIGURE, not per-build.
+
+NEXT: on-device verify the two PENDING surfaces — P4 recording (record a real HLS stream, confirm the
+.ts/.mp4 PLAYS) and P5-7 scheduler (schedule ~1 min out, watch the ~30s tick fire a PLAYABLE file) — and
+confirm the mac-pip-switch-fix on real IPTV. Then the stack is ready to merge. Backlog: promote MeterModel
+to common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope).
 ```
 ```
