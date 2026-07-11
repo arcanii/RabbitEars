@@ -10,11 +10,13 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
+#include "core/M3uWriter.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "models/Channel.h"
@@ -576,6 +578,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [[m addItemWithTitle:@"Play" action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Play in PiP" action:@selector(playInPip:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Toggle Favourite" action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:@"Show in TV Guide" action:@selector(showInGuide:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:@"Set Channel Number…" action:@selector(editChannelNumber:) keyEquivalent:@""] setTarget:self];
     return m;
 }
@@ -1394,6 +1397,132 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
                            @"the playlist at a guide whose IDs line up (Manage Playlists ▸ 📅 Set Guide "
                            @"URL).", name]];
     }
+}
+
+// Row action: open the TV Guide scrolled to (and highlighting) this channel's row. The guide
+// only carries channels with stored programmes, so explain the two miss cases distinctly.
+- (void)showInGuide:(id)__unused sender {
+    const NSInteger row = _table.clickedRow >= 0 ? _table.clickedRow : _table.selectedRow;
+    if (row < 0 || row >= (NSInteger)_channels.size() || !_db) return;
+    const Channel& c = _channels[(size_t)row];
+    if (c.tvgId.empty()) {
+        [self showResults:@"Not in the guide"
+                     info:[NSString stringWithFormat:
+                           @"“%@” has no tvg-id, so it can't be matched to a guide row.\n\nThe TV "
+                           @"Guide keys on tvg-id; channels without one never appear.", ns(c.name)]];
+        return;
+    }
+    if (!_guideWC) _guideWC = [[TvGuideWindowController alloc] initWithDatabase:_db.get()];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    NSString* tvg = ns(c.tvgId);
+    const REGuideShowResult r = [(TvGuideWindowController*)_guideWC presentRelativeTo:_window
+                                                                         showChannel:tvg
+                                                                              onPlay:^(NSString* t, NSString* n) {
+        [me playFromGuide:t name:n];
+    }];
+    // On NoGuide the controller already alerted; only ChannelMissing needs our explanation.
+    if (r == REGuideShowChannelMissing)
+        [self showResults:@"Not in the guide"
+                     info:[NSString stringWithFormat:
+                           @"“%@” isn't in the guide yet.\n\nNo stored programmes match it — run "
+                           @"Refresh Guide, or its tvg-id doesn't line up with the guide's IDs.",
+                           ns(c.name)]];
+}
+
+// Export every favourite to an Extended-M3U file (round-trips through importFavourites: and any
+// IPTV player). Uses the shared writeM3u so the dialect matches exactly what the parser reads.
+- (void)exportFavourites:(id)__unused sender {
+    if (!_db) return;
+    const std::vector<Channel> favs = _db->favourites();
+    if (favs.empty()) {
+        [self showResults:@"No favourites" info:@"Mark some channels with ★ first, then export."];
+        return;
+    }
+    NSSavePanel* panel = [NSSavePanel savePanel];
+    panel.nameFieldStringValue = @"favourites.m3u";
+    panel.allowedFileTypes = @[ @"m3u", @"m3u8" ];  // deprecated but matches openFile:; -Wdeprecated is benign
+    [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        if (resp != NSModalResponseOK || !panel.URL) return;
+        rabbitears::M3uDocument doc;
+        for (const auto& c : favs) {
+            rabbitears::ParsedChannel pc;
+            pc.name       = c.name;
+            pc.streamUrl  = c.streamUrl;
+            pc.logoUrl    = c.logoUrl;
+            pc.groupTitle = c.groupTitle;
+            pc.tvgId      = c.tvgId;
+            pc.tvgName    = c.tvgName;
+            pc.chno       = c.lcn.value_or(-1);  // export the custom LCN as tvg-chno when set
+            pc.userAgent  = c.userAgent;
+            pc.referrer   = c.referrer;
+            doc.channels.push_back(std::move(pc));
+        }
+        const std::string bytes = rabbitears::writeM3u(doc);
+        NSData* data = [NSData dataWithBytes:bytes.data() length:bytes.size()];
+        NSError* err = nil;
+        if ([data writeToURL:panel.URL options:NSDataWritingAtomic error:&err])
+            [self showResults:@"Favourites exported"
+                         info:[NSString stringWithFormat:@"Wrote %zu favourite%@ to %@.",
+                               favs.size(), favs.size() == 1 ? @"" : @"s",
+                               panel.URL.lastPathComponent]];
+        else
+            [self showResults:@"Export failed" info:(err.localizedDescription ?: @"Couldn't write the file.")];
+    }];
+}
+
+// Import favourites from an M3U: mark any channel already in the library whose stream URL (else
+// tvg-id) matches an entry in the file. Does NOT add channels — favourites are a flag on existing
+// rows, so importing into an empty/mismatched library is a no-op we report honestly.
+- (void)importFavourites:(id)__unused sender {
+    if (!_db) return;
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    panel.allowsMultipleSelection = NO;
+    panel.canChooseDirectories = NO;
+    panel.allowedFileTypes = @[ @"m3u", @"m3u8" ];
+    [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        if (resp != NSModalResponseOK || !panel.URL) return;
+        std::wstring perr;
+        rabbitears::M3uDocument doc = rabbitears::parseM3uFile(ws(panel.URL.path), &perr);
+        if (doc.channels.empty()) {
+            [self showResults:@"Nothing to import"
+                         info:perr.empty() ? @"That file has no channels." : ns(perr)];
+            return;
+        }
+        // Match by SETS, not last-wins maps: the same stream URL can appear on several channel
+        // rows (a channel duplicated across playlists), and every one of them should become a
+        // favourite — a map keyed on URL would keep only the last row and mark it arbitrarily.
+        std::set<std::wstring> wantUrls, wantTvgs;   // exported (from the file)
+        for (const auto& pc : doc.channels) {
+            wantUrls.insert(pc.streamUrl);
+            if (!pc.tvgId.empty()) wantTvgs.insert(pc.tvgId);
+        }
+        std::set<std::wstring> libUrls, libTvgs;     // present (in the library)
+        std::set<long long> toFav;
+        for (const auto& c : _db->allChannels()) {
+            libUrls.insert(c.streamUrl);
+            if (!c.tvgId.empty()) libTvgs.insert(c.tvgId);
+            // Favourite this row if its URL was exported, else if its tvg-id was (URL preferred).
+            if (wantUrls.count(c.streamUrl) ||
+                (!c.tvgId.empty() && wantTvgs.count(c.tvgId)))
+                toFav.insert(c.id);
+        }
+        // An exported entry is "unmatched" when nothing in the library shares its URL or tvg-id.
+        int unmatched = 0;
+        for (const auto& pc : doc.channels)
+            if (!libUrls.count(pc.streamUrl) &&
+                !(!pc.tvgId.empty() && libTvgs.count(pc.tvgId)))
+                ++unmatched;
+        for (long long id : toFav) _db->setFavourite(id, true);
+        [self refreshChannels];
+        [self showResults:@"Favourites imported"
+                     info:[NSString stringWithFormat:
+                           @"Marked %zu channel%@ as favourite.%@",
+                           toFav.size(), toFav.size() == 1 ? @"" : @"s",
+                           unmatched ? [NSString stringWithFormat:@"\n\n%d entr%@ in the file had no "
+                                        @"match in your playlists (import marks existing channels; it "
+                                        @"doesn't add new ones).", unmatched, unmatched == 1 ? @"y" : @"ies"]
+                                     : @""]];
+    }];
 }
 
 - (void)showAbout:(id)sender { [(AppDelegate*)NSApp.delegate showAboutPanel:sender]; }

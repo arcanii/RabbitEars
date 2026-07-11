@@ -38,6 +38,11 @@
 
 @interface EpgGuideView : NSView
 @property (nonatomic, weak) id<EpgGuideViewDelegate> delegate;
+// The rows currently laid out, in display order (sorted by channel name).
+@property (nonatomic, readonly) NSArray<REGuideRow*>* rows;
 // Populate the grid and mark "now". Resets scroll to put "now" near the left.
 - (void)setRows:(NSArray<REGuideRow*>*)rows nowUtc:(long long)nowUtc;
+// Scroll row `index` into view (vertically centred) and tint it until the next scroll or
+// click. Used by "Show in TV Guide". Out-of-range indices are ignored.
+- (void)revealRowAtIndex:(NSInteger)index;
 @end
