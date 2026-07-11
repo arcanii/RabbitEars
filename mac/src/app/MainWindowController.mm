@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cwchar>
 #include <ctime>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -19,7 +20,12 @@
 #include "core/Http.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
+#include "core/RecordingRules.h"
+#include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
+#include "models/Programme.h"
+#include "models/RecordingRule.h"
+#include "models/ScheduledRecording.h"
 #include "db/Database.h"
 #include "models/Channel.h"
 #include "platform/Encoding.h"
@@ -41,6 +47,7 @@
 #import "MeterView.h"
 #import "MetersDialog.h"
 #import "PlaylistsDialog.h"
+#import "RecordingsWindowController.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
 #import "TvGuideWindowController.h"
@@ -140,8 +147,17 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSButton*      _muteBtn;     // 🔊 / 🔇 toggle
     NSButton*      _meterBtn;    // bottom-bar show/hide-meters toggle
     NSButton*      _recBtn;      // top-bar record toggle (● / ■), tracks the active pane
-    std::wstring   _recFormat;   // recording container: "ts" (default) / "mkv" / "mp4"
-    unsigned int   _keepAwake;   // IOPMAssertion id held while any pane records (0 == none)
+    std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
+    unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
+    // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
+    // recordings, independent of the visible panes' manual recorders. A ~30s tick applies the
+    // shared planScheduler() core and expands EPG rules.
+    std::unique_ptr<VlcPlayerMac> _scheduleRecorder;
+    NSTimer*       _schedulerTimer;
+    long long      _activeScheduleId;   // the schedule currently on _scheduleRecorder (0 == none)
+    BOOL           _schedulerReconciled; // one-time startup reset of stale "Recording" rows
+    long long      _rulesExpandedAt;    // last rule-expansion time (throttled; 0 == never)
+    id             _recordingsWC;       // RecordingsWindowController (lazily created; app-lifetime)
     NSView*        _topBar;      // top command bar (add / settings / search / filter)
     NSSplitView*   _split;       // channel grid | video
     BOOL           _gridHidden;    // View ▸ Hide Channel List
@@ -466,6 +482,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
                                                  selector:@selector(tickStats) userInfo:nil repeats:YES];
 
     [self restoreLastPlaylist];
+    [self startScheduler];  // begin the ~30s recording-scheduler tick
 
     [_window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
@@ -947,7 +964,192 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // worth a global in-flight tracker here.
     for (auto& pane : _panes)
         if (pane->player) pane->player->stopRecording();  // synchronous flush + index write
+    if (_scheduleRecorder) _scheduleRecorder->stopRecording();  // finalize a scheduled recording too
     if (_keepAwake != 0) { IOPMAssertionRelease(_keepAwake); _keepAwake = 0; }
+    [_schedulerTimer invalidate]; _schedulerTimer = nil;
+}
+
+// ---- recording scheduler (Phase 5/6) ----------------------------------------------------
+// A ~30s tick applies the shared planScheduler() core to the queue and expands EPG rules. A
+// DEDICATED headless recorder runs scheduled recordings so they never fight the visible panes'
+// manual recorders. NB: this only records while the app is RUNNING and the Mac is awake — a
+// non-root app cannot arm a system wake (see -showRecordings: copy and mac/HANDOVER.md).
+
+- (void)startScheduler {
+    if (!_db || !_engine) return;
+    _scheduleRecorder = std::make_unique<VlcPlayerMac>();
+    _scheduleRecorder->init(*_engine);  // headless: only ever records, never attaches a view
+    // Weak-self timer (app-lifetime controller, but be correct): the tick fires ~every 30s.
+    MainWindowController* __unsafe_unretained me = self;
+    _schedulerTimer = [NSTimer scheduledTimerWithTimeInterval:30.0 repeats:YES
+                                                       block:^(NSTimer* __unused t) { [me schedulerTick]; }];
+    [self schedulerTick];  // run once now so an already-due schedule fires promptly
+}
+
+- (void)stopScheduledRecorder {
+    if (_scheduleRecorder) _scheduleRecorder->stopRecordingAsync();  // off-main flush
+    _activeScheduleId = 0;
+}
+
+- (void)schedulerTick {
+    if (!_db) return;
+    auto schedules = _db->listSchedules();
+
+    // One-time startup reconcile: a row still marked Recording is stale (a prior session closed
+    // mid-record; nothing is actually recording now). Reset to Pending so planScheduler resumes
+    // it if still in-window, or misses it. (Peer of Win32's schedulerReconciled.)
+    if (!_schedulerReconciled) {
+        _schedulerReconciled = YES;
+        bool changed = false;
+        for (const auto& s : schedules)
+            if (s.status == rabbitears::ScheduleStatus::Recording) {
+                _db->updateScheduleStatus(s.id, rabbitears::ScheduleStatus::Pending);
+                changed = true;
+            }
+        if (changed) schedules = _db->listSchedules();
+    }
+
+    const long long now = (long long)time(nullptr);
+    // The dedicated recorder is used ONLY for schedules, so no "manual recording" blocks it.
+    const rabbitears::SchedulerPlan plan = rabbitears::planScheduler(schedules, now, /*manual=*/false);
+
+    for (long long id : plan.stop) {
+        if (id == _activeScheduleId) [self stopScheduledRecorder];
+        _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Done);
+        [self setStatus:@"Scheduled recording saved."];
+    }
+    for (long long id : plan.miss)
+        _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Missed);
+    for (long long id : plan.start) {  // planScheduler yields at most one
+        const rabbitears::ScheduledRecording* s = nullptr;
+        for (const auto& x : schedules) if (x.id == id) { s = &x; break; }
+        if (!s) continue;
+        NSString* ext; std::string mux;
+        [MainWindowController extForFormat:s->mux ext:&ext mux:&mux];
+        NSString* path = [self recordingPathFor:ns(s->channelName) ext:ext];
+        if (_scheduleRecorder &&
+            _scheduleRecorder->startRecording(s->streamUrl, s->userAgent, s->referrer, ws(path), mux)) {
+            _activeScheduleId = id;
+            _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Recording, ws(path));
+            [self setStatus:[NSString stringWithFormat:@"● Recording (scheduled) %@", ns(s->channelName)]];
+        } else {
+            _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Failed);
+        }
+    }
+
+    [self expandRecordingRules:NO];  // Phase 6: queue upcoming airings from series rules
+    [self syncKeepAwake];
+    if (_recordingsWC) [(id)_recordingsWC reload];  // refresh an open Recordings window
+}
+
+// Phase 6: expand EPG series rules into concrete scheduled_recordings rows. The shared
+// expandRules() does the matching/dedup/padding; the controller resolves each channel and
+// inserts. Heavy (14-day EPG across every playlist), so throttled unless `force` (a guide
+// refresh, a new/re-enabled rule). Returns the number of airings queued.
+- (int)expandRecordingRules:(BOOL)force {
+    if (!_db) return 0;
+    const auto rules = _db->listRules();
+    if (rules.empty()) return 0;  // common case: no cost
+    const long long now = (long long)time(nullptr);
+    if (!force && _rulesExpandedAt != 0 &&
+        now - _rulesExpandedAt < rabbitears::kRuleExpandIntervalSeconds)
+        return 0;
+    const long long horizon = now + rabbitears::kRuleHorizonSeconds;
+    const auto programmes = _db->programmesInWindowAll(now, horizon);
+    if (programmes.empty()) { _rulesExpandedAt = now; return 0; }
+
+    const auto planned = rabbitears::expandRules(rules, programmes, _db->listSchedules(), now, horizon);
+    // expandRules stamps each schedule's channelId with the EPG programme's base id. Resolve it
+    // to a playlist channel by NORMALISED tvg-id (the @feed suffix stripped + case-folded), not
+    // the exact channelByTvgId — else a channel whose playlist tvg-id has an @feed suffix never
+    // matches and the rule silently records nothing. Build the index once per pass.
+    std::map<std::wstring, rabbitears::Channel> byNorm;
+    if (!planned.empty())
+        for (const auto& c : _db->allChannels())
+            if (!c.tvgId.empty()) byNorm.emplace(rabbitears::normaliseTvgId(c.tvgId), c);
+    int added = 0;
+    for (rabbitears::ScheduledRecording s : planned) {
+        auto it = byNorm.find(rabbitears::normaliseTvgId(s.channelId));
+        if (it == byNorm.end()) continue;  // channel left the library → nothing recordable
+        const rabbitears::Channel& ch = it->second;
+        if (!ch.name.empty()) s.channelName = ch.name;
+        s.streamUrl = ch.streamUrl;
+        s.userAgent = ch.userAgent;
+        s.referrer  = ch.referrer;
+        s.createdAt = now;
+        if (_db->addSchedule(s) > 0) ++added;
+    }
+    _rulesExpandedAt = now;
+    return added;
+}
+
+// Phase 5: queue a self-contained one-off recording for a specific channel + time window
+// (from the TV Guide's programme dialog). Resolves the tvg-id to a stream now, so the
+// recording survives the channel later changing/leaving. Nudges the scheduler in case it is
+// already airing.
+- (void)scheduleRecordingForTvgId:(NSString*)tvgId
+                             name:(NSString*)name
+                            title:(NSString*)title
+                            start:(long long)startUtc
+                             stop:(long long)stopUtc {
+    if (!_db) return;
+    auto ch = tvgId.length ? _db->channelByTvgId(ws(tvgId)) : std::nullopt;
+    if (!ch) {
+        [self showResults:@"Can't schedule"
+                     info:[NSString stringWithFormat:
+                           @"“%@” has no matching channel in your playlists, so there's nothing "
+                           @"to record.", name]];
+        return;
+    }
+    rabbitears::ScheduledRecording s;
+    s.channelId   = ws(tvgId);
+    s.channelName = ch->name.empty() ? ws(name) : ch->name;
+    s.streamUrl   = ch->streamUrl;
+    s.userAgent   = ch->userAgent;
+    s.referrer    = ch->referrer;
+    s.title       = ws(title);
+    s.startUtc    = startUtc;
+    s.stopUtc     = stopUtc;
+    s.mux         = _recFormat;
+    s.createdAt   = (long long)time(nullptr);
+    if (_db->addSchedule(s) > 0) {
+        [self schedulerTick];  // fire immediately if it's already in-window
+        [self setStatus:[NSString stringWithFormat:@"Scheduled: %@ — %@", ns(s.channelName),
+                         title.length ? title : @"recording"]];
+        // Phase 7 — the honest wake caveat, shown once at schedule time. A non-root app can't
+        // wake a sleeping Mac (IOPMSchedulePowerEvent needs root), so a scheduled recording only
+        // fires if RabbitEars is running and the Mac is awake when its window opens.
+        if (startUtc > (long long)time(nullptr))
+            [self showResults:[NSString stringWithFormat:@"Scheduled: %@", ns(s.channelName)]
+                         info:@"RabbitEars will record this while it is running and your Mac is "
+                              @"awake. It can’t wake a sleeping Mac — for an unattended recording, "
+                              @"keep the Mac on with the lid open (Settings ▸ Recording ▸ Recordings "
+                              @"lists your queue)."];
+    } else {
+        [self showResults:@"Can't schedule" info:@"Couldn't save the scheduled recording."];
+    }
+}
+
+// Phase 6: create a series rule that records every future airing matching a programme's title
+// on its channel (from the guide's "Record Series"). Forces an immediate expansion.
+- (void)addSeriesRuleForTvgId:(NSString*)tvgId name:(NSString*)name title:(NSString*)title {
+    if (!_db || title.length == 0) return;
+    rabbitears::RecordingRule r;
+    r.channelId   = ws(tvgId);
+    r.channelName = ws(name);
+    r.titleMatch  = ws(title);
+    r.match       = rabbitears::RuleMatch::Exact;
+    r.enabled     = true;
+    r.mux         = _recFormat;
+    r.createdAt   = (long long)time(nullptr);
+    if (_db->addRule(r) > 0) {
+        const int queued = [self expandRecordingRules:YES];
+        [self schedulerTick];
+        [self setStatus:[NSString stringWithFormat:@"Series rule added: “%@” (%d upcoming queued)",
+                         title, queued]];
+    } else {
+        [self showResults:@"Can't add rule" info:@"Couldn't save the series rule."];
+    }
 }
 
 // The button reflects the ACTIVE pane's recording state, so it stays correct as the user
@@ -965,7 +1167,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // (This does NOT wake a sleeping Mac and does not survive a lid close / low battery / Dark
 // Wake — macOS gives a non-root, hardened app no way to arm a wake. See mac/HANDOVER.md.)
 - (void)syncKeepAwake {
-    BOOL anyRecording = NO;
+    BOOL anyRecording = _scheduleRecorder && _scheduleRecorder->isRecording();
     for (auto& pane : _panes)
         if (pane->player && pane->player->isRecording()) { anyRecording = YES; break; }
     if (anyRecording && _keepAwake == 0) {
@@ -1705,6 +1907,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         it.representedObject = ns(f.fmt);
         it.state = (_recFormat == f.fmt) ? NSControlStateValueOn : NSControlStateValueOff;
     }
+    [recMenu addItem:[NSMenuItem separatorItem]];
+    [[recMenu addItemWithTitle:@"Recordings…" action:@selector(showRecordings:) keyEquivalent:@""] setTarget:self];
     recItem.submenu = recMenu;
 
     [m addItem:[NSMenuItem separatorItem]];
@@ -1719,6 +1923,17 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     _recFormat = ws(sender.representedObject);
     if (_db) _db->setSetting(L"rec_format", _recFormat);
     [self setStatus:[NSString stringWithFormat:@"Recording format: %@", sender.representedObject]];
+}
+
+// Settings ⚙ ▸ Recordings… — the schedule/rules manager window.
+- (void)showRecordings:(id)__unused sender {
+    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    if (!_recordingsWC) _recordingsWC = [[RecordingsWindowController alloc] initWithDatabase:_db.get()];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    [(RecordingsWindowController*)_recordingsWC presentRelativeTo:_window onChange:^{
+        [me expandRecordingRules:YES];  // a re-enabled rule should re-queue now
+        [me schedulerTick];
+    }];
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
@@ -1833,19 +2048,37 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
                    totalProg, (unsigned long)chans.size()]
                 : @"Could not refresh the guide";
             [self setStatus:summary];
+            if (okCount > 0) [self expandRecordingRules:YES];  // new airings → re-queue series rules
             [self showResults:summary info:detail];
         });
     });
+}
+
+// Lazily create the guide window controller and wire its recording callbacks once. Both
+// -showGuide: and -showInGuide: go through this so the Schedule/Record-Series actions on a
+// programme are always connected.
+- (TvGuideWindowController*)guideController {
+    if (!_guideWC) {
+        _guideWC = [[TvGuideWindowController alloc] initWithDatabase:_db.get()];
+        MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+        TvGuideWindowController* g = _guideWC;
+        g.onSchedule = ^(NSString* tvgId, NSString* name, NSString* title, long long a, long long b) {
+            [me scheduleRecordingForTvgId:tvgId name:name title:title start:a stop:b];
+        };
+        g.onRecordSeries = ^(NSString* tvgId, NSString* name, NSString* title) {
+            [me addSeriesRuleForTvgId:tvgId name:name title:title];
+        };
+    }
+    return _guideWC;
 }
 
 // Open (or re-reveal) the channels×time guide window. The window controller queries the
 // DB and lays the grid out; a picked programme calls back to -playFromGuide:name:.
 - (void)showGuide:(id)__unused sender {
     if (!_db) { [self setStatus:@"Database unavailable."]; return; }
-    if (!_guideWC) _guideWC = [[TvGuideWindowController alloc] initWithDatabase:_db.get()];
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
-    [(TvGuideWindowController*)_guideWC presentRelativeTo:_window
-                                                  onPlay:^(NSString* tvgId, NSString* name) {
+    [[self guideController] presentRelativeTo:_window
+                                      onPlay:^(NSString* tvgId, NSString* name) {
         [me playFromGuide:tvgId name:name];
     }];
 }
@@ -1883,12 +2116,11 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
                            @"Guide keys on tvg-id; channels without one never appear.", ns(c.name)]];
         return;
     }
-    if (!_guideWC) _guideWC = [[TvGuideWindowController alloc] initWithDatabase:_db.get()];
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
     NSString* tvg = ns(c.tvgId);
-    const REGuideShowResult r = [(TvGuideWindowController*)_guideWC presentRelativeTo:_window
-                                                                         showChannel:tvg
-                                                                              onPlay:^(NSString* t, NSString* n) {
+    const REGuideShowResult r = [[self guideController] presentRelativeTo:_window
+                                                             showChannel:tvg
+                                                                  onPlay:^(NSString* t, NSString* n) {
         [me playFromGuide:t name:n];
     }];
     // On NoGuide the controller already alerted; only ChannelMissing needs our explanation.

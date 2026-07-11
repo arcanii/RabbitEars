@@ -198,17 +198,28 @@ std::wstring normId(const std::wstring& s) {
     NSAlert* a = [[NSAlert alloc] init];
     a.messageText = programme.title.length ? programme.title : @"Programme";
     a.informativeText = info;
-    NSButton* play = [a addButtonWithTitle:@"Play Channel"];
-    play.enabled = row.channelId.length > 0;
-    NSButton* close = [a addButtonWithTitle:@"Close"];
+    const BOOL hasChannel = row.channelId.length > 0;
+    const long long now = (long long)time(nullptr);
+    // Buttons return NSAlertFirstButtonReturn (1000) + index, in add order.
+    NSButton* play = [a addButtonWithTitle:@"Play Channel"];       // 1000
+    play.enabled = hasChannel;
+    NSButton* sched = [a addButtonWithTitle:@"Schedule Recording"]; // 1001
+    sched.enabled = hasChannel && programme.stopUtc > now;          // can't record a finished airing
+    NSButton* series = [a addButtonWithTitle:@"Record Series"];     // 1002
+    series.enabled = hasChannel && programme.title.length > 0;
+    NSButton* close = [a addButtonWithTitle:@"Close"];              // 1003
     close.keyEquivalent = @"\033";  // Esc closes
 
     __weak TvGuideWindowController* weak = self;
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
         TvGuideWindowController* s = weak;
-        if (!s) return;
-        if (resp == NSAlertFirstButtonReturn && s->_onPlay && row.channelId.length)
+        if (!s || !hasChannel) return;
+        if (resp == NSAlertFirstButtonReturn && s->_onPlay)
             s->_onPlay(row.channelId, row.channelName);
+        else if (resp == NSAlertFirstButtonReturn + 1 && s.onSchedule)
+            s.onSchedule(row.channelId, row.channelName, programme.title, programme.startUtc, programme.stopUtc);
+        else if (resp == NSAlertFirstButtonReturn + 2 && s.onRecordSeries)
+            s.onRecordSeries(row.channelId, row.channelName, programme.title);
     }];
 }
 

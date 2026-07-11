@@ -21,6 +21,11 @@ typedef NS_ENUM(NSInteger, REGuideShowResult) {
 
 @interface TvGuideWindowController : NSObject
 - (instancetype)initWithDatabase:(rabbitears::Database*)db;
+// Recording actions offered on a programme's detail dialog (set once by the host). onSchedule
+// queues a one-off recording of this airing; onRecordSeries adds a rule for its title+channel.
+@property (nonatomic, copy) void (^onSchedule)(NSString* tvgId, NSString* channelName,
+                                               NSString* title, long long startUtc, long long stopUtc);
+@property (nonatomic, copy) void (^onRecordSeries)(NSString* tvgId, NSString* channelName, NSString* title);
 // Build the guide from the DB and show the window over `parent`. `onPlay` fires with a
 // channel's full tvg-id (+ display name) when the user picks Play on a programme. If no
 // stored programmes match a playlist channel, shows an explanatory alert instead.
