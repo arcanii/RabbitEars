@@ -93,6 +93,13 @@ void VlcPlayerMac::play(const std::wstring& url, const std::wstring& userAgent,
         libvlc_media_add_option(media, (":http-user-agent=" + utf8FromWide(userAgent)).c_str());
     if (!referrer.empty())
         libvlc_media_add_option(media, (":http-referrer=" + utf8FromWide(referrer)).c_str());
+    // Tear down any current input BEFORE swapping media. set_media on a still-running player is
+    // unreliable when switching between live streams — the old input can wedge (last frame
+    // frozen) while the new one never starts, especially for a background PiP inset re-play
+    // (reported on some IPTV feeds; test VOD streams switch cleanly either way). A stop first
+    // makes the switch deterministic. Idempotent no-op on an idle player (first play).
+    libvlc_media_player_stop(impl_->player);
+    impl_->savedAudioTrack = -1;  // the new media has its own tracks; drop the stale restore id
     libvlc_media_player_set_media(impl_->player, media);
     libvlc_media_release(media);
     libvlc_media_player_play(impl_->player);
