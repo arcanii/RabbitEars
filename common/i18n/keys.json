@@ -1062,12 +1062,6 @@
     "comment": ""
   },
   {
-    "id": "StatusLanguageRestart",
-    "cluster": "Status",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
     "id": "StatusActivePane",
     "cluster": "Status",
     "placeholders": [

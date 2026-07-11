@@ -31,7 +31,22 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.7 SHIPPED (DVR: wake-to-record + series rules)** · 0.2.8-dev: wake-timer preflight · macOS Phase-1
+## Current state — **v0.2.8 SHIPPED (localization: EN + 日本語 · wake preflight · guide loading box)** · macOS 0.2.0
+
+**Released:** **`v0.2.8`** (2026-07-11), tag `v0.2.8` @ `e45adb6`, full version **`0.2.8.217`** (tag count ==
+shipped build number), three signed installers on GitHub release `v0.2.8` (x64 / native ARM64 / universal),
+**two appcasts** (`0.2.8.217`) committed @ `5404004` and LIVE (raw feeds serve 0.2.8.217; all three enclosures
+HTTP 200). Owner-signed on the Mac (`sign_update --account SQLTerminal`). **Three headline features:**
+(1) **Localization** — the app is fully localizable and ships **English + 日本語**, defaulting to the system
+language with a Settings ▸ Language toggle (gear-icon menu, regrouped; Yu Gothic UI for CJK; restart-to-apply
+via a themed prompt). The source of truth is JSON under `common/i18n/` → `tools/i18n/gen_i18n.py` generates
+`common/core/Strings.{h,cpp}` (**never hand-edit them**); CI `--check` + selftest guard drift. (2) **Wake-timer
+preflight** — warns when the power plan won't wake the PC for a recording, + "Run wake task now". (3) **TV Guide
+loading box.** Built green (x64 BOTH theme flags + native ARM64 + selftest); each feature adversarially reviewed
+(the localization pass alone fixed 3 confirmed bugs). **Owner pass:** ✅ language shift confirmed on-device;
+the wake-preflight banner + guide loading box are **low-risk, delegated to testers** (owner's call).
+**⚠️ Japanese is a machine draft** pending a native review (`gen_i18n.py --review ja`) — the gate before
+*advertising* JP support; it ships now as an initial translation.
 
 **Released:** **`v0.2.7`** (2026-07-10), tag `v0.2.7` @ `cc9f9e4`, full version **`0.2.7.184`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.7` (x64 / native ARM64 / universal),
@@ -731,10 +746,12 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-🚧 **0.2.8-dev** (UNRELEASED; committed to `main`) — three things so far: the **wake-timer preflight**, a
-**TV Guide loading box**, and **localization (Japanese first)**. Built green x64 BOTH theme flags + native
-ARM64, selftest ALL PASS, adversarially reviewed. **Owner runtime/visual pass owed** (the sandbox can't
-launch the GUI).
+✅ **0.2.8 SHIPPED** (2026-07-11) — tag `v0.2.8` @ `e45adb6`, `0.2.8.217`, three signed installers on GitHub
+release `v0.2.8`, two appcasts LIVE @ `5404004`. Three features: the **wake-timer preflight**, a **TV Guide
+loading box**, and **localization (English + 日本語)**. Built green x64 BOTH theme flags + native ARM64,
+selftest ALL PASS, adversarially reviewed. Owner pass: ✅ language shift confirmed on-device; the wake
+preflight banner + guide loading box are low-risk, **delegated to testers**. Japanese is a machine draft —
+native review is the gate before advertising JP support. (Details of the three features below.)
 
 **Localization — Japanese first (commit `c9c2504`).** The app is fully localizable and ships English + 日本語,
 defaulting to the system language with a Settings ▸ Language toggle (System / English / 日本語). Changing it
@@ -765,8 +782,10 @@ is left unchanged until the restart, so the session never shows a half-translate
   worker thread starts — fixing a data race + an English flash on the localized splash.
 - **⚠️ Japanese is a glossary-consistent MACHINE DRAFT** pending a native review (Terms-of-Use especially).
   The pipeline exists precisely so that review is a clean `ja.json` diff.
-- **Owner pass wanted:** the menu/dialogs read naturally in Japanese (no tofu, Yu Gothic UI); the gear looks
-  right; a Japanese-Windows install comes up Japanese with no toggle; switching language + restart applies it.
+- **Owner pass:** ✅ **language shift confirmed** (2026-07-11) — switching language + the Restart-now prompt
+  brings the app back up in the chosen language, on-device. Still worth an eyeball: the gear/menu look, that
+  Japanese reads naturally (no tofu), and that a Japanese-Windows install comes up Japanese with no toggle.
+  The **native Japanese review** (`gen_i18n.py --review ja`) remains the gate before advertising JP support.
 
 **TV Guide loading box** (`onEpgGuide`, `MainWindowCommands.cpp`). The FIRST guide open is slow (reopen via
 `revealEpgGuide` is instant) — a synchronous per-playlist `programmesInWindow` build on the UI thread, with
@@ -1121,12 +1140,15 @@ Paste this verbatim to start a fresh session with working context restored:
 > You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC 3.0.23**
 > with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome (coral
 > `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps vendored/NuGet.
-> **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.7 block)
+> **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.8 block)
 > — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
-> **State: last SHIPPED = `v0.2.7`** (2026-07-10, tag @ `cc9f9e4`, `0.2.7.184`, appcasts @ `438c83d`).
-> Everything shipped is LIVE and auto-updating. **On `main`, UNRELEASED: the 0.2.8-dev wake-timer
-> preflight** (see its block under "Immediate next steps").
+> **State: last SHIPPED = `v0.2.8`** (2026-07-11, tag @ `e45adb6`, `0.2.8.217`, appcasts @ `5404004`).
+> `main` is clean. Everything shipped is LIVE and auto-updating (raw feeds serve 0.2.8.217, enclosures
+> HTTP 200). 0.2.8 = **localization (EN + 日本語)** + wake-timer preflight + TV Guide loading box. i18n
+> source of truth is `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*`
+> (never hand-edit). **Japanese is a machine draft** — native review (`gen_i18n.py --review ja`) is the
+> gate before advertising JP support.
 >
 > **The app.** `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = a video
 > HWND + `VlcPlayer` + channel; `AppState` holds the vector + `active` + `ViewMode`). Single / Split (2×2
@@ -1147,7 +1169,7 @@ Paste this verbatim to start a fresh session with working context restored:
 > `third_party/vlc-tools/x64/vlc-cache-gen.exe`, run post-install gated `IsX64Native` — **NEVER under ARM
 > emulation: it silently writes an EMPTY cache ⇒ libVLC loads 0 plugins ⇒ no playback**).
 >
-> **0.2.7 = Recording Phase 3 (newest).** `Win32/platform/WakeScheduler.{h,cpp}` registers ONE Task
+> **0.2.7 = Recording Phase 3 (DVR foundation).** `Win32/platform/WakeScheduler.{h,cpp}` registers ONE Task
 > Scheduler task ("RabbitEars Recording Wake", `WakeToRun`+`StartWhenAvailable`) running
 > `RabbitEars.exe --scheduled-wake` at `earliestPendingStart − 120s` (clamped to `now+30s`).
 > `syncWakeFromSchedules(st)` is the choke point (tick / guide refresh / rule change / Settings toggle)
@@ -1167,25 +1189,45 @@ Paste this verbatim to start a fresh session with working context restored:
 > *cancels* (never hard-deletes) a rule-generated Pending airing — a hard delete would let the expander
 > resurrect it. Both are pinned by selftests.
 >
-> **0.2.8-dev = the wake-timer preflight (newest, on `main`, unreleased).** 0.2.7's task registers, but
-> Windows only **arms** the RTC timer if the power plan's `GUID_ALLOW_RTC_WAKE` allows it — **per power
-> source**. `AC=Enable, DC=Disable` is a common laptop default, so an unplugged PC silently misses every
-> recording. Pure `common/core/PowerPolicy` (reason enum, mac-safe, 14 selftests; invariant: *`onBattery`
-> implies `hasBattery`*) + `Win32/platform/PowerPolicy` (powrprof probe) warn in the schedules manager +
-> the Settings toggle. **`AoAc` guard is load-bearing:** Modern Standby reports `RtcWake=Unspecified` yet
-> wakes fine — drop it and every modern laptop is wrongly told it can't wake. New **Settings ▸ Run wake
-> task now** (`ID_WAKE_RUN_NOW=2065`) demand-starts the task so `--scheduled-wake` is testable *without
-> sleeping*. The manager's banner height is **measured** (`DT_CALCRECT`) — never hard-code it, it clipped.
+> **0.2.8 = localization + wake preflight + guide loading box (SHIPPED, newest).**
+> **Localization (English + 日本語).** SOURCE OF TRUTH = JSON under `common/i18n/` (`languages.json` +
+> `keys.json` + one `<code>.json` per language); **`tools/i18n/gen_i18n.py`** generates the pure catalog
+> `common/core/Strings.{h,cpp}` — **NEVER hand-edit Strings.\***; edit the JSON, run the generator, commit
+> both. Win32 call sites use `Win32/ui/Tr.h`: `tr(StringId)`→`std::wstring`, `trf(id,{wideArgs})` fills
+> `{0}`,`{1}`… (UTF-8→wide at the boundary). Enum-indexed table ⇒ "every key in every language" is compile-
+> time enforced; drift guarded by `gen_i18n.py --check` (in `windows-core.yml` CI) + the CLI selftest
+> (completeness + placeholder parity). System default via `GetUserDefaultUILanguage`, read at `WM_CREATE`
+> **before** `createChildren` **and** before the splash thread — `i18n::g_lang` is a **relaxed
+> `std::atomic`** (the splash worker reads it). Settings ▸ Language ids **2066–2068**; restart-to-apply via a
+> themed TaskDialog that self-relaunches with **`--restart`** (waits on the single-instance mutex for the old
+> instance to exit, instead of bouncing). **Gear-icon** Settings button (`kGlyphSettings` MDL2 U+E713) +
+> regrouped menu. **CJK font:** `themeFontFamily()` (the single GDI+DirectWrite choke point) → **Yu Gothic
+> UI** when Japanese; the symbol/glyph role is exempt (gear/transport icons stay). **⚠️ Japanese is a machine
+> draft** — `gen_i18n.py --review ja` emits an EN/JA side-by-side for a native pass (the gate before
+> advertising JP support). Adding a language: drop a `<code>.json` + `languages.json` entry + wire
+> `Tr.h`/menu — the generator refuses to build until every key is filled.
+> **Wake-timer preflight.** 0.2.7's task registers, but Windows only **arms** the RTC timer if the power
+> plan's `GUID_ALLOW_RTC_WAKE` allows it — **per power source** (`AC=Enable, DC=Disable` is a common laptop
+> default ⇒ an unplugged PC silently misses recordings). Pure `common/core/PowerPolicy` (mac-safe, selftested;
+> invariant *`onBattery` implies `hasBattery`*) + `Win32/platform/PowerPolicy` (powrprof probe) warn in the
+> schedules manager + Settings toggle. **`AoAc` guard is load-bearing:** Modern Standby reports
+> `RtcWake=Unspecified` yet wakes fine — drop it and every modern laptop is wrongly told it can't wake.
+> **Settings ▸ Run wake task now** (`ID_WAKE_RUN_NOW=2065`) demand-starts the task so `--scheduled-wake` is
+> testable *without sleeping*. The schedules-manager banner height is **measured** (`DT_CALCRECT`) — never
+> hard-code it, it clipped.
+> **TV Guide loading box.** The first `onEpgGuide` build is synchronous (reopen via `revealEpgGuide` is
+> instant); it shows a **LOCAL** "Loading TV guide…" box (NOT `st->loadingDlg`, which is the async fetch's) —
+> no `st->busy` guard (an early version's guard was a review-caught regression on Show-in-Guide).
 >
-> **Immediate next:** the **owner's runtime pass**. 0.2.7: ✅ scheduled recording works; ⚠️ wake-from-sleep
-> is **untestable on this box** (Parallels ARM64 VM, S0-only — host suspends the guest); needs real hardware,
-> owner deems it non-critical. Unexercised: "Record series", the Rules manager, auto-update over a queued
-> recording. 0.2.8-dev: the banner renders un-clipped, and **Run wake task now** fires the launch path.
-> Then pick from `Win32/BACKLOG.md`: **series-rule follow-ups** (episode dedup via `Programme::episodeNum`/
-> `subTitle`; a rule editor — `Contains` + lead/trail padding already exist in model/DB/expander, only the UI
-> is missing), **transcoding on record**, a **background dead-link checker**, **Authenticode** (recipe is in
-> `docs/RELEASING.md`; blocked purely on the owner buying a cert — this is what silences SmartScreen),
-> portable-zip artifact, or the deferred **JSON profiles** epic.
+> **Immediate next:** 0.2.8 owner pass — ✅ **language shift confirmed on-device**; the wake-preflight banner
+> + guide loading box are low-risk, **delegated to testers**. Owed on 0.2.7 (real hardware): wake-from-sleep
+> (untestable on this Parallels ARM64 VM, S0-only), "Record series", auto-update over a queued recording.
+> Then pick from `Win32/BACKLOG.md`: the **native Japanese review** (release gate for advertising JP; the
+> Terms-of-Use text especially), **more languages** / **live language switch** (i18n follow-ups); **series-rule
+> follow-ups** (episode dedup via `Programme::episodeNum`/`subTitle`; a rule editor — `Contains` + lead/trail
+> padding already exist in model/DB/expander, only the UI is missing); **transcoding on record**; a
+> **background dead-link checker**; **Authenticode** (recipe in `docs/RELEASING.md`; blocked on the owner
+> buying a cert — silences SmartScreen); portable-zip artifact; or the deferred **JSON profiles** epic.
 >
 > **Build/verify** (PowerShell): `& "<repo>\scripts\build.cmd" -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON`
 > then `build\Win32\RabbitEarsCli.exe --selftest`. **Build BOTH theme flags** (ON and OFF) — flag-off must
@@ -1200,8 +1242,9 @@ Paste this verbatim to start a fresh session with working context restored:
 > loop**). Static CRT (`/MT`, no redist). **The sandbox cannot launch the GUI** — build-verify + reason;
 > the owner does every runtime/visual pass. `common/` must stay mac-safe (the `mac-core` CI compiles it on
 > clang — no Win32 APIs). **`.cmd` scripts must be CRLF** (enforced in `.gitattributes`; LF made cmd.exe
-> mis-parse `build-arm64.cmd`). Command ids: 2074–2098 used by 0.2.6, 2063/2064 by 0.2.7, 2065 by 0.2.8-dev
-> (2066–2069 free) — **never allocate at/above 2100** (`ID_THEME_SKIN_BASE` is open-ended). libVLC `stop()`/`release()` block → offloaded to
+> mis-parse `build-arm64.cmd`). Command ids: 2074–2098 used by 0.2.6, 2063/2064 by 0.2.7, **2065–2068 by
+> 0.2.8** (2065 wake-run-now, 2066–2068 language; 2069 free) — **never allocate at/above 2100**
+> (`ID_THEME_SKIN_BASE` is open-ended). libVLC `stop()`/`release()` block → offloaded to
 > reaper threads; event callbacks → only `PostMessage`; `i_read_bytes` is 0 for HLS; VLC sout single-quoted
 > paths need `'` doubled; modal dialogs must read their controls **before** `DestroyWindow`.
 >
@@ -1210,8 +1253,13 @@ Paste this verbatim to start a fresh session with working context restored:
 > when the owner asks**; stage **specific paths** (never `git add -A` — the owner adds `art/*.png`); end
 > commits with the `Co-Authored-By` trailer. `main` is shared with the mac team → **`git fetch`/rebase before
 > pushing** (push the code commit early to lock the build number = git commit count, so the tag matches).
-> Release flow (`docs/RELEASING.md`): commit+push → rebuild both arches → 3 installers
-> (`scripts\build-installer.cmd [x64|arm64|universal]`) → **owner signs on the Mac** (only EdDSA signing is
-> there) → `scripts\make-appcast.ps1 [-Arch arm64] -Version <ver.build> -Tag v<ver> …` → `gh release create`
-> with 3 assets → commit+push both appcasts → verify raw feeds + HTTP 200. `gh` CLI + Inno Setup are on this
-> machine, so everything except signing runs locally.
+> Release flow (`docs/RELEASING.md`): commit+push → **force-reconfigure so `version.h` picks up the new
+> commit count** (delete `build/generated/version.h`, rebuild — else the stamp lags HEAD by a commit) →
+> rebuild both arches → 3 installers (`scripts\build-installer.cmd [x64|arm64|universal]`) → **owner signs on
+> the Mac** (`sign_update --account SQLTerminal <exe>`, only EdDSA signing is there — the printed `length`
+> must equal the local file's bytes exactly) → `pwsh scripts\make-appcast.ps1 [-Arch arm64] -Version
+> <ver.build> -Tag v<ver> -SetupExe … -Signature …` → `gh release create v<ver> --target main …` with 3
+> assets (a bare SHA `--target` 422s; use `main`) → commit+push both appcasts → verify raw feeds serve
+> `<ver.build>` + enclosures HTTP 200. **`pwsh` (PowerShell 7) is now installed** (was absent for the 0.2.8
+> cut, which fell back to `& .\scripts\make-appcast.ps1` under Windows PowerShell 5.1). `gh` CLI + Inno Setup
+> are on this machine, so everything except signing runs locally. **v0.2.8 tag = `main`** (`e45adb6`, 217).

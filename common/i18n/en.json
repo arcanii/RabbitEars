@@ -164,7 +164,6 @@
   "StatusPipChannel": "PIP: {0}",
   "StatusDownloadingPlaylist": "Downloading playlist…",
   "StatusLoadingPlaylist": "Loading playlist…",
-  "StatusLanguageRestart": "Language will change when you restart RabbitEars.",
   "StatusActivePane": "Active pane {0}",
   "StatusActiveChannel": "Active: {0}",
   "GridHeaderGroup": "Group",

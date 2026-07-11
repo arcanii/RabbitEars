@@ -186,7 +186,6 @@ constexpr std::array<const char*, N> kEn = {{
     "PIP: {0}",  // StatusPipChannel
     "Downloading playlist…",  // StatusDownloadingPlaylist
     "Loading playlist…",  // StatusLoadingPlaylist
-    "Language will change when you restart RabbitEars.",  // StatusLanguageRestart
     "Active pane {0}",  // StatusActivePane
     "Active: {0}",  // StatusActiveChannel
     // --- Playlist ---
@@ -582,7 +581,6 @@ constexpr std::array<const char*, N> kJa = {{
     "PIP: {0}",  // StatusPipChannel
     "プレイリストをダウンロード中…",  // StatusDownloadingPlaylist
     "プレイリストを読み込み中…",  // StatusLoadingPlaylist
-    "言語は RabbitEars を再起動すると変わります。",  // StatusLanguageRestart
     "アクティブなペイン {0}",  // StatusActivePane
     "アクティブ: {0}",  // StatusActiveChannel
     // --- Playlist ---
