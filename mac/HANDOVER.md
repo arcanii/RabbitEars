@@ -13,32 +13,39 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 
 `main` carries **both platforms at decoupled versions**: **Windows 0.2.8** (theme engine + EPG/TV Guide,
 scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
-recording — the Windows team ships from `main`) and **mac 0.2.0** (the parity line). The version split lives in
+recording — the Windows team ships from `main`) and **mac 0.2.7** (the parity line). The version split lives in
 `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac). **That file is the one
 recurring merge conflict** between the two teams — keep the Windows line and the `if(APPLE)` override intact.
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
 
-> **Scope caveat:** the SHIPPED mac **0.2.0** (build 208) reaches parity with the Windows **0.2.5** feature
-> set. The **0.2.6/0.2.7 parity push is DONE but UNMERGED** — five stacked PRs (#25→#29, below) add favourites
-> I/O + Show-in-Guide, PiP resize/persist, saved layouts, per-pane recording, and the recording scheduler +
-> series rules. Only **wake-timer preflight** stays unported (a non-root mac app can't arm a wake — see the
-> wake note below). Windows itself is on 0.2.8.
+> **Scope:** the SHIPPED mac **0.2.7** (build 234, universal, notarized — released 2026-07-11) reaches parity
+> with the Windows **0.2.6/0.2.7** set: favourites I/O + Show-in-Guide, PiP resize/persist, saved layouts,
+> per-pane recording, and the recording scheduler + series rules (the #25→#29 stack, all merged). The earlier
+> 0.2.0 (build 208) covered the 0.2.5 set (TV Guide, multi-view, PiP). Only **wake-timer preflight** stays
+> unported by design (a non-root mac app can't arm a wake — see the wake note below). Windows is on 0.2.8.
 
-## IN FLIGHT — the 0.2.6/0.2.7 parity stack (5 PRs, all mac-core green, NONE merged)
+## SHIPPED — the 0.2.6/0.2.7 parity stack (v0.2.7-mac, build 234, 2026-07-11)
 
-A **stacked** set of PRs, each based on the one below it (retarget each `--base` to `main` as the one below
-lands; merge in order). All pushed via the **git REST API** because `git push` hangs this session (see the
-Working-rules note). Zero `common/`/`Win32/` edits across the whole stack — every core (`VideoGrid`,
-`M3uWriter`, `RecordingScheduler`, `RecordingRules`, the schema-v5 `Database` methods) was **already compiled
-into the mac binary**; this was wiring, not porting.
+The five-PR stack **merged to `main` in order #25→#29** (merge commits `f387ad0`→`de240fd`), the mac version was
+bumped to **0.2.7** (`cmake/AppVersion.cmake` APPLE override → build 234, commit `f9f7404`), and **`v0.2.7-mac`
+shipped** — universal, notarized, appcast live on `main` (`3c832cf`). All merges were `gh pr merge --merge`; the
+version bump + appcast landed via `gh api` PUT (the git REST path — `git push` still hangs this session). Zero
+`common/`/`Win32/` edits across the whole stack — every core (`VideoGrid`, `M3uWriter`, `RecordingScheduler`,
+`RecordingRules`, the schema-v5 `Database` methods) was **already compiled into the mac binary**; wiring, not porting.
 
-| PR | Branch | Phase | Reviewed | On-device |
-|----|--------|-------|----------|-----------|
-| [#25](https://github.com/arcanii/RabbitEars/pull/25) | `mac-favourites-io-guide` | Favourites import/export + Show in TV Guide | ✅ | ✅ |
-| [#26](https://github.com/arcanii/RabbitEars/pull/26) | `mac-pip-resize-persist` | PiP inset resize + persist (size/pos) | ✅ | ✅ |
-| [#27](https://github.com/arcanii/RabbitEars/pull/27) | `mac-saved-layouts` | Named saved multi-view layouts | ✅ | ✅ |
-| [#28](https://github.com/arcanii/RabbitEars/pull/28) | `mac-recording` | Per-pane recording to file (ts/mp4) | ✅ | ⏳ **PENDING** |
-| [#29](https://github.com/arcanii/RabbitEars/pull/29) | `mac-recording-scheduler` | Scheduled recordings + EPG series rules + honest wake | ✅ | ⏳ **PENDING** |
+| PR | Branch | Phase | On-device |
+|----|--------|-------|-----------|
+| [#25](https://github.com/arcanii/RabbitEars/pull/25) | `mac-favourites-io-guide` | Favourites import/export + Show in TV Guide | ✅ verified |
+| [#26](https://github.com/arcanii/RabbitEars/pull/26) | `mac-pip-resize-persist` | PiP inset resize + persist (size/pos) | ✅ verified |
+| [#27](https://github.com/arcanii/RabbitEars/pull/27) | `mac-saved-layouts` | Named saved multi-view layouts | ✅ verified |
+| [#28](https://github.com/arcanii/RabbitEars/pull/28) | `mac-recording` | Per-pane recording to file (ts/mp4) | ⚠️ **shipped unverified** |
+| [#29](https://github.com/arcanii/RabbitEars/pull/29) | `mac-recording-scheduler` | Scheduled recordings + EPG series rules + honest wake | ⚠️ **shipped unverified** |
+
+> **⚠ 0.2.7 shipped WITHOUT on-device verification of P4 recording + P5-7 scheduler.** The owner chose "ship it"
+> on 2026-07-11; the recording/scheduler **file-muxing paths never ran on real hardware** (green mac-core CI +
+> the adversarial reviews were deemed sufficient). "Does a real `.ts`/`.mp4` play?" and "does the ~30s tick fire
+> a playable scheduled file?" remain **unproven on device** — if a recording/scheduler bug surfaces in the wild,
+> start here (→ a 0.2.8-mac patch). P1-3 (favourites/PiP/layouts) WERE device-verified before merge.
 
 Each phase got an **adversarial ObjC++ review** (multi-agent workflow) that found + fixed real bugs before
 merge — the reviews repeatedly earned their cost:
@@ -61,18 +68,23 @@ non-root, hardened, Developer-ID app **CANNOT wake a sleeping Mac** — `IOPMSch
 (verified in the macOS 26 SDK `IOPMLib.h`). So scheduling shows the caveat up front and the Recordings window
 states it: records only while running + Mac awake (lid open). That is the deliberate degraded design, NOT a TODO.
 
-> **`mac-pip-switch-fix` (off main, PR-pending): a shipped-0.2.0 bug fix.** "Play in PiP" while already in PiP
-> (any re-play into a running pane) called `set_media` without stopping the current input — on some live IPTV
-> feeds the old inset wedges (frozen) and the new never starts. Fix: `libvlc_media_player_stop()` before
-> `set_media` in `VlcPlayerMac::play()`. **Could NOT reproduce with VOD test streams** (identical code to 208
-> switched them cleanly); verified no-regression, targets the likely cause — **needs confirmation on the
-> affected IPTV channels**. Commit `0ab8618`.
+> **PiP-switch freeze fix — SHIPPED in 0.2.7** (`0ab8618`, already on `main` before the stack landed). "Play in
+> PiP" while already in PiP (any re-play into a running pane) called `set_media` without stopping the current
+> input — on some live IPTV feeds the old inset wedged (frozen) and the new never started. Fix:
+> `libvlc_media_player_stop()` before `set_media` in `VlcPlayerMac::play()`. **Could NOT reproduce with VOD test
+> streams** (identical code to 208 switched them cleanly); it targets the likely cause but is **still unconfirmed
+> on the affected IPTV channels** — now released, so a persistent freeze there would be a 0.2.8-mac follow-up.
 
-**NEXT (on-device):** verify P4 recording (record a real HLS stream → the `.ts`/`.mp4` plays) and P5-7 scheduler
-(schedule ~1 min out, watch the ~30s tick fire a playable file) — these are the only unverified surfaces. Then
-confirm the PiP-switch fix on real IPTV. **On-device traps that cost hours are listed under Working rules.**
+**NEXT (on-device, post-ship validation):** 0.2.7 is out, so this now validates *shipped* code — record a real
+HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s tick fire a playable file), and
+confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
+traps that cost hours are listed under Working rules.**
 
-## Current state — v0.2.0-mac SHIPPED (PR #24 merged to main)
+## Current state — v0.2.7-mac SHIPPED (2026-07-11)
+
+**Latest: `v0.2.7-mac`** (build 234, universal, notarized, appcast live) — the 0.2.6/0.2.7 parity stack
+(#25→#29) + the PiP-switch fix. See the **SHIPPED** section above; note recording/scheduler shipped **without**
+on-device verification. The prior 0.2.0 milestone (still accurate for the multi-view/EPG internals) follows.
 
 The mac app is **shipped and auto-updating**: **`v0.2.0-mac`** on GitHub — universal (arm64 + x86_64),
 notarized, self-contained, `0.2.0` build `208`. It lands the three Windows-parity features — **TV Guide (EPG)**,
@@ -396,29 +408,23 @@ VlcPlayerMac.mm are MRC. Run an adversarial ObjC++ review before merging (it has
 EVERY native phase). Dev testing: launch with RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a
 local m3u/XMLTV fixture over http://127.0.0.1 (ATS-exempt loopback).
 
-STATE: the mac 0.2.6/0.2.7 PARITY PUSH is DONE but UNMERGED — 5 STACKED PRs, each based on the prior, all
-mac-core green, all adversarially reviewed with real bugs fixed, ZERO common/Win32 edits (every core was
-already compiled into the mac binary — wiring, not porting):
- #25 mac-favourites-io-guide  — favourites import/export (M3uWriter) + Show in TV Guide
- #26 mac-pip-resize-persist    — PiP inset resize (top-left grip, pin bottom-right) + persist size/pos
- #27 mac-saved-layouts         — named saved multi-view layouts (settings K/V, mac-local serialization)
- #28 mac-recording             — per-pane recording (2nd headless libVLC player, :sout=#std, ts/mp4; NO
-                                 mkv — bundled VLC has no mkv muxer); Record button; IOKit keep-awake
- #29 mac-recording-scheduler   — dedicated headless recorder + ~30s NSTimer tick over planScheduler();
-                                 schedule-from-guide; EPG series rules (expandRules); Recordings window;
-                                 honest wake messaging
-MERGE IN ORDER #25->#26->#27->#28->#29, retargeting each --base to main as the one below lands
-(`gh pr edit --base main`, no push needed). git push HANGS this session — all branches were pushed via the
-git REST API (blobs->tree->commit->ref; verify the API tree SHA == `git rev-parse HEAD^{tree}` before
-creating the ref; then `git fetch` + `git reset --hard FETCH_HEAD`; `git ls-remote` exits 0 even when a
-branch is ABSENT so check for a non-empty SHA). Details + the review findings are in the "IN FLIGHT" section
-above and the macos-port-strategy memory.
-
-ALSO IN FLIGHT: branch mac-pip-switch-fix (off main, commit 0ab8618, NOT PR'd) — a shipped-0.2.0 bug fix.
-"Play in PiP" while already in PiP re-plays into a running pane via set_media WITHOUT stopping first; on
-some live IPTV feeds the old inset freezes and the new never starts. Fix = libvlc_media_player_stop() before
-set_media in VlcPlayerMac::play(). COULD NOT reproduce with VOD test streams (identical code to 208 switched
-cleanly) — no-regression verified, but NEEDS confirmation on the affected IPTV channels before PR.
+STATE: v0.2.7-mac SHIPPED 2026-07-11 (build 234, universal, notarized; appcast live on main @ 3c832cf). The
+0.2.6/0.2.7 PARITY STACK MERGED to main in order #25->#29 (merge commits f387ad0->de240fd), the mac version
+bumped to 0.2.7 (f9f7404), and the PiP-switch freeze fix (0ab8618) rode in too. ZERO common/Win32 edits — every
+core was already compiled into the mac binary (wiring, not porting). What shipped:
+ #25 favourites import/export (M3uWriter) + Show in TV Guide
+ #26 PiP inset resize (top-left grip, pin bottom-right) + persist size/pos
+ #27 named saved multi-view layouts (settings K/V, mac-local serialization)
+ #28 per-pane recording (2nd headless libVLC player, :sout=#std, ts/mp4; NO mkv — bundled VLC has no mkv muxer)
+ #29 dedicated headless recorder + ~30s NSTimer tick over planScheduler(); schedule-from-guide; EPG series
+     rules (expandRules); Recordings window; honest wake messaging
+ +   PiP-switch fix: libvlc_media_player_stop() before set_media in VlcPlayerMac::play()
+CAUTION: #28 recording + #29 scheduler shipped WITHOUT on-device verification (owner chose "ship it") — the
+file-muxing paths never ran on real hardware; the PiP-switch fix is likewise unconfirmed on the affected IPTV
+channels. P1-3 WERE device-verified. A recording/scheduler/PiP bug in the wild → a 0.2.8-mac patch, not a
+blocked merge. git push STILL HANGS this session — the 5 PRs were merged with gh pr merge --merge, and the
+version bump + appcast landed via gh api PUT contents (git REST works; push does not). Release recipe +
+gotchas: the mac-release-deployment memory.
 
 DO NOT REGRESS (multi-view): the pane's NSView must be RETAINED across the async player stop (libVLC's vout
 renders into it via set_nsobject); applyViewMode re-points the _player/_videoView aliases at a SURVIVING pane
@@ -435,9 +441,11 @@ TCC protects — access can be revoked MID-SESSION (every read incl. git EPERMs)
 `tccutil reset SystemPolicyDesktopFolder com.anthropic.claude-code` (no relaunch). Closing the main window
 QUITS the app. The BUILD_NUMBER only refreshes on cmake RECONFIGURE, not per-build.
 
-NEXT: on-device verify the two PENDING surfaces — P4 recording (record a real HLS stream, confirm the
-.ts/.mp4 PLAYS) and P5-7 scheduler (schedule ~1 min out, watch the ~30s tick fire a PLAYABLE file) — and
-confirm the mac-pip-switch-fix on real IPTV. Then the stack is ready to merge. Backlog: promote MeterModel
-to common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope).
+NEXT: post-ship on-device VALIDATION of 0.2.7's unverified surfaces — P4 recording (record a real HLS stream,
+confirm the .ts/.mp4 PLAYS), P5-7 scheduler (schedule ~1 min out, watch the ~30s tick fire a PLAYABLE file),
+and the PiP-switch fix on real IPTV. A failure = a 0.2.8-mac patch, not a blocked merge. Backlog: promote
+MeterModel to common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope). Next parity
+target = Windows 0.2.8 (theme engine + Japanese i18n — the i18n system compiles into common/ but the mac UI
+does NOT consume it yet, so a 0.2.7 build ships no localization).
 ```
 ```
