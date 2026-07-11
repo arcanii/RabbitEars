@@ -117,6 +117,13 @@ static const int kPipDefaultH = 135;
 static const int kPipMinW = 160;
 static const int kPipMinH = 90;
 
+// Named saved layouts (Settings ▸ Layouts). Stored in the settings K/V — "layout_names" is a
+// newline-joined index (menu order); each layout lives at "layout_saved_<name>". Same scheme
+// as Win32, but a mac-local serialization: mac's "layout" is the multi-view arrangement (view
+// mode + per-pane channel ids + PiP geometry), not Win32's dock-panel layout.
+static const int kMaxSavedLayouts = 10;
+static const int kMaxPanes = 4;  // 2×2 is the largest grid
+
 @implementation MainWindowController {
     NSWindow*      _window;
     NSSearchField* _search;
@@ -1248,6 +1255,194 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self playChannel:c intoPane:1];
 }
 
+// ---- Named saved layouts (Settings ▸ Layouts) --------------------------------------------
+// A layout captures the multi-view arrangement so the user can restore a whole 2×2 / PiP
+// setup by name. Serialized form (version-tagged, ';'-fields, ','-lists), all mac-local:
+//   1;<mode>;<active>;<pipW>;<pipH>;<pipPosX>;<pipPosY>;<pipMoved>;<chanId0>,<chanId1>,...
+// mode 0/1/2 = Single/Split/Pip; a channel id of 0 = an empty pane. The channel list length
+// is the pane count. Parsing is defensive — a malformed string yields no layout and never
+// tears down the current view.
+
+namespace {
+struct SavedLayout {
+    ViewMode mode = ViewMode::Single;
+    int active = 0;
+    CGFloat pipW = 0, pipH = 0, pipPosX = 0, pipPosY = 0;
+    BOOL pipMoved = NO;
+    std::vector<long long> chans;   // one per pane; 0 == empty
+};
+
+std::vector<std::wstring> splitW(const std::wstring& s, wchar_t sep) {
+    std::vector<std::wstring> out;
+    size_t pos = 0;
+    while (pos <= s.size()) {
+        const size_t at = s.find(sep, pos);
+        out.push_back(s.substr(pos, at == std::wstring::npos ? std::wstring::npos : at - pos));
+        if (at == std::wstring::npos) break;
+        pos = at + 1;
+    }
+    return out;
+}
+
+std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
+    const auto f = splitW(blob, L';');
+    if (f.size() < 9 || f[0] != L"1") return std::nullopt;
+    SavedLayout L;
+    const int m = (int)std::wcstol(f[1].c_str(), nullptr, 10);
+    if (m < 0 || m > 2) return std::nullopt;
+    // Geometry fields come from a K/V blob that could be hand-edited/corrupt: reject NaN/inf so
+    // a bad value can never reach an NSView frame. (The app itself only ever writes finite doubles.)
+    auto finite = [](double v, double lo, double hi) {
+        return std::isfinite(v) ? std::clamp(v, lo, hi) : 0.0;
+    };
+    L.mode     = (ViewMode)m;
+    L.active   = (int)std::wcstol(f[2].c_str(), nullptr, 10);
+    L.pipW     = (CGFloat)finite(std::wcstod(f[3].c_str(), nullptr), 0, 100000);
+    L.pipH     = (CGFloat)finite(std::wcstod(f[4].c_str(), nullptr), 0, 100000);
+    L.pipPosX  = (CGFloat)finite(std::wcstod(f[5].c_str(), nullptr), 0, 1);
+    L.pipPosY  = (CGFloat)finite(std::wcstod(f[6].c_str(), nullptr), 0, 1);
+    L.pipMoved = (f[7] == L"1");
+    for (const auto& c : splitW(f[8], L','))
+        if (!c.empty()) L.chans.push_back(std::wcstoll(c.c_str(), nullptr, 10));
+    if (L.chans.empty() || L.chans.size() > (size_t)kMaxPanes) return std::nullopt;
+    if (L.mode == ViewMode::Single && L.chans.size() != 1) L.chans.resize(1);
+    if (L.active < 0 || L.active >= (int)L.chans.size()) L.active = 0;
+    return L;
+}
+}  // namespace
+
+// The saved-layout name index ("layout_names"), newline-joined, capped and de-blanked.
+- (std::vector<std::wstring>)savedLayoutNames {
+    std::vector<std::wstring> names;
+    if (!_db) return names;
+    if (auto v = _db->getSetting(L"layout_names"); v && !v->empty())
+        for (auto& n : splitW(*v, L'\n'))
+            if (!n.empty()) names.push_back(n);
+    if (names.size() > (size_t)kMaxSavedLayouts) names.resize((size_t)kMaxSavedLayouts);
+    return names;
+}
+
+- (void)storeLayoutNames:(const std::vector<std::wstring>&)names {
+    if (!_db) return;
+    std::wstring joined;
+    for (const auto& n : names) { if (!joined.empty()) joined += L'\n'; joined += n; }
+    _db->setSetting(L"layout_names", joined);
+}
+
+// Settings ▸ Layouts ▸ Save Current Layout… — capture the current multi-view arrangement.
+- (void)saveLayout:(id)__unused sender {
+    if (!_db) return;
+    NSAlert* a = [[NSAlert alloc] init];
+    a.messageText = @"Save Layout";
+    a.informativeText = @"Name this layout (view mode, each pane's channel, and the PiP inset).";
+    [a addButtonWithTitle:@"Save"];
+    [a addButtonWithTitle:@"Cancel"];
+    NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
+    input.stringValue = @"My layout";
+    a.accessoryView = input;
+    [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        if (resp != NSAlertFirstButtonReturn) return;
+        NSString* raw = [input.stringValue
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        // The index is newline-joined and keys are "layout_saved_<name>", so strip separators.
+        NSString* name = [[raw stringByReplacingOccurrencesOfString:@"\n" withString:@" "]
+                                stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+        if (name.length == 0) { [self showResults:@"Save Layout" info:@"Please enter a name."]; return; }
+
+        auto names = [self savedLayoutNames];
+        const std::wstring wname = ws(name);
+        const bool exists = std::find(names.begin(), names.end(), wname) != names.end();
+        if (!exists) {
+            if (names.size() >= (size_t)kMaxSavedLayouts) {
+                [self showResults:@"Layout limit reached"
+                             info:[NSString stringWithFormat:@"You already have %d saved layouts — "
+                                   @"delete one before saving another.", kMaxSavedLayouts]];
+                return;
+            }
+            names.push_back(wname);
+            [self storeLayoutNames:names];
+        }  // an existing name is overwritten in place
+
+        // Serialize the current arrangement.
+        std::wstring blob = L"1;";
+        blob += std::to_wstring((int)_viewMode) + L";";
+        blob += std::to_wstring(_activePane) + L";";
+        blob += std::to_wstring((double)_pipW) + L";" + std::to_wstring((double)_pipH) + L";";
+        blob += std::to_wstring((double)_pipPosX) + L";" + std::to_wstring((double)_pipPosY) + L";";
+        blob += (_pipMoved ? L"1" : L"0") + std::wstring(L";");
+        for (size_t i = 0; i < _panes.size(); ++i) {
+            if (i) blob += L",";
+            blob += std::to_wstring(_panes[i]->channelId);
+        }
+        _db->setSetting(L"layout_saved_" + wname, blob);
+        [self setStatus:[NSString stringWithFormat:@"Layout saved: %@", name]];
+    }];
+}
+
+// Apply a saved layout: rebuild the pane set for its view mode, replay each pane's channel,
+// restore the active pane + PiP geometry. Reuses -applyViewMode: and -playChannel:intoPane:
+// (which own the async-teardown / alias / single-audio invariants), so this only orchestrates.
+- (void)applyLayoutClicked:(NSMenuItem*)sender {
+    if (!_db) return;
+    NSString* name = sender.representedObject;
+    auto blob = _db->getSetting(L"layout_saved_" + ws(name));
+    std::optional<SavedLayout> L = blob && !blob->empty() ? parseLayout(*blob) : std::nullopt;
+    if (!L) { [self showResults:@"Couldn't apply layout"
+                            info:[NSString stringWithFormat:@"“%@” is missing or unreadable.", name]]; return; }
+
+    // PiP geometry must be set BEFORE -applyViewMode: so entering PiP restores it (applyViewMode
+    // no longer resets _pipMoved).
+    _pipW = L->pipW; _pipH = L->pipH;
+    _pipPosX = L->pipPosX; _pipPosY = L->pipPosY; _pipMoved = L->pipMoved;
+
+    int count = std::clamp((int)L->chans.size(), 1, kMaxPanes);
+    [self applyViewMode:L->mode paneCount:count];
+
+    // Replay each pane's saved channel; a channel whose playlist was since removed is skipped.
+    int missing = 0;
+    for (int i = 0; i < count && i < (int)_panes.size(); ++i) {
+        const long long cid = L->chans[(size_t)i];
+        MacVideoPane* p = _panes[(size_t)i].get();
+        if (cid == 0) {
+            // The layout marks this pane empty. If it currently holds a stream — pre-existing,
+            // or one -applyViewMode: carried into pane 0 on collapse — stop + clear it so the
+            // applied arrangement matches what was saved (peer of -stop:'s clear). Synchronous
+            // stop, like the Stop button.
+            if (p->channelId != 0) { p->player->stop(); p->channel = Channel{}; p->channelId = 0; }
+            continue;
+        }
+        if (auto ch = _db->channelById(cid)) [self playChannel:*ch intoPane:i];
+        else ++missing;
+    }
+    [self setActivePane:std::clamp(L->active, 0, (int)_panes.size() - 1)];
+
+    NSString* msg = [NSString stringWithFormat:@"Applied layout: %@", name];
+    if (missing) msg = [msg stringByAppendingFormat:@" (%d channel%@ no longer in your playlists)",
+                        missing, missing == 1 ? @"" : @"s"];
+    [self setStatus:msg];
+}
+
+// Delete a saved layout: drop it from the index and blank its value (the K/V store has no
+// delete; an empty value reads as gone — same convention as Win32).
+- (void)deleteLayoutClicked:(NSMenuItem*)sender {
+    if (!_db) return;
+    NSString* name = sender.representedObject;
+    NSAlert* a = [[NSAlert alloc] init];
+    a.messageText = [NSString stringWithFormat:@"Delete layout “%@”?", name];
+    a.informativeText = @"This removes the saved layout. Your channels and playlists are untouched.";
+    [a addButtonWithTitle:@"Delete"];
+    [a addButtonWithTitle:@"Cancel"];
+    [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        if (resp != NSAlertFirstButtonReturn) return;
+        const std::wstring wname = ws(name);
+        auto names = [self savedLayoutNames];
+        names.erase(std::remove(names.begin(), names.end(), wname), names.end());
+        [self storeLayoutNames:names];
+        _db->setSetting(L"layout_saved_" + wname, L"");
+        [self setStatus:[NSString stringWithFormat:@"Layout deleted: %@", name]];
+    }];
+}
+
 // Create the non-invasive spectrum tap (idempotent; only when enabled). The one-time
 // audio-capture consent prompt happens on the FIRST creation. macOS caches a denial,
 // so a denied prompt won't re-ask — which is exactly why -updateSpectrumAvailability:
@@ -1321,6 +1516,33 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     vSingle.state = (_viewMode == ViewMode::Single) ? NSControlStateValueOn : NSControlStateValueOff;
     vSplit.state  = (_viewMode == ViewMode::Split)  ? NSControlStateValueOn : NSControlStateValueOff;
     vPip.state    = (_viewMode == ViewMode::Pip)    ? NSControlStateValueOn : NSControlStateValueOff;
+
+    // Layouts — save/apply/delete the whole multi-view arrangement by name.
+    NSMenuItem* layoutsItem = [m addItemWithTitle:@"Layouts" action:nil keyEquivalent:@""];
+    NSMenu* layouts = [[NSMenu alloc] init];
+    [[layouts addItemWithTitle:@"Save Current Layout…" action:@selector(saveLayout:) keyEquivalent:@""] setTarget:self];
+    const auto names = [self savedLayoutNames];
+    [layouts addItem:[NSMenuItem separatorItem]];
+    if (names.empty()) {
+        [layouts addItemWithTitle:@"No saved layouts" action:nil keyEquivalent:@""].enabled = NO;
+    } else {
+        for (const auto& n : names) {
+            NSString* name = ns(n);
+            NSMenuItem* it = [layouts addItemWithTitle:name action:@selector(applyLayoutClicked:) keyEquivalent:@""];
+            it.target = self;
+            it.representedObject = name;
+        }
+        NSMenuItem* delItem = [layouts addItemWithTitle:@"Delete" action:nil keyEquivalent:@""];
+        NSMenu* del = [[NSMenu alloc] init];
+        for (const auto& n : names) {
+            NSString* name = ns(n);
+            NSMenuItem* it = [del addItemWithTitle:name action:@selector(deleteLayoutClicked:) keyEquivalent:@""];
+            it.target = self;
+            it.representedObject = name;
+        }
+        delItem.submenu = del;
+    }
+    layoutsItem.submenu = layouts;
 
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:@"TV Guide" action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
