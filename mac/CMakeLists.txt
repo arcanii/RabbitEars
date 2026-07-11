@@ -61,6 +61,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/TermsDialog.mm
     src/app/EpgGuideView.mm
     src/app/TvGuideWindowController.mm
+    src/app/RecordingsWindowController.mm
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm
@@ -74,6 +75,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
     src/app/PlaylistsDialog.mm src/app/TermsDialog.mm
     src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
+    src/app/RecordingsWindowController.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
