@@ -198,6 +198,7 @@ using namespace rabbitears;
 }
 
 - (void)applicationWillTerminate:(NSNotification*)__unused note {
+    [_mainController finalizeRecordingsForQuit];  // flush + index any open recording before exit
     shutdownUpdater();
     diag::shutdown();
 }
