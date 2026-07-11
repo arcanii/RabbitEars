@@ -165,6 +165,18 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   lossless stream copy (`ts`/`mkv`/`mp4` mux, no re-encode).
 - **Background dead-link checker** — so "Hide unavailable" isn't purely passive: probe channels
   off-thread, write `dead_status`, throttle + cache. Pairs with the existing `setDeadStatus` DAO.
+- **TV Guide first-open: build off the UI thread** (0.2.8-dev added a *loading box* only). The first
+  `onEpgGuide` build is synchronous on the UI thread, so the window is frozen behind the "Loading TV
+  guide…" box while it runs; if a build exceeds ~5 s, DWM ghosts it as "Not Responding". A diag timer
+  now logs `TV guide first-open: DB+build … ms, window … ms` — **check that number before doing this.**
+  The cost is dominated by `programmesInWindow` + per-row `wstring` materialization (7 allocs/row), and
+  the query over-fetches: it scans the whole `playlist_id` partition, not the 78 h window it then
+  filters to (`common/db/Database.cpp` `programmesInWindow`) — so a **cheaper first win is bounding the
+  query by `stop_utc > winStart AND start_utc < winEnd`** before threading anything. If still slow,
+  move the build to a worker — but it **must use its OWN `sqlite3` connection**, NOT `st->db`: that one
+  `SQLITE_OPEN_FULLMUTEX` handle would serialize/interleave a worker read with the scheduler tick's and
+  a fetch's write transactions (risking `SQLITE_LOCKED`/`BUSY` or an inconsistent snapshot). Post the
+  built rows back via a new `WM_APP_*` message (WM_APP+1..+5 and +10 are taken).
 - **Series-rule follow-ups** (the 0.2.7 engine supports these; only the UI is missing):
   **episode dedup** (skip a repeat airing of an episode already recorded — `Programme::episodeNum` /
   `subTitle` are stored but unused, so today a rule records every airing of a matching title);

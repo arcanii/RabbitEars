@@ -731,9 +731,21 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-🚧 **0.2.8-dev — the wake-timer preflight** (UNRELEASED; committed to `main`). Built green x64 BOTH theme
-flags + native ARM64, selftest ALL PASS (+14), adversarially reviewed (2 confirmed findings, both fixed).
-**Owner runtime/visual pass owed** (the sandbox can't launch the GUI).
+🚧 **0.2.8-dev** (UNRELEASED; committed to `main`) — two things so far: the **wake-timer preflight** and a
+**TV Guide loading box**. Built green x64 BOTH theme flags + native ARM64, selftest ALL PASS (+14),
+adversarially reviewed. **Owner runtime/visual pass owed** (the sandbox can't launch the GUI).
+
+**TV Guide loading box** (`onEpgGuide`, `MainWindowCommands.cpp`). The FIRST guide open is slow (reopen via
+`revealEpgGuide` is instant) — a synchronous per-playlist `programmesInWindow` build on the UI thread, with
+the window appearing only at the end, so the click looked hung. It now shows the existing modeless
+"Loading TV guide…" box (busy-spinner cursor) first, then builds, then opens. **The box is a LOCAL HWND, not
+`st->loadingDlg`** — that slot belongs to the async EPG fetch; an early version reused it plus an
+`if (st->busy) return;` guard, and review caught the guard as a **regression** (`st->busy` is also set by the
+playlist download worker, which shows no box and leaves the grid clickable → "Show in TV Guide" bailed and
+printed a misleading "try Refresh Guide…"). No guard now: the build only READS the DB on the UI thread, so
+it's safe during a fetch/playlist load. A `diag::info` logs `TV guide first-open: DB+build … ms, window … ms`
+— **the owner should read that number**; if builds run past a few seconds, thread the build with its OWN
+sqlite connection (see `Win32/BACKLOG.md`, "build off the UI thread").
 
 **Marketing version bumped `0.2.7` → `0.2.8`** in the four places that must move together —
 `cmake/AppVersion.cmake` (`APP_VERSION`), `packaging/app.manifest` (`assemblyIdentity version`),
