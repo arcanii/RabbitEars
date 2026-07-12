@@ -17,6 +17,7 @@
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
 
+#include "core/RecordingRules.h"  // normaliseTvgId — preselect a rule's channel in the editor combo
 #include "platform/Updater.h"
 #include "resource.h"
 #include "ui/BufferMeter.h"  // the Data-flow row's preview (createBufferMeter / bufferMeterSet*)
@@ -1884,6 +1885,267 @@ bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Ch
     return result;
 }
 
+// ---- Recording-rule editor (New / Edit, opened from the rules manager) -------
+
+namespace {
+constexpr int ID_RE_CHAN = 1751, ID_RE_TITLE = 1752, ID_RE_MATCH = 1753, ID_RE_LEAD = 1754,
+              ID_RE_TRAIL = 1755;
+
+struct RuleEditState {
+    HWND  combo = nullptr, title = nullptr, match = nullptr, lead = nullptr, trail = nullptr;
+    HFONT font = nullptr;
+    UINT  dpi = 96;
+    bool  ok = false, done = false;
+    // Captured on IDOK (the controls die with the window). Channel selection is a three-way:
+    // any / keep the rule's original (a channel no longer in the library) / a picked Channel*.
+    bool           anyChannel = false;
+    bool           keepChannel = false;
+    const Channel* picked = nullptr;
+    std::wstring   pickedTitle;
+    RuleMatch      pickedMatch = RuleMatch::Exact;
+    int            pickedLeadSec = 0, pickedTrailSec = 0;
+};
+
+// Minutes from a digit-only (ES_NUMBER) edit, clamped to a sane 0..240. Manual parse so the file
+// needs no extra <cstdlib>.
+int readMinutes(HWND edit) {
+    wchar_t buf[16] = L"";
+    GetWindowTextW(edit, buf, ARRAYSIZE(buf));
+    long v = 0;
+    for (const wchar_t* p = buf; *p >= L'0' && *p <= L'9'; ++p) {
+        v = v * 10 + (*p - L'0');
+        if (v >= 240) return 240;
+    }
+    return static_cast<int>(v);
+}
+
+LRESULT CALLBACK RuleEditProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<RuleEditState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, w);
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            SetBkMode(dc, TRANSPARENT);
+            HGDIOBJ of = SelectObject(dc, st->font);
+            SetTextColor(dc, currentTheme().textPrimary);
+            const std::wstring labels[5] = {tr(i18n::StringId::ScheduleFieldChannel),
+                                            tr(i18n::StringId::ScheduleFieldTitle),
+                                            tr(i18n::StringId::RuleFieldMatch),
+                                            tr(i18n::StringId::RuleFieldLead),
+                                            tr(i18n::StringId::RuleFieldTrail)};
+            const int ys[5] = {18, 76, 134, 192, 250};
+            for (int i = 0; i < 5; ++i) {
+                RECT r{dp(18, st->dpi), dp(ys[i], st->dpi), dp(114, st->dpi), dp(ys[i] + 20, st->dpi)};
+                DrawTextW(dc, labels[i].c_str(), -1, &r, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            }
+            // "min" suffix after each padding edit (edits are at x=120, width 56 -> suffix at ~184).
+            const std::wstring mn = tr(i18n::StringId::RuleMinutesSuffix);
+            RECT rl{dp(184, st->dpi), dp(194, st->dpi), dp(280, st->dpi), dp(214, st->dpi)};
+            RECT rt{dp(184, st->dpi), dp(252, st->dpi), dp(280, st->dpi), dp(272, st->dpi)};
+            DrawTextW(dc, mn.c_str(), -1, &rl, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            DrawTextW(dc, mn.c_str(), -1, &rt, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            SelectObject(dc, of);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(w)) {
+                case IDOK: {  // validate + capture BEFORE destroy
+                    wchar_t t[256] = L"";
+                    GetWindowTextW(st->title, t, ARRAYSIZE(t));
+                    std::wstring title = t;
+                    const auto notSpace = [](wchar_t c) { return !std::iswspace(c); };
+                    title.erase(title.begin(), std::find_if(title.begin(), title.end(), notSpace));
+                    title.erase(std::find_if(title.rbegin(), title.rend(), notSpace).base(), title.end());
+                    if (title.empty()) {  // a rule with no title pattern would match every programme
+                        MessageBeep(MB_ICONWARNING);
+                        SetFocus(st->title);
+                        return 0;
+                    }
+                    const int sel = static_cast<int>(SendMessageW(st->combo, CB_GETCURSEL, 0, 0));
+                    const LONG_PTR data = static_cast<LONG_PTR>(SendMessageW(st->combo, CB_GETITEMDATA, sel, 0));
+                    st->anyChannel = (data == 0);   // item 0 sentinel
+                    st->keepChannel = (data == 1);  // "channel not in library" sentinel
+                    st->picked = (data > 1) ? reinterpret_cast<const Channel*>(data) : nullptr;
+                    st->pickedTitle = title;
+                    st->pickedMatch = (SendMessageW(st->match, CB_GETCURSEL, 0, 0) == 1) ? RuleMatch::Contains
+                                                                                        : RuleMatch::Exact;
+                    st->pickedLeadSec = readMinutes(st->lead) * 60;
+                    st->pickedTrailSec = readMinutes(st->trail) * 60;
+                    st->ok = true;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                case IDCANCEL:
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+}  // namespace
+
+bool ruleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Channel>& channels,
+                RecordingRule& out) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = RuleEditProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsRuleEdit";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    std::vector<const Channel*> sorted;
+    sorted.reserve(channels.size());
+    for (const auto& c : channels) sorted.push_back(&c);
+    std::sort(sorted.begin(), sorted.end(),
+              [](const Channel* a, const Channel* b) { return a->name < b->name; });
+
+    RuleEditState st;
+    st.dpi = dpi;
+    st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
+    const bool editing = out.id != 0;
+    const int W = dp(440, dpi), H = dp(376, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsRuleEdit",
+                               (editing ? tr(i18n::StringId::RuleEditWindowTitle)
+                                        : tr(i18n::StringId::RuleEditNewTitle)).c_str(),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(st.font);
+        return false;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(18, dpi), fx = dp(120, dpi), fw = cr.right - fx - m;
+
+    // Channel combo: "(any channel)" (itemdata 0) first, then the library by name (itemdata Channel*).
+    st.combo = CreateWindowExW(0, L"COMBOBOX", L"",
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, fx,
+                               dp(14, dpi), fw, dp(320, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RE_CHAN)), hInst, nullptr);
+    SendMessageW(st.combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(tr(i18n::StringId::RuleAnyChannelPlaceholder).c_str()));
+    SendMessageW(st.combo, CB_SETITEMDATA, 0, 0);
+    int preSel = 0;  // default to "(any channel)"
+    for (const Channel* c : sorted) {
+        const int idx = static_cast<int>(
+            SendMessageW(st.combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(c->name.c_str())));
+        SendMessageW(st.combo, CB_SETITEMDATA, idx, reinterpret_cast<LPARAM>(c));
+        if (preSel == 0 && !out.channelId.empty() &&
+            normaliseTvgId(c->tvgId) == normaliseTvgId(out.channelId))
+            preSel = idx;
+    }
+    // A rule whose channel has since dropped out of the library: keep it selectable (itemdata 1) so
+    // editing another field can't silently turn the rule into "any channel".
+    if (editing && preSel == 0 && !out.channelId.empty()) {
+        const std::wstring lbl = out.channelName.empty() ? out.channelId : out.channelName;
+        const int idx =
+            static_cast<int>(SendMessageW(st.combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(lbl.c_str())));
+        SendMessageW(st.combo, CB_SETITEMDATA, idx, 1);
+        preSel = idx;
+    }
+    SendMessageW(st.combo, CB_SETCURSEL, preSel, 0);
+
+    st.title = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", out.titleMatch.c_str(),
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, fx, dp(72, dpi), fw,
+                               dp(26, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RE_TITLE)), hInst, nullptr);
+
+    st.match = CreateWindowExW(0, L"COMBOBOX", L"",
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST, fx, dp(130, dpi), fw,
+                               dp(200, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RE_MATCH)), hInst, nullptr);
+    SendMessageW(st.match, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr(i18n::StringId::RuleMatchExact).c_str()));
+    SendMessageW(st.match, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(tr(i18n::StringId::RuleMatchContains).c_str()));
+    SendMessageW(st.match, CB_SETCURSEL, out.match == RuleMatch::Contains ? 1 : 0, 0);
+
+    const int nw = dp(56, dpi);
+    st.lead = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", std::to_wstring(out.leadSec / 60).c_str(),
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_RIGHT, fx, dp(188, dpi),
+                              nw, dp(26, dpi), dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RE_LEAD)), hInst, nullptr);
+    st.trail = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", std::to_wstring(out.trailSec / 60).c_str(),
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_RIGHT, fx, dp(246, dpi),
+                               nw, dp(26, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RE_TRAIL)), hInst, nullptr);
+
+    const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                              cr.right - 2 * bw - dp(28, dpi), btnY, bw, bh, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonCancel).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  cr.right - bw - dp(18, dpi), btnY, bw, bh, dlg,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
+    for (HWND h : {st.combo, st.title, st.match, st.lead, st.trail, ok, cancel})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(st.title);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(msg.wParam)); DestroyWindow(dlg); break; }
+        if (r == -1) { DestroyWindow(dlg); break; }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    bool result = false;
+    if (st.ok) {  // captured in the IDOK handler before the controls were destroyed
+        out.titleMatch = st.pickedTitle;
+        out.match = st.pickedMatch;
+        out.leadSec = st.pickedLeadSec;
+        out.trailSec = st.pickedTrailSec;
+        if (st.anyChannel) {
+            out.channelId.clear();
+            out.channelName.clear();
+        } else if (st.picked) {
+            out.channelId = st.picked->tvgId;
+            out.channelName = st.picked->name;
+        }
+        // st.keepChannel: leave out.channelId/channelName exactly as they arrived.
+        result = true;
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(st.font);
+    return result;
+}
+
 namespace {
 
 constexpr int ID_MG_LV = 1701, ID_MG_NEW = 1702, ID_MG_CANCEL = 1703, ID_MG_DELETE = 1704;
@@ -2160,7 +2422,8 @@ void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCall
 // ---- Recording rules manager (Settings → Recording Rules…) ------------------
 
 namespace {
-constexpr int ID_RM_LV = 1861, ID_RM_TOGGLE = 1862, ID_RM_DELETE = 1863;
+constexpr int ID_RM_LV = 1861, ID_RM_TOGGLE = 1862, ID_RM_DELETE = 1863, ID_RM_NEW = 1864,
+              ID_RM_EDIT = 1865;
 
 struct RuleDlgState {
     RuleManagerCallbacks cb;
@@ -2221,8 +2484,29 @@ LRESULT CALLBACK RuleDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN:
             return dialogCtlColor(msg, w);
+        case WM_NOTIFY: {  // double-click a rule row -> edit it
+            auto* nm = reinterpret_cast<LPNMHDR>(l);
+            if (nm && nm->idFrom == ID_RM_LV && nm->code == NM_DBLCLK)
+                if (const int i = rmSelectedIndex(st); i >= 0 && st->cb.edit) {
+                    st->cb.edit(hwnd, st->rows[i].id);
+                    rmRepopulate(st);
+                }
+            return 0;
+        }
         case WM_COMMAND:
             switch (LOWORD(w)) {
+                case ID_RM_NEW:
+                    if (st->cb.edit) {
+                        st->cb.edit(hwnd, 0);  // 0 == create a new rule
+                        rmRepopulate(st);
+                    }
+                    return 0;
+                case ID_RM_EDIT:
+                    if (const int i = rmSelectedIndex(st); i >= 0 && st->cb.edit) {
+                        st->cb.edit(hwnd, st->rows[i].id);
+                        rmRepopulate(st);
+                    }
+                    return 0;
                 case ID_RM_TOGGLE:
                     if (const int i = rmSelectedIndex(st); i >= 0 && st->cb.setEnabled) {
                         st->cb.setEnabled(st->rows[i].id, !st->rows[i].enabled);
@@ -2273,7 +2557,7 @@ void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb
     st.dpi = dpi;
     st.cb = std::move(cb);
     st.font = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
-    const int W = dp(640, dpi), H = dp(420, dpi);
+    const int W = dp(700, dpi), H = dp(420, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
@@ -2321,19 +2605,29 @@ void manageRules(HWND parent, HINSTANCE hInst, UINT dpi, RuleManagerCallbacks cb
                                 hintH, dlg, nullptr, hInst, nullptr);
 
     const int bw = dp(150, dpi), dw = dp(96, dpi), gap = dp(8, dpi);
-    HWND toggleB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::RuleToggleButton).c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                   m, btnY, bw, bh, dlg,
+    int bx = m;
+    HWND newB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ScheduleManagerNewButton).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, bx, btnY, dw, bh, dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_NEW)), hInst, nullptr);
+    bx += dw + gap;
+    HWND editB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::RuleEditButton).c_str(),
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, bx, btnY, dw, bh, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_EDIT)), hInst, nullptr);
+    bx += dw + gap;
+    HWND toggleB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::RuleToggleButton).c_str(),
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, bx, btnY, bw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_TOGGLE)), hInst,
                                    nullptr);
+    bx += bw + gap;
     HWND delB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonDelete).c_str(),
-                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + bw + gap, btnY, dw, bh, dlg,
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, bx, btnY, dw, bh, dlg,
                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RM_DELETE)), hInst,
                                 nullptr);
     HWND closeB = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonClose).c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   cr.right - dw - m, btnY, dw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
-    for (HWND h : {st.lv, hint, toggleB, delB, closeB})
+    for (HWND h : {st.lv, hint, newB, editB, toggleB, delB, closeB})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
 
     applyDialogDarkMode(dlg);

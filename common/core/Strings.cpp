@@ -300,6 +300,13 @@ constexpr std::array<const char*, N> kEn = {{
     "State",  // RuleColState
     "Rules are created from the TV Guide: click a programme, then “Record series”. Every future airing is queued automatically.",  // RulesEmptyHint
     "Enable / Disable",  // RuleToggleButton
+    "Edit…",  // RuleEditButton
+    "New Recording Rule",  // RuleEditNewTitle
+    "Edit Recording Rule",  // RuleEditWindowTitle
+    "Match:",  // RuleFieldMatch
+    "Start early:",  // RuleFieldLead
+    "Stop late:",  // RuleFieldTrail
+    "min",  // RuleMinutesSuffix
     "\\r\\nRecording rules queued {0} new airing(s).\\r\\n",  // EpgRulesQueuedDetail
     "Record series",  // RecordSeriesTitle
     "Couldn't match \"{0}\" to a playable channel in your library.",  // RecordSeriesChannelNotFoundBody
@@ -697,6 +704,13 @@ constexpr std::array<const char*, N> kJa = {{
     "状態",  // RuleColState
     "ルールは番組表から作成します。番組をクリックして「シリーズ録画」を選択すると、今後のすべての放送が自動的に予約されます。",  // RulesEmptyHint
     "有効 / 無効",  // RuleToggleButton
+    "編集…",  // RuleEditButton
+    "新規録画ルール",  // RuleEditNewTitle
+    "録画ルールの編集",  // RuleEditWindowTitle
+    "一致条件:",  // RuleFieldMatch
+    "早めに開始:",  // RuleFieldLead
+    "遅めに終了:",  // RuleFieldTrail
+    "分",  // RuleMinutesSuffix
     "\\r\\n録画ルールが{0}件の新しい放送を予約しました。\\r\\n",  // EpgRulesQueuedDetail
     "シリーズ録画",  // RecordSeriesTitle
     "「{0}」をライブラリ内の再生可能なチャンネルに一致させられませんでした。",  // RecordSeriesChannelNotFoundBody
@@ -1094,6 +1108,13 @@ constexpr std::array<const char*, N> kZhHant = {{
     "狀態",  // RuleColState
     "規則是從節目表建立的：點選一個節目，然後選擇「錄製影集」。之後的每次播出都會自動排入佇列。",  // RulesEmptyHint
     "啟用 / 停用",  // RuleToggleButton
+    "編輯…",  // RuleEditButton
+    "新增錄影規則",  // RuleEditNewTitle
+    "編輯錄影規則",  // RuleEditWindowTitle
+    "比對方式：",  // RuleFieldMatch
+    "提前開始：",  // RuleFieldLead
+    "延後結束：",  // RuleFieldTrail
+    "分鐘",  // RuleMinutesSuffix
     "\\r\\n錄影規則已排入 {0} 個新的播出。\\r\\n",  // EpgRulesQueuedDetail
     "錄製影集",  // RecordSeriesTitle
     "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody
@@ -1491,6 +1512,13 @@ constexpr std::array<const char*, N> kZhHK = {{
     "狀態",  // RuleColState
     "規則是從節目表建立的：點選一個節目，然後選擇「錄製影集」。之後的每次播出都會自動排入佇列。",  // RulesEmptyHint
     "啟用 / 停用",  // RuleToggleButton
+    "編輯…",  // RuleEditButton
+    "新增錄影規則",  // RuleEditNewTitle
+    "編輯錄影規則",  // RuleEditWindowTitle
+    "比對方式：",  // RuleFieldMatch
+    "提前開始：",  // RuleFieldLead
+    "延後結束：",  // RuleFieldTrail
+    "分鐘",  // RuleMinutesSuffix
     "\\r\\n錄影規則已排入 {0} 個新的播出。\\r\\n",  // EpgRulesQueuedDetail
     "錄製影集",  // RecordSeriesTitle
     "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody

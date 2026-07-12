@@ -295,7 +295,7 @@ void Database::migrate() {
         Stmt q(db_, "PRAGMA user_version");
         if (q && q.step()) v = q.intCol(0);
     }
-    if (v >= 5) return;
+    if (v >= 6) return;  // newest schema; bump in lockstep with the highest step below
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -790,6 +790,23 @@ long long Database::addRule(const RecordingRule& r) {
     return sqlite3_last_insert_rowid(db_);
 }
 
+void Database::updateRule(const RecordingRule& r) {
+    Stmt q(db_,
+           "UPDATE recording_rules SET channel_id=?,channel_name=?,title_match=?,match_kind=?,"
+           "enabled=?,lead_sec=?,trail_sec=?,mux=? WHERE id=?");
+    if (!q) return;
+    q.bindText(1, r.channelId);
+    q.bindText(2, r.channelName);
+    q.bindText(3, r.titleMatch);
+    q.bindInt(4, static_cast<int>(r.match));
+    q.bindInt(5, r.enabled ? 1 : 0);
+    q.bindInt(6, r.leadSec);
+    q.bindInt(7, r.trailSec);
+    q.bindText(8, r.mux);
+    q.bindInt(9, r.id);
+    q.stepDone();
+}
+
 std::vector<RecordingRule> Database::listRules() {
     std::vector<RecordingRule> out;
     if (!db_) return out;
@@ -825,6 +842,17 @@ void Database::deleteRule(long long id) {
     Stmt q(db_, "DELETE FROM recording_rules WHERE id=?");
     if (!q) return;
     q.bindInt(1, id);
+    q.stepDone();
+}
+
+void Database::clearPendingForRule(long long ruleId) {
+    // Same rationale as deleteRule's pending-drop, but the rule stays: when a rule is edited its
+    // old predictions no longer match the new criteria, so clear the still-Pending rows and let
+    // the caller re-expand. History (Recording/Done/Missed/Failed/Cancelled) is untouched.
+    Stmt q(db_, "DELETE FROM scheduled_recordings WHERE rule_id=? AND status=?");
+    if (!q) return;
+    q.bindInt(1, ruleId);
+    q.bindInt(2, static_cast<int>(ScheduleStatus::Pending));
     q.stepDone();
 }
 

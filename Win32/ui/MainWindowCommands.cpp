@@ -1022,7 +1022,24 @@ int expandRecordingRules(AppState* st, bool force) {
         return 0;
     }
 
-    const auto planned = expandRules(rules, programmes, st->db.listSchedules(), now, horizon);
+    // The core is channel-blind, so its episode dedup could otherwise claim an episode for an
+    // EPG-only channel we can't record — a shared XMLTV feed routinely carries channels no enabled
+    // playlist has — silently dropping the recordable airing of that same episode. Keep only
+    // programmes on a recordable channel (an enabled library channel, which channelByTvgId resolves
+    // by exact tvg_id) so dedup only ever considers airings we can actually record.
+    std::set<std::wstring> recordable;
+    for (const Channel& c : st->db.allChannels())
+        if (!c.tvgId.empty()) recordable.insert(c.tvgId);
+    std::vector<Programme> recordableProgs;
+    recordableProgs.reserve(programmes.size());
+    for (const Programme& p : programmes)
+        if (recordable.count(p.channelId)) recordableProgs.push_back(p);
+    if (recordableProgs.empty()) {
+        st->rulesExpandedAt = now;
+        return 0;
+    }
+
+    const auto planned = expandRules(rules, recordableProgs, st->db.listSchedules(), now, horizon);
     int added = 0;
     for (ScheduledRecording s : planned) {
         // The core can't look a channel up; a rule for a channel that has since left the
@@ -1140,6 +1157,29 @@ void onManageRules(AppState* st) {
     cb.remove = [st](long long id) {
         st->db.deleteRule(id);
         syncWakeFromSchedules(st);  // its pending rows are gone; the wake time may have moved
+    };
+    cb.edit = [st](HWND owner, long long editId) {
+        HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+        RecordingRule r;
+        if (editId != 0) {
+            bool found = false;
+            for (const RecordingRule& x : st->db.listRules())
+                if (x.id == editId) { r = x; found = true; break; }
+            if (!found) return;  // deleted from under us
+        } else {
+            r.mux = st->recFormat;  // sensible default container for a brand-new rule
+        }
+        if (!ruleDialog(owner, hi, st->dpi, st->db.allChannels(), r)) return;
+        if (editId != 0) {
+            st->db.updateRule(r);
+            st->db.clearPendingForRule(editId);  // old predictions no longer match the new criteria
+        } else {
+            r.createdAt = static_cast<long long>(time(nullptr));
+            st->db.addRule(r);
+        }
+        if (r.enabled) expandRecordingRules(st, /*force=*/true);  // re-queue against the new criteria
+        syncWakeFromSchedules(st);
+        onSchedulerTick(st);  // an airing already on should start now
     };
     manageRules(st->hwnd, hInst, st->dpi, cb);
 }

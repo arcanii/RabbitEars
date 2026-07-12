@@ -96,12 +96,24 @@ struct ScheduleManagerCallbacks {
 // New / Cancel / Delete / Close. Re-queries via cb.list() after every change.
 void manageSchedules(HWND parent, HINSTANCE hInst, UINT dpi, ScheduleManagerCallbacks cb);
 
+// Modal "New / Edit recording rule" (opened from the Recording Rules manager): a title-match
+// pattern, Exact/Contains, a channel (or "any channel"), and lead/trail padding in minutes.
+// `channels` is the pick list. `out` is in/out — seed it with a populated rule to edit, or a
+// default-constructed rule for New (set out.mux). On OK (returns true) it holds
+// channelId/channelName/titleMatch/match/leadSec/trailSec/enabled ready to store; on Cancel it
+// returns false and leaves `out` untouched.
+bool ruleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Channel>& channels,
+                RecordingRule& out);
+
 // Host-provided actions for the recording-rules manager. The host owns the DB (and re-expands
 // the rule into schedules when it is enabled). All are invoked on the UI thread.
 struct RuleManagerCallbacks {
     std::function<std::vector<RecordingRule>()> list;         // current rules
     std::function<void(long long id, bool enabled)> setEnabled;
     std::function<void(long long id)> remove;                 // deletes the rule + its pending rows
+    // New… / Edit… : open ruleDialog over `owner` and persist. editId 0 == create a new rule;
+    // otherwise edit that rule. The host owns the channel pick-list + DB, so it runs the dialog.
+    std::function<void(HWND owner, long long editId)> edit;
 };
 
 // Modal recording-rules manager (Settings → Recording Rules…): the standing "record every

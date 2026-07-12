@@ -18,11 +18,14 @@ std::wstring foldTitle(const std::wstring& s) {
     return out;
 }
 
-// A stable identity for "the same episode" across airings, for episode-level dedup. Prefer the
-// XMLTV <episode-num> (a feed keeps it consistent across repeats); fall back to <sub-title> (the
-// episode name). Folded — whitespace dropped, lowercased — so trivial format wobble (e.g. the
-// spaces in xmltv_ns "0 . 4 . 0/1") doesn't defeat it; the "n:"/"s:" tag stops a number colliding
-// with an identical-looking sub-title. Empty when the programme carries neither field.
+// A stable identity for "the same episode" across airings, for episode-level dedup. Built from the
+// XMLTV <episode-num> AND <sub-title> together, folded (whitespace dropped, lowercased) so trivial
+// format wobble (e.g. the spaces in xmltv_ns "0 . 4 . 0/1") doesn't defeat it. Both are combined
+// deliberately: an <episode-num> alone can be non-identifying — a partial xmltv_ns value like
+// "0 . . " (season known, episode blank) or a pretty-printed empty element folds to dots/nothing
+// and would collapse EVERY episode of a series onto one key. Pairing it with the sub-title keeps
+// distinct episodes distinct, while a real repeat (same num AND same sub-title) still dedups.
+// Empty only when the programme carries neither field -> dedup by airing slot alone.
 std::wstring episodeKey(const Programme& p) {
     auto fold = [](const std::wstring& s) {
         std::wstring o;
@@ -31,9 +34,9 @@ std::wstring episodeKey(const Programme& p) {
             if (!std::iswspace(c)) o.push_back(static_cast<wchar_t>(std::towlower(c)));
         return o;
     };
-    if (!p.episodeNum.empty()) return L"n:" + fold(p.episodeNum);
-    if (!p.subTitle.empty()) return L"s:" + fold(p.subTitle);
-    return std::wstring();
+    const std::wstring n = fold(p.episodeNum), s = fold(p.subTitle);
+    if (n.empty() && s.empty()) return std::wstring();
+    return L"n:" + n + L"|s:" + s;
 }
 
 }  // namespace

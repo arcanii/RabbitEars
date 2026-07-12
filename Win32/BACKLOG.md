@@ -177,12 +177,18 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   `SQLITE_OPEN_FULLMUTEX` handle would serialize/interleave a worker read with the scheduler tick's and
   a fetch's write transactions (risking `SQLITE_LOCKED`/`BUSY` or an inconsistent snapshot). Post the
   built rows back via a new `WM_APP_*` message (WM_APP+1..+5 and +10 are taken).
-- **Series-rule follow-ups** (the 0.2.7 engine supports these; only the UI is missing):
-  **episode dedup** (skip a repeat airing of an episode already recorded — `Programme::episodeNum` /
-  `subTitle` are stored but unused, so today a rule records every airing of a matching title);
-  a **rule editor** (only `Exact` rules are creatable from the guide; `Contains`, `leadSec`/`trailSec`
-  padding, and "any channel" rules already exist in the model + DB + expander); and a
-  **"skip this airing"** affordance that reads better than the manager's Cancel.
+- **Series-rule follow-ups:** ✅ **episode dedup** and the ✅ **rule editor** landed on `main`
+  (0.2.9-dev, unreleased). *Episode dedup:* `episodeKey()` combines `Programme::episodeNum` + `subTitle`
+  (schema **v6** `scheduled_recordings.episode_key`) so a repeat airing of an already-queued/recorded
+  episode is skipped — title-scoped, and the caller filters to recordable channels so dedup never claims an
+  episode on an EPG-only channel it can't record. *Rule editor:* Settings ▸ Recording Rules… ▸
+  **New…/Edit…** (or double-click a row) opens a dialog for title + **Exact/Contains** + channel (or **any
+  channel**) + **lead/trail padding** in minutes; backed by `Database::updateRule` + `clearPendingForRule`.
+  **Still open:** a **"skip this airing"** affordance that reads better than the manager's Cancel; and a
+  low-severity edge case — editing a rule's **lead time while one of its airings is actively Recording** can
+  leave a phantom **Missed** row (the surviving Recording row keeps its old padded start, so slot dedup
+  misses the re-slotted airing). Fix by seeding dedup from the unpadded programme window, or by not
+  re-slotting an in-progress airing on a lead/trail edit.
 - **Group-title country fallback** for Xtream feeds (whose channels lack `tvg-id` country codes, so
   the Countries nav node stays empty for them).
 - **PIP "always on top of other apps" toggle** — the PIP popup is `WS_EX_TOPMOST` today (it must be,

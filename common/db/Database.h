@@ -117,11 +117,16 @@ public:
     // A rule is a recipe; core/RecordingRules expands it against the stored EPG into ordinary
     // scheduled_recordings rows (tagged with rule_id).
     long long addRule(const RecordingRule& r);  // returns the new id, or 0 on failure
+    void updateRule(const RecordingRule& r);    // overwrite the editable fields of the rule r.id
     std::vector<RecordingRule> listRules();     // ordered by created_at
     void setRuleEnabled(long long id, bool enabled);
     // Deletes the rule and its still-Pending schedules; recordings that already ran (or were
     // cancelled/missed) are kept as history.
     void deleteRule(long long id);
+    // Drop a rule's still-Pending schedules without touching the rule (used when a rule is edited:
+    // its old predictions no longer match, so they are cleared and the rule re-expanded). History
+    // (Done/Recording/Cancelled/…) is kept.
+    void clearPendingForRule(long long ruleId);
 
     // ---- Settings (key/value blob) ----------------------------------------
     std::optional<std::wstring> getSetting(const std::wstring& key);

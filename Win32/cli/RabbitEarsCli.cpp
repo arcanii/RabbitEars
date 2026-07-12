@@ -711,6 +711,25 @@ int selftest() {
                 auto v = expandRules({rule(7, L"cnn.us", L"Star Trek", RuleMatch::Contains)}, ps, {}, 1000, 100000);
                 expect(v.size() == 2, "same episode-num on two different shows is not cross-deduped");
             }
+            {  // a partial/blank xmltv_ns episode-num ("0 . . ") must NOT collapse distinct episodes:
+               // the sub-title still separates them (regression guard for the combined num|sub-title key)
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Nova", 2000, 3000, L"0 . . ", L"The Deep"),
+                                             ep(L"CNN.us", L"Nova", 90000, 91000, L"0 . . ", L"The Sky")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Nova", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 2, "blank-component episode-num defers to sub-title (distinct episodes kept)");
+            }
+            {  // whitespace-only episode-num likewise must not collapse -> the sub-title separates them
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Frontline", 2000, 3000, L"   ", L"Part 1"),
+                                             ep(L"CNN.us", L"Frontline", 90000, 91000, L"   ", L"Part 2")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Frontline", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 2, "whitespace-only episode-num defers to sub-title");
+            }
+            {  // same partial num AND same sub-title == a real repeat -> still deduped to one
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Nova", 2000, 3000, L"0 . . ", L"The Deep"),
+                                             ep(L"CNN.us", L"Nova", 90000, 91000, L"0 . . ", L"The Deep")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Nova", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 1, "same partial num + same sub-title still dedups a repeat");
+            }
         }
         {  // degenerate inputs
             expect(expandRules({}, progs, {}, 1000, 100000).empty(), "no rules -> nothing");
@@ -951,6 +970,100 @@ int selftest() {
         for (const auto& s : mdb.listSchedules())
             if (s.episodeKey == L"n:1.1.0/1") ekRoundTrip = true;
         expect(ekRoundTrip, "episode_key round-trips through the schedule DAO");
+
+        // Rule editor DAO: updateRule overwrites the editable fields (the "Edit…" path).
+        auto rules0 = mdb.listRules();
+        expect(rules0.size() == 1, "one rule present before edit");
+        RecordingRule ur = rules0[0];
+        ur.titleMatch = L"Edited";
+        ur.match = RuleMatch::Contains;
+        ur.channelId = L"bbc.uk";
+        ur.channelName = L"BBC";
+        ur.leadSec = 120;
+        ur.trailSec = 300;
+        ur.enabled = false;
+        mdb.updateRule(ur);
+        auto rules1 = mdb.listRules();
+        expect(rules1.size() == 1 && rules1[0].titleMatch == L"Edited" &&
+                   rules1[0].match == RuleMatch::Contains && rules1[0].channelId == L"bbc.uk" &&
+                   rules1[0].leadSec == 120 && rules1[0].trailSec == 300 && !rules1[0].enabled,
+               "updateRule overwrites titleMatch/match/channel/padding/enabled");
+        // clearPendingForRule drops a rule's Pending schedule but keeps its history.
+        const long long rid = rules1[0].id;
+        ScheduledRecording sp;
+        sp.channelName = L"c";
+        sp.streamUrl = L"u";
+        sp.startUtc = 10;
+        sp.stopUtc = 20;
+        sp.ruleId = rid;
+        sp.status = ScheduleStatus::Pending;
+        mdb.addSchedule(sp);
+        ScheduledRecording sd = sp;
+        sd.startUtc = 30;
+        sd.stopUtc = 40;
+        sd.status = ScheduleStatus::Done;
+        mdb.addSchedule(sd);
+        mdb.clearPendingForRule(rid);
+        int pend = 0, done = 0;
+        for (const auto& s : mdb.listSchedules()) {
+            if (s.ruleId != rid) continue;
+            if (s.status == ScheduleStatus::Pending) ++pend;
+            if (s.status == ScheduleStatus::Done) ++done;
+        }
+        expect(pend == 0 && done == 1, "clearPendingForRule drops Pending rows, keeps history");
+    }
+    {  // v5 -> v6 specifically: a DB from 0.2.7/0.2.8 (user_version=5, scheduled_recordings WITHOUT
+       // episode_key) must still gain the column. Guards the migration early-return bound — a stale
+       // `if (v >= 5) return` skipped v6, making every schedule query fail on the missing column.
+       // The v2 test above can't catch this (2 < 5 so it never early-returns).
+        const std::wstring p5 = std::wstring(tmp) + L"rabbitears_migrate_v5.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((p5 + sfx).c_str());
+        {
+            sqlite3* raw = nullptr;
+            sqlite3_open(utf8FromWide(p5).c_str(), &raw);
+            sqlite3_exec(
+                raw,
+                "CREATE TABLE playlists(id INTEGER PRIMARY KEY, name TEXT NOT NULL, source_url TEXT,"
+                " source_path TEXT, is_url INTEGER NOT NULL DEFAULT 1, added_at INTEGER NOT NULL,"
+                " last_refreshed_at INTEGER, channel_count INTEGER NOT NULL DEFAULT 0,"
+                " enabled INTEGER NOT NULL DEFAULT 1, epg_url TEXT);"
+                "CREATE TABLE channels(id INTEGER PRIMARY KEY, playlist_id INTEGER NOT NULL"
+                " REFERENCES playlists(id) ON DELETE CASCADE, name TEXT NOT NULL,"
+                " stream_url TEXT NOT NULL, logo_url TEXT, group_title TEXT, tvg_id TEXT,"
+                " tvg_name TEXT, lcn INTEGER, is_favourite INTEGER NOT NULL DEFAULT 0,"
+                " dead_status INTEGER NOT NULL DEFAULT 0, last_checked_at INTEGER NOT NULL DEFAULT 0,"
+                " sort_order INTEGER NOT NULL DEFAULT 0, user_agent TEXT, referrer TEXT);"
+                "CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);"
+                "CREATE TABLE scheduled_recordings(id INTEGER PRIMARY KEY, channel_id TEXT,"
+                " channel_name TEXT NOT NULL, stream_url TEXT NOT NULL, user_agent TEXT, referrer TEXT,"
+                " title TEXT, start_utc INTEGER NOT NULL, stop_utc INTEGER NOT NULL,"
+                " mux TEXT NOT NULL DEFAULT 'ts', status INTEGER NOT NULL DEFAULT 0, file_path TEXT,"
+                " created_at INTEGER NOT NULL, rule_id INTEGER);"  // v5 shape — NO episode_key (that is v6)
+                "CREATE TABLE recording_rules(id INTEGER PRIMARY KEY, channel_id TEXT, channel_name TEXT,"
+                " title_match TEXT NOT NULL, match_kind INTEGER NOT NULL DEFAULT 0,"
+                " enabled INTEGER NOT NULL DEFAULT 1, lead_sec INTEGER NOT NULL DEFAULT 0,"
+                " trail_sec INTEGER NOT NULL DEFAULT 0, mux TEXT NOT NULL DEFAULT 'ts',"
+                " created_at INTEGER NOT NULL);"
+                "PRAGMA user_version=5;",
+                nullptr, nullptr, nullptr);
+            sqlite3_close(raw);
+        }
+        Database v5db;
+        std::wstring e5;
+        expect(v5db.open(p5, &e5),
+               "v5 DB opens + migrates" + (e5.empty() ? "" : " (" + utf8FromWide(e5) + ")"));
+        ScheduledRecording s6;
+        s6.channelName = L"C";
+        s6.streamUrl = L"u";
+        s6.startUtc = 1;
+        s6.stopUtc = 2;
+        s6.episodeKey = L"n:1.1|s:x";
+        expect(v5db.addSchedule(s6) > 0,
+               "v5 DB gains episode_key on upgrade (a stale v>=5 guard would skip the v6 ALTER)");
+        bool got6 = false;
+        for (const auto& s : v5db.listSchedules())
+            if (s.episodeKey == L"n:1.1|s:x") got6 = true;
+        expect(got6, "episode_key present + round-trips after a v5->v6 upgrade");
     }
 
     out("== i18n string catalog (all shipped languages) ==\n");

@@ -1787,6 +1787,48 @@
     "comment": ""
   },
   {
+    "id": "RuleEditButton",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Recording Rules manager button that opens the rule editor for the selected rule."
+  },
+  {
+    "id": "RuleEditNewTitle",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Title bar of the rule editor when creating a new rule."
+  },
+  {
+    "id": "RuleEditWindowTitle",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Title bar of the rule editor when editing an existing rule."
+  },
+  {
+    "id": "RuleFieldMatch",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Rule editor field label: how the title is matched (Exact / Contains)."
+  },
+  {
+    "id": "RuleFieldLead",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Rule editor field label: start recording this many minutes early."
+  },
+  {
+    "id": "RuleFieldTrail",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Rule editor field label: keep recording this many minutes late."
+  },
+  {
+    "id": "RuleMinutesSuffix",
+    "cluster": "DialogRules",
+    "placeholders": [],
+    "comment": "Unit shown after the lead/trail padding number fields (minutes)."
+  },
+  {
     "id": "EpgRulesQueuedDetail",
     "cluster": "DialogRules",
     "placeholders": [
