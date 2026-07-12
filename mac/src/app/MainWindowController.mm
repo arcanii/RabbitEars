@@ -1848,25 +1848,67 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if (++_spectrumSilentTicks >= 40) [_meters[s] setAvailable:NO];
 }
 
-// Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
-// now — file import + updates/about; real preferences will hang off here.
+// Settings pull-down — the mac peer of the Win32 gear menu, laid out in the SAME structure
+// (Channels ▸ / Recording ▸ / View ▸ / Layout ▸ / Language ▸, in Win32's order). Win32-only
+// items with no mac equivalent are omitted: Theme ▸ (mac uses the native system appearance) and
+// wake-to-record (a non-root mac app cannot arm a system wake).
 - (void)showSettings:(NSButton*)sender {
     NSMenu* m = [[NSMenu alloc] init];
+
+    // Playlists (Win32: "Open File…" at the top; mac adds playlist management).
     [[m addItemWithTitle:Tr(StringId::MenuOpenPlaylistFile) action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:Tr(StringId::MenuManagePlaylists) action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
 
-    // View layout — mirrors the View menu (⌃⌘1/2/3) so it's reachable without the menu bar.
+    // Channels ▸ — favourites import/export (Win32 also carries Hide-unavailable / Categories,
+    // which the mac channel list does not have).
     [m addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* vSingle = [m addItemWithTitle:Tr(StringId::MenuSingleView) action:@selector(setViewSingle:) keyEquivalent:@""];
-    NSMenuItem* vSplit  = [m addItemWithTitle:Tr(StringId::MenuSplitView) action:@selector(setViewSplit:) keyEquivalent:@""];
-    NSMenuItem* vPip    = [m addItemWithTitle:Tr(StringId::MenuPictureInPicture) action:@selector(setViewPip:) keyEquivalent:@""];
+    NSMenuItem* chanItem = [m addItemWithTitle:Tr(StringId::MenuChannels) action:nil keyEquivalent:@""];
+    NSMenu* chan = [[NSMenu alloc] init];
+    [[chan addItemWithTitle:Tr(StringId::MenuImportFavourites) action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
+    [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
+    chanItem.submenu = chan;
+
+    // TV Guide + Refresh + Recording ▸.
+    [m addItem:[NSMenuItem separatorItem]];
+    [[m addItemWithTitle:Tr(StringId::TvGuideTitle) action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MenuRefreshGuide) action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
+
+    NSMenuItem* recItem = [m addItemWithTitle:Tr(StringId::MenuRecording) action:nil keyEquivalent:@""];
+    NSMenu* recMenu = [[NSMenu alloc] init];
+    [[recMenu addItemWithTitle:Tr(StringId::MacMainWindowRecordingsMenuItem) action:@selector(showRecordings:) keyEquivalent:@""] setTarget:self];
+    [recMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* fmtItem = [recMenu addItemWithTitle:Tr(StringId::MenuRecordingFormat) action:nil keyEquivalent:@""];
+    NSMenu* fmt = [[NSMenu alloc] init];  // Recording format ▸ (ts crash-safe default / mp4)
+    struct { NSString* title; const wchar_t* v; } fmts[] = {
+        { Tr(StringId::MacMainWindowFormatTsSafest), L"ts" }, { Tr(StringId::MenuFormatMp4), L"mp4" } };
+    for (auto& f : fmts) {
+        NSMenuItem* it = [fmt addItemWithTitle:f.title action:@selector(setRecFormat:) keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = ns(f.v);
+        it.state = (_recFormat == f.v) ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    fmtItem.submenu = fmt;
+    recItem.submenu = recMenu;
+
+    // View ▸ — Single / Split / PiP + Video only (Win32 groups the view modes here).
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* viewItem = [m addItemWithTitle:Tr(StringId::MenuView) action:nil keyEquivalent:@""];
+    NSMenu* view = [[NSMenu alloc] init];
+    NSMenuItem* vSingle = [view addItemWithTitle:Tr(StringId::MenuSingleView) action:@selector(setViewSingle:) keyEquivalent:@""];
+    NSMenuItem* vSplit  = [view addItemWithTitle:Tr(StringId::MenuSplitView) action:@selector(setViewSplit:) keyEquivalent:@""];
+    NSMenuItem* vPip    = [view addItemWithTitle:Tr(StringId::MenuPictureInPicture) action:@selector(setViewPip:) keyEquivalent:@""];
     for (NSMenuItem* it in @[ vSingle, vSplit, vPip ]) it.target = self;
     vSingle.state = (_viewMode == ViewMode::Single) ? NSControlStateValueOn : NSControlStateValueOff;
     vSplit.state  = (_viewMode == ViewMode::Split)  ? NSControlStateValueOn : NSControlStateValueOff;
     vPip.state    = (_viewMode == ViewMode::Pip)    ? NSControlStateValueOn : NSControlStateValueOff;
+    [view addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* vOnly = [view addItemWithTitle:Tr(StringId::MenuVideoOnlyPlain) action:@selector(toggleVideoOnly:) keyEquivalent:@""];
+    vOnly.target = NSApp.delegate;  // the AppDelegate owns this toggle (also the View menu-bar item)
+    vOnly.state = self.videoOnly ? NSControlStateValueOn : NSControlStateValueOff;
+    viewItem.submenu = view;
 
-    // Layouts — save/apply/delete the whole multi-view arrangement by name.
-    NSMenuItem* layoutsItem = [m addItemWithTitle:Tr(StringId::MacMainWindowLayoutsMenu) action:nil keyEquivalent:@""];
+    // Layout ▸ — save / apply / delete the named multi-view arrangements.
+    NSMenuItem* layoutsItem = [m addItemWithTitle:Tr(StringId::MenuLayout) action:nil keyEquivalent:@""];
     NSMenu* layouts = [[NSMenu alloc] init];
     [[layouts addItemWithTitle:Tr(StringId::MacMainWindowSaveCurrentLayout) action:@selector(saveLayout:) keyEquivalent:@""] setTarget:self];
     const auto names = [self savedLayoutNames];
@@ -1892,27 +1934,22 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     }
     layoutsItem.submenu = layouts;
 
-    [m addItem:[NSMenuItem separatorItem]];
-    [[m addItemWithTitle:Tr(StringId::TvGuideTitle) action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:Tr(StringId::MenuRefreshGuide) action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
-    [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:Tr(StringId::MenuMeters) action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
 
-    // Recording ▸ format (ts / mkv / mp4). Recordings save to ~/Movies/RabbitEars.
-    NSMenuItem* recItem = [m addItemWithTitle:Tr(StringId::MenuRecording) action:nil keyEquivalent:@""];
-    NSMenu* recMenu = [[NSMenu alloc] init];
-    [recMenu addItemWithTitle:Tr(StringId::MacMainWindowFormatHeader) action:nil keyEquivalent:@""].enabled = NO;
-    struct { NSString* title; const wchar_t* fmt; } fmts[] = {
-        { Tr(StringId::MacMainWindowFormatTsSafest), L"ts" }, { Tr(StringId::MenuFormatMp4), L"mp4" } };
-    for (auto& f : fmts) {
-        NSMenuItem* it = [recMenu addItemWithTitle:f.title action:@selector(setRecFormat:) keyEquivalent:@""];
-        it.target = self;
-        it.representedObject = ns(f.fmt);
-        it.state = (_recFormat == f.fmt) ? NSControlStateValueOn : NSControlStateValueOff;
+    // Language ▸ (mirrors the Win32 gear; the AppDelegate owns the selection + restart-to-apply).
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* langItem = [m addItemWithTitle:Tr(StringId::MenuLanguage) action:nil keyEquivalent:@""];
+    NSMenu* langMenu = [[NSMenu alloc] init];
+    struct { NSString* code; StringId sid; } langs[] = {
+        { @"system", StringId::LangSystemDefault }, { @"en", StringId::LangEnglish }, { @"ja", StringId::LangJapanese } };
+    NSString* curLang = currentLanguagePref();
+    for (auto& L : langs) {
+        NSMenuItem* it = [langMenu addItemWithTitle:Tr(L.sid) action:@selector(selectLanguage:) keyEquivalent:@""];
+        it.target = NSApp.delegate;
+        it.representedObject = L.code;
+        it.state = [curLang isEqualToString:L.code] ? NSControlStateValueOn : NSControlStateValueOff;
     }
-    [recMenu addItem:[NSMenuItem separatorItem]];
-    [[recMenu addItemWithTitle:Tr(StringId::MacMainWindowRecordingsMenuItem) action:@selector(showRecordings:) keyEquivalent:@""] setTarget:self];
-    recItem.submenu = recMenu;
+    langItem.submenu = langMenu;
 
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:Tr(StringId::AboutCheckForUpdatesButton) action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
