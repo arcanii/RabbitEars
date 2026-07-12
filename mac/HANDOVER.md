@@ -13,16 +13,17 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 
 `main` carries **both platforms at decoupled versions**: **Windows 0.2.8** (theme engine + EPG/TV Guide,
 scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
-recording — the Windows team ships from `main`) and **mac 0.2.7** (the parity line). The version split lives in
+recording — the Windows team ships from `main`) and **mac 0.2.8** (the parity line). The version split lives in
 `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac). **That file is the one
 recurring merge conflict** between the two teams — keep the Windows line and the `if(APPLE)` override intact.
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
 
-> **Scope:** the SHIPPED mac **0.2.7** (build 234, universal, notarized — released 2026-07-11) reaches parity
-> with the Windows **0.2.6/0.2.7** set: favourites I/O + Show-in-Guide, PiP resize/persist, saved layouts,
-> per-pane recording, and the recording scheduler + series rules (the #25→#29 stack, all merged). The earlier
-> 0.2.0 (build 208) covered the 0.2.5 set (TV Guide, multi-view, PiP). Only **wake-timer preflight** stays
-> unported by design (a non-root mac app can't arm a wake — see the wake note below). Windows is on 0.2.8.
+> **Scope:** the SHIPPED mac **0.2.8** (build 248, universal, notarized — released 2026-07-12) reaches parity
+> with the Windows **0.2.8** set: **localization (English + 日本語)** over the shared `common/i18n` catalog + a
+> Language selector, and the gear menu regrouped to match Win32. It builds on 0.2.7 (the #25→#29 stack:
+> favourites I/O, PiP resize/persist, saved layouts, per-pane recording, the recording scheduler + series
+> rules) and 0.2.0 (TV Guide, multi-view, PiP). Unported **by design**: the Windows **theme engine** (mac uses
+> the native system appearance) and **wake-to-record** (a non-root mac app can't arm a wake). Windows is on 0.2.9.
 
 ## SHIPPED — the 0.2.6/0.2.7 parity stack (v0.2.7-mac, build 234, 2026-07-11)
 
@@ -80,10 +81,18 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — v0.2.7-mac SHIPPED (2026-07-11)
+## Current state — v0.2.8-mac SHIPPED (2026-07-12)
 
-**Latest: `v0.2.7-mac`** (build 234, universal, notarized, appcast live) — the 0.2.6/0.2.7 parity stack
-(#25→#29) + the PiP-switch fix. See the **SHIPPED** section above; note recording/scheduler shipped **without**
+**Latest: `v0.2.8-mac`** (build 248, universal, notarized, appcast live @ `03048ec`) — **localization
+(English + 日本語)** over the shared `common/i18n` catalog (a `Tr`/`TrF` AppKit layer = peer of `Win32/ui/Tr.h`;
+Language selector System/English/日本語 + restart-to-apply; ~290 UI strings wrapped; **+145 mac-only ids** incl.
+machine-draft JA + zh-Hant), and the **gear menu regrouped to match Win32** (Channels/Recording/View/Layout/
+Language submenus). PR #30, on-device verified (switch→restart→JA across menus/dialogs/About/Terms; one meter-
+label overflow found + fixed). **The mac branch now merges the shared catalog to `main`** — additive +
+generator-validated (531 ids × 4 langs: en/ja/zh-Hant/zh-HK; zh-HK inherits zh-Hant via `base`; the mac-only
+Chinese is never displayed — the mac selector offers only System/English/日本語 — it exists for catalog
+completeness). See `mac/src/app/Tr.h`. **Before it: `v0.2.7-mac`** (build 234) — the 0.2.6/0.2.7 parity stack
+(#25→#29) + the PiP-switch fix. Note recording/scheduler shipped **without**
 on-device verification. The prior 0.2.0 milestone (still accurate for the multi-view/EPG internals) follows.
 
 The mac app is **shipped and auto-updating**: **`v0.2.0-mac`** on GitHub — universal (arm64 + x86_64),
@@ -408,7 +417,19 @@ VlcPlayerMac.mm are MRC. Run an adversarial ObjC++ review before merging (it has
 EVERY native phase). Dev testing: launch with RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a
 local m3u/XMLTV fixture over http://127.0.0.1 (ATS-exempt loopback).
 
-STATE: v0.2.7-mac SHIPPED 2026-07-11 (build 234, universal, notarized; appcast live on main @ 3c832cf). The
+STATE: v0.2.8-mac SHIPPED 2026-07-12 (build 248, universal, notarized; appcast @ 03048ec, PR #30) = LOCALIZATION
+(English + 日本語 over the shared common/i18n catalog; a Tr/TrF AppKit layer = peer of Win32/ui/Tr.h; Language
+selector System/English/日本語 + restart-to-apply, pref in NSUserDefaults read BEFORE buildMenu; ~290 UI strings
+wrapped across all 10 mac .mm; +145 mac-only ids Mac*-prefixed with machine-draft JA + zh-Hant) + the GEAR MENU
+regrouped to match Win32 (Channels/Recording/View/Layout/Language submenus; dropped Theme + wake, N/A on mac).
+FIRST mac change to touch common/ since 0.2.0 — mac now MERGES the shared catalog to main. main advanced hard
+mid-work (Windows added zh-Hant/zh-HK + went 0.2.9); merged cleanly to 531 ids × 4 langs (zh-HK inherits zh-Hant
+via "base"; the mac-only Chinese is NEVER displayed — the mac selector offers only System/English/日本語 — it
+exists only for catalog completeness so the Windows core-selftest CI passes). On-device VERIFIED (switch→restart→
+JA across menus/dialogs/About/Terms; one meter-label overflow found+fixed). Adversarial review: 292 wrap sites,
+0 findings. The i18n bulk ran via workflows (per-file wrap+review agents); the first heavy-schema INVENTORY
+workflow STALLED on giant structured output — fixed by edit-in-place agents returning only new-ids.
+BEFORE it — v0.2.7-mac SHIPPED 2026-07-11 (build 234, universal, notarized; appcast @ 3c832cf). The
 0.2.6/0.2.7 PARITY STACK MERGED to main in order #25->#29 (merge commits f387ad0->de240fd), the mac version
 bumped to 0.2.7 (f9f7404), and the PiP-switch freeze fix (0ab8618) rode in too. ZERO common/Win32 edits — every
 core was already compiled into the mac binary (wiring, not porting). What shipped:
