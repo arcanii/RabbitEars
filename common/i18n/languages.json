@@ -14,5 +14,11 @@
     "code": "zh-Hant",
     "enum": "ZhHant",
     "endonym": "繁體中文"
+  },
+  {
+    "code": "zh-HK",
+    "enum": "ZhHK",
+    "endonym": "繁體中文（香港）",
+    "base": "zh-Hant"
   }
 ]

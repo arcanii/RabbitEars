@@ -82,6 +82,24 @@ def main():
     ref = next((l for l in langs if l.get('reference')), langs[0])
     strings = {l['code']: load(l['code'] + '.json') for l in langs}
 
+    # A language may declare a "base": it inherits every key it does NOT itself define from that
+    # base language, so a regional variant (e.g. zh-HK over zh-Hant) carries only its DELTAS. The
+    # merge happens here, before validation/emit, so completeness + placeholder parity see the
+    # effective catalog and the generated table stays a full per-language row (no runtime fallback).
+    by_code = {l['code']: l for l in langs}
+    for l in langs:
+        base = l.get('base')
+        if not base:
+            continue
+        if base not in strings:
+            die('language "%s" has unknown base "%s"' % (l['code'], base))
+        if by_code[base].get('base'):
+            die('language "%s" base "%s" is itself a variant (chained bases unsupported)'
+                % (l['code'], base))
+        merged = dict(strings[base])
+        merged.update(strings[l['code']])  # the variant's own keys win over the base
+        strings[l['code']] = merged
+
     if review:
         if review not in strings:
             die('no such language "%s" (have: %s)' % (review, ', '.join(strings)))

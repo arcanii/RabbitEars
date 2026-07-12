@@ -890,7 +890,7 @@ int selftest() {
                "rule_id column added by migration; pre-v5 rows read back as 0");
     }
 
-    out("== i18n string catalog (en/ja/zh-Hant) ==\n");
+    out("== i18n string catalog (all shipped languages) ==\n");
     {
         using namespace i18n;
         StringId missing = StringId::Count;
@@ -902,7 +902,7 @@ int selftest() {
         // so its placeholder parity + a distinct-translation spot-check run too (add one when wiring
         // a new language).
         struct LangCase { Lang lang; const char* name; };
-        const LangCase others[] = {{Lang::Ja, "ja"}, {Lang::ZhHant, "zh-Hant"}};
+        const LangCase others[] = {{Lang::Ja, "ja"}, {Lang::ZhHant, "zh-Hant"}, {Lang::ZhHK, "zh-HK"}};
         for (const LangCase& lc : others) {
             int mismatches = 0;
             StringId firstBad = StringId::Count;

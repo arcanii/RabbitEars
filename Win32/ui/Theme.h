@@ -234,8 +234,8 @@ inline std::wstring themeFontFamily(FontRole role) {
     if (!themeFontIsSymbol(role)) {
         if (i18n::activeLang() == i18n::Lang::Ja)
             fam = L"Yu Gothic UI";           // Win10/11 Japanese UI face (Meiryo UI is the fallback)
-        else if (i18n::activeLang() == i18n::Lang::ZhHant)
-            fam = L"Microsoft JhengHei UI";  // Win Traditional-Chinese UI face (微軟正黑體)
+        else if (i18n::activeLang() == i18n::Lang::ZhHant || i18n::activeLang() == i18n::Lang::ZhHK)
+            fam = L"Microsoft JhengHei UI";  // Win Traditional-Chinese UI face (微軟正黑體), TW + HK
     }
     return fam;
 }

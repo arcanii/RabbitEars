@@ -63,6 +63,7 @@ constexpr std::array<const char*, N> kEn = {{
     "English",  // LangEnglish
     "日本語",  // LangJapanese
     "繁體中文",  // LangTraditionalChinese
+    "繁體中文（香港）",  // LangTraditionalChineseHK
     "Channels",  // MenuChannels
     "Recording",  // MenuRecording
     "Restart to change the display language",  // LangRestartInstruction
@@ -459,6 +460,7 @@ constexpr std::array<const char*, N> kJa = {{
     "English",  // LangEnglish
     "日本語",  // LangJapanese
     "繁體中文",  // LangTraditionalChinese
+    "繁體中文（香港）",  // LangTraditionalChineseHK
     "チャンネル",  // MenuChannels
     "録画",  // MenuRecording
     "表示言語を変更するには再起動してください",  // LangRestartInstruction
@@ -855,6 +857,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "English",  // LangEnglish
     "日本語",  // LangJapanese
     "繁體中文",  // LangTraditionalChinese
+    "繁體中文（香港）",  // LangTraditionalChineseHK
     "頻道",  // MenuChannels
     "錄影",  // MenuRecording
     "重新啟動以變更顯示語言",  // LangRestartInstruction
@@ -1200,8 +1203,405 @@ constexpr std::array<const char*, N> kZhHant = {{
     "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\\r\\n\\r\\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\\r\\n",  // CategoriesNoneBody
 }};
 
+// 繁體中文（香港）
+constexpr std::array<const char*, N> kZhHK = {{
+    // --- Menu ---
+    "播放",  // LabelPlay
+    "在子母畫面播放",  // MenuChannelPlayInPip
+    "在節目表中顯示",  // MenuChannelShowInGuide
+    "全熒幕",  // Fullscreen
+    "僅影片",  // MenuVideoOnlyPlain
+    "單一檢視",  // MenuSingleView
+    "分割檢視 (2×2)",  // MenuSplitView
+    "MPEG-TS  (.ts)",  // MenuFormatMpegTs
+    "Matroska  (.mkv)",  // MenuFormatMatroska
+    "MP4  (.mp4)",  // MenuFormatMp4
+    "開啟檔案…",  // MenuOpenFile
+    "錄影格式",  // MenuRecordingFormat
+    "隱藏無法使用的頻道",  // MenuHideUnavailable
+    "分類…",  // MenuCategories
+    "匯出我的最愛…",  // MenuExportFavourites
+    "匯入我的最愛…",  // MenuImportFavourites
+    "更新節目表…",  // MenuRefreshGuide
+    "排程錄影…",  // MenuScheduledRecordings
+    "錄影規則…",  // MenuRecordingRules
+    "喚醒此電腦以進行錄影",  // MenuWakeToRecord
+    "立即執行喚醒工作",  // MenuRunWakeTaskNow
+    "量表…",  // MenuMeters
+    "僅影片\\tCtrl+Shift+V",  // MenuVideoOnly
+    "繼續上次的頻道",  // MenuResumeLastChannel
+    "單一",  // MenuViewSingle
+    "分割 (2×2)",  // MenuViewSplit
+    "子母畫面",  // MenuPictureInPicture
+    "檢視",  // MenuView
+    "重設為預設值",  // MenuLayoutResetDefault
+    "移動側邊欄",  // MenuMoveSidebar
+    "移動影片",  // MenuMoveVideo
+    "移動頻道",  // MenuMoveChannels
+    "靠左",  // MenuDockToLeft
+    "靠右",  // MenuDockToRight
+    "靠上",  // MenuDockToTop
+    "靠下",  // MenuDockToBottom
+    "另存版面配置…",  // MenuSaveLayoutAs
+    "套用已儲存的版面配置",  // MenuApplySavedLayout
+    "刪除已儲存的版面配置",  // MenuDeleteSavedLayout
+    "版面配置",  // MenuLayout
+    "跟隨系統",  // MenuThemeFollowSystem
+    "佈景主題",  // MenuTheme
+    "關於…",  // MenuAbout
+    "語言",  // MenuLanguage
+    "系統預設",  // LangSystemDefault
+    "English",  // LangEnglish
+    "日本語",  // LangJapanese
+    "繁體中文",  // LangTraditionalChinese
+    "繁體中文（香港）",  // LangTraditionalChineseHK
+    "頻道",  // MenuChannels
+    "錄影",  // MenuRecording
+    "重新啟動以變更顯示語言",  // LangRestartInstruction
+    "RabbitEars 需要重新啟動才能套用新語言。",  // LangRestartBody
+    "立即重新啟動",  // LangRestartNow
+    "稍後",  // LangRestartLater
+    // --- Nav ---
+    "設定節目表 URL…",  // MenuSetGuideUrl
+    "設定節目表 URL…（無播放清單）",  // MenuGuideSetUrlNoPlaylists
+    "美國",  // CountryUnitedStates
+    "英國",  // CountryUnitedKingdom
+    "加拿大",  // CountryCanada
+    "澳洲",  // CountryAustralia
+    "紐西蘭",  // CountryNewZealand
+    "愛爾蘭",  // CountryIreland
+    "德國",  // CountryGermany
+    "法國",  // CountryFrance
+    "西班牙",  // CountrySpain
+    "義大利",  // CountryItaly
+    "葡萄牙",  // CountryPortugal
+    "荷蘭",  // CountryNetherlands
+    "比利時",  // CountryBelgium
+    "瑞士",  // CountrySwitzerland
+    "奧地利",  // CountryAustria
+    "瑞典",  // CountrySweden
+    "挪威",  // CountryNorway
+    "丹麥",  // CountryDenmark
+    "芬蘭",  // CountryFinland
+    "波蘭",  // CountryPoland
+    "捷克",  // CountryCzechia
+    "斯洛伐克",  // CountrySlovakia
+    "匈牙利",  // CountryHungary
+    "羅馬尼亞",  // CountryRomania
+    "保加利亞",  // CountryBulgaria
+    "希臘",  // CountryGreece
+    "土耳其",  // CountryTurkey
+    "俄羅斯",  // CountryRussia
+    "烏克蘭",  // CountryUkraine
+    "塞爾維亞",  // CountrySerbia
+    "克羅埃西亞",  // CountryCroatia
+    "斯洛維尼亞",  // CountrySlovenia
+    "阿爾巴尼亞",  // CountryAlbania
+    "巴西",  // CountryBrazil
+    "墨西哥",  // CountryMexico
+    "阿根廷",  // CountryArgentina
+    "智利",  // CountryChile
+    "哥倫比亞",  // CountryColombia
+    "秘魯",  // CountryPeru
+    "委內瑞拉",  // CountryVenezuela
+    "印度",  // CountryIndia
+    "巴基斯坦",  // CountryPakistan
+    "孟加拉",  // CountryBangladesh
+    "中國",  // CountryChina
+    "日本",  // CountryJapan
+    "南韓",  // CountrySouthKorea
+    "印尼",  // CountryIndonesia
+    "馬來西亞",  // CountryMalaysia
+    "新加坡",  // CountrySingapore
+    "泰國",  // CountryThailand
+    "越南",  // CountryVietnam
+    "菲律賓",  // CountryPhilippines
+    "沙烏地阿拉伯",  // CountrySaudiArabia
+    "阿拉伯聯合大公國",  // CountryUae
+    "卡達",  // CountryQatar
+    "以色列",  // CountryIsrael
+    "埃及",  // CountryEgypt
+    "摩洛哥",  // CountryMorocco
+    "阿爾及利亞",  // CountryAlgeria
+    "南非",  // CountrySouthAfrica
+    "奈及利亞",  // CountryNigeria
+    "肯亞",  // CountryKenya
+    "所有頻道",  // NavAllChannels
+    "★ 我的最愛",  // NavFavourites
+    "📺 節目表",  // NavTvGuide
+    "群組",  // NavGroups
+    "國家",  // NavCountries
+    "播放清單",  // NavPlaylists
+    "{0}（{1}）",  // NavPlaylistNameCount
+    // --- Status ---
+    "顯示緩衝流體",  // BufferMeterShow
+    "隱藏緩衝流體",  // BufferMeterHide
+    "此頻道沒有 tvg-id — 節目表無法與其對應。",  // StatusChannelNoTvgId
+    "找不到 {0} 的節目表項目 — 請嘗試更新節目表…",  // StatusNoGuideRowForChannel
+    "尚無頻道 — 請點選「+ 新增播放清單」。",  // StatusNoChannelsYet
+    "已停止",  // StatusStopped
+    "已將播放清單重新命名為「{0}」",  // StatusPlaylistRenamed
+    "已刪除播放清單",  // StatusPlaylistDeleted
+    "正在開啟：{0}",  // StatusOpening
+    "緩衝中 {0}%  —  {1}",  // StatusBuffering
+    "正在播放：{0}",  // StatusPlaying
+    "已暫停：{0}",  // StatusPaused
+    "串流已結束",  // StatusStreamEnded
+    "無法使用（離線或區域限制）：{0}",  // StatusUnavailable
+    "播放清單仍在載入中 — 請稍候…",  // StatusPlaylistLoadingWait
+    "已匯出 {0} 個我的最愛。",  // StatusExportedFavourites
+    "已達版面配置上限（{0}）— 請先刪除一個。",  // StatusLayoutLimitReached
+    "已儲存版面配置：{0}",  // StatusLayoutSaved
+    "新增播放清單失敗：無法儲存至資料庫",  // StatusAddPlaylistFailedDb
+    "已從 {1} 新增 {0} 個頻道",  // StatusAddedChannels
+    "新增播放清單失敗：{0}",  // StatusAddPlaylistFailed
+    "忙碌中 — 請稍候…",  // StatusBusyWait
+    "正在下載節目表…",  // StatusDownloadingGuide
+    "已從我的最愛移除：{0}",  // StatusRemovedFavourite
+    "已加入我的最愛：{0}",  // StatusAddedFavourite
+    "已清除節目表 URL",  // StatusGuideUrlCleared
+    "已儲存節目表 URL — 請執行 設定 ▸ 更新節目表 來取得",  // StatusGuideUrlSaved
+    "此窗格由排程錄影佔用 — 請在「排程錄影」中管理。",  // StatusScheduleOwnsPane
+    "已儲存錄影：{0}",  // StatusRecordingSaved
+    "請先播放頻道，再進行錄影。",  // StatusPlayChannelFirst
+    "● 正在錄影 {0}  →  {1}",  // StatusRecordingNow
+    "已儲存排程錄影。",  // StatusScheduledRecordingSaved
+    "● 錄影中（排程）{0}",  // StatusRecordingScheduledNow
+    "已取消此播出 — 它來自影集規則，因此仍會列為已取消。刪除該規則以停止整部影集。",  // StatusAiringCancelledRule
+    "沒有可篩選的分類 — 此媒體庫沒有群組標題。",  // StatusNoCategories
+    "已套用版面配置：{0}",  // StatusLayoutApplied
+    "已刪除版面配置：{0}",  // StatusLayoutDeleted
+    "喚醒錄影已關閉 — 錄影需要應用程式保持執行。",  // StatusWakeToRecordOff
+    "此電腦將為排程錄影而喚醒。",  // StatusWakeWillWake
+    "已啟動喚醒工作 — 排程喚醒的啟動流程正在執行。",  // StatusWakeTaskStarted
+    "無法啟動喚醒工作。請檢查記錄檔；是否有排入佇列的項目？",  // StatusWakeTaskFailed
+    "{0} 個頻道",  // StatusChannelCount
+    "子母畫面：{0}",  // StatusPipChannel
+    "正在下載播放清單…",  // StatusDownloadingPlaylist
+    "正在載入播放清單…",  // StatusLoadingPlaylist
+    "使用中的窗格 {0}",  // StatusActivePane
+    "使用中：{0}",  // StatusActiveChannel
+    // --- Playlist ---
+    "群組",  // GridHeaderGroup
+    "頻道",  // LabelChannel
+    "重新命名…",  // MenuPlaylistRename
+    "刪除播放清單",  // DeletePlaylistTitle
+    "重新命名播放清單",  // DialogRenamePlaylistTitle
+    "播放清單名稱：",  // DialogRenamePlaylistLabel
+    "要刪除播放清單「{0}」嗎？\\n\\n這會從 RabbitEars 移除其頻道。",  // DialogDeletePlaylistBody
+    "新增播放清單",  // AddPlaylistDialogTitle
+    "播放清單 URL (.m3u / .m3u8)：",  // AddPlaylistUrlPrompt
+    "來源：  {0}\\r\\n\\r\\n",  // PlaylistSourceLine
+    "無法匯入播放清單",  // PlaylistImportFailedHeading
+    "問題：  無法將播放清單儲存至資料庫。\\r\\n",  // PlaylistDbSaveProblem
+    "已從 {1} 匯入 {0} 個頻道",  // PlaylistImportedHeading
+    "已解析頻道：  {0}\\r\\n",  // PlaylistChannelsParsedLine
+    "已匯入頻道：  {0}\\r\\n",  // PlaylistChannelsImportedLine
+    "已略過（空白或重複的 URL）：  {0}\\r\\n",  // PlaylistSkippedLine
+    "群組：  {0}\\r\\n",  // PlaylistGroupsLine
+    "此播放清單不含任何頻道。",  // PlaylistNoChannelsMsg
+    "找不到頻道。",  // PlaylistNoChannelsFoundMsg
+    "匯入結果",  // ImportResultsTitle
+    // --- Transport ---
+    "\\r\\n已接收：%.2f Mb/s\\r\\n已緩衝：%.1f 秒",  // TooltipBufferReceivedBuffered
+    "消耗：%.2f Mb/s\\r\\n緩衝（延遲）：%.1f 秒\\r\\n近期遺失：%d%s",  // TooltipBufferConsumption
+    "未播放\\r\\n緩衝（延遲）：%.1f 秒",  // TooltipBufferNotPlaying
+    "網絡緩衝：%.1f 秒（接收→顯示延遲）",  // TooltipNetworkBuffer
+    "音訊頻譜（此應用程式的聲音）",  // TooltipMeterSpectrum
+    "訊號強度（串流狀態）",  // TooltipMeterSignal
+    "串流位元率歷程",  // TooltipMeterBitrate
+    "影格率（掉幀時閃紅）",  // TooltipMeterFrames
+    "暫停",  // TooltipBtnPause
+    "停止",  // TooltipBtnStop
+    "停止錄影",  // TooltipBtnStopRecording
+    "錄影",  // TooltipBtnRecord
+    "音量：%d%%",  // TooltipVolume
+    "%.1f Mb/s",  // MeterOverlayMbps
+    "%.0f kb/s",  // MeterOverlayKbps
+    "緩衝 %.1f 秒",  // TransportBufferSeconds
+    "＋  新增播放清單",  // CmdAddPlaylist
+    "設定",  // TooltipSettings
+    // --- GuideGrid ---
+    "節目",  // ProgrammeWindowTitle
+    "播放頻道",  // ProgrammePlayButton
+    "排程…",  // ProgrammeScheduleButton
+    "{0} – {1}",  // GuideTimeRange
+    "從我的最愛移除",  // GuideRemoveFromFavourites
+    "★  加入我的最愛",  // GuideAddToFavourites
+    "節目表 — RabbitEars",  // GuideWindowTitle
+    "更新節目表",  // RefreshGuideTitle
+    "找不到節目表來源",  // RefreshGuideNoSourceHeading
+    "您已啟用的播放清單都沒有 XMLTV 節目表 URL（#EXTM3U 標頭中的 x-tvg-url）。\\r\\n\\r\\n請新增一個包含該項目的播放清單，然後再試一次。",  // RefreshGuideNoSourceBody
+    "節目表",  // TvGuideTitle
+    "正在連線節目表來源…",  // LoadingContactingGuide
+    "（{0} / {1}）",  // LoadingProgressTag
+    "正在下載 {0}…{1}",  // LoadingDownloadingName
+    "正在解析 {0}（{1} KB）…{2}",  // LoadingParsingName
+    "{0}：  {1} 個節目\\r\\n",  // EpgDetailProgrammesLine
+    "已在 {1} 個頻道中儲存 {0} 個節目",  // EpgStoredSummary
+    "無法更新節目表",  // EpgRefreshFailedSummary
+    " · 規則已排入 {0} 個",  // EpgQueuedByRulesSummary
+    "正在從已儲存的節目建立節目表…",  // LoadingBuildingGuide
+    "沒有可顯示的節目表",  // GuideNoGuideHeading
+    "沒有任何已儲存的節目與您播放清單中的頻道相符。\\r\\n\\r\\n請先執行 設定 ▸ 更新節目表…，或是節目表的頻道 ID 與您的播放清單不符 — 請改用 tvg-id 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoGuideBody
+    "沒有相符的頻道",  // GuideNoMatchHeading
+    "在您的播放清單中找不到「{0}」的頻道。\\r\\n\\r\\n節目表以 tvg-id 將節目對應至頻道 — 此節目的頻道 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoMatchBody
+    "設定節目表 URL",  // SetGuideUrlTitle
+    "XMLTV 節目表 URL (.xml 或 .xml.gz；留空以清除)：",  // SetGuideUrlPrompt
+    "已儲存節目表 URL。\\n\\n要立即下載節目表嗎？",  // SetGuideUrlSavedPrompt
+    // --- DialogSchedule ---
+    "頻道：",  // ScheduleFieldChannel
+    "標題：",  // ScheduleFieldTitle
+    "開始：",  // ScheduleFieldStart
+    "結束：",  // ScheduleFieldStop
+    "新增錄影排程",  // ScheduleNewWindowTitle
+    "排程錄影",  // ScheduleEditWindowTitle
+    "等待中",  // ScheduleStatusPending
+    "● 錄影中",  // ScheduleStatusRecording
+    "完成",  // ScheduleStatusDone
+    "已錯過",  // ScheduleStatusMissed
+    "失敗",  // ScheduleStatusFailed
+    "已取消",  // ScheduleStatusCancelled
+    "（未命名）",  // ScheduleUntitledPlaceholder
+    "排程錄影",  // ScheduleManagerWindowTitle
+    "標題",  // ScheduleColTitle
+    "時間",  // ScheduleColWhen
+    "狀態",  // ScheduleColStatus
+    "新增…",  // ScheduleManagerNewButton
+    "取消錄影",  // ScheduleManagerCancelButton
+    "切換檢視會停止 %d 個背景錄影（檔案將會完成寫入）。要繼續嗎？",  // ViewSwitchStopRecordingConfirm
+    "排程錄影",  // ScheduleRecordingTitle
+    "找不到頻道",  // ChannelNotFoundHeading
+    "無法將「{0}」對應至您媒體庫中可播放的頻道（其 tvg-id 不在任何已啟用的播放清單中）。",  // ScheduleChannelNotFoundBody
+    "已排程錄影",  // ScheduleRecordingScheduledHeading
+    "{0}\\r\\n{1}\\r\\n\\r\\n在排程時間，應用程式必須保持執行。",  // ScheduleRecordingScheduledBody
+    "無法排程",  // ScheduleCouldNotHeading
+    "無法儲存錄影。",  // ScheduleCouldNotBody
+    // --- DialogRules ---
+    "（任何）",  // RuleAnyTitlePlaceholder
+    "（任何頻道）",  // RuleAnyChannelPlaceholder
+    "標題完全相符",  // RuleMatchExact
+    "標題包含",  // RuleMatchContains
+    "已啟用",  // RuleStateEnabled
+    "已停用",  // RuleStateDisabled
+    "要刪除「{0}」的規則嗎？\r\n\r\n它排入佇列且即將進行的錄影將被移除。已經執行的錄影會保留。",  // RuleDeleteConfirm
+    "錄影規則",  // RecordingRulesTitle
+    "節目",  // RuleColShow
+    "相符",  // RuleColMatch
+    "狀態",  // RuleColState
+    "規則是從節目表建立的：點選一個節目，然後選擇「錄製影集」。之後的每次播出都會自動排入佇列。",  // RulesEmptyHint
+    "啟用 / 停用",  // RuleToggleButton
+    "\\r\\n錄影規則已排入 {0} 個新的播出。\\r\\n",  // EpgRulesQueuedDetail
+    "錄製影集",  // RecordSeriesTitle
+    "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody
+    "已在錄製此影集",  // RecordSeriesAlreadyHeading
+    "在 {1} 上「{0}」的規則已存在。\\r\\n請參閱 設定 ▸ 錄影規則…。",  // RecordSeriesAlreadyBody
+    "無法儲存規則",  // RecordSeriesCouldNotSaveHeading
+    "無法儲存錄影規則。",  // RecordSeriesCouldNotSaveBody
+    "將錄製此節目的每次播出",  // RecordSeriesEveryAiringHeading
+    "{0}\\r\\n{1}\\r\\n\\r\\n已從節目表排入 {2} 個即將播出的項目。\\r\\n節目表更新時會自動納入新的播出。\\r\\n\\r\\n請在 設定 ▸ 錄影規則… 中管理規則。",  // RecordSeriesEveryAiringBody
+    // --- DialogMeters ---
+    "光暈",  // MeterKnobGlow
+    "平滑",  // MeterKnobSmooth
+    "靈敏度",  // MeterKnobSens
+    "峰值",  // MeterPeak
+    "呼吸",  // MeterKnobBreathe
+    "12.4 Mb/s",  // MeterPreviewSampleBitrate
+    "量表",  // MetersWindowTitle
+    "啟用各量表、選擇其外觀並設定其色彩。",  // MetersHeading
+    "音訊頻譜",  // MeterNameAudioSpectrum
+    "訊號強度",  // MeterNameSignalStrength
+    "位元率",  // MeterNameBitrate
+    "影格率",  // MeterNameFrameRate
+    "LED",  // MeterLookLed
+    "真空管",  // MeterLookVacuumTube
+    "LCD",  // MeterLookLcd
+    "示波器",  // MeterLookOscilloscope
+    "背景",  // MeterRoleBg
+    "暗",  // MeterRoleDim
+    "低",  // MeterRoleLow
+    "中",  // MeterRoleMid
+    "高",  // MeterRoleHigh
+    "強調",  // MeterRoleAccent
+    "資料流",  // MeterDataFlowCheckbox
+    "顯示在傳輸列最右側的緩衝槽。您也可以在該量表上按右鍵來隱藏它。",  // MeterDataFlowNote
+    "重設為預設值",  // MetersResetButton
+    // --- DialogAbout ---
+    "github.com/arcanii/RabbitEars",  // AboutGithubLinkLabel
+    "ARM64",  // AboutArchArm64
+    "x64",  // AboutArchX64
+    "x86",  // AboutArchX86
+    "不明",  // AboutArchUnknown
+    "（在 ARM64 上模擬）",  // AboutArchEmulatedOnArm64
+    "（模擬）",  // AboutArchEmulated
+    "適用於 Windows 的簡易 IPTV 檢視器。\r\n版本 {0}  ·  {1}",  // AboutVersionLine
+    "以 libVLC (LGPL-2.1) 播放媒體\r\n© VideoLAN 與 VLC 貢獻者。",  // AboutLibVlcCredit
+    "Rabbit Ears 僅供教育用途，並不代表支持您使用它進行的任何違法行為。我們不知道，我們也不在乎。",  // AboutEducationalDisclaimer
+    "關於 RabbitEars",  // AboutWindowTitle
+    "檢查更新…",  // AboutCheckForUpdatesButton
+    // --- DialogTerms ---
+    "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC(© VideoLAN 與 VLC 貢獻者)，在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
+    "RabbitEars — 使用條款",  // TermsWindowTitle
+    "使用條款",  // TermsHeading
+    "我接受",  // TermsAcceptButton
+    "拒絕",  // TermsDeclineButton
+    // --- Splash ---
+    "載入中",  // LoadingWindowTitle
+    "正在載入節目表…",  // LoadingHeading
+    "正在尋找電源插頭…",  // SplashFindingPowerPlug
+    "正在把電線接到天線上…",  // SplashConnectingWires
+    "正在把左耳往右折…",  // SplashBendingLeftEar
+    "正在三角定位波動接收器…",  // SplashTriangulatingReceptors
+    "正在預熱真空管…",  // SplashWarmingVacuumTubes
+    "正在解開同軸電纜…",  // SplashUntanglingCoax
+    "正在擦亮兔耳天線…",  // SplashPolishingRabbitEars
+    "正在趕走雜訊小精靈…",  // SplashShooingStaticGremlins
+    "正在找出 Arch 把餅乾藏在哪…",  // SplashFindingArchCookies
+    "正在鎖定最近的訊號塔…",  // SplashLockingOntoTower
+    "正在調整水平同步…",  // SplashTuningHorizontalHold
+    "正在把天線輕輕挪一下…",  // SplashNudgingAerial
+    "快要收到訊號了…",  // SplashAlmostSignal
+    "v{0}",  // SplashVersionLabel
+    // --- Error ---
+    "資料庫錯誤：{0}",  // StatusDatabaseError
+    "無法寫入檔案",  // ExportFavouritesWriteFailHeading
+    "路徑：  {0}\\r\\n",  // ExportFavouritesPathLine
+    "問題：  {0}\\r\\n",  // ProblemLineDetail
+    "下載失敗",  // EpgErrorDownloadFailed
+    "解壓縮後為空或無效",  // EpgErrorEmptyAfterDecompress
+    // --- Misc ---
+    "已選取 %d / %d 個分類",  // CategoriesSelectedCount
+    "只顯示所勾選分類的頻道：",  // CategoriesPrompt
+    "確定",  // ButtonOk
+    "篩選分類…",  // CategoriesFilterCue
+    "全選",  // CategoriesSelectAllButton
+    "清除",  // CategoriesClearButton
+    "取消",  // ButtonCancel
+    "關閉",  // ButtonClose
+    "刪除",  // ButtonDelete
+    "搜尋頻道…",  // SearchChannelsPlaceholder
+    "子母畫面\\r\\n在頻道上按右鍵 ▸ 在子母畫面播放",  // HintEmptyPip
+    "匯出我的最愛",  // ExportFavouritesTitle
+    "尚無我的最愛",  // ExportFavouritesNoneHeading
+    "請先為一些頻道加上星號（頻道清單中的 ★ 欄，或在節目表列上按右鍵），然後再匯出。\\r\\n",  // ExportFavouritesNoneBody
+    "已匯出 {0} 個我的最愛",  // ExportFavouritesDoneHeading
+    "檔案：  {0}\\r\\n",  // FileLineDetail
+    "匯入我的最愛",  // ImportFavouritesTitle
+    "找不到頻道",  // ImportFavouritesNoChannelsHeading
+    "檔案：  {0}\\r\\n檔案中的項目：  {1}\\r\\n已加星號的頻道：  {2}\\r\\n",  // ImportFavouritesDetails
+    "不在您的媒體庫中（已略過）：  {0}\\r\\n",  // ImportFavouritesSkippedLine
+    "已為 {0} 個頻道加上星號",  // ImportFavouritesStarredHeading
+    "我的版面配置",  // LayoutDefaultName
+    "儲存版面配置",  // SaveLayoutDialogTitle
+    "版面配置名稱：",  // SaveLayoutNamePrompt
+    "RabbitEars",  // AppName
+    "分類",  // CategoriesTitle
+    "沒有可篩選的分類",  // CategoriesNoneHeading
+    "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\\r\\n\\r\\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\\r\\n",  // CategoriesNoneBody
+}};
+
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).
-constexpr const std::array<const char*, N>* kTables[] = { &kEn, &kJa, &kZhHant };
+constexpr const std::array<const char*, N>* kTables[] = { &kEn, &kJa, &kZhHant, &kZhHK };
 constexpr std::size_t kLangCount = sizeof(kTables) / sizeof(kTables[0]);
 
 // Atomic: the splash worker thread reads the active language (via trU8) to localize its captions

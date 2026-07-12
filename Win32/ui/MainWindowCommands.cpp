@@ -1466,6 +1466,8 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 tr(StringId::LangJapanese).c_str());
     AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"zh-Hant" ? chk : 0u), ID_LANG_ZH_HANT,
                 tr(StringId::LangTraditionalChinese).c_str());
+    AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"zh-HK" ? chk : 0u), ID_LANG_ZH_HK,
+                tr(StringId::LangTraditionalChineseHK).c_str());
 
     // ---- assemble the top-level menu (grouped, mac-style) ----
     HMENU m = CreatePopupMenu();
@@ -1650,6 +1652,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_LANG_ZH_HANT:
             setLanguageSelection(st, L"zh-Hant");
+            break;
+        case ID_LANG_ZH_HK:
+            setLanguageSelection(st, L"zh-HK");
             break;
     }
 }

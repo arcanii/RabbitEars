@@ -98,7 +98,8 @@ constexpr int ID_WAKE_RUN_NOW = 2065;  // Settings → Run wake task now (fires 
 constexpr int ID_LANG_SYSTEM = 2066;   // Settings → Language → System default (ui_language="system")
 constexpr int ID_LANG_EN = 2067;       // Settings → Language → English ("en")
 constexpr int ID_LANG_JA = 2068;       // Settings → Language → 日本語 ("ja")
-constexpr int ID_LANG_ZH_HANT = 2069;  // Settings → Language → 繁體中文 ("zh-Hant")  (2070 spare)
+constexpr int ID_LANG_ZH_HANT = 2069;  // Settings → Language → 繁體中文 ("zh-Hant") — last free slot below the 0.2.6 block
+constexpr int ID_LANG_ZH_HK = 2062;    // Settings → Language → 繁體中文（香港） ("zh-HK"); 2070+ are taken, so this uses the free 2052–2062 gap
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif

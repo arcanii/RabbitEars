@@ -288,6 +288,12 @@
     "comment": "Menu label for Traditional Chinese; shown in its own endonym across all languages."
   },
   {
+    "id": "LangTraditionalChineseHK",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Menu label for Hong Kong Traditional Chinese; shown in its own endonym across all languages."
+  },
+  {
     "id": "MenuChannels",
     "cluster": "Menu",
     "placeholders": [],

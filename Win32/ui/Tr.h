@@ -41,11 +41,13 @@ inline i18n::Lang systemLang() {
         case LANG_JAPANESE:
             return i18n::Lang::Ja;
         case LANG_CHINESE: {
-            // We ship Traditional Chinese only. Traditional locales are Taiwan / Hong Kong / Macau;
-            // Simplified (PRC / Singapore) falls back to English until a zh-Hans catalog exists.
+            // Traditional Chinese: Taiwan -> zh-Hant; Hong Kong / Macau -> zh-HK (a zh-Hant
+            // variant carrying HK vocab). Simplified (PRC / Singapore) falls back to English
+            // until a zh-Hans catalog exists.
             const WORD sub = SUBLANGID(lid);
-            if (sub == SUBLANG_CHINESE_TRADITIONAL || sub == SUBLANG_CHINESE_HONGKONG ||
-                sub == SUBLANG_CHINESE_MACAU)
+            if (sub == SUBLANG_CHINESE_HONGKONG || sub == SUBLANG_CHINESE_MACAU)
+                return i18n::Lang::ZhHK;
+            if (sub == SUBLANG_CHINESE_TRADITIONAL)
                 return i18n::Lang::ZhHant;
             return i18n::Lang::En;
         }
@@ -59,6 +61,7 @@ inline i18n::Lang systemLang() {
 inline i18n::Lang resolveLang(const std::wstring& pref) {
     if (pref == L"ja") return i18n::Lang::Ja;
     if (pref == L"zh-Hant") return i18n::Lang::ZhHant;
+    if (pref == L"zh-HK") return i18n::Lang::ZhHK;
     if (pref == L"en") return i18n::Lang::En;
     return systemLang();
 }
