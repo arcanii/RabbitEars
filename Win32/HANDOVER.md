@@ -31,7 +31,37 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.8 SHIPPED (localization: EN + 日本語 · wake preflight · guide loading box)** · macOS 0.2.0
+## Current state — **v0.2.9 SHIPPED (Traditional Chinese + 香港 · episode dedup · rule editor · GPL-3.0 notices)** · macOS 0.2.7
+
+**Released:** **`v0.2.9`** (2026-07-12), tag `v0.2.9` @ `75f8d16`, full version **`0.2.9.243`** (tag count ==
+shipped build number), three signed installers on GitHub release `v0.2.9` (x64 / native ARM64 / universal),
+**two appcasts** (`0.2.9.243`) committed @ `fb9b030` and LIVE (raw feeds serve 0.2.9.243; all three enclosures
+HTTP 200). Owner-signed on the Mac (`sign_update --account SQLTerminal`). **Headline features:**
+(1) **Localization → Traditional Chinese** — ships **繁體中文 (`zh-Hant`)** + **繁體中文（香港） (`zh-HK`)** on top of
+EN + 日本語. A new **base/overlay** mechanism in `gen_i18n.py` lets a *variant* locale carry only its DELTAS
+(`languages.json` gets `"base": "zh-Hant"`; `zh-HK.json` is just the HK-vocab deltas) — the generator merges
+base+overlay before validation, so completeness/parity see the effective catalog and the table stays a full
+per-language row (no runtime fallback). `Tr.h` routes CJK sublangs (Taiwan→`zh-Hant`, Hong Kong/Macau→`zh-HK`);
+`themeFontFamily()` uses **Microsoft JhengHei UI** for both. (2) **Series-rule episode dedup** — schema **v6**
+`scheduled_recordings.episode_key`; `episodeKey()` = folded `<episode-num>`**+**`<sub-title>` combined (a blank /
+partial xmltv_ns num alone would collapse a whole season onto one key), title-scoped, and the caller
+(`expandRecordingRules`) pre-filters programmes to **recordable** (enabled-library) channels so dedup never claims
+an episode on an EPG-only channel it can't record. (3) **Recording rule editor** — Settings ▸ Recording Rules… ▸
+**New… / Edit…** (or double-click a row): title + **Exact/Contains** + a channel or **(any channel)** +
+**lead/trail padding**; `ruleDialog` in `Dialogs.cpp`, backed by new `Database::updateRule` +
+`clearPendingForRule` (an edit clears the rule's now-stale Pending predictions, then re-expands). Plus a **license
+cleanup**: the repo `LICENSE` was mislabeled LGPL-2.1 (it's the whole project's **GPL-3.0**) — fixed, `licenses/`
++ `THIRD-PARTY-NOTICES.txt` added, and the installer now ships them. Built green (x64 BOTH theme flags + native
+ARM64 + selftest ALL PASS). **Adversarially reviewed — the DVR pass caught 4 confirmed bugs incl. a HIGH
+ship-blocker:** the migration early-return `if (v >= 5) return` never got bumped for v6, so it would have skipped
+the `episode_key` ALTER on every existing 0.2.7/0.2.8 DB (`user_version=5`) → every scheduled-recording query
+fails on the missing column, schedules vanish, none can be added; fixed to `>= 6`, and a **v5→v6 migration
+selftest** now guards it (the v2-based migration test can't — `2 < 5` never early-returns). **⚠️ Traditional
+Chinese + Hong Kong (like Japanese) are machine drafts** pending a native pass
+(`gen_i18n.py --review zh-Hant` / `zh-HK` / `ja`) — the gate before *advertising* CJK support. **Deferred
+(LOW, in `BACKLOG.md`):** editing a rule's lead time while one of its airings is actively Recording can leave a
+phantom Missed row. **Gotcha:** Windows Defender silently quarantined the freshly-built **unsigned** installers
+(rebuilt byte-identical to re-ship + upload in one shot) — a concrete case for the **Authenticode** backlog item.
 
 **Released:** **`v0.2.8`** (2026-07-11), tag `v0.2.8` @ `e45adb6`, full version **`0.2.8.217`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.8` (x64 / native ARM64 / universal),
