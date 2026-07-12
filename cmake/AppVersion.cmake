@@ -5,7 +5,7 @@
 # computed separately in each; only this dotted version is shared.
 #
 # Bump on release (the git tag + appcast still gate the actual rollout).
-set(APP_VERSION "0.2.8")
+set(APP_VERSION "0.2.9")
 
 # macOS carries its own decoupled version: the mac port still lacks the Windows theme
 # engine, so the platforms are NOT lockstep on patch numbers. This is the one intentional

@@ -7,7 +7,7 @@
 ; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.2.8"
+#define MyVer "0.2.9"
 
 ; Build-variant selection (see docs/RELEASING.md + scripts\build-installer.cmd):
 ;   (defaults)   -> x64 installer from build\Win32\  (byte-identical to the original script)
