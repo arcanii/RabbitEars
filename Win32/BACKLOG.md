@@ -223,6 +223,17 @@ The engine shipped in 0.2.8-dev (English + Japanese; JSON source in `common/i18n
 
 ## Release / infra
 
+- **About-box "Licenses…" viewer** (follow-up to the 0.2.9 licensing cleanup) — the cleanup fixed the
+  repo `LICENSE` (now real **GPL-3.0**, was mislabeled LGPL-2.1), relocated libVLC's LGPL-2.1 text to
+  `licenses/`, added `THIRD-PARTY-NOTICES.txt`, corrected the "keeps RabbitEars proprietary" comment
+  in `cmake/LibVlc.cmake`, and wired `installer.iss` to ship the notices + `licenses\*` beside
+  `LICENSE.txt`. **Remaining:** an in-app viewer — add a third **"Licenses…"** button to `showAbout`
+  (`Win32/ui/Dialogs.cpp`, next to Check-for-Updates/OK) opening a scrollable, read-only themed panel
+  listing each bundled component (libVLC LGPL-2.1 + its GPL plugins, SQLite public-domain,
+  miniz/WinSparkle/Sparkle MIT) with copyright + source links, sourced from the i18n catalog so it
+  localizes. Low-risk, self-contained. Also (small): vendor the WinSparkle/Sparkle upstream `LICENSE`
+  files into `third_party/` for picture-perfect MIT notices, and have the **mac** DMG ship the same
+  `THIRD-PARTY-NOTICES.txt` + `licenses/` (mac-team packaging).
 - **Authenticode** code-signing of the exe + installer (silences SmartScreen; separate from the EdDSA
   update signature). **Recipe + where it slots into the release flow is documented in
   `docs/RELEASING.md` ("Not yet covered")** — blocked only on the owner buying/provisioning a

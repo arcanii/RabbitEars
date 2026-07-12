@@ -1,0 +1,106 @@
+RabbitEars — Third-Party Notices
+================================
+
+RabbitEars itself is licensed under the GNU General Public License, version 3
+or later (GPL-3.0-or-later). See the LICENSE file for the full text.
+
+This file lists the third-party components that RabbitEars links against or
+bundles in its binary distribution (the installer), together with their
+licenses and where to obtain their source. RabbitEars does NOT modify the
+source of any of these components; it ships them as received from upstream.
+
+Why the distribution is under the GPL
+-------------------------------------
+RabbitEars bundles the VLC media-player plugin set, which includes modules
+licensed under the GNU GPL (v2 or later). Because GPL-licensed components are
+included in what is distributed, the RabbitEars binary distribution as a whole
+is conveyed under the GNU GPL (see LICENSE). The libVLC core itself is LGPL and
+is dynamically linked and shipped as a separate, replaceable library.
+
+Corresponding source (GPL / LGPL obligation)
+--------------------------------------------
+The VLC components below are distributed unmodified at version 3.0.23. The
+complete corresponding source code is published by VideoLAN and can be obtained
+from:
+
+  * https://code.videolan.org/videolan/vlc/-/tree/3.0.23   (git, tag 3.0.23)
+  * https://download.videolan.org/pub/videolan/vlc/3.0.23/ (release tarballs)
+
+This satisfies the requirement to provide access to the corresponding source
+for the GPL- and LGPL-licensed VLC components RabbitEars distributes.
+
+--------------------------------------------------------------------------------
+
+Components
+==========
+
+libVLC (libvlc.dll, libvlccore.dll)
+  Version:    3.0.23
+  Copyright:  (c) VideoLAN and the VLC authors and contributors
+  License:    LGPL-2.1-or-later  (see licenses/LGPL-2.1.txt)
+  Linking:    Dynamic. The DLLs are shipped as separate files next to the
+              application and may be replaced by the user with a compatible
+              build, as permitted by the LGPL.
+  Project:    https://www.videolan.org/vlc/libvlc.html
+
+libVLC plugins (the "plugins" directory)
+  Version:    3.0.23
+  Copyright:  (c) VideoLAN and the VLC authors and contributors
+  License:    LGPL-2.1-or-later AND GPL-2.0-or-later
+              (see licenses/LGPL-2.1.txt and licenses/GPL-2.0.txt)
+  Notes:      The full plugin tree is shipped so libVLC can auto-discover its
+              modules. It contains both LGPL and GPL modules; the GPL modules
+              are the reason the overall distribution is conveyed under the GPL.
+  Project:    https://www.videolan.org/vlc/
+
+vlc-cache-gen (vlc-cache-gen.exe; native-x64 installer only)
+  Version:    3.0.23
+  Copyright:  (c) VideoLAN and the VLC authors and contributors
+  License:    Same as VLC above (LGPL-2.1-or-later / GPL-2.0-or-later)
+  Notes:      Run once at install time to build the libVLC plugin cache; not a
+              runtime dependency of the application.
+
+SQLite (amalgamation, vendored)
+  Copyright:  None — the SQLite source code is dedicated to the public domain.
+  License:    Public Domain (no restrictions; no notice required)
+  Project:    https://www.sqlite.org/
+
+miniz (vendored)
+  Copyright:  (c) 2013-2014 RAD Game Tools and Valve Software
+              (c) 2010-2014 Rich Geldreich and Tenacious Software LLC
+  License:    MIT  (see licenses/MIT-miniz.txt)
+  Project:    https://github.com/richgel999/miniz
+
+WinSparkle (Windows auto-update)
+  Copyright:  (c) Vaclav Slavik and the WinSparkle contributors
+  License:    MIT  (see the MIT License text below)
+  Project:    https://winsparkle.org/  ·  https://github.com/vslavik/winsparkle
+
+Sparkle (macOS auto-update)
+  Copyright:  (c) Andy Matuschak and the Sparkle contributors
+  License:    MIT  (see the MIT License text below)
+  Project:    https://sparkle-project.org/  ·  https://github.com/sparkle-project/Sparkle
+
+--------------------------------------------------------------------------------
+
+MIT License (applies to WinSparkle and Sparkle above; miniz has its own copy in
+licenses/MIT-miniz.txt with its specific copyright lines)
+--------------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

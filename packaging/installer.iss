@@ -86,6 +86,11 @@ Source: "..\third_party\vlc-tools\x64\vlc-cache-gen.exe"; DestDir: "{app}"; \
   Check: IsX64Native; Flags: ignoreversion
 #endif
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+; Third-party attribution + the LGPL/GPL/MIT texts of the bundled components (libVLC + its
+; GPL plugins, SQLite, miniz, WinSparkle). Ships beside LICENSE.txt to satisfy the notice/
+; source-availability obligations — see ..\THIRD-PARTY-NOTICES.txt.
+Source: "..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\RabbitEars"; Filename: "{app}\RabbitEars.exe"

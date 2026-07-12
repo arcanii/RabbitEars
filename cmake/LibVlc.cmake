@@ -19,8 +19,12 @@
 #   LIBVLC_DLLS          runtime DLL filenames to copy next to the exe.
 #   LIBVLC_PLUGINS_DIR   the plugins/ tree to copy next to the exe.
 #
-# libVLC 3.0.x is LGPLv2.1: dynamic-linking + shipping the unmodified DLLs/plugins
-# keeps RabbitEars proprietary. Ship the LGPL license text + attribution.
+# libVLC 3.0.x core is LGPL-2.1: it is dynamically linked and its unmodified DLLs are
+# shipped as separate, replaceable files (the LGPL relink requirement). RabbitEars also
+# ships the full VLC plugin tree, which includes GPL-licensed modules, so the binary
+# distribution as a whole is conveyed under the GPL — consistent with RabbitEars' own
+# GPL-3.0-or-later license. Ship the LGPL/GPL/MIT texts + attribution (see the repo-root
+# LICENSE, licenses/, and THIRD-PARTY-NOTICES.txt).
 
 # Pin the exact version (wraps libVLC 3.0.23, current 3.0.x stable). Bump deliberately.
 set(LIBVLC_NUGET_VERSION "3.0.23.1" CACHE STRING "VideoLAN.LibVLC.Windows NuGet package version")
