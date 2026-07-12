@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // See EpgGuideView.h.
 #import "EpgGuideView.h"
+#import "Tr.h"
 
 #include <algorithm>
 #include <cmath>
+
+using namespace rabbitears;
+using namespace rabbitears::i18n;  // StringId
 
 @implementation REGuideProgramme
 @end
@@ -124,7 +128,7 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     if (_rows.count == 0) {
         NSDictionary* a = @{ NSFontAttributeName: [NSFont systemFontOfSize:14],
                              NSForegroundColorAttributeName: NSColor.secondaryLabelColor };
-        NSString* msg = @"No guide loaded — run Refresh Guide first.";
+        NSString* msg = Tr(StringId::MacEpgGuideViewNoGuideLoaded);
         NSSize sz = [msg sizeWithAttributes:a];
         [msg drawAtPoint:NSMakePoint((W - sz.width) / 2, (H - sz.height) / 2) withAttributes:a];
         return;
@@ -200,8 +204,8 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
             if (tr.size.width < 8) continue;
             [p.title drawInRect:NSMakeRect(tr.origin.x, tr.origin.y, tr.size.width, 16)
                  withAttributes:titleAttr];
-            NSString* range = [NSString stringWithFormat:@"%@ – %@",
-                               [self shortTime:p.startUtc], [self shortTime:stop]];
+            NSString* range = TrF(StringId::GuideTimeRange,
+                                  { [self shortTime:p.startUtc], [self shortTime:stop] });
             [range drawInRect:NSMakeRect(tr.origin.x, tr.origin.y + 17, tr.size.width, 14)
                withAttributes:timeAttr];
         }
@@ -309,7 +313,7 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
     NSRectFill(corner);
     NSDictionary* a = @{ NSFontAttributeName: [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold],
                          NSForegroundColorAttributeName: NSColor.secondaryLabelColor };
-    [@"Channel" drawAtPoint:NSMakePoint(10, (kHeaderH - 14) / 2) withAttributes:a];
+    [Tr(StringId::LabelChannel) drawAtPoint:NSMakePoint(10, (kHeaderH - 14) / 2) withAttributes:a];
     [NSColor.separatorColor setStroke];
     NSBezierPath* edge = [NSBezierPath bezierPath];
     [edge moveToPoint:NSMakePoint(kChanColW - 0.5, 0)];

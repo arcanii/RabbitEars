@@ -3,6 +3,7 @@
 #import "TvGuideWindowController.h"
 
 #import "EpgGuideView.h"
+#import "Tr.h"
 
 #include "db/Database.h"
 #include "models/Channel.h"
@@ -18,6 +19,8 @@
 using rabbitears::Channel;
 using rabbitears::Database;
 using rabbitears::Programme;
+using namespace rabbitears;         // Tr / TrF
+using namespace rabbitears::i18n;   // StringId
 
 namespace {
 NSString* ns(const std::wstring& w) {
@@ -90,7 +93,7 @@ std::wstring normId(const std::wstring& s) {
             }
             if (cur) {
                 REGuideProgramme* gp = [[REGuideProgramme alloc] init];
-                gp.title = p.title.empty() ? @"(no title)" : ns(p.title);
+                gp.title = p.title.empty() ? Tr(StringId::MacTvGuideNoTitle) : ns(p.title);
                 gp.descr = ns(p.descr);
                 gp.startUtc = p.startUtc;
                 gp.stopUtc = p.stopUtc;
@@ -117,12 +120,9 @@ std::wstring normId(const std::wstring& s) {
     NSArray<REGuideRow*>* rows = [self buildRows];
     if (rows.count == 0) {
         NSAlert* a = [[NSAlert alloc] init];
-        a.messageText = @"No guide to show";
-        a.informativeText =
-            @"No stored programmes match a channel in your playlists.\n\n"
-            @"Run Refresh Guide first — or the guide's channel IDs don't line up with your "
-            @"playlist. Point it at a guide whose tvg-ids match (Manage Playlists ▸ 📅 Set Guide URL).";
-        [a addButtonWithTitle:@"OK"];
+        a.messageText = Tr(StringId::GuideNoGuideHeading);
+        a.informativeText = Tr(StringId::MacTvGuideNoGuideBody);
+        [a addButtonWithTitle:Tr(StringId::ButtonOk)];
         [a beginSheetModalForWindow:(parent ?: NSApp.keyWindow)
                   completionHandler:^(NSModalResponse __unused r) {}];
         return REGuideShowNoGuide;
@@ -152,7 +152,7 @@ std::wstring normId(const std::wstring& s) {
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    _window.title = @"TV Guide";
+    _window.title = Tr(StringId::TvGuideTitle);
     _window.releasedWhenClosed = NO;  // we own it via the ivar; a later re-open reuses it
     _window.contentMinSize = NSMakeSize(560, 360);
 
@@ -196,18 +196,18 @@ std::wstring normId(const std::wstring& s) {
     if (programme.descr.length) [info appendFormat:@"\n\n%@", programme.descr];
 
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = programme.title.length ? programme.title : @"Programme";
+    a.messageText = programme.title.length ? programme.title : Tr(StringId::ProgrammeWindowTitle);
     a.informativeText = info;
     const BOOL hasChannel = row.channelId.length > 0;
     const long long now = (long long)time(nullptr);
     // Buttons return NSAlertFirstButtonReturn (1000) + index, in add order.
-    NSButton* play = [a addButtonWithTitle:@"Play Channel"];       // 1000
+    NSButton* play = [a addButtonWithTitle:Tr(StringId::ProgrammePlayButton)];       // 1000
     play.enabled = hasChannel;
-    NSButton* sched = [a addButtonWithTitle:@"Schedule Recording"]; // 1001
+    NSButton* sched = [a addButtonWithTitle:Tr(StringId::ScheduleEditWindowTitle)]; // 1001
     sched.enabled = hasChannel && programme.stopUtc > now;          // can't record a finished airing
-    NSButton* series = [a addButtonWithTitle:@"Record Series"];     // 1002
+    NSButton* series = [a addButtonWithTitle:Tr(StringId::RecordSeriesTitle)];     // 1002
     series.enabled = hasChannel && programme.title.length > 0;
-    NSButton* close = [a addButtonWithTitle:@"Close"];              // 1003
+    NSButton* close = [a addButtonWithTitle:Tr(StringId::ButtonClose)];              // 1003
     close.keyEquivalent = @"\033";  // Esc closes
 
     __weak TvGuideWindowController* weak = self;

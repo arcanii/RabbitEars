@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // See PlaylistsDialog.h.
 #import "PlaylistsDialog.h"
+#import "Tr.h"
 
 #include "core/Http.h"
 #include "core/M3uParser.h"
@@ -14,6 +15,10 @@
 
 using rabbitears::Database;
 using rabbitears::Playlist;
+using rabbitears::Tr;
+using rabbitears::TrF;
+using namespace rabbitears;
+using namespace rabbitears::i18n;  // StringId
 
 namespace {
 NSString* ns(const std::wstring& w) {
@@ -55,8 +60,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
 - (void)buildPanel {
     NSView* content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 540, 420)];
 
-    NSTextField* hdr = [NSTextField labelWithString:
-        @"Turn a playlist off to hide its channels from the grid and filters, or delete it entirely."];
+    NSTextField* hdr = [NSTextField labelWithString:Tr(StringId::MacPlaylistsHeaderHint)];
     hdr.textColor = NSColor.secondaryLabelColor;
     hdr.font = [NSFont systemFontOfSize:11];
     hdr.translatesAutoresizingMaskIntoConstraints = NO;
@@ -79,7 +83,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     scroll.documentView = _rows;
     [content addSubview:scroll];
 
-    NSButton* done = [NSButton buttonWithTitle:@"Done" target:self action:@selector(done:)];
+    NSButton* done = [NSButton buttonWithTitle:Tr(StringId::MacPlaylistsDoneButton) target:self action:@selector(done:)];
     done.keyEquivalent = @"\r";
     done.translatesAutoresizingMaskIntoConstraints = NO;
     [content addSubview:done];
@@ -111,7 +115,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
                                         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskResizable
                                           backing:NSBackingStoreBuffered
                                             defer:NO];
-    _panel.title = @"Manage Playlists";
+    _panel.title = Tr(StringId::MenuManagePlaylists);
     _panel.contentView = content;
 }
 
@@ -124,8 +128,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     _playlists = _db ? _db->listPlaylists() : std::vector<Playlist>{};
 
     if (_playlists.empty()) {
-        NSTextField* empty = [NSTextField labelWithString:
-            @"No playlists yet — close this window, then use “＋ Add Playlist”."];
+        NSTextField* empty = [NSTextField labelWithString:Tr(StringId::MacPlaylistsEmptyHint)];
         empty.textColor = NSColor.secondaryLabelColor;
         [_rows addArrangedSubview:empty];
         return;
@@ -141,14 +144,14 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     NSButton* en = [NSButton checkboxWithTitle:ns(p.name) target:self action:@selector(toggleEnabled:)];
     en.state = p.enabled ? NSControlStateValueOn : NSControlStateValueOff;
     en.tag = (NSInteger)p.id;
-    en.toolTip = @"Show or hide this playlist’s channels";
+    en.toolTip = Tr(StringId::MacPlaylistsToggleTooltip);
     [en.widthAnchor constraintLessThanOrEqualToConstant:280].active = YES;  // long names truncate
     [en setContentHuggingPriority:NSLayoutPriorityDefaultHigh
                    forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     NSString* src = ns(p.isUrl ? p.sourceUrl : p.sourcePath);
-    NSString* detail =
-        [NSString stringWithFormat:@"%d ch · %@", p.channelCount, src.length ? src : @"—"];
+    NSString* detail = TrF(StringId::MacPlaylistsChannelCountSource,
+        { [NSString stringWithFormat:@"%d", p.channelCount], src.length ? src : @"—" });
     NSTextField* info = [NSTextField labelWithString:detail];
     info.textColor = NSColor.secondaryLabelColor;
     info.font = [NSFont systemFontOfSize:11];
@@ -162,14 +165,14 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     NSView* spacer = [[NSView alloc] init];
     [spacer setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    NSButton* refresh = [self iconButton:@"arrow.clockwise" tip:@"Re-download / re-read from source"
+    NSButton* refresh = [self iconButton:@"arrow.clockwise" tip:Tr(StringId::MacPlaylistsRefreshTooltip)
                                   action:@selector(refreshPlaylist:) pid:p.id];
-    NSButton* guide = [self iconButton:@"calendar" tip:@"Set the XMLTV guide (EPG) URL"
+    NSButton* guide = [self iconButton:@"calendar" tip:Tr(StringId::MacPlaylistsGuideTooltip)
                                 action:@selector(setGuideUrl:) pid:p.id];
-    NSButton* rename = [self iconButton:@"pencil" tip:@"Rename"
+    NSButton* rename = [self iconButton:@"pencil" tip:Tr(StringId::MenuPlaylistRename)
                                  action:@selector(renamePlaylist:) pid:p.id];
 
-    NSButton* del = [NSButton buttonWithTitle:@"Delete" target:self action:@selector(deletePlaylist:)];
+    NSButton* del = [NSButton buttonWithTitle:Tr(StringId::ButtonDelete) target:self action:@selector(deletePlaylist:)];
     del.tag = (NSInteger)p.id;
     [del setContentHuggingPriority:NSLayoutPriorityRequired
                     forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -203,22 +206,20 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
 
 - (void)deletePlaylist:(NSButton*)sender {
     const long long pid = (long long)sender.tag;
-    NSString* name = @"this playlist";
+    NSString* name = Tr(StringId::MacPlaylistsThisPlaylistFallback);
     int count = 0;
     for (const auto& p : _playlists)
         if (p.id == pid) { name = ns(p.name); count = p.channelCount; }
 
     NSAlert* a = [[NSAlert alloc] init];
     a.alertStyle = NSAlertStyleWarning;
-    a.messageText = [NSString stringWithFormat:@"Delete “%@”?", name];
-    a.informativeText = [NSString stringWithFormat:
-        @"This permanently removes the playlist and its %d channel%@ from RabbitEars, including "
-        @"any favourites and custom channel numbers you set on them. This cannot be undone.",
-        count, count == 1 ? @"" : @"s"];
-    NSButton* del = [a addButtonWithTitle:@"Delete"];
+    a.messageText = TrF(StringId::MacPlaylistsDeleteConfirmTitle, { name });
+    a.informativeText = TrF(StringId::MacPlaylistsDeleteConfirmBody,
+        { [NSString stringWithFormat:@"%d", count] });
+    NSButton* del = [a addButtonWithTitle:Tr(StringId::ButtonDelete)];
     del.hasDestructiveAction = YES;
     del.keyEquivalent = @"";  // don't let Return fire the destructive action
-    NSButton* cancel = [a addButtonWithTitle:@"Cancel"];
+    NSButton* cancel = [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     cancel.keyEquivalent = @"\033";  // Esc cancels
 
     [a beginSheetModalForWindow:_panel completionHandler:^(NSModalResponse resp) {
@@ -235,10 +236,10 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     for (const auto& p : _playlists) if (p.id == pid) current = ns(p.name);
 
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = @"Rename Playlist";
-    a.informativeText = @"This changes only the display name; the channels and source are untouched.";
-    [a addButtonWithTitle:@"Rename"];
-    NSButton* cancel = [a addButtonWithTitle:@"Cancel"];
+    a.messageText = Tr(StringId::DialogRenamePlaylistTitle);
+    a.informativeText = Tr(StringId::MacPlaylistsRenameBody);
+    [a addButtonWithTitle:Tr(StringId::MenuPlaylistRename)];
+    NSButton* cancel = [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     cancel.keyEquivalent = @"\033";  // Esc cancels
     NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 320, 24)];
     input.stringValue = current;
@@ -265,11 +266,10 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     for (const auto& p : _playlists) if (p.id == pid) current = ns(p.epgUrl);
 
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = @"Set Guide URL";
-    a.informativeText = @"XMLTV guide URL (.xml or .xml.gz). Leave blank to clear it. Then use "
-                        @"“Refresh Guide” (the View menu or the ⚙ menu) to download it.";
-    [a addButtonWithTitle:@"Save"];
-    NSButton* cancel = [a addButtonWithTitle:@"Cancel"];
+    a.messageText = Tr(StringId::SetGuideUrlTitle);
+    a.informativeText = Tr(StringId::MacPlaylistsGuideUrlBody);
+    [a addButtonWithTitle:Tr(StringId::MacPlaylistsSaveButton)];
+    NSButton* cancel = [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     cancel.keyEquivalent = @"\033";  // Esc cancels
     NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 24)];
     input.stringValue = current;
@@ -300,7 +300,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
     if (source.empty() || !_db) return;
 
     sender.enabled = NO;
-    sender.toolTip = @"Refreshing…";
+    sender.toolTip = Tr(StringId::MacPlaylistsRefreshingTooltip);
     const long long now = (long long)time(nullptr);
     __weak PlaylistsDialog* weak = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{

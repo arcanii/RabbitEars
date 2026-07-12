@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // See MeterView.h.
 #import "MeterView.h"
+#import "Tr.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,8 @@
 #include <os/lock.h>
 
 using namespace rabbitears::mac;
+using namespace rabbitears;
+using namespace rabbitears::i18n;  // StringId
 
 namespace {
 constexpr int kMaxBands = 64;
@@ -134,10 +137,7 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     if (_available == available) return;
     _available = available;
     // The strip is too narrow for the real instruction — put it in the tooltip.
-    self.toolTip = available ? nil
-        : @"RabbitEars can’t read its own audio output, so the spectrum can’t be drawn.\n\n"
-          @"Allow audio recording for RabbitEars in System Settings ▸ Privacy & Security, "
-          @"then relaunch the app.";
+    self.toolTip = available ? nil : Tr(StringId::MacMeterViewSpectrumUnavailableTooltip);
     [self setNeedsDisplay:YES];
 }
 
@@ -257,7 +257,7 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     // than the view and ran off both edges. Use a short message and shrink the font until it
     // fits; the full instruction lives in the tooltip (see -setAvailable:).
     NSColor* fg = [NSColor colorWithWhite:0.62 alpha:1.0];
-    NSString* msg = @"Spectrum needs audio permission";
+    NSString* msg = Tr(StringId::MacMeterViewSpectrumNeedsPermission);
     for (CGFloat pt = 9.0;; pt -= 0.5) {
         NSDictionary* attrs = @{
             NSFontAttributeName: [NSFont systemFontOfSize:pt weight:NSFontWeightMedium],

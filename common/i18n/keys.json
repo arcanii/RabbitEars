@@ -2470,5 +2470,961 @@
     "cluster": "Misc",
     "placeholders": [],
     "comment": ""
+  },
+  {
+    "id": "MenuQuit",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuFile",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuAddPlaylist",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuOpenPlaylistFile",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuManagePlaylists",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuEdit",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuUndo",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuRedo",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuCut",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuCopy",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuPaste",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuSelectAll",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuEnterFullScreen",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuHideChannelList",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuShowChannelList",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuHideToolbar",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuShowToolbar",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MenuExitVideoOnly",
+    "cluster": "MacMenu",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "AboutMacCredits",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowRecordActivePaneTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowStopRecordingPaneTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowStopButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowStatusReady",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowToggleMetersTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowToggleFavourite",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSetChannelNumber",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowDbUnavailableRestart",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowDbUnavailableSavePlaylist",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowDbUnavailable",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowReadyLoadHint",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowAllPlaylistsDisabledManage",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowAllPlaylistsDisabledSee",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLastPlayedResume",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowCountryFilterItem",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowChannelCountStatus",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSearchSuffix",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowDownloadFailed",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowReadFailed",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowImportDbSaveBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowPlaylistNoChannelsHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowImportNoChannelsBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowImportSummaryBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowImportSkippedLine",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowImportGroupsLine",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowImportedChannelsHeading",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowRecordingStartFailed",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowCantScheduleHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowScheduleNoMatchBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowScheduledStatus",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowScheduledFallbackTitle",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowScheduledTitle",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowScheduledWakeCaveat",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowScheduleSaveFailedBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSeriesRuleAdded",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowCantAddRuleHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSeriesRuleSaveFailedBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSplitViewStatus",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowPipStatus",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSingleViewStatus",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSaveLayoutPrompt",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSaveButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowEnterNamePrompt",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLayoutLimitHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLayoutLimitBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLayoutApplyFailedHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLayoutMissingBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLayoutMissingChannelsSuffix",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowLayoutsMenu",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSaveCurrentLayout",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNoSavedLayouts",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowDeleteLayoutConfirm",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowDeleteLayoutBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFormatHeader",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFormatTsSafest",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowRecordingsMenuItem",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowRecordingFormatStatus",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowMeterSettingsSaved",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNoGuideSourceBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowEpgErrorLine",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowGuideNoMatchBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNotInGuideHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNoTvgIdBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNotInGuideYetBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNoFavouritesHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowExportNoFavesBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFavesExportedHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFavesExportedBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowExportFailedHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowCouldntWriteFile",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowNothingToImportHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFileNoChannels",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFavesImportedHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFavesImportedBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowFavesUnmatchedSuffix",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowChannelNumberTitle",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowChannelNumberPrompt",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowSetButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowPlayingInPane",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowPipShort",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowBackgroundPane",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowTitleWithChannel",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacMainWindowActivePaneChannel",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsWindowTitle",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsTabScheduled",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsTabSeriesRules",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsColFormat",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsColMatchesTitle",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsCancelSelectedButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsToggleRuleButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsDeleteRuleButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsWakeHint",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsAiringQueuedByRuleHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsAiringQueuedByRuleBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsDeleteRuleConfirmHeading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacRecordingsDeleteRuleConfirmBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersTipBackground",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersTipUnlit",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersDialogSubheading",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersStyleLabel",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersColoursLabel",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersTuningLabel",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMetersKnobTooltip",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsHeaderHint",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsDoneButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsEmptyHint",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsToggleTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsChannelCountSource",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsRefreshTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsGuideTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsThisPlaylistFallback",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsDeleteConfirmTitle",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsDeleteConfirmBody",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsRenameBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsGuideUrlBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsSaveButton",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacPlaylistsRefreshingTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacTvGuideNoTitle",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacTvGuideNoGuideBody",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacTermsVersionLabel",
+    "cluster": "MacUI",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": ""
+  },
+  {
+    "id": "MacEpgGuideViewNoGuideLoaded",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMeterViewSpectrumUnavailableTooltip",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMeterViewSpectrumNeedsPermission",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMeterNameSpectrum",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMeterNameSignal",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "MacMeterNameFrames",
+    "cluster": "MacUI",
+    "placeholders": [],
+    "comment": ""
   }
 ]

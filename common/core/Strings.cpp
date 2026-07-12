@@ -414,6 +414,154 @@ constexpr std::array<const char*, N> kEn = {{
     "Categories",  // CategoriesTitle
     "No categories to filter",  // CategoriesNoneHeading
     "The channels in your library have no group titles, so there are no categories to include or exclude.\\r\\n\\r\\nAdd a playlist whose #EXTINF lines carry group-title tags to use this filter.\\r\\n",  // CategoriesNoneBody
+    // --- MacMenu ---
+    "Quit RabbitEars",  // MenuQuit
+    "File",  // MenuFile
+    "Add Playlist…",  // MenuAddPlaylist
+    "Open Playlist File…",  // MenuOpenPlaylistFile
+    "Manage Playlists…",  // MenuManagePlaylists
+    "Edit",  // MenuEdit
+    "Undo",  // MenuUndo
+    "Redo",  // MenuRedo
+    "Cut",  // MenuCut
+    "Copy",  // MenuCopy
+    "Paste",  // MenuPaste
+    "Select All",  // MenuSelectAll
+    "Enter Full Screen",  // MenuEnterFullScreen
+    "Hide Channel List",  // MenuHideChannelList
+    "Show Channel List",  // MenuShowChannelList
+    "Hide Toolbar",  // MenuHideToolbar
+    "Show Toolbar",  // MenuShowToolbar
+    "Exit Video Only",  // MenuExitVideoOnly
+    // --- DialogAbout ---
+    "A simple IPTV viewer for macOS.\n\nPlays media with libVLC (LGPL-2.1)\n© VideoLAN and the VLC contributors.\n\nRabbitEars is provided only for educational purposes, and does not represent supporting any illegal activity that you do with it. We don't know, we don't care.",  // AboutMacCredits
+    // --- MacUI ---
+    "Record the active pane",  // MacMainWindowRecordActivePaneTooltip
+    "Stop recording this pane",  // MacMainWindowStopRecordingPaneTooltip
+    "Stop",  // MacMainWindowStopButton
+    "Ready.",  // MacMainWindowStatusReady
+    "Show / hide the meters",  // MacMainWindowToggleMetersTooltip
+    "Toggle Favourite",  // MacMainWindowToggleFavourite
+    "Set Channel Number…",  // MacMainWindowSetChannelNumber
+    "Database unavailable — check disk permissions and restart.",  // MacMainWindowDbUnavailableRestart
+    "Database unavailable — cannot save playlist.",  // MacMainWindowDbUnavailableSavePlaylist
+    "Database unavailable.",  // MacMainWindowDbUnavailable
+    "Ready — load an M3U URL or open a file to begin.",  // MacMainWindowReadyLoadHint
+    "All playlists are disabled — enable one in Settings ▸ Manage Playlists….",  // MacMainWindowAllPlaylistsDisabledManage
+    "All playlists are disabled — enable one to see channels.",  // MacMainWindowAllPlaylistsDisabledSee
+    "Last played: {0} — double-click or press Return to resume.",  // MacMainWindowLastPlayedResume
+    "Country: {0}",  // MacMainWindowCountryFilterItem
+    "{0} channels{1}.",  // MacMainWindowChannelCountStatus
+    " (search)",  // MacMainWindowSearchSuffix
+    "Download failed: {0}",  // MacMainWindowDownloadFailed
+    "Read failed: {0}",  // MacMainWindowReadFailed
+    "Source: {0}\n\nThe playlist could not be saved to the database.",  // MacMainWindowImportDbSaveBody
+    "No channels found",  // MacMainWindowPlaylistNoChannelsHeading
+    "Source: {0}\n\nThe playlist contained no channels.",  // MacMainWindowImportNoChannelsBody
+    "Source: {0}\n\nChannels parsed: {1}\nChannels imported: {2}\n",  // MacMainWindowImportSummaryBody
+    "Skipped (blank or duplicate URLs): {0}\n",  // MacMainWindowImportSkippedLine
+    "Groups: {0}",  // MacMainWindowImportGroupsLine
+    "Imported {0} channels",  // MacMainWindowImportedChannelsHeading
+    "Couldn't start recording (the stream may cap concurrent connections).",  // MacMainWindowRecordingStartFailed
+    "Can't schedule",  // MacMainWindowCantScheduleHeading
+    "“{0}” has no matching channel in your playlists, so there's nothing to record.",  // MacMainWindowScheduleNoMatchBody
+    "Scheduled: {0} — {1}",  // MacMainWindowScheduledStatus
+    "recording",  // MacMainWindowScheduledFallbackTitle
+    "Scheduled: {0}",  // MacMainWindowScheduledTitle
+    "RabbitEars will record this while it is running and your Mac is awake. It can’t wake a sleeping Mac — for an unattended recording, keep the Mac on with the lid open (Settings ▸ Recording ▸ Recordings lists your queue).",  // MacMainWindowScheduledWakeCaveat
+    "Couldn't save the scheduled recording.",  // MacMainWindowScheduleSaveFailedBody
+    "Series rule added: “{0}” ({1} upcoming queued)",  // MacMainWindowSeriesRuleAdded
+    "Can't add rule",  // MacMainWindowCantAddRuleHeading
+    "Couldn't save the series rule.",  // MacMainWindowSeriesRuleSaveFailedBody
+    "Split view (2×2) — click a pane to make it active, then pick a channel.",  // MacMainWindowSplitViewStatus
+    "Picture-in-Picture — drag the inset to move it; click it to make it active.",  // MacMainWindowPipStatus
+    "Single view.",  // MacMainWindowSingleViewStatus
+    "Name this layout (view mode, each pane's channel, and the PiP inset).",  // MacMainWindowSaveLayoutPrompt
+    "Save",  // MacMainWindowSaveButton
+    "Please enter a name.",  // MacMainWindowEnterNamePrompt
+    "Layout limit reached",  // MacMainWindowLayoutLimitHeading
+    "You already have {0} saved layouts — delete one before saving another.",  // MacMainWindowLayoutLimitBody
+    "Couldn't apply layout",  // MacMainWindowLayoutApplyFailedHeading
+    "“{0}” is missing or unreadable.",  // MacMainWindowLayoutMissingBody
+    " ({0} channels no longer in your playlists)",  // MacMainWindowLayoutMissingChannelsSuffix
+    "Layouts",  // MacMainWindowLayoutsMenu
+    "Save Current Layout…",  // MacMainWindowSaveCurrentLayout
+    "No saved layouts",  // MacMainWindowNoSavedLayouts
+    "Delete layout “{0}”?",  // MacMainWindowDeleteLayoutConfirm
+    "This removes the saved layout. Your channels and playlists are untouched.",  // MacMainWindowDeleteLayoutBody
+    "Format",  // MacMainWindowFormatHeader
+    "MPEG-TS (.ts) — safest",  // MacMainWindowFormatTsSafest
+    "Recordings…",  // MacMainWindowRecordingsMenuItem
+    "Recording format: {0}",  // MacMainWindowRecordingFormatStatus
+    "Meter settings saved.",  // MacMainWindowMeterSettingsSaved
+    "None of your enabled playlists carry an XMLTV guide URL (the x-tvg-url in the #EXTM3U header).\n\nAdd a playlist that includes one, or set one per playlist in Manage Playlists ▸ 📅 Set Guide URL, then try again.",  // MacMainWindowNoGuideSourceBody
+    "{0}:  {1}\n",  // MacMainWindowEpgErrorLine
+    "Couldn't find a channel for “{0}” in your playlists.\n\nThe guide matches programmes to channels by tvg-id; this programme's ID has no match. Point the playlist at a guide whose IDs line up (Manage Playlists ▸ 📅 Set Guide URL).",  // MacMainWindowGuideNoMatchBody
+    "Not in the guide",  // MacMainWindowNotInGuideHeading
+    "“{0}” has no tvg-id, so it can't be matched to a guide row.\n\nThe TV Guide keys on tvg-id; channels without one never appear.",  // MacMainWindowNoTvgIdBody
+    "“{0}” isn't in the guide yet.\n\nNo stored programmes match it — run Refresh Guide, or its tvg-id doesn't line up with the guide's IDs.",  // MacMainWindowNotInGuideYetBody
+    "No favourites",  // MacMainWindowNoFavouritesHeading
+    "Mark some channels with ★ first, then export.",  // MacMainWindowExportNoFavesBody
+    "Favourites exported",  // MacMainWindowFavesExportedHeading
+    "Wrote {0} favourites to {2}.",  // MacMainWindowFavesExportedBody
+    "Export failed",  // MacMainWindowExportFailedHeading
+    "Couldn't write the file.",  // MacMainWindowCouldntWriteFile
+    "Nothing to import",  // MacMainWindowNothingToImportHeading
+    "That file has no channels.",  // MacMainWindowFileNoChannels
+    "Favourites imported",  // MacMainWindowFavesImportedHeading
+    "Marked {0} channels as favourite.{2}",  // MacMainWindowFavesImportedBody
+    "\n\n{0} entries in the file had no match in your playlists (import marks existing channels; it doesn't add new ones).",  // MacMainWindowFavesUnmatchedSuffix
+    "Channel number for “{0}”",  // MacMainWindowChannelNumberTitle
+    "Enter a number, or leave blank to clear it.",  // MacMainWindowChannelNumberPrompt
+    "Set",  // MacMainWindowSetButton
+    "Playing in {0}: {1}",  // MacMainWindowPlayingInPane
+    "PiP",  // MacMainWindowPipShort
+    "background pane",  // MacMainWindowBackgroundPane
+    "RabbitEars — {0}",  // MacMainWindowTitleWithChannel
+    "Active pane: {0}",  // MacMainWindowActivePaneChannel
+    "Recordings",  // MacRecordingsWindowTitle
+    "Scheduled",  // MacRecordingsTabScheduled
+    "Series Rules",  // MacRecordingsTabSeriesRules
+    "Format",  // MacRecordingsColFormat
+    "Matches title",  // MacRecordingsColMatchesTitle
+    "Cancel Selected",  // MacRecordingsCancelSelectedButton
+    "Enable/Disable Rule",  // MacRecordingsToggleRuleButton
+    "Delete Rule",  // MacRecordingsDeleteRuleButton
+    "RabbitEars records only while it is running and your Mac is awake. It can’t wake a sleeping Mac to record — keep the Mac on (lid open, plugged in) for scheduled recordings.",  // MacRecordingsWakeHint
+    "This airing was queued by a series rule",  // MacRecordingsAiringQueuedByRuleHeading
+    "It’s cancelled and won’t record. The entry stays in the list because removing it now would let its series rule re-queue the same airing; you can remove it once the airing’s scheduled time has passed.",  // MacRecordingsAiringQueuedByRuleBody
+    "Delete this series rule?",  // MacRecordingsDeleteRuleConfirmHeading
+    "Its still-pending queued recordings are removed too. Recordings that already ran are kept.",  // MacRecordingsDeleteRuleConfirmBody
+    "Background",  // MacMetersTipBackground
+    "Unlit",  // MacMetersTipUnlit
+    "Show, style, colour, and tune each meter — the preview updates live.",  // MacMetersDialogSubheading
+    "Style:",  // MacMetersStyleLabel
+    "Colours:",  // MacMetersColoursLabel
+    "Tuning:",  // MacMetersTuningLabel
+    "{0} (0–1, 0.5 = default)",  // MacMetersKnobTooltip
+    "Turn a playlist off to hide its channels from the grid and filters, or delete it entirely.",  // MacPlaylistsHeaderHint
+    "Done",  // MacPlaylistsDoneButton
+    "No playlists yet — close this window, then use “＋ Add Playlist”.",  // MacPlaylistsEmptyHint
+    "Show or hide this playlist’s channels",  // MacPlaylistsToggleTooltip
+    "{0} ch · {1}",  // MacPlaylistsChannelCountSource
+    "Re-download / re-read from source",  // MacPlaylistsRefreshTooltip
+    "Set the XMLTV guide (EPG) URL",  // MacPlaylistsGuideTooltip
+    "this playlist",  // MacPlaylistsThisPlaylistFallback
+    "Delete “{0}”?",  // MacPlaylistsDeleteConfirmTitle
+    "This permanently removes the playlist and its {0} channel(s) from RabbitEars, including any favourites and custom channel numbers you set on them. This cannot be undone.",  // MacPlaylistsDeleteConfirmBody
+    "This changes only the display name; the channels and source are untouched.",  // MacPlaylistsRenameBody
+    "XMLTV guide URL (.xml or .xml.gz). Leave blank to clear it. Then use “Refresh Guide” (the View menu or the ⚙ menu) to download it.",  // MacPlaylistsGuideUrlBody
+    "Save",  // MacPlaylistsSaveButton
+    "Refreshing…",  // MacPlaylistsRefreshingTooltip
+    "(no title)",  // MacTvGuideNoTitle
+    "No stored programmes match a channel in your playlists.\n\nRun Refresh Guide first — or the guide's channel IDs don't line up with your playlist. Point it at a guide whose tvg-ids match (Manage Playlists ▸ 📅 Set Guide URL).",  // MacTvGuideNoGuideBody
+    "Version {0}",  // MacTermsVersionLabel
+    "No guide loaded — run Refresh Guide first.",  // MacEpgGuideViewNoGuideLoaded
+    "RabbitEars can’t read its own audio output, so the spectrum can’t be drawn.\n\nAllow audio recording for RabbitEars in System Settings ▸ Privacy & Security, then relaunch the app.",  // MacMeterViewSpectrumUnavailableTooltip
+    "Spectrum needs audio permission",  // MacMeterViewSpectrumNeedsPermission
+    "Spectrum",  // MacMeterNameSpectrum
+    "Signal",  // MacMeterNameSignal
+    "Frames",  // MacMeterNameFrames
 }};
 
 // 日本語
@@ -818,6 +966,154 @@ constexpr std::array<const char*, N> kJa = {{
     "カテゴリ",  // CategoriesTitle
     "フィルターするカテゴリがありません",  // CategoriesNoneHeading
     "ライブラリのチャンネルにグループタイトルがないため、含めたり除外したりするカテゴリがありません。\\r\\n\\r\\nこのフィルターを使うには、#EXTINF 行に group-title タグを持つプレイリストを追加してください。\\r\\n",  // CategoriesNoneBody
+    // --- MacMenu ---
+    "RabbitEars を終了",  // MenuQuit
+    "ファイル",  // MenuFile
+    "プレイリストを追加…",  // MenuAddPlaylist
+    "プレイリストファイルを開く…",  // MenuOpenPlaylistFile
+    "プレイリストを管理…",  // MenuManagePlaylists
+    "編集",  // MenuEdit
+    "取り消す",  // MenuUndo
+    "やり直す",  // MenuRedo
+    "カット",  // MenuCut
+    "コピー",  // MenuCopy
+    "ペースト",  // MenuPaste
+    "すべてを選択",  // MenuSelectAll
+    "フルスクリーンにする",  // MenuEnterFullScreen
+    "チャンネルリストを隠す",  // MenuHideChannelList
+    "チャンネルリストを表示",  // MenuShowChannelList
+    "ツールバーを隠す",  // MenuHideToolbar
+    "ツールバーを表示",  // MenuShowToolbar
+    "ビデオのみ表示を終了",  // MenuExitVideoOnly
+    // --- DialogAbout ---
+    "macOS 向けのシンプルな IPTV ビューアです。\n\nlibVLC（LGPL-2.1）でメディアを再生します。\n© VideoLAN および VLC コントリビューター。\n\nRabbitEars は教育目的でのみ提供されており、これを使って行ういかなる違法行為も支持するものではありません。私たちは知りませんし、気にしません。",  // AboutMacCredits
+    // --- MacUI ---
+    "アクティブなペインを録画",  // MacMainWindowRecordActivePaneTooltip
+    "このペインの録画を停止",  // MacMainWindowStopRecordingPaneTooltip
+    "停止",  // MacMainWindowStopButton
+    "準備完了。",  // MacMainWindowStatusReady
+    "メーターを表示 / 非表示",  // MacMainWindowToggleMetersTooltip
+    "お気に入りを切り替え",  // MacMainWindowToggleFavourite
+    "チャンネル番号を設定…",  // MacMainWindowSetChannelNumber
+    "データベースを利用できません — ディスクのアクセス権を確認して再起動してください。",  // MacMainWindowDbUnavailableRestart
+    "データベースを利用できません — プレイリストを保存できません。",  // MacMainWindowDbUnavailableSavePlaylist
+    "データベースを利用できません。",  // MacMainWindowDbUnavailable
+    "準備完了 — M3U URLを読み込むか、ファイルを開いて始めてください。",  // MacMainWindowReadyLoadHint
+    "すべてのプレイリストが無効です — 設定 ▸ プレイリストを管理… で有効にしてください。",  // MacMainWindowAllPlaylistsDisabledManage
+    "すべてのプレイリストが無効です — チャンネルを表示するには有効にしてください。",  // MacMainWindowAllPlaylistsDisabledSee
+    "前回の再生: {0} — ダブルクリックまたはReturnキーで再開します。",  // MacMainWindowLastPlayedResume
+    "国: {0}",  // MacMainWindowCountryFilterItem
+    "{0} チャンネル{1}。",  // MacMainWindowChannelCountStatus
+    "（検索）",  // MacMainWindowSearchSuffix
+    "ダウンロードに失敗しました: {0}",  // MacMainWindowDownloadFailed
+    "読み込みに失敗しました: {0}",  // MacMainWindowReadFailed
+    "ソース: {0}\n\nプレイリストをデータベースに保存できませんでした。",  // MacMainWindowImportDbSaveBody
+    "チャンネルが見つかりません",  // MacMainWindowPlaylistNoChannelsHeading
+    "ソース: {0}\n\nプレイリストにチャンネルがありませんでした。",  // MacMainWindowImportNoChannelsBody
+    "ソース: {0}\n\n解析したチャンネル: {1}\nインポートしたチャンネル: {2}\n",  // MacMainWindowImportSummaryBody
+    "スキップ（空または重複するURL）: {0}\n",  // MacMainWindowImportSkippedLine
+    "グループ: {0}",  // MacMainWindowImportGroupsLine
+    "{0} 件のチャンネルをインポートしました",  // MacMainWindowImportedChannelsHeading
+    "録画を開始できませんでした（ストリームが同時接続数を制限している可能性があります）。",  // MacMainWindowRecordingStartFailed
+    "予約できません",  // MacMainWindowCantScheduleHeading
+    "「{0}」に一致するチャンネルがプレイリストにないため、録画するものがありません。",  // MacMainWindowScheduleNoMatchBody
+    "予約しました: {0} — {1}",  // MacMainWindowScheduledStatus
+    "録画",  // MacMainWindowScheduledFallbackTitle
+    "予約しました: {0}",  // MacMainWindowScheduledTitle
+    "RabbitEars は、起動中でMacがスリープしていない間、これを録画します。スリープ中のMacをスリープ解除することはできません — 無人録画には、フタを開けたままMacをオンにしておいてください（設定 ▸ 録画 ▸ 録画予約 にキューが一覧表示されます）。",  // MacMainWindowScheduledWakeCaveat
+    "録画予約を保存できませんでした。",  // MacMainWindowScheduleSaveFailedBody
+    "シリーズルールを追加しました: 「{0}」（今後{1}件を予約）",  // MacMainWindowSeriesRuleAdded
+    "ルールを追加できません",  // MacMainWindowCantAddRuleHeading
+    "シリーズルールを保存できませんでした。",  // MacMainWindowSeriesRuleSaveFailedBody
+    "分割表示 (2×2) — ペインをクリックしてアクティブにし、チャンネルを選んでください。",  // MacMainWindowSplitViewStatus
+    "ピクチャー・イン・ピクチャー — インセットをドラッグして移動し、クリックしてアクティブにします。",  // MacMainWindowPipStatus
+    "シングル表示。",  // MacMainWindowSingleViewStatus
+    "このレイアウトに名前を付けます（表示モード、各ペインのチャンネル、PiPインセット）。",  // MacMainWindowSaveLayoutPrompt
+    "保存",  // MacMainWindowSaveButton
+    "名前を入力してください。",  // MacMainWindowEnterNamePrompt
+    "レイアウトの上限に達しました",  // MacMainWindowLayoutLimitHeading
+    "保存済みのレイアウトがすでに{0}件あります — 別のものを保存する前に1つ削除してください。",  // MacMainWindowLayoutLimitBody
+    "レイアウトを適用できません",  // MacMainWindowLayoutApplyFailedHeading
+    "「{0}」が見つからないか、読み取れません。",  // MacMainWindowLayoutMissingBody
+    "（{0} チャンネルはプレイリストに存在しません）",  // MacMainWindowLayoutMissingChannelsSuffix
+    "レイアウト",  // MacMainWindowLayoutsMenu
+    "現在のレイアウトを保存…",  // MacMainWindowSaveCurrentLayout
+    "保存されたレイアウトがありません",  // MacMainWindowNoSavedLayouts
+    "レイアウト「{0}」を削除しますか？",  // MacMainWindowDeleteLayoutConfirm
+    "保存されたレイアウトを削除します。チャンネルとプレイリストはそのまま残ります。",  // MacMainWindowDeleteLayoutBody
+    "フォーマット",  // MacMainWindowFormatHeader
+    "MPEG-TS (.ts) — 最も安全",  // MacMainWindowFormatTsSafest
+    "録画予約…",  // MacMainWindowRecordingsMenuItem
+    "録画フォーマット: {0}",  // MacMainWindowRecordingFormatStatus
+    "メーター設定を保存しました。",  // MacMainWindowMeterSettingsSaved
+    "有効なプレイリストのいずれにもXMLTV番組表URL（#EXTM3Uヘッダー内のx-tvg-url）が含まれていません。\n\n番組表URLを含むプレイリストを追加するか、プレイリストを管理 ▸ 📅 番組表URLを設定 で個別に設定してから、もう一度お試しください。",  // MacMainWindowNoGuideSourceBody
+    "{0}:  {1}\n",  // MacMainWindowEpgErrorLine
+    "プレイリスト内に「{0}」に該当するチャンネルが見つかりませんでした。\n\n番組表はtvg-idで番組をチャンネルに対応付けます。この番組のIDには一致するものがありません。IDが一致する番組表をプレイリストに指定してください（プレイリストを管理 ▸ 📅 番組表URLを設定）。",  // MacMainWindowGuideNoMatchBody
+    "番組表にありません",  // MacMainWindowNotInGuideHeading
+    "「{0}」には tvg-id がないため、番組表の行と照合できません。\n\n番組表は tvg-id を基準にします。tvg-id のないチャンネルは表示されません。",  // MacMainWindowNoTvgIdBody
+    "「{0}」はまだ番組表にありません。\n\n一致する保存済みの番組がありません — 番組表を更新するか、tvg-id が番組表のIDと一致していない可能性があります。",  // MacMainWindowNotInGuideYetBody
+    "お気に入りがありません",  // MacMainWindowNoFavouritesHeading
+    "先にチャンネルに ★ を付けてから、エクスポートしてください。",  // MacMainWindowExportNoFavesBody
+    "お気に入りをエクスポートしました",  // MacMainWindowFavesExportedHeading
+    "{0} 件のお気に入りを {2} に書き込みました。",  // MacMainWindowFavesExportedBody
+    "エクスポートに失敗しました",  // MacMainWindowExportFailedHeading
+    "ファイルを書き込めませんでした。",  // MacMainWindowCouldntWriteFile
+    "インポートするものがありません",  // MacMainWindowNothingToImportHeading
+    "そのファイルにはチャンネルがありません。",  // MacMainWindowFileNoChannels
+    "お気に入りをインポートしました",  // MacMainWindowFavesImportedHeading
+    "{0} 件のチャンネルをお気に入りにしました。{2}",  // MacMainWindowFavesImportedBody
+    "\n\nファイル内の {0} 件のエントリはプレイリストと一致しませんでした（インポートは既存のチャンネルにマークを付けるだけで、新しいチャンネルは追加しません）。",  // MacMainWindowFavesUnmatchedSuffix
+    "「{0}」のチャンネル番号",  // MacMainWindowChannelNumberTitle
+    "番号を入力してください。空欄にするとクリアされます。",  // MacMainWindowChannelNumberPrompt
+    "設定",  // MacMainWindowSetButton
+    "{0}で再生中: {1}",  // MacMainWindowPlayingInPane
+    "PiP",  // MacMainWindowPipShort
+    "バックグラウンドのペイン",  // MacMainWindowBackgroundPane
+    "RabbitEars — {0}",  // MacMainWindowTitleWithChannel
+    "アクティブなペイン: {0}",  // MacMainWindowActivePaneChannel
+    "録画",  // MacRecordingsWindowTitle
+    "予約済み",  // MacRecordingsTabScheduled
+    "シリーズルール",  // MacRecordingsTabSeriesRules
+    "フォーマット",  // MacRecordingsColFormat
+    "タイトル一致",  // MacRecordingsColMatchesTitle
+    "選択項目をキャンセル",  // MacRecordingsCancelSelectedButton
+    "ルールを有効/無効",  // MacRecordingsToggleRuleButton
+    "ルールを削除",  // MacRecordingsDeleteRuleButton
+    "RabbitEars はアプリの起動中で Mac がスリープしていないときのみ録画します。録画のためにスリープ中の Mac を起動することはできません — 録画予約のあいだは Mac の電源を入れたまま（ふたを開け、電源に接続して）にしてください。",  // MacRecordingsWakeHint
+    "この放送はシリーズルールによって予約されました",  // MacRecordingsAiringQueuedByRuleHeading
+    "キャンセルされ、録画されません。今すぐ削除するとシリーズルールが同じ放送を再度予約してしまうため、この項目は一覧に残ります。放送の予定時刻を過ぎれば削除できます。",  // MacRecordingsAiringQueuedByRuleBody
+    "このシリーズルールを削除しますか？",  // MacRecordingsDeleteRuleConfirmHeading
+    "保留中の予約録画も削除されます。すでに実行された録画は保持されます。",  // MacRecordingsDeleteRuleConfirmBody
+    "背景",  // MacMetersTipBackground
+    "消灯",  // MacMetersTipUnlit
+    "各メーターの表示・スタイル・色・調整を設定します — プレビューはライブで更新されます。",  // MacMetersDialogSubheading
+    "スタイル:",  // MacMetersStyleLabel
+    "色:",  // MacMetersColoursLabel
+    "調整:",  // MacMetersTuningLabel
+    "{0}（0〜1、0.5 = 既定）",  // MacMetersKnobTooltip
+    "プレイリストをオフにすると、そのチャンネルがグリッドとフィルターから非表示になります。完全に削除することもできます。",  // MacPlaylistsHeaderHint
+    "完了",  // MacPlaylistsDoneButton
+    "プレイリストがまだありません — このウィンドウを閉じて「＋ プレイリストを追加」を使ってください。",  // MacPlaylistsEmptyHint
+    "このプレイリストのチャンネルを表示／非表示",  // MacPlaylistsToggleTooltip
+    "{0} ch · {1}",  // MacPlaylistsChannelCountSource
+    "ソースから再ダウンロード／再読み込み",  // MacPlaylistsRefreshTooltip
+    "XMLTV番組表（EPG）URLを設定",  // MacPlaylistsGuideTooltip
+    "このプレイリスト",  // MacPlaylistsThisPlaylistFallback
+    "「{0}」を削除しますか？",  // MacPlaylistsDeleteConfirmTitle
+    "プレイリストとその {0} 件のチャンネルが、設定したお気に入りやカスタムチャンネル番号も含めて RabbitEars から完全に削除されます。この操作は元に戻せません。",  // MacPlaylistsDeleteConfirmBody
+    "表示名のみが変更されます。チャンネルとソースはそのままです。",  // MacPlaylistsRenameBody
+    "XMLTV番組表URL（.xml または .xml.gz）。空欄にするとクリアされます。その後「番組表を更新」（表示メニューまたは ⚙ メニュー）でダウンロードしてください。",  // MacPlaylistsGuideUrlBody
+    "保存",  // MacPlaylistsSaveButton
+    "更新中…",  // MacPlaylistsRefreshingTooltip
+    "（無題）",  // MacTvGuideNoTitle
+    "保存された番組の中に、プレイリストのチャンネルと一致するものがありません。\n\nまず「番組表を更新」を実行してください。または、番組表のチャンネルIDがプレイリストと一致していません。tvg-idが一致する番組表を指定してください（プレイリストを管理 ▸ 📅 番組表URLを設定）。",  // MacTvGuideNoGuideBody
+    "バージョン {0}",  // MacTermsVersionLabel
+    "番組表が読み込まれていません — まず「番組表を更新」を実行してください。",  // MacEpgGuideViewNoGuideLoaded
+    "RabbitEars が自身の音声出力を読み取れないため、スペクトラムを描画できません。\n\nシステム設定 ▸ プライバシーとセキュリティ で RabbitEars のオーディオ録音を許可してから、アプリを再起動してください。",  // MacMeterViewSpectrumUnavailableTooltip
+    "スペクトラムには音声の許可が必要です",  // MacMeterViewSpectrumNeedsPermission
+    "スペクトラム",  // MacMeterNameSpectrum
+    "信号",  // MacMeterNameSignal
+    "フレーム",  // MacMeterNameFrames
 }};
 
 // 繁體中文
@@ -1222,6 +1518,154 @@ constexpr std::array<const char*, N> kZhHant = {{
     "分類",  // CategoriesTitle
     "沒有可篩選的分類",  // CategoriesNoneHeading
     "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\\r\\n\\r\\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\\r\\n",  // CategoriesNoneBody
+    // --- MacMenu ---
+    "結束 RabbitEars",  // MenuQuit
+    "檔案",  // MenuFile
+    "加入播放清單…",  // MenuAddPlaylist
+    "開啟播放清單檔案…",  // MenuOpenPlaylistFile
+    "管理播放清單…",  // MenuManagePlaylists
+    "編輯",  // MenuEdit
+    "還原",  // MenuUndo
+    "重做",  // MenuRedo
+    "剪下",  // MenuCut
+    "拷貝",  // MenuCopy
+    "貼上",  // MenuPaste
+    "全選",  // MenuSelectAll
+    "進入全螢幕",  // MenuEnterFullScreen
+    "隱藏頻道清單",  // MenuHideChannelList
+    "顯示頻道清單",  // MenuShowChannelList
+    "隱藏工具列",  // MenuHideToolbar
+    "顯示工具列",  // MenuShowToolbar
+    "結束純影像顯示",  // MenuExitVideoOnly
+    // --- DialogAbout ---
+    "適用於 macOS 的簡易 IPTV 觀看程式。\n\n使用 libVLC（LGPL-2.1）播放媒體\n© VideoLAN 及 VLC 貢獻者。\n\nRabbitEars 僅供教育用途，並不代表支持您使用它所進行的任何非法行為。我們不知道，我們也不在乎。",  // AboutMacCredits
+    // --- MacUI ---
+    "錄製使用中的窗格",  // MacMainWindowRecordActivePaneTooltip
+    "停止錄製此窗格",  // MacMainWindowStopRecordingPaneTooltip
+    "停止",  // MacMainWindowStopButton
+    "就緒。",  // MacMainWindowStatusReady
+    "顯示／隱藏儀表",  // MacMainWindowToggleMetersTooltip
+    "切換我的最愛",  // MacMainWindowToggleFavourite
+    "設定頻道號碼…",  // MacMainWindowSetChannelNumber
+    "資料庫無法使用 — 請檢查磁碟權限並重新啟動。",  // MacMainWindowDbUnavailableRestart
+    "資料庫無法使用 — 無法儲存播放清單。",  // MacMainWindowDbUnavailableSavePlaylist
+    "資料庫無法使用。",  // MacMainWindowDbUnavailable
+    "就緒 — 載入 M3U 網址或開啟檔案以開始。",  // MacMainWindowReadyLoadHint
+    "所有播放清單皆已停用 — 請在「設定 ▸ 管理播放清單…」中啟用其中一個。",  // MacMainWindowAllPlaylistsDisabledManage
+    "所有播放清單皆已停用 — 請啟用一個以查看頻道。",  // MacMainWindowAllPlaylistsDisabledSee
+    "上次播放：{0} — 按兩下或按 Return 鍵繼續。",  // MacMainWindowLastPlayedResume
+    "國家：{0}",  // MacMainWindowCountryFilterItem
+    "{0} 個頻道{1}。",  // MacMainWindowChannelCountStatus
+    "（搜尋）",  // MacMainWindowSearchSuffix
+    "下載失敗：{0}",  // MacMainWindowDownloadFailed
+    "讀取失敗：{0}",  // MacMainWindowReadFailed
+    "來源：{0}\n\n無法將播放清單儲存至資料庫。",  // MacMainWindowImportDbSaveBody
+    "找不到頻道",  // MacMainWindowPlaylistNoChannelsHeading
+    "來源：{0}\n\n播放清單中沒有任何頻道。",  // MacMainWindowImportNoChannelsBody
+    "來源：{0}\n\n解析的頻道：{1}\n匯入的頻道：{2}\n",  // MacMainWindowImportSummaryBody
+    "已略過（空白或重複的網址）：{0}\n",  // MacMainWindowImportSkippedLine
+    "群組：{0}",  // MacMainWindowImportGroupsLine
+    "已匯入 {0} 個頻道",  // MacMainWindowImportedChannelsHeading
+    "無法開始錄製（串流可能限制了同時連線數）。",  // MacMainWindowRecordingStartFailed
+    "無法排程",  // MacMainWindowCantScheduleHeading
+    "「{0}」在您的播放清單中沒有相符的頻道，因此沒有可錄製的內容。",  // MacMainWindowScheduleNoMatchBody
+    "已排程：{0} — {1}",  // MacMainWindowScheduledStatus
+    "錄影",  // MacMainWindowScheduledFallbackTitle
+    "已排程：{0}",  // MacMainWindowScheduledTitle
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄製，請讓 Mac 保持開啟並掀開螢幕（「設定 ▸ 錄製 ▸ 錄製項目」會列出您的佇列）。",  // MacMainWindowScheduledWakeCaveat
+    "無法儲存排程錄製。",  // MacMainWindowScheduleSaveFailedBody
+    "已加入影集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",  // MacMainWindowSeriesRuleAdded
+    "無法加入規則",  // MacMainWindowCantAddRuleHeading
+    "無法儲存影集規則。",  // MacMainWindowSeriesRuleSaveFailedBody
+    "分割檢視（2×2）— 按一下窗格使其成為使用中窗格，然後選擇頻道。",  // MacMainWindowSplitViewStatus
+    "子母畫面 — 拖曳嵌入畫面以移動它；按一下使其成為使用中窗格。",  // MacMainWindowPipStatus
+    "單一檢視。",  // MacMainWindowSingleViewStatus
+    "為此版面配置命名（檢視模式、各窗格的頻道，以及子母畫面嵌入畫面）。",  // MacMainWindowSaveLayoutPrompt
+    "儲存",  // MacMainWindowSaveButton
+    "請輸入名稱。",  // MacMainWindowEnterNamePrompt
+    "已達版面配置上限",  // MacMainWindowLayoutLimitHeading
+    "您已有 {0} 個已儲存的版面配置 — 請先刪除一個再儲存另一個。",  // MacMainWindowLayoutLimitBody
+    "無法套用版面配置",  // MacMainWindowLayoutApplyFailedHeading
+    "「{0}」遺失或無法讀取。",  // MacMainWindowLayoutMissingBody
+    "（{0} 個頻道已不在您的播放清單中）",  // MacMainWindowLayoutMissingChannelsSuffix
+    "版面配置",  // MacMainWindowLayoutsMenu
+    "儲存目前版面配置…",  // MacMainWindowSaveCurrentLayout
+    "沒有已儲存的版面配置",  // MacMainWindowNoSavedLayouts
+    "刪除版面配置「{0}」？",  // MacMainWindowDeleteLayoutConfirm
+    "這會移除已儲存的版面配置。您的頻道與播放清單不受影響。",  // MacMainWindowDeleteLayoutBody
+    "格式",  // MacMainWindowFormatHeader
+    "MPEG-TS (.ts) — 最安全",  // MacMainWindowFormatTsSafest
+    "錄製項目…",  // MacMainWindowRecordingsMenuItem
+    "錄製格式：{0}",  // MacMainWindowRecordingFormatStatus
+    "已儲存儀表設定。",  // MacMainWindowMeterSettingsSaved
+    "您已啟用的播放清單中，沒有任何一個帶有 XMLTV 節目表網址（#EXTM3U 標頭中的 x-tvg-url）。\n\n請加入一個包含該網址的播放清單，或在「管理播放清單 ▸ 📅 設定節目表網址」中為每個播放清單設定一個，然後再試一次。",  // MacMainWindowNoGuideSourceBody
+    "{0}：  {1}\n",  // MacMainWindowEpgErrorLine
+    "在您的播放清單中找不到「{0}」對應的頻道。\n\n節目表會依 tvg-id 將節目對應到頻道；此節目的 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（管理播放清單 ▸ 📅 設定節目表網址）。",  // MacMainWindowGuideNoMatchBody
+    "不在節目表中",  // MacMainWindowNotInGuideHeading
+    "「{0}」沒有 tvg-id，因此無法與節目表列對應。\n\n電視節目表以 tvg-id 為索引；沒有 tvg-id 的頻道永遠不會顯示。",  // MacMainWindowNoTvgIdBody
+    "「{0}」尚未出現在節目表中。\n\n沒有已儲存的節目與其相符 — 請執行「更新節目表」，或是其 tvg-id 與節目表的 ID 不一致。",  // MacMainWindowNotInGuideYetBody
+    "沒有我的最愛",  // MacMainWindowNoFavouritesHeading
+    "請先為部分頻道標上 ★，然後再匯出。",  // MacMainWindowExportNoFavesBody
+    "已匯出我的最愛",  // MacMainWindowFavesExportedHeading
+    "已將 {0} 個我的最愛寫入 {2}。",  // MacMainWindowFavesExportedBody
+    "匯出失敗",  // MacMainWindowExportFailedHeading
+    "無法寫入檔案。",  // MacMainWindowCouldntWriteFile
+    "沒有可匯入的內容",  // MacMainWindowNothingToImportHeading
+    "該檔案中沒有任何頻道。",  // MacMainWindowFileNoChannels
+    "已匯入我的最愛",  // MacMainWindowFavesImportedHeading
+    "已將 {0} 個頻道標記為我的最愛。{2}",  // MacMainWindowFavesImportedBody
+    "\n\n檔案中有 {0} 個項目在您的播放清單中沒有相符項目（匯入只會標記現有頻道，不會新增頻道）。",  // MacMainWindowFavesUnmatchedSuffix
+    "「{0}」的頻道號碼",  // MacMainWindowChannelNumberTitle
+    "請輸入號碼，或留空以清除。",  // MacMainWindowChannelNumberPrompt
+    "設定",  // MacMainWindowSetButton
+    "正在 {0} 中播放：{1}",  // MacMainWindowPlayingInPane
+    "子母畫面",  // MacMainWindowPipShort
+    "背景窗格",  // MacMainWindowBackgroundPane
+    "RabbitEars — {0}",  // MacMainWindowTitleWithChannel
+    "使用中窗格：{0}",  // MacMainWindowActivePaneChannel
+    "錄製項目",  // MacRecordingsWindowTitle
+    "已排程",  // MacRecordingsTabScheduled
+    "影集規則",  // MacRecordingsTabSeriesRules
+    "格式",  // MacRecordingsColFormat
+    "符合標題",  // MacRecordingsColMatchesTitle
+    "取消所選項目",  // MacRecordingsCancelSelectedButton
+    "啟用／停用規則",  // MacRecordingsToggleRuleButton
+    "刪除規則",  // MacRecordingsDeleteRuleButton
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製。它無法喚醒睡眠中的 Mac 來錄製 — 排程錄製期間請讓 Mac 保持開啟（掀開螢幕、接上電源）。",  // MacRecordingsWakeHint
+    "此播出項目是由影集規則排入佇列的",  // MacRecordingsAiringQueuedByRuleHeading
+    "它已取消且不會錄製。此項目仍會留在清單中，因為現在移除它會讓其影集規則再次將同一播出項目排入佇列；等播出項目的排定時間過後，您即可移除它。",  // MacRecordingsAiringQueuedByRuleBody
+    "刪除此影集規則？",  // MacRecordingsDeleteRuleConfirmHeading
+    "其仍待處理的佇列錄製也會一併移除。已執行完成的錄製則會保留。",  // MacRecordingsDeleteRuleConfirmBody
+    "背景",  // MacMetersTipBackground
+    "未點亮",  // MacMetersTipUnlit
+    "設定每個儀表的顯示、樣式、色彩與調校 — 預覽會即時更新。",  // MacMetersDialogSubheading
+    "樣式：",  // MacMetersStyleLabel
+    "色彩：",  // MacMetersColoursLabel
+    "調校：",  // MacMetersTuningLabel
+    "{0}（0–1，0.5 = 預設）",  // MacMetersKnobTooltip
+    "關閉播放清單可將其頻道從格狀檢視與篩選器中隱藏，或將其完全刪除。",  // MacPlaylistsHeaderHint
+    "完成",  // MacPlaylistsDoneButton
+    "尚無播放清單 — 請關閉此視窗，然後使用「＋ 加入播放清單」。",  // MacPlaylistsEmptyHint
+    "顯示或隱藏此播放清單的頻道",  // MacPlaylistsToggleTooltip
+    "{0} 個頻道 · {1}",  // MacPlaylistsChannelCountSource
+    "從來源重新下載／重新讀取",  // MacPlaylistsRefreshTooltip
+    "設定 XMLTV 節目表（EPG）網址",  // MacPlaylistsGuideTooltip
+    "此播放清單",  // MacPlaylistsThisPlaylistFallback
+    "刪除「{0}」？",  // MacPlaylistsDeleteConfirmTitle
+    "這會將此播放清單及其 {0} 個頻道從 RabbitEars 中永久移除，包括您為其設定的任何我的最愛與自訂頻道號碼。此操作無法復原。",  // MacPlaylistsDeleteConfirmBody
+    "這只會變更顯示名稱；頻道與來源不受影響。",  // MacPlaylistsRenameBody
+    "XMLTV 節目表網址（.xml 或 .xml.gz）。留空以清除。接著使用「更新節目表」（「檢視」選單或 ⚙ 選單）以下載它。",  // MacPlaylistsGuideUrlBody
+    "儲存",  // MacPlaylistsSaveButton
+    "更新中…",  // MacPlaylistsRefreshingTooltip
+    "（無標題）",  // MacTvGuideNoTitle
+    "沒有已儲存的節目與您播放清單中的頻道相符。\n\n請先執行「更新節目表」— 或是節目表的頻道 ID 與您的播放清單不一致。請將其指向 tvg-id 相符的節目表（管理播放清單 ▸ 📅 設定節目表網址）。",  // MacTvGuideNoGuideBody
+    "版本 {0}",  // MacTermsVersionLabel
+    "尚未載入節目表 — 請先執行「更新節目表」。",  // MacEpgGuideViewNoGuideLoaded
+    "RabbitEars 無法讀取自身的音訊輸出，因此無法繪製頻譜。\n\n請在「系統設定 ▸ 隱私權與安全性」中允許 RabbitEars 進行音訊錄製，然後重新啟動應用程式。",  // MacMeterViewSpectrumUnavailableTooltip
+    "頻譜需要音訊權限",  // MacMeterViewSpectrumNeedsPermission
+    "頻譜",  // MacMeterNameSpectrum
+    "信號",  // MacMeterNameSignal
+    "幀",  // MacMeterNameFrames
 }};
 
 // 繁體中文（香港）
@@ -1626,6 +2070,154 @@ constexpr std::array<const char*, N> kZhHK = {{
     "分類",  // CategoriesTitle
     "沒有可篩選的分類",  // CategoriesNoneHeading
     "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\\r\\n\\r\\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\\r\\n",  // CategoriesNoneBody
+    // --- MacMenu ---
+    "結束 RabbitEars",  // MenuQuit
+    "檔案",  // MenuFile
+    "加入播放清單…",  // MenuAddPlaylist
+    "開啟播放清單檔案…",  // MenuOpenPlaylistFile
+    "管理播放清單…",  // MenuManagePlaylists
+    "編輯",  // MenuEdit
+    "還原",  // MenuUndo
+    "重做",  // MenuRedo
+    "剪下",  // MenuCut
+    "拷貝",  // MenuCopy
+    "貼上",  // MenuPaste
+    "全選",  // MenuSelectAll
+    "進入全螢幕",  // MenuEnterFullScreen
+    "隱藏頻道清單",  // MenuHideChannelList
+    "顯示頻道清單",  // MenuShowChannelList
+    "隱藏工具列",  // MenuHideToolbar
+    "顯示工具列",  // MenuShowToolbar
+    "結束純影像顯示",  // MenuExitVideoOnly
+    // --- DialogAbout ---
+    "適用於 macOS 的簡易 IPTV 觀看程式。\n\n使用 libVLC（LGPL-2.1）播放媒體\n© VideoLAN 及 VLC 貢獻者。\n\nRabbitEars 僅供教育用途，並不代表支持您使用它所進行的任何非法行為。我們不知道，我們也不在乎。",  // AboutMacCredits
+    // --- MacUI ---
+    "錄製使用中的窗格",  // MacMainWindowRecordActivePaneTooltip
+    "停止錄製此窗格",  // MacMainWindowStopRecordingPaneTooltip
+    "停止",  // MacMainWindowStopButton
+    "就緒。",  // MacMainWindowStatusReady
+    "顯示／隱藏儀表",  // MacMainWindowToggleMetersTooltip
+    "切換我的最愛",  // MacMainWindowToggleFavourite
+    "設定頻道號碼…",  // MacMainWindowSetChannelNumber
+    "資料庫無法使用 — 請檢查磁碟權限並重新啟動。",  // MacMainWindowDbUnavailableRestart
+    "資料庫無法使用 — 無法儲存播放清單。",  // MacMainWindowDbUnavailableSavePlaylist
+    "資料庫無法使用。",  // MacMainWindowDbUnavailable
+    "就緒 — 載入 M3U 網址或開啟檔案以開始。",  // MacMainWindowReadyLoadHint
+    "所有播放清單皆已停用 — 請在「設定 ▸ 管理播放清單…」中啟用其中一個。",  // MacMainWindowAllPlaylistsDisabledManage
+    "所有播放清單皆已停用 — 請啟用一個以查看頻道。",  // MacMainWindowAllPlaylistsDisabledSee
+    "上次播放：{0} — 按兩下或按 Return 鍵繼續。",  // MacMainWindowLastPlayedResume
+    "國家：{0}",  // MacMainWindowCountryFilterItem
+    "{0} 個頻道{1}。",  // MacMainWindowChannelCountStatus
+    "（搜尋）",  // MacMainWindowSearchSuffix
+    "下載失敗：{0}",  // MacMainWindowDownloadFailed
+    "讀取失敗：{0}",  // MacMainWindowReadFailed
+    "來源：{0}\n\n無法將播放清單儲存至資料庫。",  // MacMainWindowImportDbSaveBody
+    "找不到頻道",  // MacMainWindowPlaylistNoChannelsHeading
+    "來源：{0}\n\n播放清單中沒有任何頻道。",  // MacMainWindowImportNoChannelsBody
+    "來源：{0}\n\n解析的頻道：{1}\n匯入的頻道：{2}\n",  // MacMainWindowImportSummaryBody
+    "已略過（空白或重複的網址）：{0}\n",  // MacMainWindowImportSkippedLine
+    "群組：{0}",  // MacMainWindowImportGroupsLine
+    "已匯入 {0} 個頻道",  // MacMainWindowImportedChannelsHeading
+    "無法開始錄製（串流可能限制了同時連線數）。",  // MacMainWindowRecordingStartFailed
+    "無法排程",  // MacMainWindowCantScheduleHeading
+    "「{0}」在您的播放清單中沒有相符的頻道，因此沒有可錄製的內容。",  // MacMainWindowScheduleNoMatchBody
+    "已排程：{0} — {1}",  // MacMainWindowScheduledStatus
+    "錄影",  // MacMainWindowScheduledFallbackTitle
+    "已排程：{0}",  // MacMainWindowScheduledTitle
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄製，請讓 Mac 保持開啟並掀開螢幕（「設定 ▸ 錄製 ▸ 錄製項目」會列出您的佇列）。",  // MacMainWindowScheduledWakeCaveat
+    "無法儲存排程錄製。",  // MacMainWindowScheduleSaveFailedBody
+    "已加入影集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",  // MacMainWindowSeriesRuleAdded
+    "無法加入規則",  // MacMainWindowCantAddRuleHeading
+    "無法儲存影集規則。",  // MacMainWindowSeriesRuleSaveFailedBody
+    "分割檢視（2×2）— 按一下窗格使其成為使用中窗格，然後選擇頻道。",  // MacMainWindowSplitViewStatus
+    "子母畫面 — 拖曳嵌入畫面以移動它；按一下使其成為使用中窗格。",  // MacMainWindowPipStatus
+    "單一檢視。",  // MacMainWindowSingleViewStatus
+    "為此版面配置命名（檢視模式、各窗格的頻道，以及子母畫面嵌入畫面）。",  // MacMainWindowSaveLayoutPrompt
+    "儲存",  // MacMainWindowSaveButton
+    "請輸入名稱。",  // MacMainWindowEnterNamePrompt
+    "已達版面配置上限",  // MacMainWindowLayoutLimitHeading
+    "您已有 {0} 個已儲存的版面配置 — 請先刪除一個再儲存另一個。",  // MacMainWindowLayoutLimitBody
+    "無法套用版面配置",  // MacMainWindowLayoutApplyFailedHeading
+    "「{0}」遺失或無法讀取。",  // MacMainWindowLayoutMissingBody
+    "（{0} 個頻道已不在您的播放清單中）",  // MacMainWindowLayoutMissingChannelsSuffix
+    "版面配置",  // MacMainWindowLayoutsMenu
+    "儲存目前版面配置…",  // MacMainWindowSaveCurrentLayout
+    "沒有已儲存的版面配置",  // MacMainWindowNoSavedLayouts
+    "刪除版面配置「{0}」？",  // MacMainWindowDeleteLayoutConfirm
+    "這會移除已儲存的版面配置。您的頻道與播放清單不受影響。",  // MacMainWindowDeleteLayoutBody
+    "格式",  // MacMainWindowFormatHeader
+    "MPEG-TS (.ts) — 最安全",  // MacMainWindowFormatTsSafest
+    "錄製項目…",  // MacMainWindowRecordingsMenuItem
+    "錄製格式：{0}",  // MacMainWindowRecordingFormatStatus
+    "已儲存儀表設定。",  // MacMainWindowMeterSettingsSaved
+    "您已啟用的播放清單中，沒有任何一個帶有 XMLTV 節目表網址（#EXTM3U 標頭中的 x-tvg-url）。\n\n請加入一個包含該網址的播放清單，或在「管理播放清單 ▸ 📅 設定節目表網址」中為每個播放清單設定一個，然後再試一次。",  // MacMainWindowNoGuideSourceBody
+    "{0}：  {1}\n",  // MacMainWindowEpgErrorLine
+    "在您的播放清單中找不到「{0}」對應的頻道。\n\n節目表會依 tvg-id 將節目對應到頻道；此節目的 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（管理播放清單 ▸ 📅 設定節目表網址）。",  // MacMainWindowGuideNoMatchBody
+    "不在節目表中",  // MacMainWindowNotInGuideHeading
+    "「{0}」沒有 tvg-id，因此無法與節目表列對應。\n\n電視節目表以 tvg-id 為索引；沒有 tvg-id 的頻道永遠不會顯示。",  // MacMainWindowNoTvgIdBody
+    "「{0}」尚未出現在節目表中。\n\n沒有已儲存的節目與其相符 — 請執行「更新節目表」，或是其 tvg-id 與節目表的 ID 不一致。",  // MacMainWindowNotInGuideYetBody
+    "沒有我的最愛",  // MacMainWindowNoFavouritesHeading
+    "請先為部分頻道標上 ★，然後再匯出。",  // MacMainWindowExportNoFavesBody
+    "已匯出我的最愛",  // MacMainWindowFavesExportedHeading
+    "已將 {0} 個我的最愛寫入 {2}。",  // MacMainWindowFavesExportedBody
+    "匯出失敗",  // MacMainWindowExportFailedHeading
+    "無法寫入檔案。",  // MacMainWindowCouldntWriteFile
+    "沒有可匯入的內容",  // MacMainWindowNothingToImportHeading
+    "該檔案中沒有任何頻道。",  // MacMainWindowFileNoChannels
+    "已匯入我的最愛",  // MacMainWindowFavesImportedHeading
+    "已將 {0} 個頻道標記為我的最愛。{2}",  // MacMainWindowFavesImportedBody
+    "\n\n檔案中有 {0} 個項目在您的播放清單中沒有相符項目（匯入只會標記現有頻道，不會新增頻道）。",  // MacMainWindowFavesUnmatchedSuffix
+    "「{0}」的頻道號碼",  // MacMainWindowChannelNumberTitle
+    "請輸入號碼，或留空以清除。",  // MacMainWindowChannelNumberPrompt
+    "設定",  // MacMainWindowSetButton
+    "正在 {0} 中播放：{1}",  // MacMainWindowPlayingInPane
+    "子母畫面",  // MacMainWindowPipShort
+    "背景窗格",  // MacMainWindowBackgroundPane
+    "RabbitEars — {0}",  // MacMainWindowTitleWithChannel
+    "使用中窗格：{0}",  // MacMainWindowActivePaneChannel
+    "錄製項目",  // MacRecordingsWindowTitle
+    "已排程",  // MacRecordingsTabScheduled
+    "影集規則",  // MacRecordingsTabSeriesRules
+    "格式",  // MacRecordingsColFormat
+    "符合標題",  // MacRecordingsColMatchesTitle
+    "取消所選項目",  // MacRecordingsCancelSelectedButton
+    "啟用／停用規則",  // MacRecordingsToggleRuleButton
+    "刪除規則",  // MacRecordingsDeleteRuleButton
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製。它無法喚醒睡眠中的 Mac 來錄製 — 排程錄製期間請讓 Mac 保持開啟（掀開螢幕、接上電源）。",  // MacRecordingsWakeHint
+    "此播出項目是由影集規則排入佇列的",  // MacRecordingsAiringQueuedByRuleHeading
+    "它已取消且不會錄製。此項目仍會留在清單中，因為現在移除它會讓其影集規則再次將同一播出項目排入佇列；等播出項目的排定時間過後，您即可移除它。",  // MacRecordingsAiringQueuedByRuleBody
+    "刪除此影集規則？",  // MacRecordingsDeleteRuleConfirmHeading
+    "其仍待處理的佇列錄製也會一併移除。已執行完成的錄製則會保留。",  // MacRecordingsDeleteRuleConfirmBody
+    "背景",  // MacMetersTipBackground
+    "未點亮",  // MacMetersTipUnlit
+    "設定每個儀表的顯示、樣式、色彩與調校 — 預覽會即時更新。",  // MacMetersDialogSubheading
+    "樣式：",  // MacMetersStyleLabel
+    "色彩：",  // MacMetersColoursLabel
+    "調校：",  // MacMetersTuningLabel
+    "{0}（0–1，0.5 = 預設）",  // MacMetersKnobTooltip
+    "關閉播放清單可將其頻道從格狀檢視與篩選器中隱藏，或將其完全刪除。",  // MacPlaylistsHeaderHint
+    "完成",  // MacPlaylistsDoneButton
+    "尚無播放清單 — 請關閉此視窗，然後使用「＋ 加入播放清單」。",  // MacPlaylistsEmptyHint
+    "顯示或隱藏此播放清單的頻道",  // MacPlaylistsToggleTooltip
+    "{0} 個頻道 · {1}",  // MacPlaylistsChannelCountSource
+    "從來源重新下載／重新讀取",  // MacPlaylistsRefreshTooltip
+    "設定 XMLTV 節目表（EPG）網址",  // MacPlaylistsGuideTooltip
+    "此播放清單",  // MacPlaylistsThisPlaylistFallback
+    "刪除「{0}」？",  // MacPlaylistsDeleteConfirmTitle
+    "這會將此播放清單及其 {0} 個頻道從 RabbitEars 中永久移除，包括您為其設定的任何我的最愛與自訂頻道號碼。此操作無法復原。",  // MacPlaylistsDeleteConfirmBody
+    "這只會變更顯示名稱；頻道與來源不受影響。",  // MacPlaylistsRenameBody
+    "XMLTV 節目表網址（.xml 或 .xml.gz）。留空以清除。接著使用「更新節目表」（「檢視」選單或 ⚙ 選單）以下載它。",  // MacPlaylistsGuideUrlBody
+    "儲存",  // MacPlaylistsSaveButton
+    "更新中…",  // MacPlaylistsRefreshingTooltip
+    "（無標題）",  // MacTvGuideNoTitle
+    "沒有已儲存的節目與您播放清單中的頻道相符。\n\n請先執行「更新節目表」— 或是節目表的頻道 ID 與您的播放清單不一致。請將其指向 tvg-id 相符的節目表（管理播放清單 ▸ 📅 設定節目表網址）。",  // MacTvGuideNoGuideBody
+    "版本 {0}",  // MacTermsVersionLabel
+    "尚未載入節目表 — 請先執行「更新節目表」。",  // MacEpgGuideViewNoGuideLoaded
+    "RabbitEars 無法讀取自身的音訊輸出，因此無法繪製頻譜。\n\n請在「系統設定 ▸ 隱私權與安全性」中允許 RabbitEars 進行音訊錄製，然後重新啟動應用程式。",  // MacMeterViewSpectrumUnavailableTooltip
+    "頻譜需要音訊權限",  // MacMeterViewSpectrumNeedsPermission
+    "頻譜",  // MacMeterNameSpectrum
+    "信號",  // MacMeterNameSignal
+    "幀",  // MacMeterNameFrames
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).
