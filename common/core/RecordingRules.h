@@ -44,10 +44,16 @@ std::wstring normaliseTvgId(const std::wstring& tvgId);
 // has not already ended (stopUtc > nowUtc), and it starts at or before `horizonUtc`.
 // The row's window is padded by the rule's leadSec/trailSec.
 //
-// Dedup is by (normalised channel id, padded start) against `existing` — which must contain
+// Slot dedup is by (normalised channel id, padded start) against `existing` — which must contain
 // ALL schedules regardless of status. That is deliberate: a slot the user Cancelled, or one
 // already Done/Missed, must never be silently recreated on the next expansion pass. It also
 // collapses two rules that match the same airing down to one recording.
+//
+// EPISODE dedup then drops a REPEAT airing of a show already scheduled: a candidate is skipped
+// when some `existing` row (any status) shares its folded title AND its episode key (from
+// Programme::episodeNum, else subTitle). A programme with neither carries no episode identity and
+// falls back to slot dedup only. Scoping by title keeps a Contains rule spanning two series from
+// cross-deduping on a shared "S01E05". Each returned row's episodeKey is set for this to persist.
 std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& rules,
                                             const std::vector<Programme>& programmes,
                                             const std::vector<ScheduledRecording>& existing,

@@ -660,6 +660,58 @@ int selftest() {
                        blocks(ScheduleStatus::Pending) && blocks(ScheduleStatus::Recording),
                    "an existing row of ANY status blocks re-creating that airing");
         }
+        {  // --- Episode dedup: skip a REPEAT airing of an already-scheduled episode ---
+            auto ep = [](const wchar_t* chan, const wchar_t* title, long long a, long long b,
+                         const wchar_t* epnum, const wchar_t* sub) {
+                Programme p;
+                p.channelId = chan;
+                p.title = title;
+                p.startUtc = a;
+                p.stopUtc = b;
+                p.episodeNum = epnum;
+                p.subTitle = sub;
+                return p;
+            };
+            {  // same show + same episode-num on two airings -> record ONCE
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Doctor Who", 2000, 3000, L"1.1.0/1", L""),
+                                             ep(L"CNN.us", L"Doctor Who", 90000, 91000, L"1.1.0/1", L"")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Doctor Who", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 1, "repeat of the same episode-num is skipped (got " + std::to_string(v.size()) + ")");
+                expect(v.size() == 1 && !v[0].episodeKey.empty(), "scheduled row carries an episode key");
+            }
+            {  // distinct episode-nums -> both recorded
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Doctor Who", 2000, 3000, L"1.1.0/1", L""),
+                                             ep(L"CNN.us", L"Doctor Who", 90000, 91000, L"1.2.0/1", L"")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Doctor Who", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 2, "distinct episodes are both scheduled");
+            }
+            {  // no episode-num -> sub-title is the identity
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Nova", 2000, 3000, L"", L"The Deep"),
+                                             ep(L"CNN.us", L"Nova", 90000, 91000, L"", L"The Deep")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Nova", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 1, "sub-title dedups a repeat when episode-num is absent");
+            }
+            {  // neither field -> no episode identity -> slot dedup only (both distinct airings kept)
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Live", 2000, 3000, L"", L""),
+                                             ep(L"CNN.us", L"Live", 90000, 91000, L"", L"")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Live", RuleMatch::Exact)}, ps, {}, 1000, 100000);
+                expect(v.size() == 2, "no episode identity -> distinct airings both scheduled");
+            }
+            {  // persisted across runs: feed a produced row back as `existing` -> a later airing skips
+                std::vector<Programme> first = {ep(L"CNN.us", L"Doctor Who", 2000, 3000, L"1.1.0/1", L"")};
+                auto made = expandRules({rule(5, L"cnn.us", L"Doctor Who", RuleMatch::Exact)}, first, {}, 1000, 100000);
+                std::vector<Programme> later = {ep(L"CNN.us", L"Doctor Who", 90000, 91000, L"1.1.0/1", L"")};
+                auto v = expandRules({rule(5, L"cnn.us", L"Doctor Who", RuleMatch::Exact)}, later, made, 1000, 100000);
+                expect(made.size() == 1 && v.empty(),
+                       "a later airing of an already-scheduled episode is not re-created");
+            }
+            {  // title-scoped: a Contains rule over two series does NOT cross-dedup on a shared num
+                std::vector<Programme> ps = {ep(L"CNN.us", L"Star Trek: TNG", 2000, 3000, L"1.1.0/1", L""),
+                                             ep(L"CNN.us", L"Star Trek: Voyager", 90000, 91000, L"1.1.0/1", L"")};
+                auto v = expandRules({rule(7, L"cnn.us", L"Star Trek", RuleMatch::Contains)}, ps, {}, 1000, 100000);
+                expect(v.size() == 2, "same episode-num on two different shows is not cross-deduped");
+            }
+        }
         {  // degenerate inputs
             expect(expandRules({}, progs, {}, 1000, 100000).empty(), "no rules -> nothing");
             expect(expandRules({rule(1, L"cnn.us", L"News", RuleMatch::Exact)}, {}, {}, 1000, 100000).empty(),
@@ -888,6 +940,17 @@ int selftest() {
         expect(mdb.addRule(mr) > 0, "recording_rules table added by migration (v5)");
         expect(mdb.listSchedules().size() == 1 && mdb.listSchedules()[0].ruleId == 0,
                "rule_id column added by migration; pre-v5 rows read back as 0");
+        ScheduledRecording ek;
+        ek.channelName = L"Ch";
+        ek.streamUrl = L"http://c";
+        ek.startUtc = 5;
+        ek.stopUtc = 6;
+        ek.episodeKey = L"n:1.1.0/1";
+        expect(mdb.addSchedule(ek) > 0, "scheduled_recordings.episode_key added by migration (v6)");
+        bool ekRoundTrip = false;
+        for (const auto& s : mdb.listSchedules())
+            if (s.episodeKey == L"n:1.1.0/1") ekRoundTrip = true;
+        expect(ekRoundTrip, "episode_key round-trips through the schedule DAO");
     }
 
     out("== i18n string catalog (all shipped languages) ==\n");

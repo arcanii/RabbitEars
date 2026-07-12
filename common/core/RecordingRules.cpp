@@ -18,6 +18,24 @@ std::wstring foldTitle(const std::wstring& s) {
     return out;
 }
 
+// A stable identity for "the same episode" across airings, for episode-level dedup. Prefer the
+// XMLTV <episode-num> (a feed keeps it consistent across repeats); fall back to <sub-title> (the
+// episode name). Folded — whitespace dropped, lowercased — so trivial format wobble (e.g. the
+// spaces in xmltv_ns "0 . 4 . 0/1") doesn't defeat it; the "n:"/"s:" tag stops a number colliding
+// with an identical-looking sub-title. Empty when the programme carries neither field.
+std::wstring episodeKey(const Programme& p) {
+    auto fold = [](const std::wstring& s) {
+        std::wstring o;
+        o.reserve(s.size());
+        for (wchar_t c : s)
+            if (!std::iswspace(c)) o.push_back(static_cast<wchar_t>(std::towlower(c)));
+        return o;
+    };
+    if (!p.episodeNum.empty()) return L"n:" + fold(p.episodeNum);
+    if (!p.subTitle.empty()) return L"s:" + fold(p.subTitle);
+    return std::wstring();
+}
+
 }  // namespace
 
 std::wstring normaliseTvgId(const std::wstring& tvgId) {
@@ -41,6 +59,13 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
     std::set<std::pair<std::wstring, long long>> taken;
     for (const ScheduledRecording& s : existing)
         taken.emplace(normaliseTvgId(s.channelId), s.startUtc);
+
+    // Episode dedup seed: a show already queued/recorded (any status) claims its episode, so a
+    // later airing of the SAME episode is skipped. Keyed by folded title + episode key; rows with
+    // no episode key (manual / pre-v6 / no-episode-num) don't participate — they slot-dedup only.
+    std::set<std::pair<std::wstring, std::wstring>> takenEpisodes;
+    for (const ScheduledRecording& s : existing)
+        if (!s.episodeKey.empty()) takenEpisodes.emplace(foldTitle(s.title), s.episodeKey);
 
     // Fold each programme's channel id + title ONCE. A guide can hold tens of thousands of
     // rows; re-folding them per rule turned this into O(rules x programmes) allocations.
@@ -74,6 +99,16 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
             if (!hit) continue;
 
             const Programme& p = *c.p;
+            const long long start = std::max<long long>(0, p.startUtc - r.leadSec);
+
+            // Slot dedup: an existing row (any status) or an already-created row owns this airing.
+            if (!taken.emplace(c.chan, start).second) continue;
+            // Episode dedup: skip a repeat airing of an episode this series already has. Committed
+            // only AFTER the slot check passes, so a slot-deduped candidate can't wrongly claim
+            // the episode. Empty key (no episode-num/sub-title) never dedups here.
+            const std::wstring ek = episodeKey(p);
+            if (!ek.empty() && !takenEpisodes.emplace(c.title, ek).second) continue;
+
             ScheduledRecording s;
             s.ruleId = r.id;
             s.channelId = p.channelId;
@@ -81,12 +116,11 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
             // its EPG rows linger, and the schedule must still say what it is recording.
             s.channelName = r.channelName.empty() ? p.channelId : r.channelName;
             s.title = p.title;
-            s.startUtc = std::max<long long>(0, p.startUtc - r.leadSec);
+            s.startUtc = start;
             s.stopUtc = p.stopUtc + r.trailSec;
             s.mux = r.mux;
             s.status = ScheduleStatus::Pending;
-
-            if (!taken.emplace(c.chan, s.startUtc).second) continue;
+            s.episodeKey = ek;
             out.push_back(std::move(s));
         }
     }

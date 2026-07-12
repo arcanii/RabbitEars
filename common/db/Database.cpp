@@ -122,7 +122,7 @@ Programme readProgramme(Stmt& q) {
 // SELECT column order shared by every scheduled-recording query below.
 constexpr const char* kScheduleCols =
     "id,channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
-    "status,file_path,created_at,rule_id";
+    "status,file_path,created_at,rule_id,episode_key";
 
 ScheduledRecording readSchedule(Stmt& q) {
     ScheduledRecording s;
@@ -140,6 +140,7 @@ ScheduledRecording readSchedule(Stmt& q) {
     s.filePath = q.textCol(11);
     s.createdAt = q.intCol(12);
     s.ruleId = q.intCol(13);  // NULL (pre-v5 / one-off rows) reads back as 0
+    s.episodeKey = q.textCol(14);  // '' for manual / pre-v6 rows (no episode dedup)
     return s;
 }
 
@@ -285,6 +286,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v3: EPG — playlists.epg_url + the epg_programmes table (XMLTV now/next + guide).
 //   v4: scheduled_recordings — the recording scheduler queue.
 //   v5: recording_rules (EPG-driven series rules) + scheduled_recordings.rule_id.
+//   v6: scheduled_recordings.episode_key — per-episode identity for series-rule episode dedup.
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -364,6 +366,13 @@ void Database::migrate() {
         exec("ALTER TABLE scheduled_recordings ADD COLUMN rule_id INTEGER");
     exec("CREATE INDEX IF NOT EXISTS idx_sched_rule ON scheduled_recordings(rule_id, start_utc);");
 
+    // v6: episode_key on scheduled_recordings — a stable per-episode identity (from the EPG
+    // <episode-num>, else <sub-title>) set by core/RecordingRules, so a series rule skips a REPEAT
+    // airing of an episode it already queued/recorded, not merely a duplicate of the same airing
+    // slot. Empty for manual and pre-v6 rows: they just don't participate in episode dedup.
+    if (!hasColumn("scheduled_recordings", "episode_key"))
+        exec("ALTER TABLE scheduled_recordings ADD COLUMN episode_key TEXT");
+
     // Advance user_version to reflect exactly what actually landed, so a partial
     // failure retries the missing step next open instead of skipping it. (hasColumn on a
     // column of a table doubles as a table-exists check — table_info is empty if absent.)
@@ -372,7 +381,9 @@ void Database::migrate() {
     const bool haveV4 = haveV3 && hasColumn("scheduled_recordings", "id");
     const bool haveV5 =
         haveV4 && hasColumn("recording_rules", "id") && hasColumn("scheduled_recordings", "rule_id");
-    if (haveV5) exec("PRAGMA user_version=5");
+    const bool haveV6 = haveV5 && hasColumn("scheduled_recordings", "episode_key");
+    if (haveV6) exec("PRAGMA user_version=6");
+    else if (haveV5) exec("PRAGMA user_version=5");
     else if (haveV4) exec("PRAGMA user_version=4");
     else if (haveV3) exec("PRAGMA user_version=3");
     else if (haveV2) exec("PRAGMA user_version=2");
@@ -738,7 +749,7 @@ long long Database::addSchedule(const ScheduledRecording& s) {
     Stmt q(db_,
            "INSERT INTO scheduled_recordings("
            "channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
-           "status,file_path,created_at,rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+           "status,file_path,created_at,rule_id,episode_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     if (!q) return 0;
     q.bindText(1, s.channelId);
     q.bindText(2, s.channelName);
@@ -753,6 +764,7 @@ long long Database::addSchedule(const ScheduledRecording& s) {
     q.bindText(11, s.filePath);
     q.bindInt(12, s.createdAt);
     q.bindInt(13, s.ruleId);  // 0 == a one-off schedule (no owning rule)
+    q.bindText(14, s.episodeKey);  // '' for manual rows (no episode dedup)
     if (q.stepDone() != SQLITE_DONE) return 0;
     return sqlite3_last_insert_rowid(db_);
 }

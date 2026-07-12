@@ -37,6 +37,11 @@ struct ScheduledRecording {
     // Set by core/RecordingRules::expandRules; lets a rule's still-Pending rows be dropped
     // when the rule is deleted, and keeps the expander from re-creating a row it already made.
     long long      ruleId = 0;
+    // Stable per-episode identity (from the EPG <episode-num>, else <sub-title>), set by
+    // core/RecordingRules::expandRules. Lets a rule skip a REPEAT airing of an episode it has
+    // already queued/recorded — dedup keys on (folded title, episodeKey). Empty for manual rows
+    // and for programmes carrying neither field: those dedup by airing slot only.
+    std::wstring   episodeKey;
 };
 
 }  // namespace rabbitears
