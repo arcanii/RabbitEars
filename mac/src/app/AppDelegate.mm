@@ -5,6 +5,7 @@
 // auto-update, and the MainWindowController (the actual UI).
 #import "AppDelegate.h"
 #import "MainWindowController.h"
+#import "Tr.h"
 
 #include "platform/Log.h"
 #include "platform/Updater.h"
@@ -16,6 +17,7 @@
 #endif
 
 using namespace rabbitears;
+using namespace rabbitears::i18n;  // StringId
 
 @implementation AppDelegate {
     MainWindowController* _mainController;
@@ -24,6 +26,7 @@ using namespace rabbitears;
 - (void)applicationDidFinishLaunching:(NSNotification*)__unused note {
     diag::init(RE_VERSION_DISPLAY_W);
     diag::info(L"macOS app starting");
+    applyStartupLanguage();  // resolve the display language (NSUserDefaults) BEFORE building any UI
     [self buildMenu];
     initUpdater();  // Sparkle background checks when provisioned; no-op otherwise
 
@@ -38,12 +41,14 @@ using namespace rabbitears;
     NSMenuItem* appItem = [[NSMenuItem alloc] init];
     [menubar addItem:appItem];
     NSMenu* appMenu = [[NSMenu alloc] init];
-    [[appMenu addItemWithTitle:@"About RabbitEars"
+    [[appMenu addItemWithTitle:Tr(StringId::AboutWindowTitle)
                         action:@selector(showAboutPanel:) keyEquivalent:@""] setTarget:self];
-    [[appMenu addItemWithTitle:@"Check for Updates…"
+    [[appMenu addItemWithTitle:Tr(StringId::AboutCheckForUpdatesButton)
                         action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"Quit RabbitEars" action:@selector(terminate:) keyEquivalent:@"q"];
+    [self addLanguageSubmenuTo:appMenu];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:Tr(StringId::MenuQuit) action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
 
     // File menu — playlist import + management. The Mac-native home for these commands
@@ -51,18 +56,18 @@ using namespace rabbitears;
     // to _mainController, which is nil until the window loads just after buildMenu.
     NSMenuItem* fileItem = [[NSMenuItem alloc] init];
     [menubar addItem:fileItem];
-    NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    [[fileMenu addItemWithTitle:@"Add Playlist…"
+    NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:Tr(StringId::MenuFile)];
+    [[fileMenu addItemWithTitle:Tr(StringId::MenuAddPlaylist)
                          action:@selector(addPlaylist:) keyEquivalent:@"n"] setTarget:self];
-    [[fileMenu addItemWithTitle:@"Open Playlist File…"
+    [[fileMenu addItemWithTitle:Tr(StringId::MenuOpenPlaylistFile)
                          action:@selector(openFile:) keyEquivalent:@"o"] setTarget:self];
     [fileMenu addItem:[NSMenuItem separatorItem]];
-    [[fileMenu addItemWithTitle:@"Manage Playlists…"
+    [[fileMenu addItemWithTitle:Tr(StringId::MenuManagePlaylists)
                          action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
     [fileMenu addItem:[NSMenuItem separatorItem]];
-    [[fileMenu addItemWithTitle:@"Import Favourites…"
+    [[fileMenu addItemWithTitle:Tr(StringId::MenuImportFavourites)
                          action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
-    [[fileMenu addItemWithTitle:@"Export Favourites…"
+    [[fileMenu addItemWithTitle:Tr(StringId::MenuExportFavourites)
                          action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
     fileItem.submenu = fileMenu;
 
@@ -72,65 +77,65 @@ using namespace rabbitears;
     // (and cut/copy/select-all/undo) silently do nothing.
     NSMenuItem* editItem = [[NSMenuItem alloc] init];
     [menubar addItem:editItem];
-    NSMenu* editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
-    [editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
-    NSMenuItem* redo = [editMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"z"];
+    NSMenu* editMenu = [[NSMenu alloc] initWithTitle:Tr(StringId::MenuEdit)];
+    [editMenu addItemWithTitle:Tr(StringId::MenuUndo) action:@selector(undo:) keyEquivalent:@"z"];
+    NSMenuItem* redo = [editMenu addItemWithTitle:Tr(StringId::MenuRedo) action:@selector(redo:) keyEquivalent:@"z"];
     redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItem:[NSMenuItem separatorItem]];
-    [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
-    [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
-    [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
-    [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+    [editMenu addItemWithTitle:Tr(StringId::MenuCut) action:@selector(cut:) keyEquivalent:@"x"];
+    [editMenu addItemWithTitle:Tr(StringId::MenuCopy) action:@selector(copy:) keyEquivalent:@"c"];
+    [editMenu addItemWithTitle:Tr(StringId::MenuPaste) action:@selector(paste:) keyEquivalent:@"v"];
+    [editMenu addItemWithTitle:Tr(StringId::MenuSelectAll) action:@selector(selectAll:) keyEquivalent:@"a"];
     editItem.submenu = editMenu;
 
     // View menu — native full-screen (⌃⌘F). toggleFullScreen: routes down the
     // responder chain to the key window.
     NSMenuItem* viewItem = [[NSMenuItem alloc] init];
     [menubar addItem:viewItem];
-    NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
-    NSMenuItem* fs = [viewMenu addItemWithTitle:@"Enter Full Screen"
+    NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:Tr(StringId::MenuView)];
+    NSMenuItem* fs = [viewMenu addItemWithTitle:Tr(StringId::MenuEnterFullScreen)
                                          action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
     // Hide the channel list / toolbar so the video can fill the window. Kept in the
     // menu bar (not the in-window toolbar) so they still work once the toolbar hides.
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* hideList = [viewMenu addItemWithTitle:@"Hide Channel List"
+    NSMenuItem* hideList = [viewMenu addItemWithTitle:Tr(StringId::MenuHideChannelList)
                                                action:@selector(toggleChannelList:) keyEquivalent:@"l"];
     hideList.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     hideList.target = self;
-    NSMenuItem* hideBar = [viewMenu addItemWithTitle:@"Hide Toolbar"
+    NSMenuItem* hideBar = [viewMenu addItemWithTitle:Tr(StringId::MenuHideToolbar)
                                               action:@selector(toggleToolbar:) keyEquivalent:@"t"];
     hideBar.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     hideBar.target = self;
-    NSMenuItem* vidOnly = [viewMenu addItemWithTitle:@"Video Only"
+    NSMenuItem* vidOnly = [viewMenu addItemWithTitle:Tr(StringId::MenuVideoOnlyPlain)
                                               action:@selector(toggleVideoOnly:) keyEquivalent:@"f"];
     vidOnly.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     vidOnly.target = self;
 
     // Multi-view layout — Single vs Split (2×2). ⌃⌘1 / ⌃⌘2.
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* single = [viewMenu addItemWithTitle:@"Single View"
+    NSMenuItem* single = [viewMenu addItemWithTitle:Tr(StringId::MenuSingleView)
                                              action:@selector(setViewSingle:) keyEquivalent:@"1"];
     single.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     single.target = self;
-    NSMenuItem* split = [viewMenu addItemWithTitle:@"Split View (2×2)"
+    NSMenuItem* split = [viewMenu addItemWithTitle:Tr(StringId::MenuSplitView)
                                             action:@selector(setViewSplit:) keyEquivalent:@"2"];
     split.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     split.target = self;
-    NSMenuItem* pip = [viewMenu addItemWithTitle:@"Picture-in-Picture"
+    NSMenuItem* pip = [viewMenu addItemWithTitle:Tr(StringId::MenuPictureInPicture)
                                           action:@selector(setViewPip:) keyEquivalent:@"3"];
     pip.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
     pip.target = self;
 
     // TV Guide (EPG) — open the channels×time guide (⌘G) + download the guide data.
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    [[viewMenu addItemWithTitle:@"TV Guide"
+    [[viewMenu addItemWithTitle:Tr(StringId::TvGuideTitle)
                          action:@selector(showGuide:) keyEquivalent:@"g"] setTarget:self];
-    [[viewMenu addItemWithTitle:@"Refresh Guide…"
+    [[viewMenu addItemWithTitle:Tr(StringId::MenuRefreshGuide)
                          action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
-    [[viewMenu addItemWithTitle:@"Meters…"
+    [[viewMenu addItemWithTitle:Tr(StringId::MenuMeters)
                          action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
 
     viewItem.submenu = viewMenu;
@@ -139,6 +144,56 @@ using namespace rabbitears;
 }
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
+
+// Language submenu (System default / English / 日本語). Selecting a language persists the
+// preference to NSUserDefaults and prompts a restart — the active language is applied only at
+// startup (setActiveLang is a startup-only, atomically-read global), matching Win32.
+- (void)addLanguageSubmenuTo:(NSMenu*)parent {
+    NSMenuItem* langItem = [[NSMenuItem alloc] init];
+    langItem.title = Tr(StringId::MenuLanguage);
+    NSMenu* langMenu = [[NSMenu alloc] initWithTitle:langItem.title];
+    struct LangDef { NSString* code; StringId sid; };
+    const LangDef defs[] = {
+        { @"system", StringId::LangSystemDefault },
+        { @"en",     StringId::LangEnglish },
+        { @"ja",     StringId::LangJapanese },
+    };
+    NSString* cur = currentLanguagePref();
+    for (const LangDef& d : defs) {
+        NSMenuItem* it = [langMenu addItemWithTitle:Tr(d.sid)
+                                             action:@selector(selectLanguage:) keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = d.code;
+        it.state = [cur isEqualToString:d.code] ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    langItem.submenu = langMenu;
+    [parent addItem:langItem];  // one-time, app-lifetime (same MRC-leak convention as the rest of buildMenu)
+}
+
+- (void)selectLanguage:(NSMenuItem*)sender {
+    NSString* code = sender.representedObject;
+    if (!code.length || [code isEqualToString:currentLanguagePref()]) return;  // no change
+    setLanguagePref(code);
+    NSAlert* alert = [[[NSAlert alloc] init] autorelease];
+    alert.messageText = Tr(StringId::LangRestartInstruction);
+    alert.informativeText = Tr(StringId::LangRestartBody);
+    [alert addButtonWithTitle:Tr(StringId::LangRestartNow)];
+    [alert addButtonWithTitle:Tr(StringId::LangRestartLater)];
+    if ([alert runModal] == NSAlertFirstButtonReturn)
+        [self relaunch];  // else: the new language applies on the next launch
+}
+
+// Relaunch to apply a new display language. A short shell helper waits for THIS instance to
+// fully exit (a plain `open` would just re-activate the still-quitting app) before `open -n`
+// starts a fresh one.
+- (void)relaunch {
+    NSString* bundle = [[NSBundle mainBundle] bundlePath];
+    NSString* script = [NSString stringWithFormat:
+        @"while /bin/kill -0 %d 2>/dev/null; do /bin/sleep 0.1; done; /usr/bin/open -n \"%@\"",
+        [[NSProcessInfo processInfo] processIdentifier], bundle];
+    [NSTask launchedTaskWithLaunchPath:@"/bin/sh" arguments:@[ @"-c", script ]];
+    [NSApp terminate:nil];
+}
 
 // View-menu chrome toggles, forwarded to the window controller.
 - (void)toggleChannelList:(id)__unused sender { [_mainController toggleChannelList]; }
@@ -163,11 +218,11 @@ using namespace rabbitears;
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
     if (item.action == @selector(toggleChannelList:))
-        item.title = _mainController.channelListHidden ? @"Show Channel List" : @"Hide Channel List";
+        item.title = Tr(_mainController.channelListHidden ? StringId::MenuShowChannelList : StringId::MenuHideChannelList);
     else if (item.action == @selector(toggleToolbar:))
-        item.title = _mainController.toolbarHidden ? @"Show Toolbar" : @"Hide Toolbar";
+        item.title = Tr(_mainController.toolbarHidden ? StringId::MenuShowToolbar : StringId::MenuHideToolbar);
     else if (item.action == @selector(toggleVideoOnly:))
-        item.title = _mainController.videoOnly ? @"Exit Video Only" : @"Video Only";
+        item.title = Tr(_mainController.videoOnly ? StringId::MenuExitVideoOnly : StringId::MenuVideoOnlyPlain);
     else if (item.action == @selector(setViewSingle:))
         item.state = (!_mainController.isSplitView && !_mainController.isPipView)
                          ? NSControlStateValueOn : NSControlStateValueOff;
@@ -183,13 +238,7 @@ using namespace rabbitears;
 - (void)showAboutPanel:(id)__unused sender {
     NSMutableParagraphStyle* ps = [[NSMutableParagraphStyle alloc] init];
     ps.alignment = NSTextAlignmentCenter;
-    NSString* credits =
-        @"A simple IPTV viewer for macOS.\n\n"
-        @"Plays media with libVLC (LGPL-2.1)\n"
-        @"© VideoLAN and the VLC contributors.\n\n"
-        @"RabbitEars is provided only for educational purposes, and does not "
-        @"represent supporting any illegal activity that you do with it. "
-        @"We don't know, we don't care.";
+    NSString* credits = Tr(StringId::AboutMacCredits);
     NSAttributedString* attr = [[NSAttributedString alloc] initWithString:credits attributes:@{
         NSFontAttributeName: [NSFont systemFontOfSize:11],
         NSParagraphStyleAttributeName: ps,

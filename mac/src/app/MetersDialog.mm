@@ -5,6 +5,7 @@
 #import "MeterView.h"
 #include "MeterModel.h"
 #include "db/Database.h"
+#import "Tr.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,16 +13,24 @@
 
 using rabbitears::Database;
 using namespace rabbitears::mac;
+using namespace rabbitears;
+using namespace rabbitears::i18n;  // StringId
 
 namespace {
 
-// The four kinds in dialog order, their settings-key stems, and display labels.
+// The four kinds in dialog order, their settings-key stems, and display labels. Labels are
+// StringIds (not NSStrings): these are load-time globals, so they resolve through Tr() at the
+// use sites — after the active language is set — rather than at static-init time.
 const char* kKeys[4]   = {"spectrum", "signal", "bitrate", "frames"};
-NSString*   kLabels[4] = {@"Spectrum", @"Signal", @"Bitrate", @"Frames"};
+StringId    kLabels[4] = {StringId::MacMeterNameSpectrum, StringId::MacMeterNameSignal,
+                          StringId::MeterNameBitrate, StringId::MacMeterNameFrames};
 MeterKind   kKinds[4]  = {MeterKind::Spectrum, MeterKind::Signal, MeterKind::Bitrate, MeterKind::Frames};
-NSString*   kColorTips[7] = {@"Background", @"Unlit", @"Low", @"Mid", @"High", @"Accent", @"Peak"};
+StringId    kColorTips[7] = {StringId::MacMetersTipBackground, StringId::MacMetersTipUnlit,
+                             StringId::MeterRoleLow, StringId::MeterRoleMid, StringId::MeterRoleHigh,
+                             StringId::MeterRoleAccent, StringId::MeterPeak};
 // Tuning knobs in MeterTuning order (glow, smoothing, sensitivity, peakHold, breathing).
-NSString*   kTuneLabels[5] = {@"Glow", @"Smooth", @"Sens", @"Peak", @"Breath"};
+StringId    kTuneLabels[5] = {StringId::MeterKnobGlow, StringId::MeterKnobSmooth, StringId::MeterKnobSens,
+                              StringId::MeterPeak, StringId::MeterKnobBreathe};
 
 NSColor* nscolor(const rabbitears::SkinColor& c) {
     return [NSColor colorWithSRGBRed:c.r / 255.0 green:c.g / 255.0 blue:c.b / 255.0 alpha:c.a / 255.0];
@@ -107,7 +116,7 @@ std::wstring wkey(int i, const char* suffix) {
     root.translatesAutoresizingMaskIntoConstraints = NO;
 
     NSTextField* hdr =
-        [NSTextField labelWithString:@"Show, style, colour, and tune each meter — the preview updates live."];
+        [NSTextField labelWithString:Tr(StringId::MacMetersDialogSubheading)];
     hdr.textColor = NSColor.secondaryLabelColor;
     hdr.font = [NSFont systemFontOfSize:11];
     [root addArrangedSubview:hdr];
@@ -132,19 +141,20 @@ std::wstring wkey(int i, const char* suffix) {
                                         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskResizable
                                           backing:NSBackingStoreBuffered
                                             defer:NO];
-    _panel.title = @"Meters";
+    _panel.title = Tr(StringId::MetersWindowTitle);
     _panel.contentView = content;
 }
 
 - (NSView*)buildKindRow:(int)i {
-    NSButton* en = [NSButton checkboxWithTitle:kLabels[i] target:self action:@selector(controlChanged:)];
+    NSButton* en = [NSButton checkboxWithTitle:Tr(kLabels[i]) target:self action:@selector(controlChanged:)];
     en.state = _cfg[i].enabled ? NSControlStateValueOn : NSControlStateValueOff;
     en.tag = i;
     [en.widthAnchor constraintEqualToConstant:100].active = YES;  // align the popups in a column
     _enable[i] = en;
 
     NSPopUpButton* sp = [[NSPopUpButton alloc] init];
-    [sp addItemsWithTitles:@[ @"LED", @"LCD", @"Tube", @"Scope" ]];  // index == (int)MeterStyle
+    [sp addItemsWithTitles:@[ Tr(StringId::MeterLookLed), Tr(StringId::MeterLookLcd),
+                              Tr(StringId::MeterLookVacuumTube), Tr(StringId::MeterLookOscilloscope) ]];  // index == (int)MeterStyle
     [sp selectItemAtIndex:(NSInteger)_cfg[i].style];
     sp.target = self;
     sp.action = @selector(controlChanged:);
@@ -163,20 +173,20 @@ std::wstring wkey(int i, const char* suffix) {
     [hspacer setContentHuggingPriority:NSLayoutPriorityDefaultLow
                         forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    NSStackView* row1 = [NSStackView stackViewWithViews:@[ en, [NSTextField labelWithString:@"Style:"],
+    NSStackView* row1 = [NSStackView stackViewWithViews:@[ en, [NSTextField labelWithString:Tr(StringId::MacMetersStyleLabel)],
                                                            sp, hspacer, pv ]];
     row1.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     row1.spacing = 10;
     row1.alignment = NSLayoutAttributeCenterY;
 
     // Colours: 7 wells (bg, off, low, mid, high, accent, peak).
-    NSMutableArray<NSView*>* wells = [NSMutableArray arrayWithObject:[NSTextField labelWithString:@"Colours:"]];
+    NSMutableArray<NSView*>* wells = [NSMutableArray arrayWithObject:[NSTextField labelWithString:Tr(StringId::MacMetersColoursLabel)]];
     const MeterPalette& p = _cfg[i].palette;
     const rabbitears::SkinColor roles[7] = {p.bg, p.off, p.low, p.mid, p.high, p.accent, p.peak};
     for (int j = 0; j < 7; ++j) {
         NSColorWell* w = [[NSColorWell alloc] init];
         w.color = (j == 0 && roles[0].inherit) ? [NSColor colorWithWhite:0.08 alpha:1.0] : nscolor(roles[j]);
-        w.toolTip = kColorTips[j];
+        w.toolTip = Tr(kColorTips[j]);
         w.target = self;
         w.action = @selector(controlChanged:);
         w.tag = i;
@@ -193,16 +203,16 @@ std::wstring wkey(int i, const char* suffix) {
     // Tuning: 5 sliders (0..1). Label + slider per knob.
     const float knobs[5] = {_cfg[i].tuning.glow, _cfg[i].tuning.smoothing, _cfg[i].tuning.sensitivity,
                             _cfg[i].tuning.peakHold, _cfg[i].tuning.breathing};
-    NSMutableArray<NSView*>* tune = [NSMutableArray arrayWithObject:[NSTextField labelWithString:@"Tuning:"]];
+    NSMutableArray<NSView*>* tune = [NSMutableArray arrayWithObject:[NSTextField labelWithString:Tr(StringId::MacMetersTuningLabel)]];
     for (int j = 0; j < 5; ++j) {
-        NSTextField* lbl = [NSTextField labelWithString:kTuneLabels[j]];
+        NSTextField* lbl = [NSTextField labelWithString:Tr(kTuneLabels[j])];
         lbl.font = [NSFont systemFontOfSize:10];
         lbl.textColor = NSColor.secondaryLabelColor;
         NSSlider* sl = [NSSlider sliderWithValue:knobs[j] minValue:0.0 maxValue:1.0
                                           target:self action:@selector(controlChanged:)];
         sl.continuous = YES;
         sl.tag = i * 10 + j;  // decode: kind = tag/10
-        sl.toolTip = [NSString stringWithFormat:@"%@ (0–1, 0.5 = default)", kTuneLabels[j]];
+        sl.toolTip = TrF(StringId::MacMetersKnobTooltip, {Tr(kTuneLabels[j])});
         [sl.widthAnchor constraintEqualToConstant:56].active = YES;
         _tune[i][j] = sl;
         [tune addObject:lbl];
@@ -221,10 +231,10 @@ std::wstring wkey(int i, const char* suffix) {
 }
 
 - (NSView*)buildButtonRow {
-    NSButton* reset = [NSButton buttonWithTitle:@"Reset to Defaults" target:self action:@selector(reset:)];
-    NSButton* cancel = [NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancel:)];
+    NSButton* reset = [NSButton buttonWithTitle:Tr(StringId::MetersResetButton) target:self action:@selector(reset:)];
+    NSButton* cancel = [NSButton buttonWithTitle:Tr(StringId::ButtonCancel) target:self action:@selector(cancel:)];
     cancel.keyEquivalent = @"\033";  // Esc
-    NSButton* ok = [NSButton buttonWithTitle:@"OK" target:self action:@selector(ok:)];
+    NSButton* ok = [NSButton buttonWithTitle:Tr(StringId::ButtonOk) target:self action:@selector(ok:)];
     ok.keyEquivalent = @"\r";
     NSView* spacer = [[NSView alloc] init];
     [spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow

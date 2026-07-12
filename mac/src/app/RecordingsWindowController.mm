@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // See RecordingsWindowController.h.
 #import "RecordingsWindowController.h"
+#import "Tr.h"
 
 #include "db/Database.h"
 #include "models/RecordingRule.h"
@@ -14,6 +15,8 @@ using rabbitears::Database;
 using rabbitears::RecordingRule;
 using rabbitears::ScheduledRecording;
 using rabbitears::ScheduleStatus;
+using namespace rabbitears;
+using namespace rabbitears::i18n;  // StringId
 
 namespace {
 NSString* ns(const std::wstring& w) {
@@ -21,12 +24,12 @@ NSString* ns(const std::wstring& w) {
 }
 NSString* statusText(ScheduleStatus s) {
     switch (s) {
-        case ScheduleStatus::Pending:   return @"Pending";
-        case ScheduleStatus::Recording: return @"● Recording";
-        case ScheduleStatus::Done:      return @"Done";
-        case ScheduleStatus::Missed:    return @"Missed";
-        case ScheduleStatus::Failed:    return @"Failed";
-        case ScheduleStatus::Cancelled: return @"Cancelled";
+        case ScheduleStatus::Pending:   return Tr(StringId::ScheduleStatusPending);
+        case ScheduleStatus::Recording: return Tr(StringId::ScheduleStatusRecording);
+        case ScheduleStatus::Done:      return Tr(StringId::ScheduleStatusDone);
+        case ScheduleStatus::Missed:    return Tr(StringId::ScheduleStatusMissed);
+        case ScheduleStatus::Failed:    return Tr(StringId::ScheduleStatusFailed);
+        case ScheduleStatus::Cancelled: return Tr(StringId::ScheduleStatusCancelled);
     }
     return @"";
 }
@@ -42,7 +45,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     });
     NSString* a = [df stringFromDate:[NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)startUtc]];
     NSString* b = [tf stringFromDate:[NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)stopUtc]];
-    return [NSString stringWithFormat:@"%@ – %@", a, b];
+    return TrF(StringId::GuideTimeRange, {a, b});
 }
 }  // namespace
 
@@ -124,7 +127,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
                                           styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                      NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                                             backing:NSBackingStoreBuffered defer:NO];
-    _window.title = @"Recordings";
+    _window.title = Tr(StringId::MacRecordingsWindowTitle);
     _window.releasedWhenClosed = NO;
     _window.contentMinSize = NSMakeSize(520, 320);
 
@@ -135,10 +138,12 @@ NSString* whenText(long long startUtc, long long stopUtc) {
 
     // Scheduled tab.
     NSTabViewItem* schedItem = [[NSTabViewItem alloc] initWithIdentifier:@"sched"];
-    schedItem.label = @"Scheduled";
+    schedItem.label = Tr(StringId::MacRecordingsTabScheduled);
     NSScrollView* schedScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 660, 320)];
     _schedTable = [self makeTableInScroll:schedScroll
-                                  columns:@[ @"Channel", @"Title", @"When", @"Format", @"Status" ]
+                                  columns:@[ Tr(StringId::LabelChannel), Tr(StringId::ScheduleColTitle),
+                                             Tr(StringId::ScheduleColWhen), Tr(StringId::MacRecordingsColFormat),
+                                             Tr(StringId::ScheduleColStatus) ]
                                    widths:@[ @150, @200, @210, @60, @100 ]
                                       ids:@[ @"chan", @"title", @"when", @"fmt", @"status" ]];
     schedItem.view = schedScroll;
@@ -146,33 +151,32 @@ NSString* whenText(long long startUtc, long long stopUtc) {
 
     // Series rules tab.
     NSTabViewItem* ruleItem = [[NSTabViewItem alloc] initWithIdentifier:@"rules"];
-    ruleItem.label = @"Series Rules";
+    ruleItem.label = Tr(StringId::MacRecordingsTabSeriesRules);
     NSScrollView* ruleScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 660, 320)];
     _ruleTable = [self makeTableInScroll:ruleScroll
-                                 columns:@[ @"Enabled", @"Channel", @"Matches title", @"Format" ]
+                                 columns:@[ Tr(StringId::RuleStateEnabled), Tr(StringId::LabelChannel),
+                                            Tr(StringId::MacRecordingsColMatchesTitle), Tr(StringId::MacRecordingsColFormat) ]
                                   widths:@[ @70, @180, @280, @70 ]
                                      ids:@[ @"on", @"chan", @"title", @"fmt" ]];
     ruleItem.view = ruleScroll;
     [tabs addTabViewItem:ruleItem];
 
     // Bottom bar: action buttons + the honest wake note (Phase 7).
-    NSButton* cancelSched = [NSButton buttonWithTitle:@"Cancel Selected"
+    NSButton* cancelSched = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsCancelSelectedButton)
                                                target:self action:@selector(cancelSchedule:)];
     cancelSched.frame = NSMakeRect(12, 44, 150, 26);
     cancelSched.autoresizingMask = NSViewMaxYMargin;
     [cv addSubview:cancelSched];
-    NSButton* toggleRule = [NSButton buttonWithTitle:@"Enable/Disable Rule"
+    NSButton* toggleRule = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsToggleRuleButton)
                                               target:self action:@selector(toggleRule:)];
     toggleRule.frame = NSMakeRect(170, 44, 170, 26);
     [cv addSubview:toggleRule];
-    NSButton* delRule = [NSButton buttonWithTitle:@"Delete Rule"
+    NSButton* delRule = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsDeleteRuleButton)
                                            target:self action:@selector(deleteRule:)];
     delRule.frame = NSMakeRect(348, 44, 120, 26);
     [cv addSubview:delRule];
 
-    _hint = [NSTextField labelWithString:
-        @"RabbitEars records only while it is running and your Mac is awake. It can’t wake a "
-        @"sleeping Mac to record — keep the Mac on (lid open, plugged in) for scheduled recordings."];
+    _hint = [NSTextField labelWithString:Tr(StringId::MacRecordingsWakeHint)];
     _hint.frame = NSMakeRect(12, 10, frame.size.width - 24, 28);
     _hint.autoresizingMask = NSViewWidthSizable;
     _hint.textColor = NSColor.secondaryLabelColor;
@@ -207,7 +211,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         const auto& r = _rules[(size_t)row];
         NSString* cid = col.identifier;
         if      ([cid isEqualToString:@"on"])    text = r.enabled ? @"✓" : @"—";
-        else if ([cid isEqualToString:@"chan"])  text = r.channelName.empty() ? @"(any channel)" : ns(r.channelName);
+        else if ([cid isEqualToString:@"chan"])  text = r.channelName.empty() ? Tr(StringId::RuleAnyChannelPlaceholder) : ns(r.channelName);
         else if ([cid isEqualToString:@"title"]) text = ns(r.titleMatch);
         else if ([cid isEqualToString:@"fmt"])   text = ns(r.mux);
     }
@@ -235,11 +239,9 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         // undoing the cancel (a review-caught bug; Win32 guards the same case). Keep it; the user
         // must delete/disable the rule to stop it entirely.
         NSAlert* a = [[NSAlert alloc] init];
-        a.messageText = @"This airing was queued by a series rule";
-        a.informativeText = @"It’s cancelled and won’t record. The entry stays in the list because "
-                            @"removing it now would let its series rule re-queue the same airing; "
-                            @"you can remove it once the airing’s scheduled time has passed.";
-        [a addButtonWithTitle:@"OK"];
+        a.messageText = Tr(StringId::MacRecordingsAiringQueuedByRuleHeading);
+        a.informativeText = Tr(StringId::MacRecordingsAiringQueuedByRuleBody);
+        [a addButtonWithTitle:Tr(StringId::ButtonOk)];
         [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse __unused r) {}];
         return;
     } else {
@@ -263,11 +265,10 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     if (row < 0 || row >= (NSInteger)_rules.size() || !_db) return;
     const long long id = _rules[(size_t)row].id;
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = @"Delete this series rule?";
-    a.informativeText = @"Its still-pending queued recordings are removed too. Recordings that "
-                        @"already ran are kept.";
-    [a addButtonWithTitle:@"Delete"];
-    [a addButtonWithTitle:@"Cancel"];
+    a.messageText = Tr(StringId::MacRecordingsDeleteRuleConfirmHeading);
+    a.informativeText = Tr(StringId::MacRecordingsDeleteRuleConfirmBody);
+    [a addButtonWithTitle:Tr(StringId::ButtonDelete)];
+    [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
         if (resp != NSAlertFirstButtonReturn || !self->_db) return;
         self->_db->deleteRule(id);

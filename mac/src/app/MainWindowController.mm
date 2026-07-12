@@ -53,9 +53,11 @@
 #import "TvGuideWindowController.h"
 #import "VlcEngineMac.h"
 #import "VlcPlayerMac.h"
+#import "Tr.h"
 
 using namespace rabbitears;
 using namespace rabbitears::mac;  // MeterKind / MeterStyle / MeterConfig + the meter codecs
+using namespace rabbitears::i18n;  // StringId / Tr / TrF
 
 // NSTableView that plays the selected row on Return/Enter (the keyboard peer of the
 // double-click action), so the grid is fully keyboard-navigable.
@@ -258,7 +260,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    _window.title = @"RabbitEars";
+    _window.title = Tr(StringId::AppName);
     [_window center];
     _window.releasedWhenClosed = NO;  // we own it via the ivar
     _window.contentMinSize = NSMakeSize(560, 360);  // keep both split panes usable
@@ -306,28 +308,28 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     bar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
 
     // Left: the accent "+ Add Playlist" (prompts for a URL) and the Settings menu.
-    NSButton* addBtn = [NSButton buttonWithTitle:@"+  Add Playlist"
+    NSButton* addBtn = [NSButton buttonWithTitle:Tr(StringId::CmdAddPlaylist)
                                           target:self action:@selector(addPlaylist:)];
     addBtn.frame = NSMakeRect(12, 9, 138, 28);
     addBtn.bezelColor = NSColor.controlAccentColor;  // accent, like the Win32 button
     [bar addSubview:addBtn];
 
     // A gear that pops the Open/Manage/Meters/Updates/About menu (showSettings:).
-    NSImage* gear = [NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:@"Settings"];
+    NSImage* gear = [NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:Tr(StringId::TooltipSettings)];
     NSButton* setBtn = [NSButton buttonWithImage:gear target:self action:@selector(showSettings:)];
     setBtn.frame = NSMakeRect(158, 9, 40, 28);
-    setBtn.toolTip = @"Settings";
+    setBtn.toolTip = Tr(StringId::TooltipSettings);
     [bar addSubview:setBtn];
 
     // Record toggle for the active pane (● idle / ■ recording). Between the gear and search.
-    NSImage* recImg = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:@"Record"];
+    NSImage* recImg = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:Tr(StringId::TooltipBtnRecord)];
     _recBtn = [NSButton buttonWithImage:recImg target:self action:@selector(toggleRecord:)];
     _recBtn.frame = NSMakeRect(206, 9, 40, 28);
-    _recBtn.toolTip = @"Record the active pane";
+    _recBtn.toolTip = Tr(StringId::MacMainWindowRecordActivePaneTooltip);
     [bar addSubview:_recBtn];
 
     // Right (pinned): Stop, the filter popup, and the stretchy search field between.
-    NSButton* stopBtn = [NSButton buttonWithTitle:@"Stop" target:self action:@selector(stop:)];
+    NSButton* stopBtn = [NSButton buttonWithTitle:Tr(StringId::MacMainWindowStopButton) target:self action:@selector(stop:)];
     stopBtn.frame = NSMakeRect(cs.width - 92, 9, 80, 28);
     stopBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:stopBtn];
@@ -341,7 +343,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     _search = [[NSSearchField alloc]
         initWithFrame:NSMakeRect(284, 10, cs.width - 562, 26)];
-    _search.placeholderString = @"Search channels…";
+    _search.placeholderString = Tr(StringId::SearchChannelsPlaceholder);
     _search.autoresizingMask = NSViewWidthSizable;
     _search.delegate = self;  // controlTextDidChange: -> live filter
     [bar addSubview:_search];
@@ -350,7 +352,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     // ---- bottom bar: status line (left) + volume (right) ----
     const CGFloat statusH = kStatusH;
-    _status = [NSTextField labelWithString:@"Ready."];
+    _status = [NSTextField labelWithString:Tr(StringId::MacMainWindowStatusReady)];
     _status.frame = NSMakeRect(12, 3, cs.width - 24 - 150, statusH - 5);
     _status.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
     _status.textColor = NSColor.secondaryLabelColor;
@@ -370,10 +372,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [content addSubview:_muteBtn];
 
     _meterBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"waveform"
-                                                  accessibilityDescription:@"Show/Hide meters"]
+                                                  accessibilityDescription:Tr(StringId::MacMainWindowToggleMetersTooltip)]
                                    target:self action:@selector(toggleMeters:)];
     _meterBtn.bordered = NO;
-    _meterBtn.toolTip = @"Show / hide the meters";
+    _meterBtn.toolTip = Tr(StringId::MacMainWindowToggleMetersTooltip);
     _meterBtn.frame = NSMakeRect(cs.width - 162, 1, 24, 20);
     _meterBtn.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
     _meterBtn.alphaValue = _metersHidden ? 0.35 : 1.0;
@@ -403,8 +405,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _table.doubleAction = @selector(playSelectedRow:);  // double-click / Return plays
     [self addColumn:@"fav" title:@"★" width:26];
     [self addColumn:@"num" title:@"#" width:46];
-    [self addColumn:@"name" title:@"Channel" width:200];
-    [self addColumn:@"group" title:@"Group" width:120];
+    [self addColumn:@"name" title:Tr(StringId::LabelChannel) width:200];
+    [self addColumn:@"group" title:Tr(StringId::GridHeaderGroup) width:120];
     _table.headerView = [[NSTableHeaderView alloc] init];
     _table.dataSource = self;
     _table.delegate = self;
@@ -457,7 +459,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [split addSubview:videoPane];
 
     // Empty-state hint, centered over the (black) video pane until channels exist.
-    _emptyHint = [NSTextField labelWithString:@"No channels yet — click “＋ Add Playlist” to begin."];
+    _emptyHint = [NSTextField labelWithString:Tr(StringId::StatusNoChannelsYet)];
     _emptyHint.textColor = NSColor.secondaryLabelColor;
     _emptyHint.font = [NSFont systemFontOfSize:15];
     _emptyHint.translatesAutoresizingMaskIntoConstraints = NO;
@@ -620,11 +622,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (NSMenu*)makeRowMenu {
     NSMenu* m = [[NSMenu alloc] init];
-    [[m addItemWithTitle:@"Play" action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"Play in PiP" action:@selector(playInPip:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"Toggle Favourite" action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"Show in TV Guide" action:@selector(showInGuide:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"Set Channel Number…" action:@selector(editChannelNumber:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::LabelPlay) action:@selector(playClicked:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MenuChannelPlayInPip) action:@selector(playInPip:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MacMainWindowToggleFavourite) action:@selector(toggleFavourite:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MenuChannelShowInGuide) action:@selector(showInGuide:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MacMainWindowSetChannelNumber) action:@selector(editChannelNumber:) keyEquivalent:@""] setTarget:self];
     return m;
 }
 
@@ -633,14 +635,14 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // ---- playlist load / filter model ----
 
 - (void)restoreLastPlaylist {
-    if (!_db) { [self setStatus:@"Database unavailable — check disk permissions and restart."]; return; }
+    if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailableRestart)]; return; }
     const auto playlists = _db->listPlaylists();
     long long pid = 0;
     for (const auto& p : playlists) if (p.enabled) pid = p.id;  // last enabled (added_at order)
     if (!pid) {
-        [self setStatus:playlists.empty()
-                            ? @"Ready — load an M3U URL or open a file to begin."
-                            : @"All playlists are disabled — enable one in Settings ▸ Manage Playlists…."];
+        [self setStatus:Tr(playlists.empty()
+                            ? StringId::MacMainWindowReadyLoadHint
+                            : StringId::MacMainWindowAllPlaylistsDisabledManage)];
         [self rebuildFilterMenu];
         return;
     }
@@ -658,9 +660,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         if (_channels[i].id != cid) continue;
         [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
         [_table scrollRowToVisible:(NSInteger)i];
-        [self setStatus:[NSString stringWithFormat:
-                         @"Last played: %@ — double-click or press Return to resume.",
-                         ns(_channels[i].name)]];
+        [self setStatus:TrF(StringId::MacMainWindowLastPlayedResume, {ns(_channels[i].name)})];
         return;
     }
 }
@@ -686,8 +686,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)rebuildFilterMenu {
     [_filter removeAllItems];
-    [self addFilterItem:@"All channels" tag:kFilterAll group:nil];
-    [self addFilterItem:@"★ Favourites" tag:kFilterFavourites group:nil];
+    [self addFilterItem:Tr(StringId::NavAllChannels) tag:kFilterAll group:nil];
+    [self addFilterItem:Tr(StringId::NavFavourites) tag:kFilterFavourites group:nil];
     if (_db) {
         const auto groups = _db->listGroups();
         if (!groups.empty()) [_filter.menu addItem:[NSMenuItem separatorItem]];
@@ -699,7 +699,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         if (!countries.empty()) [_filter.menu addItem:[NSMenuItem separatorItem]];
         for (const auto& cc : countries) {
             if (cc.empty()) continue;
-            [self addFilterItem:[@"Country: " stringByAppendingString:ns(cc).uppercaseString]
+            [self addFilterItem:TrF(StringId::MacMainWindowCountryFilterItem, {ns(cc).uppercaseString})
                             tag:kFilterCountry group:ns(cc)];
         }
     }
@@ -741,8 +741,9 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [_table deselectAll:nil];
     [_table reloadData];
-    [self setStatus:[NSString stringWithFormat:@"%lu channels%@.", (unsigned long)_channels.size(),
-                     q.empty() ? @"" : @" (search)"]];
+    [self setStatus:TrF(StringId::MacMainWindowChannelCountStatus,
+                     {[NSString stringWithFormat:@"%lu", (unsigned long)_channels.size()],
+                      q.empty() ? @"" : Tr(StringId::MacMainWindowSearchSuffix)})];
     [self updateEmptyHint];
 }
 
@@ -757,10 +758,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // "+ Add Playlist": prompt for a URL, then load it (peer of the Win32 onAddUrl).
 - (void)addPlaylist:(id)__unused sender {
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = @"Add Playlist";
-    a.informativeText = @"Playlist URL (.m3u / .m3u8):";
-    [a addButtonWithTitle:@"OK"];
-    [a addButtonWithTitle:@"Cancel"];
+    a.messageText = Tr(StringId::AddPlaylistDialogTitle);
+    a.informativeText = Tr(StringId::AddPlaylistUrlPrompt);
+    [a addButtonWithTitle:Tr(StringId::ButtonOk)];
+    [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 320, 24)];
     input.placeholderString = @"https://…";
     a.accessoryView = input;
@@ -777,7 +778,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)loadPlaylistFromURL:(NSString*)u {
     const std::wstring url = ws(u);
     const uint64_t token = ++_loadToken;
-    [self setStatus:@"Downloading playlist…"];
+    [self setStatus:Tr(StringId::StatusDownloadingPlaylist)];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         std::string bytes;
         std::wstring derr;
@@ -785,7 +786,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         auto doc = std::make_shared<M3uDocument>(ok ? parseM3u(bytes) : M3uDocument{});
         dispatch_async(dispatch_get_main_queue(), ^{
             if (token != self->_loadToken) return;  // a newer load superseded this one
-            if (!ok) { [self setStatus:[NSString stringWithFormat:@"Download failed: %@", ns(derr)]]; return; }
+            if (!ok) { [self setStatus:TrF(StringId::MacMainWindowDownloadFailed, {ns(derr)})]; return; }
             [self importDoc:*doc name:friendlyName(url, true) source:url isUrl:true];
         });
     });
@@ -800,7 +801,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         const std::wstring path = ws(panel.URL.path);
         std::wstring perr;
         const M3uDocument doc = parseM3uFile(path, &perr);
-        if (!perr.empty()) { [self setStatus:[NSString stringWithFormat:@"Read failed: %@", ns(perr)]]; return; }
+        if (!perr.empty()) { [self setStatus:TrF(StringId::MacMainWindowReadFailed, {ns(perr)})]; return; }
         [self importDoc:doc name:friendlyName(path, false) source:path isUrl:false];
     }];
 }
@@ -809,17 +810,16 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
              name:(const std::wstring&)name
            source:(const std::wstring&)source
             isUrl:(bool)isUrl {
-    if (!_db) { [self setStatus:@"Database unavailable — cannot save playlist."]; return; }
+    if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailableSavePlaylist)]; return; }
     const long long now = (long long)time(nullptr);
     // Pass doc.epgUrl (the M3U x-tvg-url) through so the playlist carries its XMLTV guide
     // source — without it, Refresh Guide has nothing to fetch (the Win32 peer at
     // MainWindowCommands.cpp:108 does the same).
     const long long pid = _db->addPlaylist(name, source, isUrl, now, doc.epgUrl);
     if (pid == 0) {
-        [self setStatus:@"Add playlist failed: could not save to the database."];
-        [self showResults:@"Could not import the playlist"
-                     info:[NSString stringWithFormat:
-                           @"Source: %@\n\nThe playlist could not be saved to the database.", ns(source)]];
+        [self setStatus:Tr(StringId::StatusAddPlaylistFailedDb)];
+        [self showResults:Tr(StringId::PlaylistImportFailedHeading)
+                     info:TrF(StringId::MacMainWindowImportDbSaveBody, {ns(source)})];
         return;
     }
     const int imported = _db->bulkInsertChannels(pid, doc.channels, now);
@@ -831,24 +831,27 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     // Import results — the mac peer of the Win32 onPlaylistDone dialog.
     if (parsed == 0) {
-        [self showResults:@"No channels found"
-                     info:[NSString stringWithFormat:
-                           @"Source: %@\n\nThe playlist contained no channels.", ns(source)]];
+        [self showResults:Tr(StringId::MacMainWindowPlaylistNoChannelsHeading)
+                     info:TrF(StringId::MacMainWindowImportNoChannelsBody, {ns(source)})];
         return;
     }
-    NSMutableString* info = [NSMutableString stringWithFormat:
-        @"Source: %@\n\nChannels parsed: %d\nChannels imported: %d\n", ns(source), parsed, imported];
+    NSMutableString* info = [NSMutableString string];
+    [info appendString:TrF(StringId::MacMainWindowImportSummaryBody,
+        {ns(source), [NSString stringWithFormat:@"%d", parsed], [NSString stringWithFormat:@"%d", imported]})];
     if (parsed - imported > 0)
-        [info appendFormat:@"Skipped (blank or duplicate URLs): %d\n", parsed - imported];
-    [info appendFormat:@"Groups: %lu", (unsigned long)groups.size()];
-    [self showResults:[NSString stringWithFormat:@"Imported %d channels", imported] info:info];
+        [info appendString:TrF(StringId::MacMainWindowImportSkippedLine,
+            {[NSString stringWithFormat:@"%d", parsed - imported]})];
+    [info appendString:TrF(StringId::MacMainWindowImportGroupsLine,
+        {[NSString stringWithFormat:@"%lu", (unsigned long)groups.size()]})];
+    [self showResults:TrF(StringId::MacMainWindowImportedChannelsHeading,
+        {[NSString stringWithFormat:@"%d", imported]}) info:info];
 }
 
 - (void)showResults:(NSString*)title info:(NSString*)info {
     NSAlert* a = [[NSAlert alloc] init];
     a.messageText = title;
     a.informativeText = info;
-    [a addButtonWithTitle:@"OK"];
+    [a addButtonWithTitle:Tr(StringId::ButtonOk)];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse __unused r) {}];
     [a autorelease];  // MRC: the sheet retains it for its lifetime; balance the alloc +1
 }
@@ -867,8 +870,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (MacVideoPane* p = [self activePane]) { p->channel = Channel{}; p->channelId = 0; }
     for (MeterView* m : _meters) [m reset];
     [self stopSpectrumTap];  // free the tap's RT thread (no spinning on silence)
-    _window.title = @"RabbitEars";
-    [self setStatus:@"Stopped."];
+    _window.title = Tr(StringId::AppName);
+    [self setStatus:Tr(StringId::StatusStopped)];
     // NB: recording is independent of playback (its own connection) — Stop does NOT stop a
     // running recording, matching Win32. Use the Record button to stop recording.
 }
@@ -938,10 +941,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         p->player->stopRecordingAsync();  // off-main: a stalled feed can't hang the UI on stop
         [self updateRecordButton];
         [self syncKeepAwake];  // another pane may still record — re-derive, don't assume
-        [self setStatus:[NSString stringWithFormat:@"Recording saved: %@", ns(file)]];
+        [self setStatus:TrF(StringId::StatusRecordingSaved, {ns(file)})];
         return;
     }
-    if (p->channelId == 0) { [self setStatus:@"Play a channel first, then Record."]; return; }
+    if (p->channelId == 0) { [self setStatus:Tr(StringId::StatusPlayChannelFirst)]; return; }
     NSString* ext; std::string mux;
     [MainWindowController extForFormat:_recFormat ext:&ext mux:&mux];
     NSString* path = [self recordingPathFor:ns(p->channel.name) ext:ext];
@@ -949,9 +952,9 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
                                   ws(path), mux)) {
         [self updateRecordButton];
         [self syncKeepAwake];  // don't let the machine idle-sleep out from under a recording
-        [self setStatus:[NSString stringWithFormat:@"● Recording %@ → %@", ns(p->channel.name), path]];
+        [self setStatus:TrF(StringId::StatusRecordingNow, {ns(p->channel.name), path})];
     } else {
-        [self setStatus:@"Couldn't start recording (the stream may cap concurrent connections)."];
+        [self setStatus:Tr(StringId::MacMainWindowRecordingStartFailed)];
     }
 }
 
@@ -1016,7 +1019,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     for (long long id : plan.stop) {
         if (id == _activeScheduleId) [self stopScheduledRecorder];
         _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Done);
-        [self setStatus:@"Scheduled recording saved."];
+        [self setStatus:Tr(StringId::StatusScheduledRecordingSaved)];
     }
     for (long long id : plan.miss)
         _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Missed);
@@ -1031,7 +1034,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             _scheduleRecorder->startRecording(s->streamUrl, s->userAgent, s->referrer, ws(path), mux)) {
             _activeScheduleId = id;
             _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Recording, ws(path));
-            [self setStatus:[NSString stringWithFormat:@"● Recording (scheduled) %@", ns(s->channelName)]];
+            [self setStatus:TrF(StringId::StatusRecordingScheduledNow, {ns(s->channelName)})];
         } else {
             _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Failed);
         }
@@ -1095,10 +1098,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (!_db) return;
     auto ch = tvgId.length ? _db->channelByTvgId(ws(tvgId)) : std::nullopt;
     if (!ch) {
-        [self showResults:@"Can't schedule"
-                     info:[NSString stringWithFormat:
-                           @"“%@” has no matching channel in your playlists, so there's nothing "
-                           @"to record.", name]];
+        [self showResults:Tr(StringId::MacMainWindowCantScheduleHeading)
+                     info:TrF(StringId::MacMainWindowScheduleNoMatchBody, {name})];
         return;
     }
     rabbitears::ScheduledRecording s;
@@ -1114,19 +1115,18 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     s.createdAt   = (long long)time(nullptr);
     if (_db->addSchedule(s) > 0) {
         [self schedulerTick];  // fire immediately if it's already in-window
-        [self setStatus:[NSString stringWithFormat:@"Scheduled: %@ — %@", ns(s.channelName),
-                         title.length ? title : @"recording"]];
+        [self setStatus:TrF(StringId::MacMainWindowScheduledStatus,
+                         {ns(s.channelName),
+                          title.length ? title : Tr(StringId::MacMainWindowScheduledFallbackTitle)})];
         // Phase 7 — the honest wake caveat, shown once at schedule time. A non-root app can't
         // wake a sleeping Mac (IOPMSchedulePowerEvent needs root), so a scheduled recording only
         // fires if RabbitEars is running and the Mac is awake when its window opens.
         if (startUtc > (long long)time(nullptr))
-            [self showResults:[NSString stringWithFormat:@"Scheduled: %@", ns(s.channelName)]
-                         info:@"RabbitEars will record this while it is running and your Mac is "
-                              @"awake. It can’t wake a sleeping Mac — for an unattended recording, "
-                              @"keep the Mac on with the lid open (Settings ▸ Recording ▸ Recordings "
-                              @"lists your queue)."];
+            [self showResults:TrF(StringId::MacMainWindowScheduledTitle, {ns(s.channelName)})
+                         info:Tr(StringId::MacMainWindowScheduledWakeCaveat)];
     } else {
-        [self showResults:@"Can't schedule" info:@"Couldn't save the scheduled recording."];
+        [self showResults:Tr(StringId::MacMainWindowCantScheduleHeading)
+                     info:Tr(StringId::MacMainWindowScheduleSaveFailedBody)];
     }
 }
 
@@ -1145,10 +1145,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (_db->addRule(r) > 0) {
         const int queued = [self expandRecordingRules:YES];
         [self schedulerTick];
-        [self setStatus:[NSString stringWithFormat:@"Series rule added: “%@” (%d upcoming queued)",
-                         title, queued]];
+        [self setStatus:TrF(StringId::MacMainWindowSeriesRuleAdded,
+                         {title, [NSString stringWithFormat:@"%d", queued]})];
     } else {
-        [self showResults:@"Can't add rule" info:@"Couldn't save the series rule."];
+        [self showResults:Tr(StringId::MacMainWindowCantAddRuleHeading)
+                     info:Tr(StringId::MacMainWindowSeriesRuleSaveFailedBody)];
     }
 }
 
@@ -1158,9 +1159,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     MacVideoPane* p = [self activePane];
     const BOOL rec = p && p->player->isRecording();
     NSString* sym = rec ? @"stop.circle.fill" : @"record.circle";
-    _recBtn.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:@"Record"];
+    _recBtn.image = [NSImage imageWithSystemSymbolName:sym accessibilityDescription:Tr(StringId::TooltipBtnRecord)];
     _recBtn.contentTintColor = rec ? NSColor.systemRedColor : nil;
-    _recBtn.toolTip = rec ? @"Stop recording this pane" : @"Record the active pane";
+    _recBtn.toolTip = Tr(rec ? StringId::MacMainWindowStopRecordingPaneTooltip
+                             : StringId::MacMainWindowRecordActivePaneTooltip);
 }
 
 // Hold an IOPMAssertion iff ANY pane is recording, so the Mac won't IDLE-sleep mid-recording.
@@ -1410,8 +1412,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self applyMeterLayout];
     MacVideoPane* p = [self activePane];
     if (p && p->channelId) {
-        _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(p->channel.name)];
-        [self setStatus:[NSString stringWithFormat:@"Active pane: %@", ns(p->channel.name)]];
+        _window.title = TrF(StringId::MacMainWindowTitleWithChannel, {ns(p->channel.name)});
+        [self setStatus:TrF(StringId::MacMainWindowActivePaneChannel, {ns(p->channel.name)})];
     }
 }
 
@@ -1573,13 +1575,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self updateEmptyHint];
     switch (_viewMode) {
         case ViewMode::Split:
-            [self setStatus:@"Split view (2×2) — click a pane to make it active, then pick a channel."];
+            [self setStatus:Tr(StringId::MacMainWindowSplitViewStatus)];
             break;
         case ViewMode::Pip:
-            [self setStatus:@"Picture-in-Picture — drag the inset to move it; click it to make it active."];
+            [self setStatus:Tr(StringId::MacMainWindowPipStatus)];
             break;
         default:
-            [self setStatus:@"Single view."];
+            [self setStatus:Tr(StringId::MacMainWindowSingleViewStatus)];
             break;
     }
 }
@@ -1678,12 +1680,12 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 - (void)saveLayout:(id)__unused sender {
     if (!_db) return;
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = @"Save Layout";
-    a.informativeText = @"Name this layout (view mode, each pane's channel, and the PiP inset).";
-    [a addButtonWithTitle:@"Save"];
-    [a addButtonWithTitle:@"Cancel"];
+    a.messageText = Tr(StringId::SaveLayoutDialogTitle);
+    a.informativeText = Tr(StringId::MacMainWindowSaveLayoutPrompt);
+    [a addButtonWithTitle:Tr(StringId::MacMainWindowSaveButton)];
+    [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
-    input.stringValue = @"My layout";
+    input.stringValue = Tr(StringId::LayoutDefaultName);
     a.accessoryView = input;
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
         if (resp != NSAlertFirstButtonReturn) return;
@@ -1692,16 +1694,16 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         // The index is newline-joined and keys are "layout_saved_<name>", so strip separators.
         NSString* name = [[raw stringByReplacingOccurrencesOfString:@"\n" withString:@" "]
                                 stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
-        if (name.length == 0) { [self showResults:@"Save Layout" info:@"Please enter a name."]; return; }
+        if (name.length == 0) { [self showResults:Tr(StringId::SaveLayoutDialogTitle) info:Tr(StringId::MacMainWindowEnterNamePrompt)]; return; }
 
         auto names = [self savedLayoutNames];
         const std::wstring wname = ws(name);
         const bool exists = std::find(names.begin(), names.end(), wname) != names.end();
         if (!exists) {
             if (names.size() >= (size_t)kMaxSavedLayouts) {
-                [self showResults:@"Layout limit reached"
-                             info:[NSString stringWithFormat:@"You already have %d saved layouts — "
-                                   @"delete one before saving another.", kMaxSavedLayouts]];
+                [self showResults:Tr(StringId::MacMainWindowLayoutLimitHeading)
+                             info:TrF(StringId::MacMainWindowLayoutLimitBody,
+                                   {[NSString stringWithFormat:@"%d", kMaxSavedLayouts]})];
                 return;
             }
             names.push_back(wname);
@@ -1720,7 +1722,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
             blob += std::to_wstring(_panes[i]->channelId);
         }
         _db->setSetting(L"layout_saved_" + wname, blob);
-        [self setStatus:[NSString stringWithFormat:@"Layout saved: %@", name]];
+        [self setStatus:TrF(StringId::StatusLayoutSaved, {name})];
     }];
 }
 
@@ -1732,8 +1734,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     NSString* name = sender.representedObject;
     auto blob = _db->getSetting(L"layout_saved_" + ws(name));
     std::optional<SavedLayout> L = blob && !blob->empty() ? parseLayout(*blob) : std::nullopt;
-    if (!L) { [self showResults:@"Couldn't apply layout"
-                            info:[NSString stringWithFormat:@"“%@” is missing or unreadable.", name]]; return; }
+    if (!L) { [self showResults:Tr(StringId::MacMainWindowLayoutApplyFailedHeading)
+                            info:TrF(StringId::MacMainWindowLayoutMissingBody, {name})]; return; }
 
     // PiP geometry must be set BEFORE -applyViewMode: so entering PiP restores it (applyViewMode
     // no longer resets _pipMoved).
@@ -1761,9 +1763,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     }
     [self setActivePane:std::clamp(L->active, 0, (int)_panes.size() - 1)];
 
-    NSString* msg = [NSString stringWithFormat:@"Applied layout: %@", name];
-    if (missing) msg = [msg stringByAppendingFormat:@" (%d channel%@ no longer in your playlists)",
-                        missing, missing == 1 ? @"" : @"s"];
+    NSString* msg = TrF(StringId::StatusLayoutApplied, {name});
+    if (missing) msg = [msg stringByAppendingString:
+                        TrF(StringId::MacMainWindowLayoutMissingChannelsSuffix,
+                            {[NSString stringWithFormat:@"%d", missing], missing == 1 ? @"" : @"s"})];
     [self setStatus:msg];
 }
 
@@ -1773,10 +1776,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if (!_db) return;
     NSString* name = sender.representedObject;
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = [NSString stringWithFormat:@"Delete layout “%@”?", name];
-    a.informativeText = @"This removes the saved layout. Your channels and playlists are untouched.";
-    [a addButtonWithTitle:@"Delete"];
-    [a addButtonWithTitle:@"Cancel"];
+    a.messageText = TrF(StringId::MacMainWindowDeleteLayoutConfirm, {name});
+    a.informativeText = Tr(StringId::MacMainWindowDeleteLayoutBody);
+    [a addButtonWithTitle:Tr(StringId::ButtonDelete)];
+    [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
         if (resp != NSAlertFirstButtonReturn) return;
         const std::wstring wname = ws(name);
@@ -1784,7 +1787,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         names.erase(std::remove(names.begin(), names.end(), wname), names.end());
         [self storeLayoutNames:names];
         _db->setSetting(L"layout_saved_" + wname, L"");
-        [self setStatus:[NSString stringWithFormat:@"Layout deleted: %@", name]];
+        [self setStatus:TrF(StringId::StatusLayoutDeleted, {name})];
     }];
 }
 
@@ -1845,31 +1848,73 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if (++_spectrumSilentTicks >= 40) [_meters[s] setAvailable:NO];
 }
 
-// Settings pull-down (peer of the Win32 "Settings ▾" command-bar menu). Small for
-// now — file import + updates/about; real preferences will hang off here.
+// Settings pull-down — the mac peer of the Win32 gear menu, laid out in the SAME structure
+// (Channels ▸ / Recording ▸ / View ▸ / Layout ▸ / Language ▸, in Win32's order). Win32-only
+// items with no mac equivalent are omitted: Theme ▸ (mac uses the native system appearance) and
+// wake-to-record (a non-root mac app cannot arm a system wake).
 - (void)showSettings:(NSButton*)sender {
     NSMenu* m = [[NSMenu alloc] init];
-    [[m addItemWithTitle:@"Open Playlist File…" action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"Manage Playlists…" action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
 
-    // View layout — mirrors the View menu (⌃⌘1/2/3) so it's reachable without the menu bar.
+    // Playlists (Win32: "Open File…" at the top; mac adds playlist management).
+    [[m addItemWithTitle:Tr(StringId::MenuOpenPlaylistFile) action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MenuManagePlaylists) action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
+
+    // Channels ▸ — favourites import/export (Win32 also carries Hide-unavailable / Categories,
+    // which the mac channel list does not have).
     [m addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* vSingle = [m addItemWithTitle:@"Single View" action:@selector(setViewSingle:) keyEquivalent:@""];
-    NSMenuItem* vSplit  = [m addItemWithTitle:@"Split View (2×2)" action:@selector(setViewSplit:) keyEquivalent:@""];
-    NSMenuItem* vPip    = [m addItemWithTitle:@"Picture-in-Picture" action:@selector(setViewPip:) keyEquivalent:@""];
+    NSMenuItem* chanItem = [m addItemWithTitle:Tr(StringId::MenuChannels) action:nil keyEquivalent:@""];
+    NSMenu* chan = [[NSMenu alloc] init];
+    [[chan addItemWithTitle:Tr(StringId::MenuImportFavourites) action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
+    [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
+    chanItem.submenu = chan;
+
+    // TV Guide + Refresh + Recording ▸.
+    [m addItem:[NSMenuItem separatorItem]];
+    [[m addItemWithTitle:Tr(StringId::TvGuideTitle) action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MenuRefreshGuide) action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
+
+    NSMenuItem* recItem = [m addItemWithTitle:Tr(StringId::MenuRecording) action:nil keyEquivalent:@""];
+    NSMenu* recMenu = [[NSMenu alloc] init];
+    [[recMenu addItemWithTitle:Tr(StringId::MacMainWindowRecordingsMenuItem) action:@selector(showRecordings:) keyEquivalent:@""] setTarget:self];
+    [recMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* fmtItem = [recMenu addItemWithTitle:Tr(StringId::MenuRecordingFormat) action:nil keyEquivalent:@""];
+    NSMenu* fmt = [[NSMenu alloc] init];  // Recording format ▸ (ts crash-safe default / mp4)
+    struct { NSString* title; const wchar_t* v; } fmts[] = {
+        { Tr(StringId::MacMainWindowFormatTsSafest), L"ts" }, { Tr(StringId::MenuFormatMp4), L"mp4" } };
+    for (auto& f : fmts) {
+        NSMenuItem* it = [fmt addItemWithTitle:f.title action:@selector(setRecFormat:) keyEquivalent:@""];
+        it.target = self;
+        it.representedObject = ns(f.v);
+        it.state = (_recFormat == f.v) ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    fmtItem.submenu = fmt;
+    recItem.submenu = recMenu;
+
+    // View ▸ — Single / Split / PiP + Video only (Win32 groups the view modes here).
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* viewItem = [m addItemWithTitle:Tr(StringId::MenuView) action:nil keyEquivalent:@""];
+    NSMenu* view = [[NSMenu alloc] init];
+    NSMenuItem* vSingle = [view addItemWithTitle:Tr(StringId::MenuSingleView) action:@selector(setViewSingle:) keyEquivalent:@""];
+    NSMenuItem* vSplit  = [view addItemWithTitle:Tr(StringId::MenuSplitView) action:@selector(setViewSplit:) keyEquivalent:@""];
+    NSMenuItem* vPip    = [view addItemWithTitle:Tr(StringId::MenuPictureInPicture) action:@selector(setViewPip:) keyEquivalent:@""];
     for (NSMenuItem* it in @[ vSingle, vSplit, vPip ]) it.target = self;
     vSingle.state = (_viewMode == ViewMode::Single) ? NSControlStateValueOn : NSControlStateValueOff;
     vSplit.state  = (_viewMode == ViewMode::Split)  ? NSControlStateValueOn : NSControlStateValueOff;
     vPip.state    = (_viewMode == ViewMode::Pip)    ? NSControlStateValueOn : NSControlStateValueOff;
+    [view addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* vOnly = [view addItemWithTitle:Tr(StringId::MenuVideoOnlyPlain) action:@selector(toggleVideoOnly:) keyEquivalent:@""];
+    vOnly.target = NSApp.delegate;  // the AppDelegate owns this toggle (also the View menu-bar item)
+    vOnly.state = self.videoOnly ? NSControlStateValueOn : NSControlStateValueOff;
+    viewItem.submenu = view;
 
-    // Layouts — save/apply/delete the whole multi-view arrangement by name.
-    NSMenuItem* layoutsItem = [m addItemWithTitle:@"Layouts" action:nil keyEquivalent:@""];
+    // Layout ▸ — save / apply / delete the named multi-view arrangements.
+    NSMenuItem* layoutsItem = [m addItemWithTitle:Tr(StringId::MenuLayout) action:nil keyEquivalent:@""];
     NSMenu* layouts = [[NSMenu alloc] init];
-    [[layouts addItemWithTitle:@"Save Current Layout…" action:@selector(saveLayout:) keyEquivalent:@""] setTarget:self];
+    [[layouts addItemWithTitle:Tr(StringId::MacMainWindowSaveCurrentLayout) action:@selector(saveLayout:) keyEquivalent:@""] setTarget:self];
     const auto names = [self savedLayoutNames];
     [layouts addItem:[NSMenuItem separatorItem]];
     if (names.empty()) {
-        [layouts addItemWithTitle:@"No saved layouts" action:nil keyEquivalent:@""].enabled = NO;
+        [layouts addItemWithTitle:Tr(StringId::MacMainWindowNoSavedLayouts) action:nil keyEquivalent:@""].enabled = NO;
     } else {
         for (const auto& n : names) {
             NSString* name = ns(n);
@@ -1877,7 +1922,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
             it.target = self;
             it.representedObject = name;
         }
-        NSMenuItem* delItem = [layouts addItemWithTitle:@"Delete" action:nil keyEquivalent:@""];
+        NSMenuItem* delItem = [layouts addItemWithTitle:Tr(StringId::ButtonDelete) action:nil keyEquivalent:@""];
         NSMenu* del = [[NSMenu alloc] init];
         for (const auto& n : names) {
             NSString* name = ns(n);
@@ -1889,31 +1934,26 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     }
     layoutsItem.submenu = layouts;
 
-    [m addItem:[NSMenuItem separatorItem]];
-    [[m addItemWithTitle:@"TV Guide" action:@selector(showGuide:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"Refresh Guide…" action:@selector(refreshGuide:) keyEquivalent:@""] setTarget:self];
-    [m addItem:[NSMenuItem separatorItem]];
-    [[m addItemWithTitle:@"Meters…" action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::MenuMeters) action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
 
-    // Recording ▸ format (ts / mkv / mp4). Recordings save to ~/Movies/RabbitEars.
-    NSMenuItem* recItem = [m addItemWithTitle:@"Recording" action:nil keyEquivalent:@""];
-    NSMenu* recMenu = [[NSMenu alloc] init];
-    [recMenu addItemWithTitle:@"Format" action:nil keyEquivalent:@""].enabled = NO;
-    struct { NSString* title; const wchar_t* fmt; } fmts[] = {
-        { @"MPEG-TS (.ts) — safest", L"ts" }, { @"MP4 (.mp4)", L"mp4" } };
-    for (auto& f : fmts) {
-        NSMenuItem* it = [recMenu addItemWithTitle:f.title action:@selector(setRecFormat:) keyEquivalent:@""];
-        it.target = self;
-        it.representedObject = ns(f.fmt);
-        it.state = (_recFormat == f.fmt) ? NSControlStateValueOn : NSControlStateValueOff;
+    // Language ▸ (mirrors the Win32 gear; the AppDelegate owns the selection + restart-to-apply).
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* langItem = [m addItemWithTitle:Tr(StringId::MenuLanguage) action:nil keyEquivalent:@""];
+    NSMenu* langMenu = [[NSMenu alloc] init];
+    struct { NSString* code; StringId sid; } langs[] = {
+        { @"system", StringId::LangSystemDefault }, { @"en", StringId::LangEnglish }, { @"ja", StringId::LangJapanese } };
+    NSString* curLang = currentLanguagePref();
+    for (auto& L : langs) {
+        NSMenuItem* it = [langMenu addItemWithTitle:Tr(L.sid) action:@selector(selectLanguage:) keyEquivalent:@""];
+        it.target = NSApp.delegate;
+        it.representedObject = L.code;
+        it.state = [curLang isEqualToString:L.code] ? NSControlStateValueOn : NSControlStateValueOff;
     }
-    [recMenu addItem:[NSMenuItem separatorItem]];
-    [[recMenu addItemWithTitle:@"Recordings…" action:@selector(showRecordings:) keyEquivalent:@""] setTarget:self];
-    recItem.submenu = recMenu;
+    langItem.submenu = langMenu;
 
     [m addItem:[NSMenuItem separatorItem]];
-    [[m addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
-    [[m addItemWithTitle:@"About RabbitEars" action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::AboutCheckForUpdatesButton) action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
+    [[m addItemWithTitle:Tr(StringId::AboutWindowTitle) action:@selector(showAbout:) keyEquivalent:@""] setTarget:self];
     [m popUpMenuPositioningItem:nil
                      atLocation:NSMakePoint(0, NSHeight(sender.bounds) + 4)
                          inView:sender];
@@ -1922,12 +1962,12 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 - (void)setRecFormat:(NSMenuItem*)sender {
     _recFormat = ws(sender.representedObject);
     if (_db) _db->setSetting(L"rec_format", _recFormat);
-    [self setStatus:[NSString stringWithFormat:@"Recording format: %@", sender.representedObject]];
+    [self setStatus:TrF(StringId::MacMainWindowRecordingFormatStatus, {sender.representedObject})];
 }
 
 // Settings ⚙ ▸ Recordings… — the schedule/rules manager window.
 - (void)showRecordings:(id)__unused sender {
-    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailable)]; return; }
     if (!_recordingsWC) _recordingsWC = [[RecordingsWindowController alloc] initWithDatabase:_db.get()];
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
     [(RecordingsWindowController*)_recordingsWC presentRelativeTo:_window onChange:^{
@@ -1944,7 +1984,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [dlg presentForWindow:_window onApply:^{
         [self loadMeterConfig];
         [self applyMeterConfig];
-        [self setStatus:@"Meter settings saved."];
+        [self setStatus:Tr(StringId::MacMainWindowMeterSettingsSaved)];
     }];
     [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
 }
@@ -1988,7 +2028,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     }
     [self refreshChannels];
     if (!_currentPid && lastEnabled == 0 && !playlists.empty())
-        [self setStatus:@"All playlists are disabled — enable one to see channels."];
+        [self setStatus:Tr(StringId::MacMainWindowAllPlaylistsDisabledSee)];
 }
 
 // ---- TV Guide (EPG) ----------------------------------------------------------
@@ -1997,19 +2037,17 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // main queue, then store the parsed programmes on the main thread. Newest refresh wins.
 
 - (void)refreshGuide:(id)__unused sender {
-    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailable)]; return; }
     struct Target { long long id; std::wstring name; std::wstring url; };
     auto targets = std::make_shared<std::vector<Target>>();
     for (const auto& pl : _db->listPlaylists())
         if (pl.enabled && !pl.epgUrl.empty()) targets->push_back({pl.id, pl.name, pl.epgUrl});
     if (targets->empty()) {
-        [self showResults:@"No guide source found"
-                     info:@"None of your enabled playlists carry an XMLTV guide URL (the x-tvg-url in "
-                          @"the #EXTM3U header).\n\nAdd a playlist that includes one, or set one per "
-                          @"playlist in Manage Playlists ▸ 📅 Set Guide URL, then try again."];
+        [self showResults:Tr(StringId::RefreshGuideNoSourceHeading)
+                     info:Tr(StringId::MacMainWindowNoGuideSourceBody)];
         return;
     }
-    [self setStatus:@"Downloading guide…"];
+    [self setStatus:Tr(StringId::StatusDownloadingGuide)];
     const uint64_t token = ++_epgToken;  // newest refresh wins (an in-flight one is superseded)
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         // Each fetch's outcome: parsed programmes, or an error string.
@@ -2035,18 +2073,20 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
             NSMutableString* detail = [NSMutableString string];
             for (auto& f : *results) {
                 if (!f.error.empty()) {
-                    [detail appendFormat:@"%@:  %@\n", ns(f.name), ns(f.error)];
+                    [detail appendString:TrF(StringId::MacMainWindowEpgErrorLine, {ns(f.name), ns(f.error)})];
                     continue;
                 }
                 const int stored = self->_db->bulkInsertProgrammes(f.id, f.progs, now);
                 ++okCount; totalProg += stored;
                 for (const auto& p : f.progs) chans.insert(p.channelId);
-                [detail appendFormat:@"%@:  %d programmes\n", ns(f.name), stored];
+                [detail appendString:TrF(StringId::EpgDetailProgrammesLine,
+                    {ns(f.name), [NSString stringWithFormat:@"%d", stored]})];
             }
             NSString* summary = okCount > 0
-                ? [NSString stringWithFormat:@"Stored %d programmes across %lu channels",
-                   totalProg, (unsigned long)chans.size()]
-                : @"Could not refresh the guide";
+                ? TrF(StringId::EpgStoredSummary,
+                   {[NSString stringWithFormat:@"%d", totalProg],
+                    [NSString stringWithFormat:@"%lu", (unsigned long)chans.size()]})
+                : Tr(StringId::EpgRefreshFailedSummary);
             [self setStatus:summary];
             if (okCount > 0) [self expandRecordingRules:YES];  // new airings → re-queue series rules
             [self showResults:summary info:detail];
@@ -2075,7 +2115,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // Open (or re-reveal) the channels×time guide window. The window controller queries the
 // DB and lays the grid out; a picked programme calls back to -playFromGuide:name:.
 - (void)showGuide:(id)__unused sender {
-    if (!_db) { [self setStatus:@"Database unavailable."]; return; }
+    if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailable)]; return; }
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
     [[self guideController] presentRelativeTo:_window
                                       onPlay:^(NSString* tvgId, NSString* name) {
@@ -2094,12 +2134,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         [(TvGuideWindowController*)_guideWC hide];  // don't leave the show playing behind the guide
         [_window makeKeyAndOrderFront:nil];
     } else {
-        [self showResults:@"No matching channel"
-                     info:[NSString stringWithFormat:
-                           @"Couldn't find a channel for “%@” in your playlists.\n\nThe guide matches "
-                           @"programmes to channels by tvg-id; this programme's ID has no match. Point "
-                           @"the playlist at a guide whose IDs line up (Manage Playlists ▸ 📅 Set Guide "
-                           @"URL).", name]];
+        [self showResults:Tr(StringId::GuideNoMatchHeading)
+                     info:TrF(StringId::MacMainWindowGuideNoMatchBody, {name})];
     }
 }
 
@@ -2110,10 +2146,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if (row < 0 || row >= (NSInteger)_channels.size() || !_db) return;
     const Channel& c = _channels[(size_t)row];
     if (c.tvgId.empty()) {
-        [self showResults:@"Not in the guide"
-                     info:[NSString stringWithFormat:
-                           @"“%@” has no tvg-id, so it can't be matched to a guide row.\n\nThe TV "
-                           @"Guide keys on tvg-id; channels without one never appear.", ns(c.name)]];
+        [self showResults:Tr(StringId::MacMainWindowNotInGuideHeading)
+                     info:TrF(StringId::MacMainWindowNoTvgIdBody, {ns(c.name)})];
         return;
     }
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
@@ -2125,11 +2159,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     }];
     // On NoGuide the controller already alerted; only ChannelMissing needs our explanation.
     if (r == REGuideShowChannelMissing)
-        [self showResults:@"Not in the guide"
-                     info:[NSString stringWithFormat:
-                           @"“%@” isn't in the guide yet.\n\nNo stored programmes match it — run "
-                           @"Refresh Guide, or its tvg-id doesn't line up with the guide's IDs.",
-                           ns(c.name)]];
+        [self showResults:Tr(StringId::MacMainWindowNotInGuideHeading)
+                     info:TrF(StringId::MacMainWindowNotInGuideYetBody, {ns(c.name)})];
 }
 
 // Export every favourite to an Extended-M3U file (round-trips through importFavourites: and any
@@ -2138,7 +2169,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if (!_db) return;
     const std::vector<Channel> favs = _db->favourites();
     if (favs.empty()) {
-        [self showResults:@"No favourites" info:@"Mark some channels with ★ first, then export."];
+        [self showResults:Tr(StringId::MacMainWindowNoFavouritesHeading) info:Tr(StringId::MacMainWindowExportNoFavesBody)];
         return;
     }
     NSSavePanel* panel = [NSSavePanel savePanel];
@@ -2164,12 +2195,14 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         NSData* data = [NSData dataWithBytes:bytes.data() length:bytes.size()];
         NSError* err = nil;
         if ([data writeToURL:panel.URL options:NSDataWritingAtomic error:&err])
-            [self showResults:@"Favourites exported"
-                         info:[NSString stringWithFormat:@"Wrote %zu favourite%@ to %@.",
-                               favs.size(), favs.size() == 1 ? @"" : @"s",
-                               panel.URL.lastPathComponent]];
+            [self showResults:Tr(StringId::MacMainWindowFavesExportedHeading)
+                         info:TrF(StringId::MacMainWindowFavesExportedBody,
+                               {[NSString stringWithFormat:@"%zu", favs.size()],
+                                favs.size() == 1 ? @"" : @"s",
+                                panel.URL.lastPathComponent})];
         else
-            [self showResults:@"Export failed" info:(err.localizedDescription ?: @"Couldn't write the file.")];
+            [self showResults:Tr(StringId::MacMainWindowExportFailedHeading)
+                         info:(err.localizedDescription ?: Tr(StringId::MacMainWindowCouldntWriteFile))];
     }];
 }
 
@@ -2187,8 +2220,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         std::wstring perr;
         rabbitears::M3uDocument doc = rabbitears::parseM3uFile(ws(panel.URL.path), &perr);
         if (doc.channels.empty()) {
-            [self showResults:@"Nothing to import"
-                         info:perr.empty() ? @"That file has no channels." : ns(perr)];
+            [self showResults:Tr(StringId::MacMainWindowNothingToImportHeading)
+                         info:perr.empty() ? Tr(StringId::MacMainWindowFileNoChannels) : ns(perr)];
             return;
         }
         // Match by SETS, not last-wins maps: the same stream URL can appear on several channel
@@ -2217,14 +2250,14 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
                 ++unmatched;
         for (long long id : toFav) _db->setFavourite(id, true);
         [self refreshChannels];
-        [self showResults:@"Favourites imported"
-                     info:[NSString stringWithFormat:
-                           @"Marked %zu channel%@ as favourite.%@",
-                           toFav.size(), toFav.size() == 1 ? @"" : @"s",
-                           unmatched ? [NSString stringWithFormat:@"\n\n%d entr%@ in the file had no "
-                                        @"match in your playlists (import marks existing channels; it "
-                                        @"doesn't add new ones).", unmatched, unmatched == 1 ? @"y" : @"ies"]
-                                     : @""]];
+        [self showResults:Tr(StringId::MacMainWindowFavesImportedHeading)
+                     info:TrF(StringId::MacMainWindowFavesImportedBody,
+                           {[NSString stringWithFormat:@"%zu", toFav.size()],
+                            toFav.size() == 1 ? @"" : @"s",
+                            unmatched ? TrF(StringId::MacMainWindowFavesUnmatchedSuffix,
+                                            {[NSString stringWithFormat:@"%d", unmatched],
+                                             unmatched == 1 ? @"y" : @"ies"})
+                                      : @""})];
     }];
 }
 
@@ -2287,10 +2320,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     const Channel& c = _channels[(size_t)row];
     const long long cid = c.id;  // capture by value; _channels can change before the sheet returns
     NSAlert* a = [[NSAlert alloc] init];
-    a.messageText = [NSString stringWithFormat:@"Channel number for “%@”", ns(c.name)];
-    a.informativeText = @"Enter a number, or leave blank to clear it.";
-    [a addButtonWithTitle:@"Set"];
-    [a addButtonWithTitle:@"Cancel"];
+    a.messageText = TrF(StringId::MacMainWindowChannelNumberTitle, {ns(c.name)});
+    a.informativeText = Tr(StringId::MacMainWindowChannelNumberPrompt);
+    [a addButtonWithTitle:Tr(StringId::MacMainWindowSetButton)];
+    [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     NSTextField* input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 220, 24)];
     input.stringValue = c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
     a.accessoryView = input;
@@ -2322,14 +2355,16 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     p->channel = c;
     p->channelId = c.id;
     if (idx != _activePane) {
-        [self setStatus:[NSString stringWithFormat:@"Playing in %@: %@",
-                         (_viewMode == ViewMode::Pip ? @"PiP" : @"background pane"), ns(c.name)]];
+        [self setStatus:TrF(StringId::MacMainWindowPlayingInPane,
+                         {Tr(_viewMode == ViewMode::Pip ? StringId::MacMainWindowPipShort
+                                                        : StringId::MacMainWindowBackgroundPane),
+                          ns(c.name)})];
         return;
     }
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in
     if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
-    _window.title = [NSString stringWithFormat:@"RabbitEars — %@", ns(c.name)];
-    [self setStatus:[NSString stringWithFormat:@"Playing: %@", ns(c.name)]];
+    _window.title = TrF(StringId::MacMainWindowTitleWithChannel, {ns(c.name)});
+    [self setStatus:TrF(StringId::StatusPlaying, {ns(c.name)})];
 }
 
 // The shared "start playing this channel" path — used by the grid (playRow:) and the
