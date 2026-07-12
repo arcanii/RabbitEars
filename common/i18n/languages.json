@@ -9,5 +9,10 @@
     "code": "ja",
     "enum": "Ja",
     "endonym": "日本語"
+  },
+  {
+    "code": "zh-Hant",
+    "enum": "ZhHant",
+    "endonym": "繁體中文"
   }
 ]

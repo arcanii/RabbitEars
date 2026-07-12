@@ -97,7 +97,8 @@ constexpr int ID_RULES = 2064;         // Settings → Recording Rules… (serie
 constexpr int ID_WAKE_RUN_NOW = 2065;  // Settings → Run wake task now (fires --scheduled-wake)
 constexpr int ID_LANG_SYSTEM = 2066;   // Settings → Language → System default (ui_language="system")
 constexpr int ID_LANG_EN = 2067;       // Settings → Language → English ("en")
-constexpr int ID_LANG_JA = 2068;       // Settings → Language → 日本語 ("ja")  (2069 spare)
+constexpr int ID_LANG_JA = 2068;       // Settings → Language → 日本語 ("ja")
+constexpr int ID_LANG_ZH_HANT = 2069;  // Settings → Language → 繁體中文 ("zh-Hant")  (2070 spare)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif

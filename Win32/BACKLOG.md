@@ -191,11 +191,20 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
 
 ## Localization (i18n) follow-ups
 
-The engine shipped in 0.2.8-dev (English + Japanese; JSON source in `common/i18n/`, generator
-`tools/i18n/gen_i18n.py`, `common/i18n/README.md`). Remaining:
+The engine shipped in 0.2.8 (English + Japanese; JSON source in `common/i18n/`, generator
+`tools/i18n/gen_i18n.py`, `common/i18n/README.md`). **Traditional Chinese (繁體中文, `zh-Hant`) added on
+`main`** (machine draft, unreleased) — proved the "add a language" path end-to-end: `zh-Hant.json` +
+`languages.json`/`keys.json` entries, `Tr.h` (`systemLang` now maps Chinese-Traditional sublangs,
+Simplified falls back to English), the Settings ▸ Language item (`ID_LANG_ZH_HANT=2069`), the
+`Microsoft JhengHei UI` CJK font in `themeFontFamily()`, and the CLI selftest generalized to check
+completeness + placeholder parity across ALL shipped languages. Remaining:
 - **Native Japanese review** — the current `ja.json` is a glossary-consistent machine draft. A native
   speaker should pass over it (via `gen_i18n.py --review ja`), the **Terms-of-Use** text especially
   (provisional legal wording). This is the gate before advertising JP support in a release.
+- **Native Traditional Chinese review** — `zh-Hant.json` is a machine draft (glossary-consistent,
+  Taiwan conventions, adversarially reviewed — one 配對→對應 fix applied; no Simplified chars, country
+  names Taiwan-standard). A native Taiwan speaker should still pass over it (via
+  `gen_i18n.py --review zh-Hant`), the **Terms-of-Use** especially, before advertising 繁體中文 support.
 - **Live language switch** (currently restart-to-apply) — rebuild the built-once chrome + GDI fonts +
   the cached Direct2D grid/guide text formats on toggle, reusing the DPI-change relayout path. Modest.
 - **More languages** — drop a `<code>.json` + `languages.json` entry + wire `Tr.h`/menu; the generator

@@ -282,6 +282,12 @@
     "comment": ""
   },
   {
+    "id": "LangTraditionalChinese",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Menu label for Traditional Chinese; shown in its own endonym across all languages."
+  },
+  {
     "id": "MenuChannels",
     "cluster": "Menu",
     "placeholders": [],

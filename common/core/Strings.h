@@ -12,7 +12,7 @@
 namespace rabbitears {
 namespace i18n {
 
-enum class Lang { En, Ja };  // order matches common/i18n/languages.json (first = reference)
+enum class Lang { En, Ja, ZhHant };  // order matches common/i18n/languages.json (first = reference)
 
 enum class StringId {
     // --- Menu ---
@@ -63,6 +63,7 @@ enum class StringId {
     LangSystemDefault,
     LangEnglish,
     LangJapanese,
+    LangTraditionalChinese,
     MenuChannels,
     MenuRecording,
     LangRestartInstruction,

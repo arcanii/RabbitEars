@@ -34,16 +34,31 @@ inline std::wstring trf(i18n::StringId id, std::initializer_list<std::wstring> a
     return s;
 }
 
-// The system UI language, mapped onto our two-language set (extend when languages are added).
+// The system UI language, mapped onto our shipped language set (extend when languages are added).
 inline i18n::Lang systemLang() {
-    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_JAPANESE ? i18n::Lang::Ja
-                                                                      : i18n::Lang::En;
+    const LANGID lid = GetUserDefaultUILanguage();
+    switch (PRIMARYLANGID(lid)) {
+        case LANG_JAPANESE:
+            return i18n::Lang::Ja;
+        case LANG_CHINESE: {
+            // We ship Traditional Chinese only. Traditional locales are Taiwan / Hong Kong / Macau;
+            // Simplified (PRC / Singapore) falls back to English until a zh-Hans catalog exists.
+            const WORD sub = SUBLANGID(lid);
+            if (sub == SUBLANG_CHINESE_TRADITIONAL || sub == SUBLANG_CHINESE_HONGKONG ||
+                sub == SUBLANG_CHINESE_MACAU)
+                return i18n::Lang::ZhHant;
+            return i18n::Lang::En;
+        }
+        default:
+            return i18n::Lang::En;
+    }
 }
 
-// Resolve a persisted "ui_language" preference ("system" | "en" | "ja") to the effective language.
-// Anything unrecognized (or "system") follows the OS.
+// Resolve a persisted "ui_language" preference ("system" | "en" | "ja" | "zh-Hant") to the effective
+// language. Anything unrecognized (or "system") follows the OS.
 inline i18n::Lang resolveLang(const std::wstring& pref) {
     if (pref == L"ja") return i18n::Lang::Ja;
+    if (pref == L"zh-Hant") return i18n::Lang::ZhHant;
     if (pref == L"en") return i18n::Lang::En;
     return systemLang();
 }

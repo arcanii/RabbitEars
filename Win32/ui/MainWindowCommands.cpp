@@ -1456,7 +1456,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                     tr(StringId::MenuDeleteSavedLayout).c_str());
     }
 
-    // Language submenu: System default / English / 日本語 (restart-to-apply).
+    // Language submenu: System default / English / 日本語 / 繁體中文 (restart-to-apply).
     HMENU langMenu = CreatePopupMenu();
     AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"system" ? chk : 0u), ID_LANG_SYSTEM,
                 tr(StringId::LangSystemDefault).c_str());
@@ -1464,6 +1464,8 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 tr(StringId::LangEnglish).c_str());
     AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"ja" ? chk : 0u), ID_LANG_JA,
                 tr(StringId::LangJapanese).c_str());
+    AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"zh-Hant" ? chk : 0u), ID_LANG_ZH_HANT,
+                tr(StringId::LangTraditionalChinese).c_str());
 
     // ---- assemble the top-level menu (grouped, mac-style) ----
     HMENU m = CreatePopupMenu();
@@ -1645,6 +1647,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_LANG_JA:
             setLanguageSelection(st, L"ja");
+            break;
+        case ID_LANG_ZH_HANT:
+            setLanguageSelection(st, L"zh-Hant");
             break;
     }
 }

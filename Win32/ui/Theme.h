@@ -231,8 +231,12 @@ inline std::wstring themeFontFamily(FontRole role) {
 #else
         role == FontRole::Glyph ? std::wstring(L"Segoe MDL2 Assets") : std::wstring(L"Segoe UI");
 #endif
-    if (i18n::activeLang() == i18n::Lang::Ja && !themeFontIsSymbol(role))
-        fam = L"Yu Gothic UI";  // Win10/11 Japanese UI face (Meiryo UI is the documented fallback)
+    if (!themeFontIsSymbol(role)) {
+        if (i18n::activeLang() == i18n::Lang::Ja)
+            fam = L"Yu Gothic UI";           // Win10/11 Japanese UI face (Meiryo UI is the fallback)
+        else if (i18n::activeLang() == i18n::Lang::ZhHant)
+            fam = L"Microsoft JhengHei UI";  // Win Traditional-Chinese UI face (微軟正黑體)
+    }
     return fam;
 }
 
