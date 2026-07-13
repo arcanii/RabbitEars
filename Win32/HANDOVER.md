@@ -31,9 +31,14 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.10 hotfix BUILT (Chinese language-selection fixes) — awaiting owner signature + release** · v0.2.9 SHIPPED · macOS 0.2.7
+## Current state — **v0.2.10 SHIPPED (Chinese language-selection hotfix)** · v0.2.9 · macOS 0.2.7
 
-**0.2.10 HOTFIX — BUILT + COMMITTED, RELEASE PENDING (owner signature).** Fixes the two Traditional
+**Released:** **`v0.2.10`** (2026-07-13), tag `v0.2.10` @ `3da1096`, full version **`0.2.10.253`** (the
+installers were built at commit `7c3727e`/count 253; the tag sits a couple of doc commits later — the
+usual cosmetic drift; installers + version.h + appcast all agree on 0.2.10.253, cleanly `> 0.2.9.243`).
+Three signed installers on GitHub release `v0.2.10` (x64 / native ARM64 / universal), **two appcasts**
+(`0.2.10.253`) committed @ `1e1b2e4` and LIVE (raw feeds serve 0.2.10.253; all three enclosures HTTP 200).
+Owner-signed on the Mac. **0.2.10 HOTFIX.** Fixes the two Traditional
 Chinese / Hong Kong **language-selection** bugs an owner runtime pass caught in shipped 0.2.9 — both
 GUI-wiring, so invisible to the headless selftest + the i18n review (they only exercise the catalog, not
 the Win32 language plumbing). **(1)** The `WM_CREATE` startup loader whitelisted `ui_language` to only
@@ -51,12 +56,8 @@ range before allocating a command id. Version bumped 0.2.9 → **0.2.10** (commi
 installers built** — x64 `35,309,768` / arm64 `30,167,080` / universal `63,171,660` bytes. **Owner-verified
 on-device: zh-Hant + zh-HK now apply.** The `main` rebase also pulled the **mac team's localization merge**:
 the shared i18n catalog is now **531 keys × 4 languages** (EN / 日本語 / 繁體中文 / 繁體中文（香港）) — it builds +
-passes placeholder parity on the Windows side, so it ships along. **REMAINING to cut 0.2.10** (per
-`docs/RELEASING.md`): owner signs the 3 installers on the Mac (`sign_update --account SQLTerminal`; each
-printed length must equal the bytes above) → `pwsh scripts\make-appcast.ps1 -Version 0.2.10.253 -Tag v0.2.10
--SetupExe … -Signature …` for x64 (`appcast.xml`) and `-Arch arm64` (`appcast-arm64.xml`) →
-`gh release create v0.2.10 --target main` with the 3 installers → commit+push both appcasts → verify raw
-feeds serve 0.2.10.253 + all enclosures HTTP 200.
+passes placeholder parity on the Windows side, so it ships along. **Owner runtime pass: ✅ zh-Hant + zh-HK
+now apply on-device**, and auto-update `0.2.9 → 0.2.10` is live for both arches.
 
 **Released:** **`v0.2.9`** (2026-07-12), tag `v0.2.9` @ `75f8d16`, full version **`0.2.9.243`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.9` (x64 / native ARM64 / universal),
