@@ -197,24 +197,24 @@ constexpr std::array<const char*, N> kEn = {{
     "Delete Playlist",  // DeletePlaylistTitle
     "Rename Playlist",  // DialogRenamePlaylistTitle
     "Playlist name:",  // DialogRenamePlaylistLabel
-    "Delete playlist \"{0}\"?\\n\\nThis removes its channels from RabbitEars.",  // DialogDeletePlaylistBody
+    "Delete playlist \"{0}\"?\n\nThis removes its channels from RabbitEars.",  // DialogDeletePlaylistBody
     "Add Playlist",  // AddPlaylistDialogTitle
     "Playlist URL (.m3u / .m3u8):",  // AddPlaylistUrlPrompt
-    "Source:  {0}\\r\\n\\r\\n",  // PlaylistSourceLine
+    "Source:  {0}\r\n\r\n",  // PlaylistSourceLine
     "Could not import the playlist",  // PlaylistImportFailedHeading
-    "Problem:  the playlist could not be saved to the database.\\r\\n",  // PlaylistDbSaveProblem
+    "Problem:  the playlist could not be saved to the database.\r\n",  // PlaylistDbSaveProblem
     "Imported {0} channels from {1}",  // PlaylistImportedHeading
-    "Channels parsed:  {0}\\r\\n",  // PlaylistChannelsParsedLine
-    "Channels imported:  {0}\\r\\n",  // PlaylistChannelsImportedLine
-    "Skipped (blank or duplicate URLs):  {0}\\r\\n",  // PlaylistSkippedLine
-    "Groups:  {0}\\r\\n",  // PlaylistGroupsLine
+    "Channels parsed:  {0}\r\n",  // PlaylistChannelsParsedLine
+    "Channels imported:  {0}\r\n",  // PlaylistChannelsImportedLine
+    "Skipped (blank or duplicate URLs):  {0}\r\n",  // PlaylistSkippedLine
+    "Groups:  {0}\r\n",  // PlaylistGroupsLine
     "The playlist contained no channels.",  // PlaylistNoChannelsMsg
     "No channels found.",  // PlaylistNoChannelsFoundMsg
     "Import results",  // ImportResultsTitle
     // --- Transport ---
-    "\\r\\nReceived: %.2f Mb/s\\r\\nBuffered: %.1f s",  // TooltipBufferReceivedBuffered
-    "Consumption: %.2f Mb/s\\r\\nBuffer (latency): %.1f s\\r\\nRecent loss: %d%s",  // TooltipBufferConsumption
-    "Not playing\\r\\nBuffer (latency): %.1f s",  // TooltipBufferNotPlaying
+    "\r\nReceived: %.2f Mb/s\r\nBuffered: %.1f s",  // TooltipBufferReceivedBuffered
+    "Consumption: %.2f Mb/s\r\nBuffer (latency): %.1f s\r\nRecent loss: %d%s",  // TooltipBufferConsumption
+    "Not playing\r\nBuffer (latency): %.1f s",  // TooltipBufferNotPlaying
     "Network buffer: %.1f s (receive->show delay)",  // TooltipNetworkBuffer
     "Audio spectrum (this app's sound)",  // TooltipMeterSpectrum
     "Signal strength (stream health)",  // TooltipMeterSignal
@@ -240,24 +240,24 @@ constexpr std::array<const char*, N> kEn = {{
     "TV Guide — RabbitEars",  // GuideWindowTitle
     "Refresh Guide",  // RefreshGuideTitle
     "No guide source found",  // RefreshGuideNoSourceHeading
-    "None of your enabled playlists carry an XMLTV guide URL (x-tvg-url in the #EXTM3U header).\\r\\n\\r\\nAdd a playlist that includes one, then try again.",  // RefreshGuideNoSourceBody
+    "None of your enabled playlists carry an XMLTV guide URL (x-tvg-url in the #EXTM3U header).\r\n\r\nAdd a playlist that includes one, then try again.",  // RefreshGuideNoSourceBody
     "TV Guide",  // TvGuideTitle
     "Contacting guide source…",  // LoadingContactingGuide
     " ({0} of {1})",  // LoadingProgressTag
     "Downloading {0}…{1}",  // LoadingDownloadingName
     "Parsing {0} ({1} KB)…{2}",  // LoadingParsingName
-    "{0}:  {1} programmes\\r\\n",  // EpgDetailProgrammesLine
+    "{0}:  {1} programmes\r\n",  // EpgDetailProgrammesLine
     "Stored {0} programmes across {1} channels",  // EpgStoredSummary
     "Could not refresh the guide",  // EpgRefreshFailedSummary
     " · {0} queued by rules",  // EpgQueuedByRulesSummary
     "Building the guide from stored programmes…",  // LoadingBuildingGuide
     "No guide to show",  // GuideNoGuideHeading
-    "No stored programmes match a channel in your playlists.\\r\\n\\r\\nEither run Settings ▸ Refresh Guide… first, or the guide's channel IDs don't match your playlist — point it at a guide whose tvg-ids line up (right-click a playlist ▸ Set Guide URL…).",  // GuideNoGuideBody
+    "No stored programmes match a channel in your playlists.\r\n\r\nEither run Settings ▸ Refresh Guide… first, or the guide's channel IDs don't match your playlist — point it at a guide whose tvg-ids line up (right-click a playlist ▸ Set Guide URL…).",  // GuideNoGuideBody
     "No matching channel",  // GuideNoMatchHeading
-    "Couldn't find a channel for \"{0}\" in your playlist.\\r\\n\\r\\nThe guide matches programmes to channels by tvg-id — this programme's channel ID has no match. Point the playlist at a guide whose IDs match it (right-click the playlist ▸ Set Guide URL…).",  // GuideNoMatchBody
+    "Couldn't find a channel for \"{0}\" in your playlist.\r\n\r\nThe guide matches programmes to channels by tvg-id — this programme's channel ID has no match. Point the playlist at a guide whose IDs match it (right-click the playlist ▸ Set Guide URL…).",  // GuideNoMatchBody
     "Set Guide URL",  // SetGuideUrlTitle
     "XMLTV guide URL (.xml or .xml.gz; blank to clear):",  // SetGuideUrlPrompt
-    "Guide URL saved.\\n\\nDownload the guide now?",  // SetGuideUrlSavedPrompt
+    "Guide URL saved.\n\nDownload the guide now?",  // SetGuideUrlSavedPrompt
     // --- DialogSchedule ---
     "Channel:",  // ScheduleFieldChannel
     "Title:",  // ScheduleFieldTitle
@@ -283,7 +283,7 @@ constexpr std::array<const char*, N> kEn = {{
     "Channel not found",  // ChannelNotFoundHeading
     "Couldn't match \"{0}\" to a playable channel in your library (its tvg-id isn't in an enabled playlist).",  // ScheduleChannelNotFoundBody
     "Recording scheduled",  // ScheduleRecordingScheduledHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\nThe app must be running at the scheduled time.",  // ScheduleRecordingScheduledBody
+    "{0}\r\n{1}\r\n\r\nThe app must be running at the scheduled time.",  // ScheduleRecordingScheduledBody
     "Could not schedule",  // ScheduleCouldNotHeading
     "The recording could not be saved.",  // ScheduleCouldNotBody
     // --- DialogRules ---
@@ -307,15 +307,15 @@ constexpr std::array<const char*, N> kEn = {{
     "Start early:",  // RuleFieldLead
     "Stop late:",  // RuleFieldTrail
     "min",  // RuleMinutesSuffix
-    "\\r\\nRecording rules queued {0} new airing(s).\\r\\n",  // EpgRulesQueuedDetail
+    "\r\nRecording rules queued {0} new airing(s).\r\n",  // EpgRulesQueuedDetail
     "Record series",  // RecordSeriesTitle
     "Couldn't match \"{0}\" to a playable channel in your library.",  // RecordSeriesChannelNotFoundBody
     "Already recording this series",  // RecordSeriesAlreadyHeading
-    "A rule for \"{0}\" on {1} already exists.\\r\\nSee Settings ▸ Recording Rules….",  // RecordSeriesAlreadyBody
+    "A rule for \"{0}\" on {1} already exists.\r\nSee Settings ▸ Recording Rules….",  // RecordSeriesAlreadyBody
     "Could not save the rule",  // RecordSeriesCouldNotSaveHeading
     "The recording rule could not be stored.",  // RecordSeriesCouldNotSaveBody
     "Recording every airing of this show",  // RecordSeriesEveryAiringHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n{2} upcoming airing(s) queued from the guide.\\r\\nNew airings are picked up automatically as the guide refreshes.\\r\\n\\r\\nManage rules in Settings ▸ Recording Rules….",  // RecordSeriesEveryAiringBody
+    "{0}\r\n{1}\r\n\r\n{2} upcoming airing(s) queued from the guide.\r\nNew airings are picked up automatically as the guide refreshes.\r\n\r\nManage rules in Settings ▸ Recording Rules….",  // RecordSeriesEveryAiringBody
     // --- DialogMeters ---
     "Glow",  // MeterKnobGlow
     "Smooth",  // MeterKnobSmooth
@@ -381,8 +381,8 @@ constexpr std::array<const char*, N> kEn = {{
     // --- Error ---
     "Database error: {0}",  // StatusDatabaseError
     "Could not write the file",  // ExportFavouritesWriteFailHeading
-    "Path:  {0}\\r\\n",  // ExportFavouritesPathLine
-    "Problem:  {0}\\r\\n",  // ProblemLineDetail
+    "Path:  {0}\r\n",  // ExportFavouritesPathLine
+    "Problem:  {0}\r\n",  // ProblemLineDetail
     "download failed",  // EpgErrorDownloadFailed
     "empty or invalid after decompression",  // EpgErrorEmptyAfterDecompress
     // --- Misc ---
@@ -396,16 +396,16 @@ constexpr std::array<const char*, N> kEn = {{
     "Close",  // ButtonClose
     "Delete",  // ButtonDelete
     "Search channels…",  // SearchChannelsPlaceholder
-    "Picture-in-Picture\\r\\nRight-click a channel ▸ Play in PIP",  // HintEmptyPip
+    "Picture-in-Picture\r\nRight-click a channel ▸ Play in PIP",  // HintEmptyPip
     "Export favourites",  // ExportFavouritesTitle
     "No favourites yet",  // ExportFavouritesNoneHeading
-    "Star some channels first (the ★ column in the channel list, or right-click a TV-Guide row), then export.\\r\\n",  // ExportFavouritesNoneBody
+    "Star some channels first (the ★ column in the channel list, or right-click a TV-Guide row), then export.\r\n",  // ExportFavouritesNoneBody
     "Exported {0} favourite(s)",  // ExportFavouritesDoneHeading
-    "File:  {0}\\r\\n",  // FileLineDetail
+    "File:  {0}\r\n",  // FileLineDetail
     "Import favourites",  // ImportFavouritesTitle
     "No channels found",  // ImportFavouritesNoChannelsHeading
-    "File:  {0}\\r\\nEntries in file:  {1}\\r\\nChannels starred:  {2}\\r\\n",  // ImportFavouritesDetails
-    "Not in your library (skipped):  {0}\\r\\n",  // ImportFavouritesSkippedLine
+    "File:  {0}\r\nEntries in file:  {1}\r\nChannels starred:  {2}\r\n",  // ImportFavouritesDetails
+    "Not in your library (skipped):  {0}\r\n",  // ImportFavouritesSkippedLine
     "Starred {0} channel(s)",  // ImportFavouritesStarredHeading
     "My layout",  // LayoutDefaultName
     "Save Layout",  // SaveLayoutDialogTitle
@@ -413,7 +413,7 @@ constexpr std::array<const char*, N> kEn = {{
     "RabbitEars",  // AppName
     "Categories",  // CategoriesTitle
     "No categories to filter",  // CategoriesNoneHeading
-    "The channels in your library have no group titles, so there are no categories to include or exclude.\\r\\n\\r\\nAdd a playlist whose #EXTINF lines carry group-title tags to use this filter.\\r\\n",  // CategoriesNoneBody
+    "The channels in your library have no group titles, so there are no categories to include or exclude.\r\n\r\nAdd a playlist whose #EXTINF lines carry group-title tags to use this filter.\r\n",  // CategoriesNoneBody
     // --- MacMenu ---
     "Quit RabbitEars",  // MenuQuit
     "File",  // MenuFile
@@ -749,24 +749,24 @@ constexpr std::array<const char*, N> kJa = {{
     "プレイリストを削除",  // DeletePlaylistTitle
     "プレイリストの名前を変更",  // DialogRenamePlaylistTitle
     "プレイリスト名:",  // DialogRenamePlaylistLabel
-    "プレイリスト「{0}」を削除しますか?\\n\\nこのプレイリストのチャンネルが RabbitEars から削除されます。",  // DialogDeletePlaylistBody
+    "プレイリスト「{0}」を削除しますか?\n\nこのプレイリストのチャンネルが RabbitEars から削除されます。",  // DialogDeletePlaylistBody
     "プレイリストを追加",  // AddPlaylistDialogTitle
     "プレイリスト URL (.m3u / .m3u8):",  // AddPlaylistUrlPrompt
-    "ソース:  {0}\\r\\n\\r\\n",  // PlaylistSourceLine
+    "ソース:  {0}\r\n\r\n",  // PlaylistSourceLine
     "プレイリストをインポートできませんでした",  // PlaylistImportFailedHeading
-    "問題:  プレイリストをデータベースに保存できませんでした。\\r\\n",  // PlaylistDbSaveProblem
+    "問題:  プレイリストをデータベースに保存できませんでした。\r\n",  // PlaylistDbSaveProblem
     "{1} から {0} 件のチャンネルをインポートしました",  // PlaylistImportedHeading
-    "解析したチャンネル:  {0}\\r\\n",  // PlaylistChannelsParsedLine
-    "インポートしたチャンネル:  {0}\\r\\n",  // PlaylistChannelsImportedLine
-    "スキップ (空または重複する URL):  {0}\\r\\n",  // PlaylistSkippedLine
-    "グループ:  {0}\\r\\n",  // PlaylistGroupsLine
+    "解析したチャンネル:  {0}\r\n",  // PlaylistChannelsParsedLine
+    "インポートしたチャンネル:  {0}\r\n",  // PlaylistChannelsImportedLine
+    "スキップ (空または重複する URL):  {0}\r\n",  // PlaylistSkippedLine
+    "グループ:  {0}\r\n",  // PlaylistGroupsLine
     "プレイリストにチャンネルがありませんでした。",  // PlaylistNoChannelsMsg
     "チャンネルが見つかりませんでした。",  // PlaylistNoChannelsFoundMsg
     "インポート結果",  // ImportResultsTitle
     // --- Transport ---
-    "\\r\\n受信: %.2f Mb/s\\r\\nバッファ済み: %.1f 秒",  // TooltipBufferReceivedBuffered
-    "消費: %.2f Mb/s\\r\\nバッファ (遅延): %.1f 秒\\r\\n直近の損失: %d%s",  // TooltipBufferConsumption
-    "再生していません\\r\\nバッファ (遅延): %.1f 秒",  // TooltipBufferNotPlaying
+    "\r\n受信: %.2f Mb/s\r\nバッファ済み: %.1f 秒",  // TooltipBufferReceivedBuffered
+    "消費: %.2f Mb/s\r\nバッファ (遅延): %.1f 秒\r\n直近の損失: %d%s",  // TooltipBufferConsumption
+    "再生していません\r\nバッファ (遅延): %.1f 秒",  // TooltipBufferNotPlaying
     "ネットワークバッファ: %.1f 秒 (受信→表示の遅延)",  // TooltipNetworkBuffer
     "オーディオスペクトラム (このアプリの音声)",  // TooltipMeterSpectrum
     "信号強度 (ストリームの状態)",  // TooltipMeterSignal
@@ -792,24 +792,24 @@ constexpr std::array<const char*, N> kJa = {{
     "番組表 — RabbitEars",  // GuideWindowTitle
     "番組表を更新",  // RefreshGuideTitle
     "番組表のソースが見つかりません",  // RefreshGuideNoSourceHeading
-    "有効なプレイリストのいずれにもXMLTV番組表URL（#EXTM3Uヘッダー内のx-tvg-url）が含まれていません。\\r\\n\\r\\n番組表URLを含むプレイリストを追加してから、もう一度お試しください。",  // RefreshGuideNoSourceBody
+    "有効なプレイリストのいずれにもXMLTV番組表URL（#EXTM3Uヘッダー内のx-tvg-url）が含まれていません。\r\n\r\n番組表URLを含むプレイリストを追加してから、もう一度お試しください。",  // RefreshGuideNoSourceBody
     "番組表",  // TvGuideTitle
     "番組表のソースに接続中…",  // LoadingContactingGuide
     " （{1} 件中 {0} 件）",  // LoadingProgressTag
     "{0} をダウンロード中…{1}",  // LoadingDownloadingName
     "{0} を解析中 ({1} KB)…{2}",  // LoadingParsingName
-    "{0}:  {1} 番組\\r\\n",  // EpgDetailProgrammesLine
+    "{0}:  {1} 番組\r\n",  // EpgDetailProgrammesLine
     "{1} チャンネルにわたって {0} 番組を保存しました",  // EpgStoredSummary
     "番組表を更新できませんでした",  // EpgRefreshFailedSummary
     " · ルールにより {0} 件をキューに追加",  // EpgQueuedByRulesSummary
     "保存された番組から番組表を構築中…",  // LoadingBuildingGuide
     "表示する番組表がありません",  // GuideNoGuideHeading
-    "保存された番組の中に、プレイリストのチャンネルと一致するものがありません。\\r\\n\\r\\nまず「設定 ▸ 番組表を更新…」を実行してください。または、番組表のチャンネルIDがプレイリストと一致していない可能性があります。tvg-idが一致する番組表を指定してください（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideNoGuideBody
+    "保存された番組の中に、プレイリストのチャンネルと一致するものがありません。\r\n\r\nまず「設定 ▸ 番組表を更新…」を実行してください。または、番組表のチャンネルIDがプレイリストと一致していない可能性があります。tvg-idが一致する番組表を指定してください（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideNoGuideBody
     "一致するチャンネルがありません",  // GuideNoMatchHeading
-    "プレイリスト内に「{0}」に該当するチャンネルが見つかりませんでした。\\r\\n\\r\\n番組表はtvg-idで番組をチャンネルに対応付けます。この番組のチャンネルIDには一致するものがありません。IDが一致する番組表をプレイリストに指定してください（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideNoMatchBody
+    "プレイリスト内に「{0}」に該当するチャンネルが見つかりませんでした。\r\n\r\n番組表はtvg-idで番組をチャンネルに対応付けます。この番組のチャンネルIDには一致するものがありません。IDが一致する番組表をプレイリストに指定してください（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideNoMatchBody
     "番組表URLを設定",  // SetGuideUrlTitle
     "XMLTV番組表URL (.xml または .xml.gz、空欄でクリア):",  // SetGuideUrlPrompt
-    "番組表URLを保存しました。\\n\\n今すぐ番組表をダウンロードしますか？",  // SetGuideUrlSavedPrompt
+    "番組表URLを保存しました。\n\n今すぐ番組表をダウンロードしますか？",  // SetGuideUrlSavedPrompt
     // --- DialogSchedule ---
     "チャンネル:",  // ScheduleFieldChannel
     "タイトル:",  // ScheduleFieldTitle
@@ -835,7 +835,7 @@ constexpr std::array<const char*, N> kJa = {{
     "チャンネルが見つかりません",  // ChannelNotFoundHeading
     "「{0}」をライブラリ内の再生可能なチャンネルに一致させられませんでした（その tvg-id が有効なプレイリストに含まれていません）。",  // ScheduleChannelNotFoundBody
     "録画を予約しました",  // ScheduleRecordingScheduledHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n予約した時刻にアプリが起動している必要があります。",  // ScheduleRecordingScheduledBody
+    "{0}\r\n{1}\r\n\r\n予約した時刻にアプリが起動している必要があります。",  // ScheduleRecordingScheduledBody
     "予約できませんでした",  // ScheduleCouldNotHeading
     "録画を保存できませんでした。",  // ScheduleCouldNotBody
     // --- DialogRules ---
@@ -859,15 +859,15 @@ constexpr std::array<const char*, N> kJa = {{
     "早めに開始:",  // RuleFieldLead
     "遅めに終了:",  // RuleFieldTrail
     "分",  // RuleMinutesSuffix
-    "\\r\\n録画ルールが{0}件の新しい放送を予約しました。\\r\\n",  // EpgRulesQueuedDetail
+    "\r\n録画ルールが{0}件の新しい放送を予約しました。\r\n",  // EpgRulesQueuedDetail
     "シリーズ録画",  // RecordSeriesTitle
     "「{0}」をライブラリ内の再生可能なチャンネルに一致させられませんでした。",  // RecordSeriesChannelNotFoundBody
     "このシリーズはすでに録画中です",  // RecordSeriesAlreadyHeading
-    "{1}での「{0}」の録画ルールはすでに存在します。\\r\\n設定 ▸ 録画ルール… を参照してください。",  // RecordSeriesAlreadyBody
+    "{1}での「{0}」の録画ルールはすでに存在します。\r\n設定 ▸ 録画ルール… を参照してください。",  // RecordSeriesAlreadyBody
     "ルールを保存できませんでした",  // RecordSeriesCouldNotSaveHeading
     "録画ルールを保存できませんでした。",  // RecordSeriesCouldNotSaveBody
     "この番組のすべての放送を録画します",  // RecordSeriesEveryAiringHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n番組表から今後の放送を{2}件予約しました。\\r\\n番組表の更新に合わせて、新しい放送が自動的に取り込まれます。\\r\\n\\r\\nルールの管理は設定 ▸ 録画ルール… で行えます。",  // RecordSeriesEveryAiringBody
+    "{0}\r\n{1}\r\n\r\n番組表から今後の放送を{2}件予約しました。\r\n番組表の更新に合わせて、新しい放送が自動的に取り込まれます。\r\n\r\nルールの管理は設定 ▸ 録画ルール… で行えます。",  // RecordSeriesEveryAiringBody
     // --- DialogMeters ---
     "グロー",  // MeterKnobGlow
     "スムーズ",  // MeterKnobSmooth
@@ -933,8 +933,8 @@ constexpr std::array<const char*, N> kJa = {{
     // --- Error ---
     "データベースエラー: {0}",  // StatusDatabaseError
     "ファイルを書き込めませんでした",  // ExportFavouritesWriteFailHeading
-    "パス:  {0}\\r\\n",  // ExportFavouritesPathLine
-    "問題:  {0}\\r\\n",  // ProblemLineDetail
+    "パス:  {0}\r\n",  // ExportFavouritesPathLine
+    "問題:  {0}\r\n",  // ProblemLineDetail
     "ダウンロードに失敗しました",  // EpgErrorDownloadFailed
     "展開後に空または無効です",  // EpgErrorEmptyAfterDecompress
     // --- Misc ---
@@ -948,16 +948,16 @@ constexpr std::array<const char*, N> kJa = {{
     "閉じる",  // ButtonClose
     "削除",  // ButtonDelete
     "チャンネルを検索…",  // SearchChannelsPlaceholder
-    "ピクチャー・イン・ピクチャー\\r\\nチャンネルを右クリック ▸ PIPで再生",  // HintEmptyPip
+    "ピクチャー・イン・ピクチャー\r\nチャンネルを右クリック ▸ PIPで再生",  // HintEmptyPip
     "お気に入りをエクスポート",  // ExportFavouritesTitle
     "お気に入りがまだありません",  // ExportFavouritesNoneHeading
-    "先にチャンネルにスターを付けてください(チャンネル一覧の ★ 列、または番組表の行を右クリック)。それからエクスポートしてください。\\r\\n",  // ExportFavouritesNoneBody
+    "先にチャンネルにスターを付けてください(チャンネル一覧の ★ 列、または番組表の行を右クリック)。それからエクスポートしてください。\r\n",  // ExportFavouritesNoneBody
     "{0} 件のお気に入りをエクスポートしました",  // ExportFavouritesDoneHeading
-    "ファイル:  {0}\\r\\n",  // FileLineDetail
+    "ファイル:  {0}\r\n",  // FileLineDetail
     "お気に入りをインポート",  // ImportFavouritesTitle
     "チャンネルが見つかりません",  // ImportFavouritesNoChannelsHeading
-    "ファイル:  {0}\\r\\nファイル内のエントリ:  {1}\\r\\nスターを付けたチャンネル:  {2}\\r\\n",  // ImportFavouritesDetails
-    "ライブラリにありません(スキップ):  {0}\\r\\n",  // ImportFavouritesSkippedLine
+    "ファイル:  {0}\r\nファイル内のエントリ:  {1}\r\nスターを付けたチャンネル:  {2}\r\n",  // ImportFavouritesDetails
+    "ライブラリにありません(スキップ):  {0}\r\n",  // ImportFavouritesSkippedLine
     "{0} 件のチャンネルにスターを付けました",  // ImportFavouritesStarredHeading
     "マイレイアウト",  // LayoutDefaultName
     "レイアウトを保存",  // SaveLayoutDialogTitle
@@ -965,7 +965,7 @@ constexpr std::array<const char*, N> kJa = {{
     "RabbitEars",  // AppName
     "カテゴリ",  // CategoriesTitle
     "フィルターするカテゴリがありません",  // CategoriesNoneHeading
-    "ライブラリのチャンネルにグループタイトルがないため、含めたり除外したりするカテゴリがありません。\\r\\n\\r\\nこのフィルターを使うには、#EXTINF 行に group-title タグを持つプレイリストを追加してください。\\r\\n",  // CategoriesNoneBody
+    "ライブラリのチャンネルにグループタイトルがないため、含めたり除外したりするカテゴリがありません。\r\n\r\nこのフィルターを使うには、#EXTINF 行に group-title タグを持つプレイリストを追加してください。\r\n",  // CategoriesNoneBody
     // --- MacMenu ---
     "RabbitEars を終了",  // MenuQuit
     "ファイル",  // MenuFile
@@ -1301,24 +1301,24 @@ constexpr std::array<const char*, N> kZhHant = {{
     "刪除播放清單",  // DeletePlaylistTitle
     "重新命名播放清單",  // DialogRenamePlaylistTitle
     "播放清單名稱：",  // DialogRenamePlaylistLabel
-    "要刪除播放清單「{0}」嗎？\\n\\n這會從 RabbitEars 移除其頻道。",  // DialogDeletePlaylistBody
+    "要刪除播放清單「{0}」嗎？\n\n這會從 RabbitEars 移除其頻道。",  // DialogDeletePlaylistBody
     "新增播放清單",  // AddPlaylistDialogTitle
     "播放清單 URL (.m3u / .m3u8)：",  // AddPlaylistUrlPrompt
-    "來源：  {0}\\r\\n\\r\\n",  // PlaylistSourceLine
+    "來源：  {0}\r\n\r\n",  // PlaylistSourceLine
     "無法匯入播放清單",  // PlaylistImportFailedHeading
-    "問題：  無法將播放清單儲存至資料庫。\\r\\n",  // PlaylistDbSaveProblem
+    "問題：  無法將播放清單儲存至資料庫。\r\n",  // PlaylistDbSaveProblem
     "已從 {1} 匯入 {0} 個頻道",  // PlaylistImportedHeading
-    "已解析頻道：  {0}\\r\\n",  // PlaylistChannelsParsedLine
-    "已匯入頻道：  {0}\\r\\n",  // PlaylistChannelsImportedLine
-    "已略過（空白或重複的 URL）：  {0}\\r\\n",  // PlaylistSkippedLine
-    "群組：  {0}\\r\\n",  // PlaylistGroupsLine
+    "已解析頻道：  {0}\r\n",  // PlaylistChannelsParsedLine
+    "已匯入頻道：  {0}\r\n",  // PlaylistChannelsImportedLine
+    "已略過（空白或重複的 URL）：  {0}\r\n",  // PlaylistSkippedLine
+    "群組：  {0}\r\n",  // PlaylistGroupsLine
     "此播放清單不含任何頻道。",  // PlaylistNoChannelsMsg
     "找不到頻道。",  // PlaylistNoChannelsFoundMsg
     "匯入結果",  // ImportResultsTitle
     // --- Transport ---
-    "\\r\\n已接收：%.2f Mb/s\\r\\n已緩衝：%.1f 秒",  // TooltipBufferReceivedBuffered
-    "消耗：%.2f Mb/s\\r\\n緩衝（延遲）：%.1f 秒\\r\\n近期遺失：%d%s",  // TooltipBufferConsumption
-    "未播放\\r\\n緩衝（延遲）：%.1f 秒",  // TooltipBufferNotPlaying
+    "\r\n已接收：%.2f Mb/s\r\n已緩衝：%.1f 秒",  // TooltipBufferReceivedBuffered
+    "消耗：%.2f Mb/s\r\n緩衝（延遲）：%.1f 秒\r\n近期遺失：%d%s",  // TooltipBufferConsumption
+    "未播放\r\n緩衝（延遲）：%.1f 秒",  // TooltipBufferNotPlaying
     "網路緩衝：%.1f 秒（接收→顯示延遲）",  // TooltipNetworkBuffer
     "音訊頻譜（此應用程式的聲音）",  // TooltipMeterSpectrum
     "訊號強度（串流狀態）",  // TooltipMeterSignal
@@ -1344,24 +1344,24 @@ constexpr std::array<const char*, N> kZhHant = {{
     "節目表 — RabbitEars",  // GuideWindowTitle
     "更新節目表",  // RefreshGuideTitle
     "找不到節目表來源",  // RefreshGuideNoSourceHeading
-    "您已啟用的播放清單都沒有 XMLTV 節目表 URL（#EXTM3U 標頭中的 x-tvg-url）。\\r\\n\\r\\n請新增一個包含該項目的播放清單，然後再試一次。",  // RefreshGuideNoSourceBody
+    "您已啟用的播放清單都沒有 XMLTV 節目表 URL（#EXTM3U 標頭中的 x-tvg-url）。\r\n\r\n請新增一個包含該項目的播放清單，然後再試一次。",  // RefreshGuideNoSourceBody
     "節目表",  // TvGuideTitle
     "正在連線節目表來源…",  // LoadingContactingGuide
     "（{0} / {1}）",  // LoadingProgressTag
     "正在下載 {0}…{1}",  // LoadingDownloadingName
     "正在解析 {0}（{1} KB）…{2}",  // LoadingParsingName
-    "{0}：  {1} 個節目\\r\\n",  // EpgDetailProgrammesLine
+    "{0}：  {1} 個節目\r\n",  // EpgDetailProgrammesLine
     "已在 {1} 個頻道中儲存 {0} 個節目",  // EpgStoredSummary
     "無法更新節目表",  // EpgRefreshFailedSummary
     " · 規則已排入 {0} 個",  // EpgQueuedByRulesSummary
     "正在從已儲存的節目建立節目表…",  // LoadingBuildingGuide
     "沒有可顯示的節目表",  // GuideNoGuideHeading
-    "沒有任何已儲存的節目與您播放清單中的頻道相符。\\r\\n\\r\\n請先執行 設定 ▸ 更新節目表…，或是節目表的頻道 ID 與您的播放清單不符 — 請改用 tvg-id 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoGuideBody
+    "沒有任何已儲存的節目與您播放清單中的頻道相符。\r\n\r\n請先執行 設定 ▸ 更新節目表…，或是節目表的頻道 ID 與您的播放清單不符 — 請改用 tvg-id 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoGuideBody
     "沒有相符的頻道",  // GuideNoMatchHeading
-    "在您的播放清單中找不到「{0}」的頻道。\\r\\n\\r\\n節目表以 tvg-id 將節目對應至頻道 — 此節目的頻道 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoMatchBody
+    "在您的播放清單中找不到「{0}」的頻道。\r\n\r\n節目表以 tvg-id 將節目對應至頻道 — 此節目的頻道 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoMatchBody
     "設定節目表 URL",  // SetGuideUrlTitle
     "XMLTV 節目表 URL (.xml 或 .xml.gz；留空以清除)：",  // SetGuideUrlPrompt
-    "已儲存節目表 URL。\\n\\n要立即下載節目表嗎？",  // SetGuideUrlSavedPrompt
+    "已儲存節目表 URL。\n\n要立即下載節目表嗎？",  // SetGuideUrlSavedPrompt
     // --- DialogSchedule ---
     "頻道：",  // ScheduleFieldChannel
     "標題：",  // ScheduleFieldTitle
@@ -1387,7 +1387,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "找不到頻道",  // ChannelNotFoundHeading
     "無法將「{0}」對應至您媒體庫中可播放的頻道（其 tvg-id 不在任何已啟用的播放清單中）。",  // ScheduleChannelNotFoundBody
     "已排程錄影",  // ScheduleRecordingScheduledHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n在排程時間，應用程式必須保持執行。",  // ScheduleRecordingScheduledBody
+    "{0}\r\n{1}\r\n\r\n在排程時間，應用程式必須保持執行。",  // ScheduleRecordingScheduledBody
     "無法排程",  // ScheduleCouldNotHeading
     "無法儲存錄影。",  // ScheduleCouldNotBody
     // --- DialogRules ---
@@ -1411,15 +1411,15 @@ constexpr std::array<const char*, N> kZhHant = {{
     "提前開始：",  // RuleFieldLead
     "延後結束：",  // RuleFieldTrail
     "分鐘",  // RuleMinutesSuffix
-    "\\r\\n錄影規則已排入 {0} 個新的播出。\\r\\n",  // EpgRulesQueuedDetail
+    "\r\n錄影規則已排入 {0} 個新的播出。\r\n",  // EpgRulesQueuedDetail
     "錄製影集",  // RecordSeriesTitle
     "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody
     "已在錄製此影集",  // RecordSeriesAlreadyHeading
-    "在 {1} 上「{0}」的規則已存在。\\r\\n請參閱 設定 ▸ 錄影規則…。",  // RecordSeriesAlreadyBody
+    "在 {1} 上「{0}」的規則已存在。\r\n請參閱 設定 ▸ 錄影規則…。",  // RecordSeriesAlreadyBody
     "無法儲存規則",  // RecordSeriesCouldNotSaveHeading
     "無法儲存錄影規則。",  // RecordSeriesCouldNotSaveBody
     "將錄製此節目的每次播出",  // RecordSeriesEveryAiringHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n已從節目表排入 {2} 個即將播出的項目。\\r\\n節目表更新時會自動納入新的播出。\\r\\n\\r\\n請在 設定 ▸ 錄影規則… 中管理規則。",  // RecordSeriesEveryAiringBody
+    "{0}\r\n{1}\r\n\r\n已從節目表排入 {2} 個即將播出的項目。\r\n節目表更新時會自動納入新的播出。\r\n\r\n請在 設定 ▸ 錄影規則… 中管理規則。",  // RecordSeriesEveryAiringBody
     // --- DialogMeters ---
     "光暈",  // MeterKnobGlow
     "平滑",  // MeterKnobSmooth
@@ -1485,8 +1485,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     // --- Error ---
     "資料庫錯誤：{0}",  // StatusDatabaseError
     "無法寫入檔案",  // ExportFavouritesWriteFailHeading
-    "路徑：  {0}\\r\\n",  // ExportFavouritesPathLine
-    "問題：  {0}\\r\\n",  // ProblemLineDetail
+    "路徑：  {0}\r\n",  // ExportFavouritesPathLine
+    "問題：  {0}\r\n",  // ProblemLineDetail
     "下載失敗",  // EpgErrorDownloadFailed
     "解壓縮後為空或無效",  // EpgErrorEmptyAfterDecompress
     // --- Misc ---
@@ -1500,16 +1500,16 @@ constexpr std::array<const char*, N> kZhHant = {{
     "關閉",  // ButtonClose
     "刪除",  // ButtonDelete
     "搜尋頻道…",  // SearchChannelsPlaceholder
-    "子母畫面\\r\\n在頻道上按右鍵 ▸ 在子母畫面播放",  // HintEmptyPip
+    "子母畫面\r\n在頻道上按右鍵 ▸ 在子母畫面播放",  // HintEmptyPip
     "匯出我的最愛",  // ExportFavouritesTitle
     "尚無我的最愛",  // ExportFavouritesNoneHeading
-    "請先為一些頻道加上星號（頻道清單中的 ★ 欄，或在節目表列上按右鍵），然後再匯出。\\r\\n",  // ExportFavouritesNoneBody
+    "請先為一些頻道加上星號（頻道清單中的 ★ 欄，或在節目表列上按右鍵），然後再匯出。\r\n",  // ExportFavouritesNoneBody
     "已匯出 {0} 個我的最愛",  // ExportFavouritesDoneHeading
-    "檔案：  {0}\\r\\n",  // FileLineDetail
+    "檔案：  {0}\r\n",  // FileLineDetail
     "匯入我的最愛",  // ImportFavouritesTitle
     "找不到頻道",  // ImportFavouritesNoChannelsHeading
-    "檔案：  {0}\\r\\n檔案中的項目：  {1}\\r\\n已加星號的頻道：  {2}\\r\\n",  // ImportFavouritesDetails
-    "不在您的媒體庫中（已略過）：  {0}\\r\\n",  // ImportFavouritesSkippedLine
+    "檔案：  {0}\r\n檔案中的項目：  {1}\r\n已加星號的頻道：  {2}\r\n",  // ImportFavouritesDetails
+    "不在您的媒體庫中（已略過）：  {0}\r\n",  // ImportFavouritesSkippedLine
     "已為 {0} 個頻道加上星號",  // ImportFavouritesStarredHeading
     "我的版面配置",  // LayoutDefaultName
     "儲存版面配置",  // SaveLayoutDialogTitle
@@ -1517,7 +1517,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "RabbitEars",  // AppName
     "分類",  // CategoriesTitle
     "沒有可篩選的分類",  // CategoriesNoneHeading
-    "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\\r\\n\\r\\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\\r\\n",  // CategoriesNoneBody
+    "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\r\n\r\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\r\n",  // CategoriesNoneBody
     // --- MacMenu ---
     "結束 RabbitEars",  // MenuQuit
     "檔案",  // MenuFile
@@ -1853,24 +1853,24 @@ constexpr std::array<const char*, N> kZhHK = {{
     "刪除播放清單",  // DeletePlaylistTitle
     "重新命名播放清單",  // DialogRenamePlaylistTitle
     "播放清單名稱：",  // DialogRenamePlaylistLabel
-    "要刪除播放清單「{0}」嗎？\\n\\n這會從 RabbitEars 移除其頻道。",  // DialogDeletePlaylistBody
+    "要刪除播放清單「{0}」嗎？\n\n這會從 RabbitEars 移除其頻道。",  // DialogDeletePlaylistBody
     "新增播放清單",  // AddPlaylistDialogTitle
     "播放清單 URL (.m3u / .m3u8)：",  // AddPlaylistUrlPrompt
-    "來源：  {0}\\r\\n\\r\\n",  // PlaylistSourceLine
+    "來源：  {0}\r\n\r\n",  // PlaylistSourceLine
     "無法匯入播放清單",  // PlaylistImportFailedHeading
-    "問題：  無法將播放清單儲存至資料庫。\\r\\n",  // PlaylistDbSaveProblem
+    "問題：  無法將播放清單儲存至資料庫。\r\n",  // PlaylistDbSaveProblem
     "已從 {1} 匯入 {0} 個頻道",  // PlaylistImportedHeading
-    "已解析頻道：  {0}\\r\\n",  // PlaylistChannelsParsedLine
-    "已匯入頻道：  {0}\\r\\n",  // PlaylistChannelsImportedLine
-    "已略過（空白或重複的 URL）：  {0}\\r\\n",  // PlaylistSkippedLine
-    "群組：  {0}\\r\\n",  // PlaylistGroupsLine
+    "已解析頻道：  {0}\r\n",  // PlaylistChannelsParsedLine
+    "已匯入頻道：  {0}\r\n",  // PlaylistChannelsImportedLine
+    "已略過（空白或重複的 URL）：  {0}\r\n",  // PlaylistSkippedLine
+    "群組：  {0}\r\n",  // PlaylistGroupsLine
     "此播放清單不含任何頻道。",  // PlaylistNoChannelsMsg
     "找不到頻道。",  // PlaylistNoChannelsFoundMsg
     "匯入結果",  // ImportResultsTitle
     // --- Transport ---
-    "\\r\\n已接收：%.2f Mb/s\\r\\n已緩衝：%.1f 秒",  // TooltipBufferReceivedBuffered
-    "消耗：%.2f Mb/s\\r\\n緩衝（延遲）：%.1f 秒\\r\\n近期遺失：%d%s",  // TooltipBufferConsumption
-    "未播放\\r\\n緩衝（延遲）：%.1f 秒",  // TooltipBufferNotPlaying
+    "\r\n已接收：%.2f Mb/s\r\n已緩衝：%.1f 秒",  // TooltipBufferReceivedBuffered
+    "消耗：%.2f Mb/s\r\n緩衝（延遲）：%.1f 秒\r\n近期遺失：%d%s",  // TooltipBufferConsumption
+    "未播放\r\n緩衝（延遲）：%.1f 秒",  // TooltipBufferNotPlaying
     "網絡緩衝：%.1f 秒（接收→顯示延遲）",  // TooltipNetworkBuffer
     "音訊頻譜（此應用程式的聲音）",  // TooltipMeterSpectrum
     "訊號強度（串流狀態）",  // TooltipMeterSignal
@@ -1896,24 +1896,24 @@ constexpr std::array<const char*, N> kZhHK = {{
     "節目表 — RabbitEars",  // GuideWindowTitle
     "更新節目表",  // RefreshGuideTitle
     "找不到節目表來源",  // RefreshGuideNoSourceHeading
-    "您已啟用的播放清單都沒有 XMLTV 節目表 URL（#EXTM3U 標頭中的 x-tvg-url）。\\r\\n\\r\\n請新增一個包含該項目的播放清單，然後再試一次。",  // RefreshGuideNoSourceBody
+    "您已啟用的播放清單都沒有 XMLTV 節目表 URL（#EXTM3U 標頭中的 x-tvg-url）。\r\n\r\n請新增一個包含該項目的播放清單，然後再試一次。",  // RefreshGuideNoSourceBody
     "節目表",  // TvGuideTitle
     "正在連線節目表來源…",  // LoadingContactingGuide
     "（{0} / {1}）",  // LoadingProgressTag
     "正在下載 {0}…{1}",  // LoadingDownloadingName
     "正在解析 {0}（{1} KB）…{2}",  // LoadingParsingName
-    "{0}：  {1} 個節目\\r\\n",  // EpgDetailProgrammesLine
+    "{0}：  {1} 個節目\r\n",  // EpgDetailProgrammesLine
     "已在 {1} 個頻道中儲存 {0} 個節目",  // EpgStoredSummary
     "無法更新節目表",  // EpgRefreshFailedSummary
     " · 規則已排入 {0} 個",  // EpgQueuedByRulesSummary
     "正在從已儲存的節目建立節目表…",  // LoadingBuildingGuide
     "沒有可顯示的節目表",  // GuideNoGuideHeading
-    "沒有任何已儲存的節目與您播放清單中的頻道相符。\\r\\n\\r\\n請先執行 設定 ▸ 更新節目表…，或是節目表的頻道 ID 與您的播放清單不符 — 請改用 tvg-id 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoGuideBody
+    "沒有任何已儲存的節目與您播放清單中的頻道相符。\r\n\r\n請先執行 設定 ▸ 更新節目表…，或是節目表的頻道 ID 與您的播放清單不符 — 請改用 tvg-id 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoGuideBody
     "沒有相符的頻道",  // GuideNoMatchHeading
-    "在您的播放清單中找不到「{0}」的頻道。\\r\\n\\r\\n節目表以 tvg-id 將節目對應至頻道 — 此節目的頻道 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoMatchBody
+    "在您的播放清單中找不到「{0}」的頻道。\r\n\r\n節目表以 tvg-id 將節目對應至頻道 — 此節目的頻道 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideNoMatchBody
     "設定節目表 URL",  // SetGuideUrlTitle
     "XMLTV 節目表 URL (.xml 或 .xml.gz；留空以清除)：",  // SetGuideUrlPrompt
-    "已儲存節目表 URL。\\n\\n要立即下載節目表嗎？",  // SetGuideUrlSavedPrompt
+    "已儲存節目表 URL。\n\n要立即下載節目表嗎？",  // SetGuideUrlSavedPrompt
     // --- DialogSchedule ---
     "頻道：",  // ScheduleFieldChannel
     "標題：",  // ScheduleFieldTitle
@@ -1939,7 +1939,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "找不到頻道",  // ChannelNotFoundHeading
     "無法將「{0}」對應至您媒體庫中可播放的頻道（其 tvg-id 不在任何已啟用的播放清單中）。",  // ScheduleChannelNotFoundBody
     "已排程錄影",  // ScheduleRecordingScheduledHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n在排程時間，應用程式必須保持執行。",  // ScheduleRecordingScheduledBody
+    "{0}\r\n{1}\r\n\r\n在排程時間，應用程式必須保持執行。",  // ScheduleRecordingScheduledBody
     "無法排程",  // ScheduleCouldNotHeading
     "無法儲存錄影。",  // ScheduleCouldNotBody
     // --- DialogRules ---
@@ -1963,15 +1963,15 @@ constexpr std::array<const char*, N> kZhHK = {{
     "提前開始：",  // RuleFieldLead
     "延後結束：",  // RuleFieldTrail
     "分鐘",  // RuleMinutesSuffix
-    "\\r\\n錄影規則已排入 {0} 個新的播出。\\r\\n",  // EpgRulesQueuedDetail
+    "\r\n錄影規則已排入 {0} 個新的播出。\r\n",  // EpgRulesQueuedDetail
     "錄製影集",  // RecordSeriesTitle
     "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody
     "已在錄製此影集",  // RecordSeriesAlreadyHeading
-    "在 {1} 上「{0}」的規則已存在。\\r\\n請參閱 設定 ▸ 錄影規則…。",  // RecordSeriesAlreadyBody
+    "在 {1} 上「{0}」的規則已存在。\r\n請參閱 設定 ▸ 錄影規則…。",  // RecordSeriesAlreadyBody
     "無法儲存規則",  // RecordSeriesCouldNotSaveHeading
     "無法儲存錄影規則。",  // RecordSeriesCouldNotSaveBody
     "將錄製此節目的每次播出",  // RecordSeriesEveryAiringHeading
-    "{0}\\r\\n{1}\\r\\n\\r\\n已從節目表排入 {2} 個即將播出的項目。\\r\\n節目表更新時會自動納入新的播出。\\r\\n\\r\\n請在 設定 ▸ 錄影規則… 中管理規則。",  // RecordSeriesEveryAiringBody
+    "{0}\r\n{1}\r\n\r\n已從節目表排入 {2} 個即將播出的項目。\r\n節目表更新時會自動納入新的播出。\r\n\r\n請在 設定 ▸ 錄影規則… 中管理規則。",  // RecordSeriesEveryAiringBody
     // --- DialogMeters ---
     "光暈",  // MeterKnobGlow
     "平滑",  // MeterKnobSmooth
@@ -2037,8 +2037,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     // --- Error ---
     "資料庫錯誤：{0}",  // StatusDatabaseError
     "無法寫入檔案",  // ExportFavouritesWriteFailHeading
-    "路徑：  {0}\\r\\n",  // ExportFavouritesPathLine
-    "問題：  {0}\\r\\n",  // ProblemLineDetail
+    "路徑：  {0}\r\n",  // ExportFavouritesPathLine
+    "問題：  {0}\r\n",  // ProblemLineDetail
     "下載失敗",  // EpgErrorDownloadFailed
     "解壓縮後為空或無效",  // EpgErrorEmptyAfterDecompress
     // --- Misc ---
@@ -2052,16 +2052,16 @@ constexpr std::array<const char*, N> kZhHK = {{
     "關閉",  // ButtonClose
     "刪除",  // ButtonDelete
     "搜尋頻道…",  // SearchChannelsPlaceholder
-    "子母畫面\\r\\n在頻道上按右鍵 ▸ 在子母畫面播放",  // HintEmptyPip
+    "子母畫面\r\n在頻道上按右鍵 ▸ 在子母畫面播放",  // HintEmptyPip
     "匯出我的最愛",  // ExportFavouritesTitle
     "尚無我的最愛",  // ExportFavouritesNoneHeading
-    "請先為一些頻道加上星號（頻道清單中的 ★ 欄，或在節目表列上按右鍵），然後再匯出。\\r\\n",  // ExportFavouritesNoneBody
+    "請先為一些頻道加上星號（頻道清單中的 ★ 欄，或在節目表列上按右鍵），然後再匯出。\r\n",  // ExportFavouritesNoneBody
     "已匯出 {0} 個我的最愛",  // ExportFavouritesDoneHeading
-    "檔案：  {0}\\r\\n",  // FileLineDetail
+    "檔案：  {0}\r\n",  // FileLineDetail
     "匯入我的最愛",  // ImportFavouritesTitle
     "找不到頻道",  // ImportFavouritesNoChannelsHeading
-    "檔案：  {0}\\r\\n檔案中的項目：  {1}\\r\\n已加星號的頻道：  {2}\\r\\n",  // ImportFavouritesDetails
-    "不在您的媒體庫中（已略過）：  {0}\\r\\n",  // ImportFavouritesSkippedLine
+    "檔案：  {0}\r\n檔案中的項目：  {1}\r\n已加星號的頻道：  {2}\r\n",  // ImportFavouritesDetails
+    "不在您的媒體庫中（已略過）：  {0}\r\n",  // ImportFavouritesSkippedLine
     "已為 {0} 個頻道加上星號",  // ImportFavouritesStarredHeading
     "我的版面配置",  // LayoutDefaultName
     "儲存版面配置",  // SaveLayoutDialogTitle
@@ -2069,7 +2069,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "RabbitEars",  // AppName
     "分類",  // CategoriesTitle
     "沒有可篩選的分類",  // CategoriesNoneHeading
-    "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\\r\\n\\r\\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\\r\\n",  // CategoriesNoneBody
+    "您媒體庫中的頻道沒有群組標題，因此沒有可包含或排除的分類。\r\n\r\n若要使用此篩選，請新增其 #EXTINF 行帶有 group-title 標籤的播放清單。\r\n",  // CategoriesNoneBody
     // --- MacMenu ---
     "結束 RabbitEars",  // MenuQuit
     "檔案",  // MenuFile
