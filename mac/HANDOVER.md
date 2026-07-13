@@ -403,9 +403,9 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions via cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.8; an if(APPLE) override = mac 0.2.0) — that file is the recurring cross-team merge conflict,
-keep both lines. mac is SHIPPED + auto-updating: v0.2.0-mac (build 208, universal, notarized,
-self-contained; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
+Windows 0.2.9; an if(APPLE) override = mac 0.2.8) — that file is the recurring cross-team merge conflict,
+keep both lines. mac is SHIPPED + auto-updating: v0.2.8-mac (build 248, universal, notarized,
+self-contained, LOCALIZED EN + 日本語; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
 scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only; the build-mac
 CMakeCache can hold a stale universal arch). Release: scripts/package-mac.sh + the mac-release-deployment
 memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal;
@@ -428,7 +428,11 @@ via "base"; the mac-only Chinese is NEVER displayed — the mac selector offers 
 exists only for catalog completeness so the Windows core-selftest CI passes). On-device VERIFIED (switch→restart→
 JA across menus/dialogs/About/Terms; one meter-label overflow found+fixed). Adversarial review: 292 wrap sites,
 0 findings. The i18n bulk ran via workflows (per-file wrap+review agents); the first heavy-schema INVENTORY
-workflow STALLED on giant structured output — fixed by edit-in-place agents returning only new-ids.
+workflow STALLED on giant structured output — fixed by edit-in-place agents returning only new-ids. PR #30
+needed the USER to merge (auto-mode BLOCKS self-merging an agent-authored PR); branch pushed via the git-data
+REST API (git push hangs); the shared-catalog PR CI runs on the head+base MERGE, which is what caught the
+missing zh-Hant. i18n = mac/src/app/Tr.h (Tr/TrF) + common/i18n/*.json + common/core/Strings.{h,cpp} (GENERATED
+by tools/i18n/gen_i18n.py — edit the JSON, never the .cpp; run gen_i18n.py + it validates completeness/parity).
 BEFORE it — v0.2.7-mac SHIPPED 2026-07-11 (build 234, universal, notarized; appcast @ 3c832cf). The
 0.2.6/0.2.7 PARITY STACK MERGED to main in order #25->#29 (merge commits f387ad0->de240fd), the mac version
 bumped to 0.2.7 (f9f7404), and the PiP-switch freeze fix (0ab8618) rode in too. ZERO common/Win32 edits — every
@@ -460,13 +464,18 @@ X.Y.Z (build) ====" in rabbitears.log. Codesign a dev build (Dev ID + --options 
 file with com.apple.security.device.audio-input) to test Spectrum. The repo is under ~/Desktop which macOS
 TCC protects — access can be revoked MID-SESSION (every read incl. git EPERMs); fix:
 `tccutil reset SystemPolicyDesktopFolder com.anthropic.claude-code` (no relaunch). Closing the main window
-QUITS the app. The BUILD_NUMBER only refreshes on cmake RECONFIGURE, not per-build.
+QUITS the app. The BUILD_NUMBER only refreshes on cmake RECONFIGURE, not per-build. The dev build SHARES the
+app's NSUserDefaults domain (com.rabbitears.RabbitEars) with any installed RabbitEars — RABBITEARS_DATA_DIR
+isolates the DB but NOT the defaults (ui_language, window frames), so switching language while testing writes
+the USER's real defaults. Bumping the version re-triggers the ToU gate (keyed on full version incl. build).
 
-NEXT: post-ship on-device VALIDATION of 0.2.7's unverified surfaces — P4 recording (record a real HLS stream,
-confirm the .ts/.mp4 PLAYS), P5-7 scheduler (schedule ~1 min out, watch the ~30s tick fire a PLAYABLE file),
-and the PiP-switch fix on real IPTV. A failure = a 0.2.8-mac patch, not a blocked merge. Backlog: promote
-MeterModel to common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope). Next parity
-target = Windows 0.2.8 (theme engine + Japanese i18n — the i18n system compiles into common/ but the mac UI
-does NOT consume it yet, so a 0.2.7 build ships no localization).
+NEXT: mac is at 0.2.8 (localized EN + 日本語); Windows is at 0.2.9. Candidate targets: (a) Windows 0.2.9 parity
+— read Win32/HANDOVER.md for what's portable (0.2.9 added episode-dedup + a recording-rule editor + GPL-3.0
+notices; skip the theme engine + wake, N/A on mac); (b) a NATIVE Japanese review (`gen_i18n.py --review ja`)
+before promoting JP past "initial machine draft"; (c) the STILL-UNVERIFIED-ON-DEVICE 0.2.7 surfaces — P4
+recording (record a real HLS stream, confirm the .ts/.mp4 PLAYS), P5-7 scheduler (~1 min out, watch the ~30s
+tick fire a PLAYABLE file), and the PiP-switch fix on real IPTV (any failure = a patch). Backlog: promote
+MeterModel to common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two
+now-unused catalog ids (MacMainWindowLayoutsMenu, MacMainWindowFormatHeader).
 ```
 ```
