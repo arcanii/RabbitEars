@@ -11,19 +11,21 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 *headers*), **`Win32/`** (the Windows app), **`mac/`** (this — the Cocoa app), under a unified root
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
-`main` carries **both platforms at decoupled versions**: **Windows 0.2.8** (theme engine + EPG/TV Guide,
+`main` carries **both platforms at decoupled versions**: **Windows 0.2.10** (theme engine + EPG/TV Guide,
 scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
-recording — the Windows team ships from `main`) and **mac 0.2.8** (the parity line). The version split lives in
+recording — the Windows team ships from `main`) and **mac 0.2.9** (the parity line). The version split lives in
 `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac). **That file is the one
 recurring merge conflict** between the two teams — keep the Windows line and the `if(APPLE)` override intact.
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
 
-> **Scope:** the SHIPPED mac **0.2.8** (build 248, universal, notarized — released 2026-07-12) reaches parity
-> with the Windows **0.2.8** set: **localization (English + 日本語)** over the shared `common/i18n` catalog + a
-> Language selector, and the gear menu regrouped to match Win32. It builds on 0.2.7 (the #25→#29 stack:
-> favourites I/O, PiP resize/persist, saved layouts, per-pane recording, the recording scheduler + series
-> rules) and 0.2.0 (TV Guide, multi-view, PiP). Unported **by design**: the Windows **theme engine** (mac uses
-> the native system appearance) and **wake-to-record** (a non-root mac app can't arm a wake). Windows is on 0.2.9.
+> **Scope:** the SHIPPED mac **0.2.9** (build 261, universal, notarized — released 2026-07-13) reaches parity
+> with the Windows **0.2.9** set: a **recording-rule editor** (New…/Edit… series rules), **series-rule episode
+> dedup** (schema v6, already shared), **Traditional Chinese** (zh-Hant + zh-HK) in the Language selector, and
+> the **GPL-3.0 notices** bundled in `Resources/`. It builds on 0.2.8 (localization EN + 日本語 + gear regrouped),
+> 0.2.7 (the #25→#29 stack: favourites I/O, PiP resize/persist, saved layouts, per-pane recording, the recording
+> scheduler + series rules) and 0.2.0 (TV Guide, multi-view, PiP). Unported **by design**: the Windows **theme
+> engine** (mac uses the native system appearance) and **wake-to-record** (a non-root mac app can't arm a wake).
+> Windows **0.2.10** is a Win32-only Traditional-Chinese *language-selection* hotfix, N/A to mac.
 
 ## SHIPPED — the 0.2.6/0.2.7 parity stack (v0.2.7-mac, build 234, 2026-07-11)
 
@@ -81,9 +83,32 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — v0.2.8-mac SHIPPED (2026-07-12)
+## Current state — v0.2.9-mac SHIPPED (2026-07-13)
 
-**Latest: `v0.2.8-mac`** (build 248, universal, notarized, appcast live @ `03048ec`) — **localization
+**Latest: `v0.2.9-mac`** (build 261, universal, notarized, appcast live @ `cb14d56`) — **Windows-0.2.9 parity**:
+a **recording-rule editor** (New…/Edit… + double-click in the Recordings window's *Series Rules* tab — channel-or-
+`(any channel)`, title, Exact/Contains, lead/trail minutes; OK gated on a non-empty title; New→`addRule`,
+Edit→`updateRule`+`clearPendingForRule`+re-expand — in `RecordingsWindowController`, **zero new catalog strings**,
+reuses the shared Win32 rule ids); **series-rule episode dedup** (the shared schema-v6 `episode_key` +
+`episodeKey`/`expandRules` were already compiled in — the mac fix is the 0.2.9 **pre-filter**: restrict the
+channel-blind expander to *recordable* programmes BEFORE dedup, normalised @feed-safe, in
+`-expandRecordingRules:`); **Traditional Chinese** zh-Hant + zh-HK in the Language selector + `Tr.h` routing
+(Simplified/bare-`zh` fall through to English); and the **GPL-3.0** LICENSE + THIRD-PARTY-NOTICES.txt + `licenses/`
+bundled into `Contents/Resources` (via `mac/CMakeLists.txt`; deep-codesign covers them) + an About-box copyright
+line (`NSHumanReadableCopyright`). **ZERO `common/`/`Win32/` source changes** (PR #31). **Two fixes rode along:**
+(1) **a shipped-since-0.2.7 CRASH** — `recordingPathFor:` cached its filename-scrub `NSCharacterSet` in a `static`
+from the AUTORELEASED `characterSetWithCharactersInString:` without `retain` (MRC), so the **2nd** recording of a
+session (a 2nd manual record, or the scheduler tick) messaged a freed object → `EXC_BAD_ACCESS`; caught by the
+0.2.9 on-device pass, fixed with a retain (`474004d`); (2) **a shared-catalog `\r\n` bug** (PR #32, `common/i18n`)
+— 27 strings were double-escaped (`\\r\\n`) so both platforms rendered a literal `\r\n`; collapsed to real
+newlines + regenerated `Strings.cpp`. **On-device VERIFIED** (isolated `RABBITEARS_DATA_DIR` + a `127.0.0.1`
+m3u/XMLTV fixture of public HLS streams): playback, manual recording→valid h264+aac `.ts`, rule editor CRUD +
+validation + field round-trip, episode dedup (3 airings→2 schedules), the scheduler (tick→Recording→auto-Done,
+playable `.ts`, no crash), and 繁體中文 rendering + selector. Adversarial ObjC++/ARC + logic reviews: 0 code
+defects (1 low zh-Hans-region routing edge fixed). ⚠ **Trap:** the installed app + a dev build share the bundle id,
+so a dual-instance screen composites both windows — clicks are unsafe for real data; verify the running PID's DB
+via `lsof`/`ps eww` and prefer a HEADLESS scheduler re-test (sqlite-arm a schedule + monitor the log/DB).
+**Before it: `v0.2.8-mac`** (build 248, universal, notarized, appcast @ `03048ec`) — **localization
 (English + 日本語)** over the shared `common/i18n` catalog (a `Tr`/`TrF` AppKit layer = peer of `Win32/ui/Tr.h`;
 Language selector System/English/日本語 + restart-to-apply; ~290 UI strings wrapped; **+145 mac-only ids** incl.
 machine-draft JA + zh-Hant), and the **gear menu regrouped to match Win32** (Channels/Recording/View/Layout/
@@ -403,9 +428,9 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions via cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.9; an if(APPLE) override = mac 0.2.8) — that file is the recurring cross-team merge conflict,
-keep both lines. mac is SHIPPED + auto-updating: v0.2.8-mac (build 248, universal, notarized,
-self-contained, LOCALIZED EN + 日本語; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
+Windows 0.2.10; an if(APPLE) override = mac 0.2.9) — that file is the recurring cross-team merge conflict,
+keep both lines. mac is SHIPPED + auto-updating: v0.2.9-mac (build 261, universal, notarized,
+self-contained, LOCALIZED EN + 日本語 + 繁體中文/香港; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
 scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only; the build-mac
 CMakeCache can hold a stale universal arch). Release: scripts/package-mac.sh + the mac-release-deployment
 memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal;
@@ -417,7 +442,33 @@ VlcPlayerMac.mm are MRC. Run an adversarial ObjC++ review before merging (it has
 EVERY native phase). Dev testing: launch with RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a
 local m3u/XMLTV fixture over http://127.0.0.1 (ATS-exempt loopback).
 
-STATE: v0.2.8-mac SHIPPED 2026-07-12 (build 248, universal, notarized; appcast @ 03048ec, PR #30) = LOCALIZATION
+STATE: v0.2.9-mac SHIPPED 2026-07-13 (build 261, universal, notarized; appcast @ cb14d56; PRs #31 code + #32 the
+i18n fix, both merged by the user) = WINDOWS-0.2.9 PARITY: a recording-rule editor (New…/Edit… + double-click in
+the Recordings window's Series Rules tab — channel/(any channel), title, Exact/Contains, lead/trail min; OK gated
+on a non-empty title; New→addRule, Edit→updateRule+clearPendingForRule+re-expand; in RecordingsWindowController;
+ZERO new catalog strings — reuses the shared Win32 rule ids); series-rule EPISODE DEDUP (shared schema-v6
+episode_key + episodeKey/expandRules were already compiled in; the mac 0.2.9 change is the PRE-FILTER — restrict
+the channel-blind expander to RECORDABLE programmes BEFORE dedup, normalised @feed-safe, in expandRecordingRules:);
+TRADITIONAL CHINESE zh-Hant+zh-HK in the selector + Tr.h routing (Simplified/bare-zh → English); GPL-3.0 notices
+(LICENSE+THIRD-PARTY-NOTICES.txt+licenses/) bundled into Contents/Resources + About-box NSHumanReadableCopyright.
+ZERO common/Win32 SOURCE changes (PR #31). TWO fixes rode along: (1) a SHIPPED-SINCE-0.2.7 CRASH — recordingPathFor:
+cached its filename-scrub NSCharacterSet in a `static` from the AUTORELEASED characterSetWithCharactersInString:
+without retain (MRC file) → the 2nd recording of a session (2nd manual record OR the scheduler tick) messaged a
+freed object → EXC_BAD_ACCESS; fixed with a retain (474004d); (2) a SHARED-CATALOG \r\n bug (PR #32, common/i18n) —
+27 strings were double-escaped (\\r\\n) so BOTH platforms rendered a literal \r\n; collapsed to real newlines +
+regenerated Strings.cpp. ON-DEVICE VERIFIED (isolated RABBITEARS_DATA_DIR + a 127.0.0.1 m3u/XMLTV fixture of PUBLIC
+HLS streams — mux.dev x36xhzz + Apple bipbop): playback, manual recording→valid h264+aac .ts (ffprobe), rule editor
+CRUD+validation+round-trip, episode dedup (3 airings→2 schedules), the scheduler (tick→Recording→auto-Done, playable
+.ts, NO crash), and 繁體中文 rendering + selector (系統預設/English/日本語/✓繁體中文/繁體中文（香港）). Adversarial ObjC++/ARC +
+logic reviews: 0 code defects (1 low zh-Hans-region routing edge fixed). RELEASE: universal VLC (vlc-3.0.23-universal.dmg)
+→ package-mac.sh --sign → hdiutil+ditto dmg → sign dmg → notarytool --keychain-profile SQLTerminal-notarize --wait
+(Accepted) → stapler staple → sign_update --account SQLTerminal (PROMPTS keychain — click Allow; the first run
+blocks/times-out) → gh release create v0.2.9-mac --target main --latest=false → appcast via git push (WORKED this
+session). GOTCHA: a STALE build-mac-universal/ from a prior release held a signed .app whose sealed Info.plist EPERM'd
+the cmake regen ("Operation not permitted", NOT TCC) → rm -rf build-mac-universal before the universal configure.
+GOTCHA: the installed app + a dev build SHARE the bundle id → a dual-instance screen composites both windows, clicks
+unsafe for real data → verify the running PID's DB via lsof/ps eww + prefer a HEADLESS scheduler re-test.
+BEFORE it — v0.2.8-mac SHIPPED 2026-07-12 (build 248, universal, notarized; appcast @ 03048ec, PR #30) = LOCALIZATION
 (English + 日本語 over the shared common/i18n catalog; a Tr/TrF AppKit layer = peer of Win32/ui/Tr.h; Language
 selector System/English/日本語 + restart-to-apply, pref in NSUserDefaults read BEFORE buildMenu; ~290 UI strings
 wrapped across all 10 mac .mm; +145 mac-only ids Mac*-prefixed with machine-draft JA + zh-Hant) + the GEAR MENU
@@ -469,13 +520,15 @@ app's NSUserDefaults domain (com.rabbitears.RabbitEars) with any installed Rabbi
 isolates the DB but NOT the defaults (ui_language, window frames), so switching language while testing writes
 the USER's real defaults. Bumping the version re-triggers the ToU gate (keyed on full version incl. build).
 
-NEXT: mac is at 0.2.8 (localized EN + 日本語); Windows is at 0.2.9. Candidate targets: (a) Windows 0.2.9 parity
-— read Win32/HANDOVER.md for what's portable (0.2.9 added episode-dedup + a recording-rule editor + GPL-3.0
-notices; skip the theme engine + wake, N/A on mac); (b) a NATIVE Japanese review (`gen_i18n.py --review ja`)
-before promoting JP past "initial machine draft"; (c) the STILL-UNVERIFIED-ON-DEVICE 0.2.7 surfaces — P4
-recording (record a real HLS stream, confirm the .ts/.mp4 PLAYS), P5-7 scheduler (~1 min out, watch the ~30s
-tick fire a PLAYABLE file), and the PiP-switch fix on real IPTV (any failure = a patch). Backlog: promote
-MeterModel to common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two
-now-unused catalog ids (MacMainWindowLayoutsMenu, MacMainWindowFormatHeader).
+NEXT: mac is at 0.2.9 (parity with Windows 0.2.9); Windows is at 0.2.10 (a Win32-only Chinese-selection hotfix,
+already N/A to mac). The 0.2.7 recording/scheduler is now ON-DEVICE VERIFIED (+ its 2nd-recording crash fixed in
+0.2.9), so that long-open item is CLOSED. Candidate targets: (a) **NATIVE TRANSLATION REVIEW — now the priority:**
+0.2.9 EXPOSES Traditional Chinese to users, so JA *and* zh-Hant *and* zh-HK are all shipping as machine drafts —
+`gen_i18n.py --review ja` / `zh-Hant` / `zh-HK` is the gate before truly advertising CJK; (b) the `MenuVideoOnly`
+`\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator (a literal `\t` on the
+Windows menu), left for a Windows-side check; (c) whatever the Windows team ships next past 0.2.10 (read
+Win32/HANDOVER.md; skip the theme engine + wake, N/A on mac). Backlog: promote MeterModel to common/ui (E3,
+Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two now-unused catalog ids
+(MacMainWindowLayoutsMenu, MacMainWindowFormatHeader).
 ```
 ```
