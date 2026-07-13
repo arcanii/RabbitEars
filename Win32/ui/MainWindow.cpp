@@ -123,11 +123,13 @@ void applyDarkChrome(HWND hwnd) {
     DwmSetWindowAttribute(hwnd, 33, &corner, sizeof(corner));
 }
 
-#ifdef RABBITEARS_THEME_ENGINE
-// Recreate the three chrome fonts for the active skin and re-apply them to the controls
-// that carry them. A skin may change the font family/size (Phase 4); dark<->light share
-// Segoe UI so this is a no-op look today, but the plumbing is skin-correct. (titleFont is
-// used at paint in drawCmdBar; no control carries it, so it just needs recreating.)
+// Recreate the three chrome fonts for the active skin AND active UI language, re-applying them to
+// the controls that carry them. A skin may change the font family/size (Phase 4), and the UI language
+// swaps the non-symbol faces to a CJK UI face (Yu Gothic UI / Microsoft JhengHei UI) via
+// themeFontFamily() — so this runs on both a skin switch and a live language switch. dark<->light
+// share Segoe UI so a skin change is a no-op look today, but the plumbing is correct. (titleFont is
+// used at paint in drawCmdBar; no control carries it, so it just needs recreating.) NOT theme-gated:
+// themeFont() works in both flag builds, and the live language switch needs it flag-off too.
 void remakeUiFonts(AppState* st) {
     // Keep the old handles until every control has been switched to the new font, so no
     // control ever references a freed HFONT.
@@ -145,6 +147,7 @@ void remakeUiFonts(AppState* st) {
     if (oldGlyph) DeleteObject(oldGlyph);
 }
 
+#ifdef RABBITEARS_THEME_ENGINE
 // Re-apply the active skin to the window chrome + OS-drawn common controls. Owner-drawn
 // surfaces (command bar, strip, grid, meters) read currentTheme() each paint, so they
 // only need the repaint; the fonts, DWM caption/border, and common-controls dark/light
@@ -1679,9 +1682,10 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
     // lifetime (released on exit); a second launch just focuses the existing window.
     HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"RabbitEars.SingleInstance");
     if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
-        // A self-restart (Settings ▸ Language ▸ Restart now) launches us with --restart while the
-        // outgoing instance is still tearing down. Wait for it to release the mutex (it exits within
-        // the WM_DESTROY watchdog's 4 s), then fall through to a normal, single-owner startup.
+        // A self-relaunch (--restart) arrives while the outgoing instance is still tearing down. Wait
+        // for it to release the mutex (it exits within the WM_DESTROY watchdog's 4 s), then fall
+        // through to a normal, single-owner startup. (No feature triggers this today — the language
+        // switch applies live — but the wait keeps any future self-restart from bouncing.)
         if (restart) {
             WaitForSingleObject(instanceMutex, 6000);  // WAIT_ABANDONED when the old instance exits
         } else {

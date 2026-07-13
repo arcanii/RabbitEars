@@ -211,8 +211,24 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
   Taiwan conventions, adversarially reviewed — one 配對→對應 fix applied; no Simplified chars, country
   names Taiwan-standard). A native Taiwan speaker should still pass over it (via
   `gen_i18n.py --review zh-Hant`), the **Terms-of-Use** especially, before advertising 繁體中文 support.
-- **Live language switch** (currently restart-to-apply) — rebuild the built-once chrome + GDI fonts +
-  the cached Direct2D grid/guide text formats on toggle, reusing the DPI-change relayout path. Modest.
+- **Live language switch** — ✅ DONE (0.2.11-dev, UNRELEASED). Settings ▸ Language now applies the
+  choice **live, with no restart**: `setLanguageSelection` calls `i18n::setActiveLang(resolveLang(pref))`
+  then a new `applyLanguageChange(st)` (`MainWindowCommands.cpp`) that remakes the CJK-aware chrome
+  fonts (`remakeUiFonts`, hoisted OUT of the `#ifdef RABBITEARS_THEME_ENGINE` so it works flag-off),
+  re-sends the search cue banner, re-renders the buffer label, rebuilds the nav tree (`refreshNav`),
+  recreates the Direct2D grid + guide text formats (`channelGridUpdateDpi` + new
+  `epgGuideRefreshLanguage`), refreshes the status line, and `RedrawWindow`s. The old restart
+  TaskDialog + `restartApp()` are gone (the `--restart` self-relaunch plumbing in `runApp`/`WinMain`
+  is kept, now unused). Built green all three configs (x64 both theme flags + native ARM64) +
+  selftest ALL PASS; adversarially reviewed (3 findings refuted, 2 confirmed-cosmetic). **Two minor
+  deferrals:** (1) a live switch overwrites the status line's channel-count only when idle — a
+  background download/EPG-fetch banner is left intact (guarded on `busy`/`loadingDlg`), but a
+  non-busy transient (Paused/Buffering/Unavailable) briefly stays in the old language until the next
+  player event (the transport button glyph still indicates play/pause/record state). (2) `refreshNav`
+  drops the nav sidebar's selection highlight + collapses expanded Groups/Countries — its established
+  behavior at every call site (playlist add/rename/delete), so the switch just returns the sidebar to
+  the app's normal no-selection default; a proper fix (restore selection by matching `st->filter`)
+  would benefit all `refreshNav` callers and is a separate enhancement.
 - **More languages** — drop a `<code>.json` + `languages.json` entry + wire `Tr.h`/menu; the generator
   refuses to build until every key is filled. The lookup already scales (kTables indexed by `Lang`).
 - **Localize the 2 COMDLG filter strings** ("Playlists (*.m3u)…") — kept literal because of their

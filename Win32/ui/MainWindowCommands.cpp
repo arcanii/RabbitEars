@@ -20,7 +20,6 @@
 #include <commdlg.h>
 #include <dwmapi.h>
 #include <shlobj.h>  // SHGetKnownFolderPath (Videos folder for recordings)
-#include <shellapi.h>  // ShellExecuteW (self-restart on a language change)
 #include <objidl.h>  // IStream — required by gdiplus.h below
 #include <windowsx.h>
 // gdiplus.h uses unqualified min/max; NOMINMAX removes those macros, so pull the
@@ -1362,55 +1361,54 @@ void onMeters(AppState* st) {
     layout(st->hwnd, st);  // show/hide meters per the new enables
 }
 
-// Relaunch the app to apply a setting that only takes effect at startup (the display language). A
-// fresh instance is launched with --restart (it WAITS on the single-instance mutex for us to exit,
-// rather than bouncing), then we tear down — which releases the mutex and lets the new one take over.
-void restartApp(AppState* st) {
-    wchar_t exe[MAX_PATH] = L"";
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    const HINSTANCE r = ShellExecuteW(nullptr, L"open", exe, L"--restart", nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(r) > 32) {  // > 32 == launched OK (ShellExecute's success contract)
-        DestroyWindow(st->hwnd);  // WM_DESTROY tears down cleanly (reaper threads + libVLC + the mutex)
-    } else {
-        // Couldn't spawn the new instance — stay open rather than close with no relaunch. The choice
-        // is already persisted, so it still applies the next time the user launches RabbitEars.
-        diag::warn(L"language restart: relaunch failed (ShellExecute), staying open");
-    }
+// Apply a UI-language change LIVE (no restart). Everything the app draws falls into two camps: text
+// re-read from tr() at paint (owner-drawn command bar / strip / grid rows, and every popup menu or
+// modal dialog, which are built fresh from tr() when next shown) needs only a repaint; text set ONCE
+// into a control or cached in a Direct2D format goes stale and is rebuilt here. Tooltips are
+// LPSTR_TEXTCALLBACKW, so they re-query tr() on the next hover. Runs on the UI thread.
+void applyLanguageChange(AppState* st) {
+    // 1. Chrome fonts — themeFont() now resolves the new language's face (a CJK UI face vs Segoe UI),
+    //    and this re-pushes WM_SETFONT to the nav / search / status / buffer / transport controls.
+    remakeUiFonts(st);
+    // 2. Built-once static text that isn't re-read at paint.
+    SendMessageW(st->search, EM_SETCUEBANNER, TRUE,
+                 reinterpret_cast<LPARAM>(tr(i18n::StringId::SearchChannelsPlaceholder).c_str()));
+    SetWindowTextW(st->bufLabel, bufLabelText(st->ap().player.networkCaching()).c_str());
+    // 3. Nav tree — rebuilt in full (Country child nodes sort by their TRANSLATED name, so an
+    //    in-place relabel wouldn't reorder them). refreshNav re-reads tr() as it inserts.
+    refreshNav(st);
+    // 4. Status line — it stores raw formatted text, not a StringId, so it can't be re-translated in
+    //    place. Re-derive a fresh line from the current state: the now-playing channel if one is
+    //    playing, else the channel count — but NOT while a background op (playlist download / EPG
+    //    fetch) owns the status line, since overwriting "Downloading playlist…" with a channel count
+    //    would imply the op finished. In that case leave it: it re-renders in the new language when
+    //    the op posts its next status. (Other transient states self-heal on the next player event.)
+    if (st->ap().player.isPlaying() && !st->ap().nowPlayingName.empty())
+        setStatus(st, trf(i18n::StringId::StatusPlaying, {st->ap().nowPlayingName}));
+    else if (!st->busy && !st->loadingDlg)
+        updateCounts(st);
+    // 5. Direct2D controls cache their text formats with the font family baked in — recreate them so
+    //    CJK glyphs don't render in a fallback face. channelGridUpdateDpi(grid, currentDpi) rebuilds
+    //    the grid's formats without changing metrics; the guide re-does its formats + caption.
+    channelGridUpdateDpi(st->grid, st->dpi);
+    if (epgGuideOpen()) epgGuideRefreshLanguage();
+    // 6. Repaint the rest, synchronously (RDW_UPDATENOW, as applyActiveSkin does) so the switch lands
+    //    in one frame with no flash of stale text: the command bar (Add-Playlist label + wordmark in
+    //    the new face) and any owner-drawn surface that reads tr() at paint (e.g. the empty-PIP hint).
+    RedrawWindow(st->hwnd, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 }
 
-// Settings ▸ Language: persist the choice, then prompt (Restart now / Later). We deliberately do NOT
-// re-render live — the built-once chrome + the cached Direct2D text formats would need a full rebuild
-// + font-remake; restart-to-apply is the pragmatic first pass (live upgrade is backlogged). The
-// active language is left UNCHANGED until the restart, so the current session stays fully consistent
-// in the old language rather than showing a half-translated mix.
+// Settings ▸ Language: persist the choice and apply it LIVE (no restart). The active language is
+// switched immediately and every built-once surface is rebuilt in place by applyLanguageChange, so
+// the whole UI re-renders in the chosen language without relaunching.
 void setLanguageSelection(AppState* st, const wchar_t* pref) {
-    if (st->uiLanguage == pref) return;  // already selected — nothing to change or prompt
+    if (st->uiLanguage == pref) return;  // already selected — nothing to change
     st->uiLanguage = pref;
     st->db.setSetting(L"ui_language", pref);
-
-    // A themed TaskDialog with custom buttons — its text is localized to the JUST-CHOSEN language
-    // (a preview of what the restart brings), via a temporary active-language switch for the lookups.
-    const i18n::Lang shown = resolveLang(st->uiLanguage);
-    const std::wstring title = wideFromUtf8(i18n::trU8(i18n::StringId::AppName, shown));
-    const std::wstring instr = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartInstruction, shown));
-    const std::wstring body = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartBody, shown));
-    const std::wstring now = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartNow, shown));
-    const std::wstring later = wideFromUtf8(i18n::trU8(i18n::StringId::LangRestartLater, shown));
-    const TASKDIALOG_BUTTON btns[] = {{IDYES, now.c_str()}, {IDNO, later.c_str()}};
-    TASKDIALOGCONFIG cfg{};
-    cfg.cbSize = sizeof(cfg);
-    cfg.hwndParent = st->hwnd;
-    cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
-    cfg.pszWindowTitle = title.c_str();
-    cfg.pszMainIcon = TD_INFORMATION_ICON;
-    cfg.pszMainInstruction = instr.c_str();
-    cfg.pszContent = body.c_str();
-    cfg.pButtons = btns;
-    cfg.cButtons = ARRAYSIZE(btns);
-    cfg.nDefaultButton = IDYES;
-    int pressed = 0;
-    if (SUCCEEDED(TaskDialogIndirect(&cfg, &pressed, nullptr, nullptr)) && pressed == IDYES)
-        restartApp(st);  // else "Later" / dismissed — the choice is persisted, applies next launch
+    i18n::setActiveLang(resolveLang(st->uiLanguage));
+    applyLanguageChange(st);
+    diag::info(L"UI language switched live to " + std::wstring(pref));
 }
 
 // Command-bar Settings (gear) menu — grouped submenus mirroring the mac gear menu's curation.
@@ -1496,7 +1494,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                     tr(StringId::MenuDeleteSavedLayout).c_str());
     }
 
-    // Language submenu: System default / English / 日本語 / 繁體中文 (restart-to-apply).
+    // Language submenu: System default / English / 日本語 / 繁體中文 (applied live — see setLanguageSelection).
     HMENU langMenu = CreatePopupMenu();
     AppendMenuW(langMenu, MF_STRING | (st->uiLanguage == L"system" ? chk : 0u), ID_LANG_SYSTEM,
                 tr(StringId::LangSystemDefault).c_str());

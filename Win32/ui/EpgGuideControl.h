@@ -75,4 +75,10 @@ void revealEpgGuide(long long nowUtc);
 // tell the user. Build the guide first via the epgGuideOpen()/onEpgGuide pattern.
 bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc);
 
+// Refresh the guide for a LIVE UI-language change: re-set the (translated) window caption and
+// rebuild the cached Direct2D text formats so they pick up the new font family (the CJK UI faces
+// differ from Segoe UI), then repaint. The programme rows are unchanged, so this skips the DB
+// rebuild showEpgGuide would do. No-op if the guide window doesn't exist (open or hidden).
+void epgGuideRefreshLanguage();
+
 }  // namespace rabbitears

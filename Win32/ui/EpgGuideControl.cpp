@@ -582,6 +582,20 @@ void hideEpgGuide() {
 
 bool epgGuideOpen() { return g_guide && IsWindow(g_guide); }
 
+void epgGuideRefreshLanguage() {
+    if (!g_guide || !IsWindow(g_guide)) return;
+    // Live UI-language change. The caption is a translated string set once at CreateWindowExW, and
+    // the four cached IDWriteTextFormats (fmtChannel/fmtProg/fmtSub/fmtTime) bake in the font family
+    // at creation — for a CJK language that family is Yu Gothic UI / Microsoft JhengHei UI, not Segoe
+    // UI. Re-set the caption + rebuild the formats (recreateFormats reads themeFontFamily() live),
+    // then repaint. The stored programme rows don't change, so no applyData()/DB rebuild is needed;
+    // everything else drawn in paint() (search cue, time ranges, hour axis) is read via tr()/trf() at
+    // paint time and self-heals on the invalidate.
+    SetWindowTextW(g_guide, tr(i18n::StringId::GuideWindowTitle).c_str());
+    if (GuideState* st = stateOf(g_guide)) recreateFormats(st);
+    InvalidateRect(g_guide, nullptr, FALSE);
+}
+
 void revealEpgGuide(long long nowUtc) {
     if (!g_guide || !IsWindow(g_guide)) return;
     if (GuideState* st = stateOf(g_guide)) {

@@ -59,6 +59,32 @@ the shared i18n catalog is now **531 keys × 4 languages** (EN / 日本語 / 繁
 passes placeholder parity on the Windows side, so it ships along. **Owner runtime pass: ✅ zh-Hant + zh-HK
 now apply on-device**, and auto-update `0.2.9 → 0.2.10` is live for both arches.
 
+**0.2.11-dev (UNRELEASED): live language switch.** Settings ▸ Language now applies **live — no restart**
+(was restart-to-apply). The old restart TaskDialog + `restartApp()` are removed; `setLanguageSelection`
+(`Win32/ui/MainWindowCommands.cpp`) now calls `i18n::setActiveLang(resolveLang(pref))` then a new
+**`applyLanguageChange(st)`** that rebuilds every built-once surface in place: it remakes the CJK-aware
+chrome fonts (**`remakeUiFonts` hoisted OUT of the `#ifdef RABBITEARS_THEME_ENGINE`** so it runs flag-off
+too — `themeFontFamily()` reads `i18n::activeLang()` live), re-sends the search cue banner, re-renders the
+buffer label, rebuilds the nav tree (`refreshNav`), recreates the Direct2D **grid** text formats
+(`channelGridUpdateDpi(st->grid, st->dpi)`) and the **guide** formats + caption (new
+**`epgGuideRefreshLanguage()`** in `EpgGuideControl`), re-derives the status line, and `RedrawWindow`s
+(`RDW_ALLCHILDREN|RDW_UPDATENOW`). Everything else self-heals: owner-drawn command bar / strip / grid
+headers read `tr()` at paint; popup menus rebuild on show; modal dialogs rebuild on open; transport
+tooltips are `LPSTR_TEXTCALLBACKW`; the MDL2 glyph fonts are symbol-role (never CJK-swapped). The
+`--restart` self-relaunch plumbing in `runApp`/`WinMain` is kept but now unused. **Built green all three
+configs** (x64 BOTH theme flags + native ARM64) + **selftest ALL PASS**; **adversarially reviewed** (5
+findings → 3 refuted against the code [the `editFont` "dangling HFONT" — WM_SETFONT doesn't transfer
+ownership; the tooltip font — pre-existing + font-linking covers CJK; a "● Recording" status line — none
+exists, the record button glyph shows it], 2 confirmed-cosmetic). **Known minors (in `BACKLOG.md`):**
+(1) a switch leaves a background download/EPG-fetch status banner intact (guarded on `busy`/`loadingDlg`),
+but a non-busy transient (Paused/Buffering/Unavailable) briefly stays in the old language until the next
+player event; (2) `refreshNav` drops the nav selection highlight + collapses expanded nodes — its
+established behavior at every call site. **⚠️ Not selftest-covered (Win32 language plumbing) — owner
+runtime-verifies:** pick each language from the gear menu and confirm the whole UI (nav, command bar,
+grid headers, guide if open, dialogs, tooltips) re-renders instantly in the new language + face, EN↔JA↔
+繁體中文↔香港, without a restart. **Version NOT yet bumped (still 0.2.10); no release cut** — pending the
+0.2.11 cut (owner drives from PowerShell).
+
 **Released:** **`v0.2.9`** (2026-07-12), tag `v0.2.9` @ `75f8d16`, full version **`0.2.9.243`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.9` (x64 / native ARM64 / universal),
 **two appcasts** (`0.2.9.243`) committed @ `fb9b030` and LIVE (raw feeds serve 0.2.9.243; all three enclosures

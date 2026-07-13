@@ -268,8 +268,9 @@ struct AppState {
                                       // start so the ~30s tick doesn't re-register COM every pass.
     long long  rulesExpandedAt = 0;   // last EPG->schedule rule expansion (unix s); throttles the tick
     std::wstring recFormat = L"ts";  // recording container: "ts" | "mkv" | "mp4"
-    std::wstring uiLanguage = L"system";  // "system" | "en" | "ja" (setting "ui_language"); applied
-                                          // to i18n::setActiveLang at startup (restart to change)
+    std::wstring uiLanguage = L"system";  // "system"|"en"|"ja"|"zh-Hant"|"zh-HK" (setting "ui_language");
+                                          // resolveLang()'d into i18n::setActiveLang at startup and
+                                          // re-applied LIVE on a Settings ▸ Language change (no restart)
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
     bool       categoryActive = false;    // is the Categories include-filter on?
     std::set<std::wstring> categories;    // included group titles when active
@@ -378,8 +379,17 @@ void syncSpectrumTap(AppState* st);
 void resetStatMeters(AppState* st);
 void onMeters(AppState* st);
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor);
-#ifdef RABBITEARS_THEME_ENGINE
+// Recreate the three chrome fonts (uiFont/titleFont/glyphFont) for the active skin AND active UI
+// language, re-applying them to the controls that carry them. Not theme-gated: themeFont() resolves
+// a CJK face (Yu Gothic UI / Microsoft JhengHei UI) from the active language in BOTH flag builds, so
+// the live language switch needs this even when the theme engine is compiled out.
 void remakeUiFonts(AppState* st);
+// Apply a UI-language change LIVE (no restart): remake the CJK-aware fonts, re-translate the
+// built-once chrome (search cue, buffer label, nav tree), recreate the Direct2D grid/guide text
+// formats, refresh the status line, and repaint. Call AFTER i18n::setActiveLang(). See
+// setLanguageSelection (MainWindowCommands.cpp).
+void applyLanguageChange(AppState* st);
+#ifdef RABBITEARS_THEME_ENGINE
 void applyActiveSkin(HWND hwnd, AppState* st, bool repaint);
 void setSkinSelection(HWND hwnd, AppState* st, const char* sel);
 #endif
