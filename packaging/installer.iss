@@ -3,11 +3,11 @@
 ;   scripts\build-installer.cmd   (after a normal GUI build)
 ; Produces build\installer\RabbitEars-<ver>-setup.exe.
 ;
-; Keep MyVer in sync with APP_VERSION (cmake/AppVersion.cmake), packaging/app.manifest,
-; and packaging/RabbitEars.rc on each release — see docs/RELEASING.md.
+; The version comes from APP_VERSION (cmake/AppVersion.cmake) — the single source of truth. CMake
+; generates generated/version.iss (in the build dir) from packaging/version.iss.in; we #include it
+; below (after SrcDir is known). Nothing to hand-edit here — see docs/RELEASING.md.
 
 #define MyApp "RabbitEars"
-#define MyVer "0.2.10"
 
 ; Build-variant selection (see docs/RELEASING.md + scripts\build-installer.cmd):
 ;   (defaults)   -> x64 installer from build\Win32\  (byte-identical to the original script)
@@ -30,6 +30,19 @@
     #define OutSuffix ""
   #endif
   #define ArchList ArchAllowed
+#endif
+
+; Version, derived from APP_VERSION via the CMake-generated version.iss in the arch's build dir
+; (SrcDir=..\<build>\Win32, so ..\generated\version.iss sits beside it). Override with /DMyVer=x.y.z
+; for a standalone ISCC run without a configured build tree.
+#ifndef MyVer
+  #define VerInc SrcDir + "\..\generated\version.iss"
+  #if FileExists(VerInc)
+    #include VerInc
+  #else
+    #pragma message "version.iss not found (" + VerInc + ") — using dev fallback; run a CMake build first"
+    #define MyVer "0.0.0-dev"
+  #endif
 #endif
 
 [Setup]

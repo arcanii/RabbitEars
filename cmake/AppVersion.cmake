@@ -4,8 +4,11 @@
 # mac/CMakeLists.txt for macOS). The per-commit BUILD_NUMBER (git rev-list count) is
 # computed separately in each; only this dotted version is shared.
 #
-# Bump on release (the git tag + appcast still gate the actual rollout).
-set(APP_VERSION "0.2.10")
+# Bump on release (the git tag + appcast still gate the actual rollout). THIS is the single
+# source of truth for the Windows version: the .exe VERSIONINFO (packaging/RabbitEars.rc via the
+# generated version.h), the app manifest (generated from packaging/app.manifest.in), and the Inno
+# installer (generated packaging/version.iss) all derive from it — nothing else to hand-edit.
+set(APP_VERSION "0.2.11")
 
 # macOS carries its own decoupled version: the mac port still lacks the Windows theme
 # engine, so the platforms are NOT lockstep on patch numbers. This is the one intentional
@@ -18,8 +21,9 @@ set(APP_VERSION "0.2.10")
 # recording scheduler + EPG series rules); 0.2.8 added localization — English + 日本語 via the shared
 # common/i18n catalog + a language selector; 0.2.9 adds the recording-rule editor, series-rule
 # episode dedup (schema v6, already shared), Traditional Chinese (zh-Hant + zh-HK) in the selector,
-# and the GPL-3.0 notices in the bundle. (Windows 0.2.10 is a Win32-only Chinese-selection hotfix,
-# N/A to mac.) (mac history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8 → 0.2.9.)
+# and the GPL-3.0 notices in the bundle. (Windows 0.2.10 is a Win32-only Chinese-selection hotfix and
+# 0.2.11 a Win32-only live language switch, both N/A to mac.) (mac history: 0.1.7 → 0.1.10 → 0.2.0 →
+# 0.2.7 → 0.2.8 → 0.2.9.)
 if(APPLE)
   set(APP_VERSION "0.2.9")
 endif()

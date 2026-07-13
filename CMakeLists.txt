@@ -66,6 +66,9 @@ endif()
 if(NOT BUILD_NUMBER MATCHES "^[0-9]+$")
   set(BUILD_NUMBER 0)
 endif()
+# Comma-separated form (0.2.11 -> 0,2,11) for the Windows VERSIONINFO FILEVERSION/PRODUCTVERSION
+# fields in the generated version.h (packaging/RabbitEars.rc consumes it).
+string(REPLACE "." "," APP_VERSION_COMMA "${APP_VERSION}")
 configure_file("${CMAKE_SOURCE_DIR}/common/version.h.in"
                "${CMAKE_BINARY_DIR}/generated/version.h" @ONLY)
 

@@ -77,14 +77,22 @@ if(RABBITEARS_BUILD_GUI)
     platform/Updater.cpp
     platform/WakeScheduler.cpp
     "${CMAKE_SOURCE_DIR}/packaging/RabbitEars.rc")
-  # The .rc pulls in app.manifest, app.ico, and the About/splash PNGs — declare
-  # them so editing any forces a .res rebuild (RC dependency scanning misses these).
+  # Generate the app manifest + the Inno installer's version define from APP_VERSION
+  # (cmake/AppVersion.cmake) into build/generated/, so both derive from the single source of truth
+  # alongside version.h. The manifest is found by the .rc via the generated/ RC include path (below);
+  # version.iss is #included by packaging/installer.iss (via scripts/build-installer.cmd).
+  configure_file("${CMAKE_SOURCE_DIR}/packaging/app.manifest.in"
+                 "${CMAKE_BINARY_DIR}/generated/app.manifest" @ONLY)
+  configure_file("${CMAKE_SOURCE_DIR}/packaging/version.iss.in"
+                 "${CMAKE_BINARY_DIR}/generated/version.iss" @ONLY)
+  # The .rc pulls in the generated app.manifest + version.h, app.ico, and the About/splash PNGs —
+  # declare them so editing any forces a .res rebuild (RC dependency scanning misses these).
   set_source_files_properties("${CMAKE_SOURCE_DIR}/packaging/RabbitEars.rc" PROPERTIES
-    OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/packaging/app.manifest;${CMAKE_SOURCE_DIR}/packaging/app.ico;${CMAKE_SOURCE_DIR}/art/RabbitEars3.png;${CMAKE_SOURCE_DIR}/art/RabbitEars_logo.png;${CMAKE_SOURCE_DIR}/art/BadAss_RabbitEars.png")
+    OBJECT_DEPENDS "${CMAKE_BINARY_DIR}/generated/app.manifest;${CMAKE_BINARY_DIR}/generated/version.h;${CMAKE_SOURCE_DIR}/packaging/app.ico;${CMAKE_SOURCE_DIR}/art/RabbitEars3.png;${CMAKE_SOURCE_DIR}/art/RabbitEars_logo.png;${CMAKE_SOURCE_DIR}/art/BadAss_RabbitEars.png")
   target_include_directories(RabbitEars PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"        # Win32/ — for ui/*.h, audio/*.h, resource.h
     ${LIBVLC_INCLUDE_DIR}
-    "${CMAKE_BINARY_DIR}/generated")     # version.h
+    "${CMAKE_BINARY_DIR}/generated")     # version.h + the .rc's #include "version.h" / app.manifest
   target_link_directories(RabbitEars PRIVATE ${LIBVLC_LIB_DIR})
   if(RABBITEARS_UPDATER)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_HAVE_WINSPARKLE)

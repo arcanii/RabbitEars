@@ -12,3 +12,9 @@
 // commit, so every committed build compares correctly against the appcast.
 #define RE_VERSION_FULL "@APP_VERSION@.@BUILD_NUMBER@"
 #define RE_VERSION_FULL_W L"@APP_VERSION@.@BUILD_NUMBER@"
+
+// Windows VERSIONINFO forms for packaging/RabbitEars.rc — derived from APP_VERSION so the .exe's
+// Explorer → Properties → Details version tracks the single source (cmake/AppVersion.cmake). The 4th
+// field is the marketing patch's build slot, kept 0 (the git BUILD_NUMBER lives in RE_VERSION_FULL).
+#define RE_VERSION_RC     @APP_VERSION_COMMA@,0   // e.g. 0,2,11,0 — FILEVERSION / PRODUCTVERSION
+#define RE_VERSION_RC_STR "@APP_VERSION@.0"       // e.g. "0.2.11.0" — the VALUE version strings

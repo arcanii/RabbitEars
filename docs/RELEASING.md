@@ -46,13 +46,15 @@ portable zip for people who prefer it; those users update manually).
 - (Optional) an Authenticode code-signing cert — see *Not yet covered*.
 
 ## Per release
-1. **Bump the version** if the marketing version changes, in all four places:
-   `APP_VERSION` in `cmake/AppVersion.cmake` (About box + update checks; the
-   `if(APPLE)` override below it is the mac version and must NOT move), `MyVer` in
-   `packaging/installer.iss` (installer name/version), the `FILEVERSION`/
-   `PRODUCTVERSION` + `FileVersion`/`ProductVersion` strings in
-   `packaging/RabbitEars.rc`, and the `assemblyIdentity version` in
-   `packaging/app.manifest`. The build number (git commit count) is automatic.
+1. **Bump the version** if the marketing version changes — **one place only**:
+   `APP_VERSION` in `cmake/AppVersion.cmake` (leave the `if(APPLE)` override below it —
+   that's the decoupled mac version — untouched). Everything else derives from it at
+   CMake configure time: the About box + update checks (generated `version.h`), the
+   `.exe` VERSIONINFO (`packaging/RabbitEars.rc` `#include`s `version.h` →
+   `RE_VERSION_RC`/`RE_VERSION_RC_STR`), the app manifest identity (generated from
+   `packaging/app.manifest.in`), and the Inno installer name/version
+   (`packaging/installer.iss` `#include`s the generated `version.iss` from
+   `packaging/version.iss.in`). The build number (git commit count) is automatic.
 2. **Commit** everything first — the build number is baked at CMake configure time,
    so the version stamp only matches `HEAD` after a build that follows the commit.
 3. **Build both arches** (skip the ARM64 lines for an x64-only release):
