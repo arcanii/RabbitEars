@@ -907,8 +907,12 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // and `/ :` etc. break the path, so the exact Win32 set is replaced with '_'.
 - (NSString*)recordingPathFor:(NSString*)channelName ext:(NSString*)ext {
     NSMutableString* name = [NSMutableString string];
+    // MRC: retain the cached set (app-lifetime). +characterSetWithCharactersInString: returns an
+    // AUTORELEASED object; without the retain the static would dangle once the first call's
+    // autorelease pool drained, and the NEXT call (e.g. a 2nd manual record, or the scheduler tick)
+    // would message a freed object → EXC_BAD_ACCESS. (Caught on-device; shipped latent since 0.2.7.)
     static NSCharacterSet* bad =
-        [NSCharacterSet characterSetWithCharactersInString:@"\\/:*?\"<>|'{},"];
+        [[NSCharacterSet characterSetWithCharactersInString:@"\\/:*?\"<>|'{},"] retain];
     for (NSUInteger i = 0; i < channelName.length; ++i) {
         unichar c = [channelName characterAtIndex:i];
         [name appendString:(c < 0x20 || [bad characterIsMember:c]) ? @"_"
