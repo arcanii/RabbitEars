@@ -50,13 +50,23 @@ inline NSString* TrF(i18n::StringId id, std::initializer_list<NSString*> args) {
 inline i18n::Lang macSystemLang() {
     NSString* code = [[NSLocale preferredLanguages].firstObject lowercaseString];
     if ([code hasPrefix:@"ja"]) return i18n::Lang::Ja;
+    if ([code hasPrefix:@"zh"] && ![code containsString:@"hans"]) {
+        // We ship Traditional only. Hong Kong / Macau → the HK overlay; Taiwan / generic Hant →
+        // Traditional (mirrors Win32's Tr routing). Simplified ("hans", incl. region-tagged like
+        // zh-Hans-HK) and bare "zh" fall through to English rather than forcing Traditional on a
+        // Simplified reader — a user who wants Chinese can still pick it explicitly from the menu.
+        if ([code containsString:@"hk"] || [code containsString:@"mo"]) return i18n::Lang::ZhHK;
+        if ([code containsString:@"hant"] || [code containsString:@"tw"]) return i18n::Lang::ZhHant;
+    }
     return i18n::Lang::En;
 }
 
-// Resolve a persisted pref ("system" | "en" | "ja") to the effective language.
+// Resolve a persisted pref ("system" | "en" | "ja" | "zh-Hant" | "zh-HK") to the effective language.
 inline i18n::Lang macResolveLang(NSString* pref) {
     if ([pref isEqualToString:@"ja"]) return i18n::Lang::Ja;
     if ([pref isEqualToString:@"en"]) return i18n::Lang::En;
+    if ([pref isEqualToString:@"zh-Hant"]) return i18n::Lang::ZhHant;
+    if ([pref isEqualToString:@"zh-HK"]) return i18n::Lang::ZhHK;
     return macSystemLang();  // "system" or anything unrecognized follows the OS
 }
 

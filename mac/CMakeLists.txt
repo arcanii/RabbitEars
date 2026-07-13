@@ -48,6 +48,21 @@ if(RABBITEARS_BUILD_MAC)
   set(RE_MAC_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/RabbitEars.icns")
   set_source_files_properties("${RE_MAC_ICNS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
+  # GPL-3.0 license + third-party notices. RabbitEars is GPL-3.0-or-later, so the binary must
+  # ship its license text; the Windows installer does this, and the mac peer is to bundle them in
+  # Contents/Resources (the deep codesign in package-mac.sh then covers them). The top-level
+  # LICENSE + THIRD-PARTY-NOTICES.txt go in Resources; the dependency license texts in
+  # Resources/licenses. The About box points here via NSHumanReadableCopyright (Info.plist).
+  set(RE_MAC_LICENSES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD-PARTY-NOTICES.txt")
+  set_source_files_properties(${RE_MAC_LICENSES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+  set(RE_MAC_LICENSE_TEXTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/../licenses/GPL-2.0.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../licenses/LGPL-2.1.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../licenses/MIT-miniz.txt")
+  set_source_files_properties(${RE_MAC_LICENSE_TEXTS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/licenses")
+
   add_executable(RabbitEars MACOSX_BUNDLE
     src/app/main.mm
     src/app/AppDelegate.mm
@@ -65,7 +80,9 @@ if(RABBITEARS_BUILD_MAC)
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm
-    "${RE_MAC_ICNS}")
+    "${RE_MAC_ICNS}"
+    ${RE_MAC_LICENSES}
+    ${RE_MAC_LICENSE_TEXTS})
 
   # These use ARC (weak-self timers; CoreFoundation bridging + a block-owning C++
   # struct for the Core Audio spectrum tap; block-captured self in the dialogs; the

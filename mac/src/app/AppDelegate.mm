@@ -145,7 +145,7 @@ using namespace rabbitears::i18n;  // StringId
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
 
-// Language submenu (System default / English / 日本語). Selecting a language persists the
+// Language submenu (System default / English / 日本語 / 繁體中文 / 繁體中文（香港）). Selecting a language persists the
 // preference to NSUserDefaults and prompts a restart — the active language is applied only at
 // startup (setActiveLang is a startup-only, atomically-read global), matching Win32.
 - (void)addLanguageSubmenuTo:(NSMenu*)parent {
@@ -154,9 +154,11 @@ using namespace rabbitears::i18n;  // StringId
     NSMenu* langMenu = [[NSMenu alloc] initWithTitle:langItem.title];
     struct LangDef { NSString* code; StringId sid; };
     const LangDef defs[] = {
-        { @"system", StringId::LangSystemDefault },
-        { @"en",     StringId::LangEnglish },
-        { @"ja",     StringId::LangJapanese },
+        { @"system",  StringId::LangSystemDefault },
+        { @"en",      StringId::LangEnglish },
+        { @"ja",      StringId::LangJapanese },
+        { @"zh-Hant", StringId::LangTraditionalChinese },
+        { @"zh-HK",   StringId::LangTraditionalChineseHK },
     };
     NSString* cur = currentLanguagePref();
     for (const LangDef& d : defs) {

@@ -3,11 +3,14 @@
 #import "RecordingsWindowController.h"
 #import "Tr.h"
 
+#include "core/RecordingRules.h"  // normaliseTvgId — resolve a rule's channel to the library
 #include "db/Database.h"
+#include "models/Channel.h"
 #include "models/RecordingRule.h"
 #include "models/ScheduledRecording.h"
 #include "platform/Encoding.h"
 
+#include <algorithm>
 #include <ctime>
 #include <vector>
 
@@ -22,6 +25,7 @@ namespace {
 NSString* ns(const std::wstring& w) {
     return [NSString stringWithUTF8String:rabbitears::utf8FromWide(w).c_str()] ?: @"";
 }
+std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: ""); }
 NSString* statusText(ScheduleStatus s) {
     switch (s) {
         case ScheduleStatus::Pending:   return Tr(StringId::ScheduleStatusPending);
@@ -49,7 +53,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
 }
 }  // namespace
 
-@interface RecordingsWindowController () <NSTableViewDataSource, NSTableViewDelegate>
+@interface RecordingsWindowController () <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
 @end
 
 @implementation RecordingsWindowController {
@@ -58,6 +62,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     NSTableView* _schedTable;
     NSTableView* _ruleTable;
     NSTextField* _hint;
+    NSButton*    _ruleEditOk;  // the rule-editor sheet's OK button, while it is up (else nil)
     void (^_onChange)(void);
     std::vector<ScheduledRecording> _schedules;
     std::vector<RecordingRule>      _rules;
@@ -169,12 +174,25 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     [cv addSubview:cancelSched];
     NSButton* toggleRule = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsToggleRuleButton)
                                               target:self action:@selector(toggleRule:)];
-    toggleRule.frame = NSMakeRect(170, 44, 170, 26);
+    toggleRule.frame = NSMakeRect(170, 44, 150, 26);
     [cv addSubview:toggleRule];
     NSButton* delRule = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsDeleteRuleButton)
                                            target:self action:@selector(deleteRule:)];
-    delRule.frame = NSMakeRect(348, 44, 120, 26);
+    delRule.frame = NSMakeRect(324, 44, 110, 26);
     [cv addSubview:delRule];
+    // New… / Edit… a series rule (the mac peer of Win32's Recording-Rules manager). Rules could
+    // previously only be born from the guide's "Record Series"; these create/edit them directly.
+    NSButton* newRule = [NSButton buttonWithTitle:Tr(StringId::ScheduleManagerNewButton)
+                                           target:self action:@selector(newRule:)];
+    newRule.frame = NSMakeRect(444, 44, 100, 26);
+    [cv addSubview:newRule];
+    NSButton* editRule = [NSButton buttonWithTitle:Tr(StringId::RuleEditButton)
+                                            target:self action:@selector(editRule:)];
+    editRule.frame = NSMakeRect(548, 44, 100, 26);
+    [cv addSubview:editRule];
+    // Double-clicking a rule row edits it.
+    _ruleTable.target = self;
+    _ruleTable.doubleAction = @selector(editRule:);
 
     _hint = [NSTextField labelWithString:Tr(StringId::MacRecordingsWakeHint)];
     _hint.frame = NSMakeRect(12, 10, frame.size.width - 24, 28);
@@ -275,6 +293,162 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         [self reload];
         [self notifyChange];
     }];
+}
+
+// ---- rule editor (New… / Edit…) ------------------------------------------------------------
+// The mac peer of Win32's ruleDialog. Rules were previously born only from the guide's "Record
+// Series"; this lets the user create one from scratch or change an existing rule's criteria.
+
+- (NSString*)trimmed:(NSString*)s {
+    return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+- (void)newRule:(id)__unused sender {
+    RecordingRule r;  // id==0 ⇒ new; defaults from the model (Exact, enabled, no padding)
+    r.mux = L"ts";    // the crash-safe default container (mp4 loses its index on a hard crash)
+    r.createdAt = (long long)time(nullptr);  // addRule binds this verbatim (no auto-stamp)
+    [self presentRuleEditorForRule:r isNew:YES];
+}
+
+- (void)editRule:(id)__unused sender {
+    const NSInteger row = _ruleTable.selectedRow;
+    if (row < 0 || row >= (NSInteger)_rules.size()) return;  // nothing selected
+    [self presentRuleEditorForRule:_rules[(size_t)row] isNew:NO];
+}
+
+- (void)presentRuleEditorForRule:(RecordingRule)rule isNew:(BOOL)isNew {
+    if (!_db) return;
+
+    // Library channels for the picker, sorted by name. Popup index 0 == "(any channel)";
+    // a menu item's tag is the 1-based library index (0 == any) so a duplicate channel name
+    // can't collapse the mapping (NSPopUpButton's addItemWithTitle: dedups by title — building
+    // the menu with explicit items + tags avoids that).
+    std::vector<Channel> chans = _db->allChannels();
+    std::sort(chans.begin(), chans.end(),
+              [](const Channel& a, const Channel& b) { return a.name < b.name; });
+
+    NSInteger preSelTag = 0;  // default "(any channel)"
+    if (!rule.channelId.empty()) {
+        const std::wstring want = normaliseTvgId(rule.channelId);
+        for (size_t i = 0; i < chans.size(); ++i)
+            if (!chans[i].tvgId.empty() && normaliseTvgId(chans[i].tvgId) == want) {
+                preSelTag = (NSInteger)i + 1;
+                break;
+            }
+        if (preSelTag == 0) {  // the rule's channel has left the library — keep it selectable so
+            Channel keep;      // editing another field can't silently turn it into "(any channel)"
+            keep.tvgId = rule.channelId;
+            keep.name  = rule.channelName.empty() ? rule.channelId : rule.channelName;
+            chans.push_back(keep);
+            preSelTag = (NSInteger)chans.size();
+        }
+    }
+
+    // Accessory: 5 labelled rows (Channel / Title / Match / Start early / Stop late).
+    const CGFloat W = 380, rowH = 26, gap = 10, labelW = 92, fieldX = 100, fieldW = W - fieldX, numW = 56;
+    const CGFloat H = 5 * rowH + 4 * gap;
+    NSView* form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, W, H)];
+    auto rowY = [&](int i) { return H - (CGFloat)(i + 1) * rowH - (CGFloat)i * gap; };
+    auto addLabel = [&](StringId sid, int i) {
+        NSTextField* l = [NSTextField labelWithString:Tr(sid)];
+        l.frame = NSMakeRect(0, rowY(i) + 4, labelW, rowH - 6);
+        l.alignment = NSTextAlignmentRight;
+        [form addSubview:l];
+    };
+    addLabel(StringId::ScheduleFieldChannel, 0);
+    addLabel(StringId::ScheduleFieldTitle,   1);
+    addLabel(StringId::RuleFieldMatch,       2);
+    addLabel(StringId::RuleFieldLead,        3);
+    addLabel(StringId::RuleFieldTrail,       4);
+
+    NSPopUpButton* chanPop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(fieldX, rowY(0), fieldW, rowH)
+                                                        pullsDown:NO];
+    NSMenuItem* anyItem = [[NSMenuItem alloc] initWithTitle:Tr(StringId::RuleAnyChannelPlaceholder)
+                                                     action:nil keyEquivalent:@""];
+    anyItem.tag = 0;
+    [chanPop.menu addItem:anyItem];
+    for (size_t i = 0; i < chans.size(); ++i) {
+        NSString* t = chans[i].name.empty() ? ns(chans[i].tvgId) : ns(chans[i].name);
+        NSMenuItem* it = [[NSMenuItem alloc] initWithTitle:t action:nil keyEquivalent:@""];
+        it.tag = (NSInteger)i + 1;
+        [chanPop.menu addItem:it];
+    }
+    [chanPop selectItemWithTag:preSelTag];
+
+    NSTextField* titleField = [[NSTextField alloc] initWithFrame:NSMakeRect(fieldX, rowY(1), fieldW, rowH)];
+    titleField.stringValue = ns(rule.titleMatch);
+    titleField.delegate = self;
+
+    NSPopUpButton* matchPop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(fieldX, rowY(2), fieldW, rowH)
+                                                         pullsDown:NO];
+    [matchPop.menu addItem:[[NSMenuItem alloc] initWithTitle:Tr(StringId::RuleMatchExact) action:nil keyEquivalent:@""]];
+    [matchPop.menu addItem:[[NSMenuItem alloc] initWithTitle:Tr(StringId::RuleMatchContains) action:nil keyEquivalent:@""]];
+    [matchPop selectItemAtIndex:(rule.match == RuleMatch::Contains ? 1 : 0)];
+
+    NSTextField* leadField = [[NSTextField alloc] initWithFrame:NSMakeRect(fieldX, rowY(3), numW, rowH)];
+    leadField.stringValue = [NSString stringWithFormat:@"%d", rule.leadSec / 60];
+    leadField.alignment = NSTextAlignmentRight;
+    NSTextField* trailField = [[NSTextField alloc] initWithFrame:NSMakeRect(fieldX, rowY(4), numW, rowH)];
+    trailField.stringValue = [NSString stringWithFormat:@"%d", rule.trailSec / 60];
+    trailField.alignment = NSTextAlignmentRight;
+    auto addMin = [&](int i) {
+        NSTextField* m = [NSTextField labelWithString:Tr(StringId::RuleMinutesSuffix)];
+        m.frame = NSMakeRect(fieldX + numW + 6, rowY(i) + 4, 80, rowH - 6);
+        m.textColor = NSColor.secondaryLabelColor;
+        [form addSubview:m];
+    };
+    addMin(3);
+    addMin(4);
+    for (NSView* v in @[ chanPop, titleField, matchPop, leadField, trailField ]) [form addSubview:v];
+
+    NSAlert* alert = [[NSAlert alloc] init];
+    alert.messageText = isNew ? Tr(StringId::RuleEditNewTitle) : Tr(StringId::RuleEditWindowTitle);
+    alert.accessoryView = form;
+    NSButton* ok = [alert addButtonWithTitle:Tr(StringId::ButtonOk)];
+    [alert addButtonWithTitle:Tr(StringId::ButtonCancel)];
+    _ruleEditOk = ok;
+    ok.enabled = [self trimmed:titleField.stringValue].length > 0;  // a rule needs a title
+    alert.window.initialFirstResponder = titleField;
+
+    const long long ruleId = rule.id;
+    __block RecordingRule carried = rule;  // preserve enabled / mux / createdAt across the edit
+    [alert beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
+        titleField.delegate = nil;   // stop controlTextDidChange: before the controls go away
+        self->_ruleEditOk = nil;
+        if (resp != NSAlertFirstButtonReturn || !self->_db) return;
+        NSString* title = [self trimmed:titleField.stringValue];
+        if (title.length == 0) return;  // OK was gated on this; re-check defensively
+
+        RecordingRule r = carried;
+        r.id = ruleId;
+        r.titleMatch = ws(title);
+        r.match = (matchPop.indexOfSelectedItem == 1) ? RuleMatch::Contains : RuleMatch::Exact;
+        r.leadSec  = std::max(0, (int)leadField.intValue) * 60;
+        r.trailSec = std::max(0, (int)trailField.intValue) * 60;
+        const NSInteger tag = chanPop.selectedItem.tag;  // 0 == any; k == chans[k-1]
+        if (tag <= 0) {
+            r.channelId.clear();
+            r.channelName.clear();
+        } else if ((size_t)(tag - 1) < chans.size()) {
+            r.channelId   = chans[(size_t)(tag - 1)].tvgId;
+            r.channelName = chans[(size_t)(tag - 1)].name;
+        }
+
+        if (isNew) {
+            self->_db->addRule(r);
+        } else {
+            self->_db->updateRule(r);
+            self->_db->clearPendingForRule(ruleId);  // stale predictions no longer match the criteria
+        }
+        [self reload];
+        [self notifyChange];  // host re-expands the rules against the new/edited criteria
+    }];
+}
+
+- (void)controlTextDidChange:(NSNotification*)note {
+    // Gate the rule editor's OK on a non-empty (trimmed) title.
+    if (_ruleEditOk)
+        _ruleEditOk.enabled = [self trimmed:((NSTextField*)note.object).stringValue].length > 0;
 }
 
 @end

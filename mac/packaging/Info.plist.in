@@ -14,6 +14,10 @@
   <key>CFBundleShortVersionString</key><string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
   <key>CFBundleVersion</key>           <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
+  <!-- Shown in the standard About panel. RabbitEars is GPL-3.0-or-later; the full license
+       (LICENSE) + third-party notices (THIRD-PARTY-NOTICES.txt, licenses/) ship in this
+       bundle's Resources folder. -->
+  <key>NSHumanReadableCopyright</key>  <string>Copyright © 2026 — GPL-3.0-or-later. Full license and third-party notices are in this app's Resources folder.</string>
   <!-- Minimum macOS 26 — deliberate "latest is best" policy (runtime gate only; the
        compile-time deployment target stays unpinned so CI's older SDK still builds). -->
   <key>LSMinimumSystemVersion</key>    <string>26.0</string>

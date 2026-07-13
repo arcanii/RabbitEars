@@ -907,8 +907,12 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // and `/ :` etc. break the path, so the exact Win32 set is replaced with '_'.
 - (NSString*)recordingPathFor:(NSString*)channelName ext:(NSString*)ext {
     NSMutableString* name = [NSMutableString string];
+    // MRC: retain the cached set (app-lifetime). +characterSetWithCharactersInString: returns an
+    // AUTORELEASED object; without the retain the static would dangle once the first call's
+    // autorelease pool drained, and the NEXT call (e.g. a 2nd manual record, or the scheduler tick)
+    // would message a freed object → EXC_BAD_ACCESS. (Caught on-device; shipped latent since 0.2.7.)
     static NSCharacterSet* bad =
-        [NSCharacterSet characterSetWithCharactersInString:@"\\/:*?\"<>|'{},"];
+        [[NSCharacterSet characterSetWithCharactersInString:@"\\/:*?\"<>|'{},"] retain];
     for (NSUInteger i = 0; i < channelName.length; ++i) {
         unichar c = [channelName characterAtIndex:i];
         [name appendString:(c < 0x20 || [bad characterIsMember:c]) ? @"_"
@@ -1061,15 +1065,29 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     const auto programmes = _db->programmesInWindowAll(now, horizon);
     if (programmes.empty()) { _rulesExpandedAt = now; return 0; }
 
-    const auto planned = rabbitears::expandRules(rules, programmes, _db->listSchedules(), now, horizon);
-    // expandRules stamps each schedule's channelId with the EPG programme's base id. Resolve it
-    // to a playlist channel by NORMALISED tvg-id (the @feed suffix stripped + case-folded), not
-    // the exact channelByTvgId — else a channel whose playlist tvg-id has an @feed suffix never
-    // matches and the rule silently records nothing. Build the index once per pass.
+    // Index the library by NORMALISED tvg-id (the @feed quality suffix stripped + case-folded) so an
+    // iptv-org "@feed" channel still matches the XMLTV base id — the exact channelByTvgId would miss
+    // it and the rule would silently record nothing. Built once; it doubles as the recordable set
+    // for the pre-filter below, and the resolver for the planned schedules after.
     std::map<std::wstring, rabbitears::Channel> byNorm;
-    if (!planned.empty())
-        for (const auto& c : _db->allChannels())
-            if (!c.tvgId.empty()) byNorm.emplace(rabbitears::normaliseTvgId(c.tvgId), c);
+    for (const auto& c : _db->allChannels())
+        if (!c.tvgId.empty()) byNorm.emplace(rabbitears::normaliseTvgId(c.tvgId), c);
+
+    // Episode dedup lives inside the channel-blind expander, so it would otherwise claim an episode
+    // for an EPG-only channel we can't record (a shared XMLTV feed routinely carries channels no
+    // enabled playlist has), silently dropping the recordable airing of that same episode. Keep only
+    // programmes on a recordable (library) channel so dedup weighs only airings we can actually
+    // record. (Win32 0.2.9 parity — matched on the normalised id here for @feed robustness.)
+    std::vector<rabbitears::Programme> recordableProgs;
+    recordableProgs.reserve(programmes.size());
+    for (const auto& p : programmes)
+        if (byNorm.count(rabbitears::normaliseTvgId(p.channelId))) recordableProgs.push_back(p);
+    if (recordableProgs.empty()) { _rulesExpandedAt = now; return 0; }
+
+    // expandRules stamps each schedule's channelId with the EPG programme's base id; resolve it back
+    // to the library channel through the same normalised index.
+    const auto planned =
+        rabbitears::expandRules(rules, recordableProgs, _db->listSchedules(), now, horizon);
     int added = 0;
     for (rabbitears::ScheduledRecording s : planned) {
         auto it = byNorm.find(rabbitears::normaliseTvgId(s.channelId));
@@ -1941,7 +1959,9 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     NSMenuItem* langItem = [m addItemWithTitle:Tr(StringId::MenuLanguage) action:nil keyEquivalent:@""];
     NSMenu* langMenu = [[NSMenu alloc] init];
     struct { NSString* code; StringId sid; } langs[] = {
-        { @"system", StringId::LangSystemDefault }, { @"en", StringId::LangEnglish }, { @"ja", StringId::LangJapanese } };
+        { @"system", StringId::LangSystemDefault }, { @"en", StringId::LangEnglish },
+        { @"ja", StringId::LangJapanese }, { @"zh-Hant", StringId::LangTraditionalChinese },
+        { @"zh-HK", StringId::LangTraditionalChineseHK } };
     NSString* curLang = currentLanguagePref();
     for (auto& L : langs) {
         NSMenuItem* it = [langMenu addItemWithTitle:Tr(L.sid) action:@selector(selectLanguage:) keyEquivalent:@""];
