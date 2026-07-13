@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.10 SHIPPED (Chinese language-selection hotfix)** · v0.2.9 · macOS 0.2.7
+## Current state — **v0.2.11 SHIPPED (live language switch + single-source version)** · v0.2.10 · macOS 0.2.7
 
 **Released:** **`v0.2.10`** (2026-07-13), tag `v0.2.10` @ `3da1096`, full version **`0.2.10.253`** (the
 installers were built at commit `7c3727e`/count 253; the tag sits a couple of doc commits later — the
@@ -59,7 +59,14 @@ the shared i18n catalog is now **531 keys × 4 languages** (EN / 日本語 / 繁
 passes placeholder parity on the Windows side, so it ships along. **Owner runtime pass: ✅ zh-Hant + zh-HK
 now apply on-device**, and auto-update `0.2.9 → 0.2.10` is live for both arches.
 
-**0.2.11-dev (UNRELEASED): live language switch.** Settings ▸ Language now applies **live — no restart**
+**Released:** **`v0.2.11`** (2026-07-13), tag `v0.2.11` @ `8deadcc`, full version **`0.2.11.265`** (the
+installers were built at `e98d44f`/count 265; the tag sits on the appcast commit `8deadcc` one commit later
+— the usual cosmetic drift; installers + version.h + both appcasts all agree on 0.2.11.265, cleanly
+`> 0.2.10.253`). Three installers on GitHub release `v0.2.11` — x64 `35,313,200` / arm64 `30,162,041` /
+universal `63,186,623` bytes — **two appcasts** (`0.2.11.265`) committed @ `8deadcc` and LIVE (raw feeds
+serve 0.2.11.265; all three enclosures HTTP 200). Owner-signed on the Mac (`sign_update --account
+SQLTerminal`). **✅ Owner runtime-verified on-device: language switching applies live.** **Two headline
+changes:** **(1) Live language switch** — Settings ▸ Language now applies **live — no restart**
 (was restart-to-apply). The old restart TaskDialog + `restartApp()` are removed; `setLanguageSelection`
 (`Win32/ui/MainWindowCommands.cpp`) now calls `i18n::setActiveLang(resolveLang(pref))` then a new
 **`applyLanguageChange(st)`** that rebuilds every built-once surface in place: it remakes the CJK-aware
@@ -79,11 +86,15 @@ exists, the record button glyph shows it], 2 confirmed-cosmetic). **Known minors
 (1) a switch leaves a background download/EPG-fetch status banner intact (guarded on `busy`/`loadingDlg`),
 but a non-busy transient (Paused/Buffering/Unavailable) briefly stays in the old language until the next
 player event; (2) `refreshNav` drops the nav selection highlight + collapses expanded nodes — its
-established behavior at every call site. **⚠️ Not selftest-covered (Win32 language plumbing) — owner
-runtime-verifies:** pick each language from the gear menu and confirm the whole UI (nav, command bar,
-grid headers, guide if open, dialogs, tooltips) re-renders instantly in the new language + face, EN↔JA↔
-繁體中文↔香港, without a restart. **Version NOT yet bumped (still 0.2.10); no release cut** — pending the
-0.2.11 cut (owner drives from PowerShell).
+established behavior at every call site. **(2) Single-source version** — the Windows marketing version was
+duplicated across four files (hand-synced every release); now **`APP_VERSION` in `cmake/AppVersion.cmake`
+is the ONLY place to bump.** Everything derives at CMake configure time: `packaging/RabbitEars.rc`
+`#include`s the generated `version.h` (new `RE_VERSION_RC` / `RE_VERSION_RC_STR` macros, from a new
+`APP_VERSION_COMMA`); the app manifest is generated from `packaging/app.manifest.in`; the Inno installer
+`#include`s a generated `version.iss` (from `packaging/version.iss.in`). `docs/RELEASING.md` step 1 is now
+"one place only". The mac `if(APPLE)` override stays 0.2.9. Verified end-to-end: the built exe reports
+`FileVersion 0.2.11.0` with the manifest embedded on both arches. **⚠️ CJK still machine drafts** — the
+native-review gate (`gen_i18n.py --review zh-Hant | zh-HK | ja`) before *advertising* CJK is unchanged.
 
 **Released:** **`v0.2.9`** (2026-07-12), tag `v0.2.9` @ `75f8d16`, full version **`0.2.9.243`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.9` (x64 / native ARM64 / universal),
