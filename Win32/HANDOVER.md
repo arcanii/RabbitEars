@@ -31,7 +31,32 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.9 SHIPPED (Traditional Chinese + 香港 · episode dedup · rule editor · GPL-3.0 notices)** · macOS 0.2.7
+## Current state — **v0.2.10 hotfix BUILT (Chinese language-selection fixes) — awaiting owner signature + release** · v0.2.9 SHIPPED · macOS 0.2.7
+
+**0.2.10 HOTFIX — BUILT + COMMITTED, RELEASE PENDING (owner signature).** Fixes the two Traditional
+Chinese / Hong Kong **language-selection** bugs an owner runtime pass caught in shipped 0.2.9 — both
+GUI-wiring, so invisible to the headless selftest + the i18n review (they only exercise the catalog, not
+the Win32 language plumbing). **(1)** The `WM_CREATE` startup loader whitelisted `ui_language` to only
+`system`/`en`/`ja`, so a persisted `zh-Hant`/`zh-HK` was silently dropped and the app reset to the system
+language (Chinese "restarted but did nothing"). *Fix:* **removed the whitelist — `resolveLang()` is the
+single validator** now (`Win32/ui/MainWindow.cpp`; retroactive — an already-persisted Chinese choice now
+applies without re-selecting). **(2)** `ID_LANG_ZH_HK` was `2062`, the LAST id of the **computed**
+`ID_DOCK_BASE` range (`2051 + panel*4 + side` → 2051..2062), so picking 繁體中文（香港） fired a dock command
+("move channels to bottom") instead of switching language. *Fix:* moved to **`2049`**, a genuine single-id
+gap (`Win32/ui/MainWindowInternal.h`). **⚠️ NEW GOTCHA — computed command-id ranges** (`ID_DOCK_BASE`
+2051..2062, `ID_LAYOUT_APPLY_BASE` 2079..2088, `ID_LAYOUT_DELETE_BASE` 2089..2098, `ID_THEME_SKIN_BASE`
+2100+) do NOT appear as literal `= 20xx` assignments, so a plain grep misses them — check every `*_BASE + n`
+range before allocating a command id. Version bumped 0.2.9 → **0.2.10** (commit `7c3727e`, full
+**`0.2.10.253`**); both arches built (x64 BOTH theme flags + native ARM64) + selftest ALL PASS; **3
+installers built** — x64 `35,309,768` / arm64 `30,167,080` / universal `63,171,660` bytes. **Owner-verified
+on-device: zh-Hant + zh-HK now apply.** The `main` rebase also pulled the **mac team's localization merge**:
+the shared i18n catalog is now **531 keys × 4 languages** (EN / 日本語 / 繁體中文 / 繁體中文（香港）) — it builds +
+passes placeholder parity on the Windows side, so it ships along. **REMAINING to cut 0.2.10** (per
+`docs/RELEASING.md`): owner signs the 3 installers on the Mac (`sign_update --account SQLTerminal`; each
+printed length must equal the bytes above) → `pwsh scripts\make-appcast.ps1 -Version 0.2.10.253 -Tag v0.2.10
+-SetupExe … -Signature …` for x64 (`appcast.xml`) and `-Arch arm64` (`appcast-arm64.xml`) →
+`gh release create v0.2.10 --target main` with the 3 installers → commit+push both appcasts → verify raw
+feeds serve 0.2.10.253 + all enclosures HTTP 200.
 
 **Released:** **`v0.2.9`** (2026-07-12), tag `v0.2.9` @ `75f8d16`, full version **`0.2.9.243`** (tag count ==
 shipped build number), three signed installers on GitHub release `v0.2.9` (x64 / native ARM64 / universal),
