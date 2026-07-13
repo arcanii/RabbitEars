@@ -460,8 +460,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const bool dbOk = st->db.open(dbPath, &err);
             i18n::setActiveLang(systemLang());
             if (dbOk) {
-                if (auto lg = st->db.getSetting(L"ui_language");
-                    lg && (*lg == L"system" || *lg == L"en" || *lg == L"ja"))
+                // Accept ANY persisted value and let resolveLang() validate it (an unknown code
+                // falls back to the system language). Do NOT re-whitelist the languages here — that
+                // list silently dropped "zh-Hant"/"zh-HK", resetting Chinese users to the system
+                // language even though the menu persisted their choice.
+                if (auto lg = st->db.getSetting(L"ui_language"); lg && !lg->empty())
                     st->uiLanguage = *lg;
                 i18n::setActiveLang(resolveLang(st->uiLanguage));
             }

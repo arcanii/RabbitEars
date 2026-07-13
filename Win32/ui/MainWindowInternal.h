@@ -99,7 +99,11 @@ constexpr int ID_LANG_SYSTEM = 2066;   // Settings → Language → System defau
 constexpr int ID_LANG_EN = 2067;       // Settings → Language → English ("en")
 constexpr int ID_LANG_JA = 2068;       // Settings → Language → 日本語 ("ja")
 constexpr int ID_LANG_ZH_HANT = 2069;  // Settings → Language → 繁體中文 ("zh-Hant") — last free slot below the 0.2.6 block
-constexpr int ID_LANG_ZH_HK = 2062;    // Settings → Language → 繁體中文（香港） ("zh-HK"); 2070+ are taken, so this uses the free 2052–2062 gap
+// 2049 is a genuine single-id gap (between ID_EPG_GUIDE 2048 and ID_LAYOUT_RESET 2050). NOTE: do NOT
+// reuse 2052..2062 — those are the COMPUTED ID_DOCK_BASE range (2051 + panel*4 + side), which a
+// literal-id grep does NOT surface; 2062 there collided with "move channels to bottom", so selecting
+// this item fired a dock command instead of switching language.
+constexpr int ID_LANG_ZH_HK = 2049;    // Settings → Language → 繁體中文（香港） ("zh-HK")
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
