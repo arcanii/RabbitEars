@@ -12,6 +12,9 @@
 
 @interface MainWindowController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSSplitViewDelegate>
 - (void)showWindow;
+// Re-label every built-once UI surface in the CURRENT active language (Settings ▸ Language applies
+// live, no restart). The caller must flip i18n::setActiveLang(...) BEFORE calling this. Main thread.
+- (void)applyLanguageLive;
 
 // View-menu chrome toggles — hide the channel list / the top toolbar so the video
 // can fill the window. Driven from the app menu bar so they still work when the

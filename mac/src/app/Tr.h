@@ -85,8 +85,9 @@ inline void applyStartupLanguage() {
     i18n::setActiveLang(macResolveLang(currentLanguagePref()));
 }
 
-// Persist a new language pref. Does NOT change the RUNNING language (setActiveLang is applied
-// only at startup, matching Win32) - the app restarts to apply.
+// Persist a new language pref (NSUserDefaults). This only stores the choice; the caller applies it
+// LIVE by pairing it with i18n::setActiveLang(macResolveLang(code)) + a UI relabel (no restart —
+// see AppDelegate -selectLanguage:). It is also read once at startup by applyStartupLanguage().
 inline void setLanguagePref(NSString* code) {
     [[NSUserDefaults standardUserDefaults] setObject:code forKey:languagePrefKey()];
 }
