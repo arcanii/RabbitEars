@@ -569,8 +569,10 @@ increasingly user-facing — `gen_i18n.py --review ja` / `zh-Hant` / `zh-HK` is 
 CJK; (b) the `MenuVideoOnly` `\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator
 (a literal `\t` on the Windows menu), left for a Windows-side check; (c) whatever the Windows team ships next past
 0.2.11 (read Win32/HANDOVER.md; skip the theme engine + wake, N/A on mac). Backlog: promote MeterModel to
-common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two now-unused catalog
-ids (MacMainWindowLayoutsMenu, MacMainWindowFormatHeader); the LangRestart* catalog ids are now DEAD on both
-platforms (both do live switch) — pruneable.
+common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope). DONE (dead-catalog-id
+prune): the 6 dead ids — LangRestartInstruction/Body/Now/Later (both platforms live-switch now, no restart
+dialog) + MacMainWindowLayoutsMenu + MacMainWindowFormatHeader — were removed from common/i18n/*.json and
+Strings.{h,cpp} regenerated (531→525 keys × 4 langs; gen_i18n --check green, mac core+selftest green, ZERO
+Win32/mac source refs, and a whole-repo sweep confirmed NO other orphaned ids remain).
 ```
 ```
