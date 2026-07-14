@@ -17,4 +17,5 @@ namespace rabbitears { class Database; }
 // can nudge the scheduler (re-expand rules, re-derive keep-awake).
 - (void)presentRelativeTo:(NSWindow*)parent onChange:(void (^)(void))onChange;
 - (void)reload;  // re-query the DB into both tables (called from the ~30s tick when open)
+- (void)relabelForLanguageChange;  // live language switch (window reused across opens)
 @end

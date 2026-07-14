@@ -37,10 +37,13 @@ using namespace rabbitears::i18n;  // StringId
 // Minimal app menu: About / Check for Updates… / Quit. (About + Quit route to
 // NSApp via the responder chain; Check for Updates calls into Sparkle.)
 - (void)buildMenu {
-    NSMenu* menubar = [[NSMenu alloc] init];
-    NSMenuItem* appItem = [[NSMenuItem alloc] init];
+    // buildMenu is re-run on every live language switch, so autorelease the alloc'd bar/items/
+    // submenus (each is retained by its parent, and NSApp.mainMenu retains the whole tree) — else
+    // ~11 objects would leak per switch. The old bar is reclaimed when NSApp.mainMenu is reassigned.
+    NSMenu* menubar = [[[NSMenu alloc] init] autorelease];
+    NSMenuItem* appItem = [[[NSMenuItem alloc] init] autorelease];
     [menubar addItem:appItem];
-    NSMenu* appMenu = [[NSMenu alloc] init];
+    NSMenu* appMenu = [[[NSMenu alloc] init] autorelease];
     [[appMenu addItemWithTitle:Tr(StringId::AboutWindowTitle)
                         action:@selector(showAboutPanel:) keyEquivalent:@""] setTarget:self];
     [[appMenu addItemWithTitle:Tr(StringId::AboutCheckForUpdatesButton)
@@ -54,9 +57,9 @@ using namespace rabbitears::i18n;  // StringId
     // File menu — playlist import + management. The Mac-native home for these commands
     // (they're also on the in-window Settings ▾ pull-down). Items target self and forward
     // to _mainController, which is nil until the window loads just after buildMenu.
-    NSMenuItem* fileItem = [[NSMenuItem alloc] init];
+    NSMenuItem* fileItem = [[[NSMenuItem alloc] init] autorelease];
     [menubar addItem:fileItem];
-    NSMenu* fileMenu = [[NSMenu alloc] initWithTitle:Tr(StringId::MenuFile)];
+    NSMenu* fileMenu = [[[NSMenu alloc] initWithTitle:Tr(StringId::MenuFile)] autorelease];
     [[fileMenu addItemWithTitle:Tr(StringId::MenuAddPlaylist)
                          action:@selector(addPlaylist:) keyEquivalent:@"n"] setTarget:self];
     [[fileMenu addItemWithTitle:Tr(StringId::MenuOpenPlaylistFile)
@@ -75,9 +78,9 @@ using namespace rabbitears::i18n;  // StringId
     // the standard editing commands through these menu items' key equivalents,
     // down the responder chain to the focused field editor. Without it, paste
     // (and cut/copy/select-all/undo) silently do nothing.
-    NSMenuItem* editItem = [[NSMenuItem alloc] init];
+    NSMenuItem* editItem = [[[NSMenuItem alloc] init] autorelease];
     [menubar addItem:editItem];
-    NSMenu* editMenu = [[NSMenu alloc] initWithTitle:Tr(StringId::MenuEdit)];
+    NSMenu* editMenu = [[[NSMenu alloc] initWithTitle:Tr(StringId::MenuEdit)] autorelease];
     [editMenu addItemWithTitle:Tr(StringId::MenuUndo) action:@selector(undo:) keyEquivalent:@"z"];
     NSMenuItem* redo = [editMenu addItemWithTitle:Tr(StringId::MenuRedo) action:@selector(redo:) keyEquivalent:@"z"];
     redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
@@ -90,9 +93,9 @@ using namespace rabbitears::i18n;  // StringId
 
     // View menu — native full-screen (⌃⌘F). toggleFullScreen: routes down the
     // responder chain to the key window.
-    NSMenuItem* viewItem = [[NSMenuItem alloc] init];
+    NSMenuItem* viewItem = [[[NSMenuItem alloc] init] autorelease];
     [menubar addItem:viewItem];
-    NSMenu* viewMenu = [[NSMenu alloc] initWithTitle:Tr(StringId::MenuView)];
+    NSMenu* viewMenu = [[[NSMenu alloc] initWithTitle:Tr(StringId::MenuView)] autorelease];
     NSMenuItem* fs = [viewMenu addItemWithTitle:Tr(StringId::MenuEnterFullScreen)
                                          action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     fs.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
@@ -145,13 +148,13 @@ using namespace rabbitears::i18n;  // StringId
 
 - (void)checkForUpdates:(id)__unused sender { rabbitears::checkForUpdates(); }
 
-// Language submenu (System default / English / 日本語 / 繁體中文 / 繁體中文（香港）). Selecting a language persists the
-// preference to NSUserDefaults and prompts a restart — the active language is applied only at
-// startup (setActiveLang is a startup-only, atomically-read global), matching Win32.
+// Language submenu (System default / English / 日本語 / 繁體中文 / 繁體中文（香港）). Selecting a language persists
+// the preference to NSUserDefaults and applies it LIVE — no restart (see -selectLanguage:). The
+// menu is rebuilt on each language change, so the ✓ tracks the active language.
 - (void)addLanguageSubmenuTo:(NSMenu*)parent {
-    NSMenuItem* langItem = [[NSMenuItem alloc] init];
+    NSMenuItem* langItem = [[[NSMenuItem alloc] init] autorelease];
     langItem.title = Tr(StringId::MenuLanguage);
-    NSMenu* langMenu = [[NSMenu alloc] initWithTitle:langItem.title];
+    NSMenu* langMenu = [[[NSMenu alloc] initWithTitle:langItem.title] autorelease];
     struct LangDef { NSString* code; StringId sid; };
     const LangDef defs[] = {
         { @"system",  StringId::LangSystemDefault },
@@ -172,29 +175,15 @@ using namespace rabbitears::i18n;  // StringId
     [parent addItem:langItem];  // one-time, app-lifetime (same MRC-leak convention as the rest of buildMenu)
 }
 
+// Apply the chosen language LIVE — no restart (the mac peer of Win32 setLanguageSelection).
 - (void)selectLanguage:(NSMenuItem*)sender {
     NSString* code = sender.representedObject;
     if (!code.length || [code isEqualToString:currentLanguagePref()]) return;  // no change
-    setLanguagePref(code);
-    NSAlert* alert = [[[NSAlert alloc] init] autorelease];
-    alert.messageText = Tr(StringId::LangRestartInstruction);
-    alert.informativeText = Tr(StringId::LangRestartBody);
-    [alert addButtonWithTitle:Tr(StringId::LangRestartNow)];
-    [alert addButtonWithTitle:Tr(StringId::LangRestartLater)];
-    if ([alert runModal] == NSAlertFirstButtonReturn)
-        [self relaunch];  // else: the new language applies on the next launch
-}
-
-// Relaunch to apply a new display language. A short shell helper waits for THIS instance to
-// fully exit (a plain `open` would just re-activate the still-quitting app) before `open -n`
-// starts a fresh one.
-- (void)relaunch {
-    NSString* bundle = [[NSBundle mainBundle] bundlePath];
-    NSString* script = [NSString stringWithFormat:
-        @"while /bin/kill -0 %d 2>/dev/null; do /bin/sleep 0.1; done; /usr/bin/open -n \"%@\"",
-        [[NSProcessInfo processInfo] processIdentifier], bundle];
-    [NSTask launchedTaskWithLaunchPath:@"/bin/sh" arguments:@[ @"-c", script ]];
-    [NSApp terminate:nil];
+    setLanguagePref(code);                  // persist (NSUserDefaults) — BEFORE buildMenu so the
+                                            //   Language checkmark reads the new pref
+    setActiveLang(macResolveLang(code));    // flip the RUNNING language: every Tr()/TrF() now reads it
+    [self buildMenu];                       // rebuild the menu bar in the new language (+ moves the checkmark)
+    [_mainController applyLanguageLive];     // relabel the open window (fans out to meters + modeless windows)
 }
 
 // View-menu chrome toggles, forwarded to the window controller.

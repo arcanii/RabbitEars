@@ -36,4 +36,5 @@
 // ---- Spectrum consent helpers (no-ops for other kinds) ----------------------
 - (void)setAvailable:(BOOL)available;  // NO => "grant audio permission" placeholder
 - (BOOL)consumeHadEnergy;              // any band > floor since last call (thread-safe, clears)
+- (void)relabelForLanguageChange;      // live language switch: re-apply toolTip + repaint
 @end

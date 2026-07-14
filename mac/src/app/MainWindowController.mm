@@ -149,6 +149,11 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSButton*      _muteBtn;     // 🔊 / 🔇 toggle
     NSButton*      _meterBtn;    // bottom-bar show/hide-meters toggle
     NSButton*      _recBtn;      // top-bar record toggle (● / ■), tracks the active pane
+    // Top-bar buttons that are otherwise setup-locals — held (UNRETAINED, like _recBtn/_muteBtn:
+    // _topBar owns them for app lifetime) so a live language switch can relabel them in place.
+    NSButton*      _addBtn;      // "+ Add Playlist"
+    NSButton*      _setBtn;      // ⚙ gear
+    NSButton*      _stopBtn;     // "Stop"
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
@@ -313,6 +318,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     addBtn.frame = NSMakeRect(12, 9, 138, 28);
     addBtn.bezelColor = NSColor.controlAccentColor;  // accent, like the Win32 button
     [bar addSubview:addBtn];
+    _addBtn = addBtn;  // hold for live relabel (unretained; the bar retains it)
 
     // A gear that pops the Open/Manage/Meters/Updates/About menu (showSettings:).
     NSImage* gear = [NSImage imageWithSystemSymbolName:@"gearshape" accessibilityDescription:Tr(StringId::TooltipSettings)];
@@ -320,6 +326,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     setBtn.frame = NSMakeRect(158, 9, 40, 28);
     setBtn.toolTip = Tr(StringId::TooltipSettings);
     [bar addSubview:setBtn];
+    _setBtn = setBtn;  // hold for live relabel
 
     // Record toggle for the active pane (● idle / ■ recording). Between the gear and search.
     NSImage* recImg = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:Tr(StringId::TooltipBtnRecord)];
@@ -333,6 +340,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     stopBtn.frame = NSMakeRect(cs.width - 92, 9, 80, 28);
     stopBtn.autoresizingMask = NSViewMinXMargin;
     [bar addSubview:stopBtn];
+    _stopBtn = stopBtn;  // hold for live relabel
 
     _filter = [[NSPopUpButton alloc]
         initWithFrame:NSMakeRect(cs.width - 270, 9, 170, 28) pullsDown:NO];
@@ -632,6 +640,83 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)setStatus:(NSString*)s { _status.stringValue = s; }
 
+// Settings ▸ Language applies LIVE (no restart), the mac peer of Win32 applyLanguageChange. The
+// caller (AppDelegate -selectLanguage:) has already flipped the process-global active language via
+// i18n::setActiveLang, so every Tr()/TrF() below reads the NEW language. Relabel every built-once
+// surface in place — AppKit controls redraw when their title/stringValue/placeholderString/toolTip
+// changes. Menus/sheets built fresh on open (the gear pull-down, every NSAlert) and views that
+// re-read Tr() in drawRect: (MeterView, EpgGuideView) need only a repaint. No font work: the macOS
+// system font cascades to CJK on its own. Main thread only (menu-action driven).
+- (void)applyLanguageLive {
+    // Window title — re-derive from the active pane's channel (not a hardcoded app name).
+    MacVideoPane* ap = [self activePane];
+    _window.title = (ap && ap->channelId)
+        ? TrF(StringId::MacMainWindowTitleWithChannel, {ns(ap->channel.name)})
+        : Tr(StringId::AppName);
+
+    // Top bar.
+    _addBtn.title = Tr(StringId::CmdAddPlaylist);
+    _setBtn.image = [NSImage imageWithSystemSymbolName:@"gearshape"
+                                accessibilityDescription:Tr(StringId::TooltipSettings)];
+    _setBtn.toolTip = Tr(StringId::TooltipSettings);
+    _stopBtn.title = Tr(StringId::MacMainWindowStopButton);
+    [self updateRecordButton];  // _recBtn image + toolTip, re-read from the live recording state
+    // _muteBtn is an emoji glyph (🔊/🔇, language-independent) — leave it.
+    _meterBtn.image = [NSImage imageWithSystemSymbolName:@"waveform"
+                                 accessibilityDescription:Tr(StringId::MacMainWindowToggleMetersTooltip)];
+    _meterBtn.toolTip = Tr(StringId::MacMainWindowToggleMetersTooltip);
+    _search.placeholderString = Tr(StringId::SearchChannelsPlaceholder);  // NOT stringValue (user text)
+
+    // Channel-grid column headers (the ★/# glyph columns are language-independent — leave them).
+    [_table tableColumnWithIdentifier:@"name"].title = Tr(StringId::LabelChannel);
+    [_table tableColumnWithIdentifier:@"group"].title = Tr(StringId::GridHeaderGroup);
+    [_table.headerView setNeedsDisplay:YES];
+
+    // Right-click row menu — attached once at setup, never rebuilt on open, so relabel it wholesale.
+    NSMenu* rm = [self makeRowMenu];  // +1 (alloc, NOT autoreleased)
+    _table.menu = rm;                  // the retain property releases the old menu + retains rm
+    [rm release];                      // balance the +1, else a leak per switch
+
+    // Empty-pane hint (updateEmptyHint only toggles .hidden; it never re-sets the text).
+    _emptyHint.stringValue = Tr(StringId::StatusNoChannelsYet);
+
+    // Filter popup — rebuildFilterMenu re-reads its Tr labels but force-selects index 0; preserve the
+    // user's current filter across the rebuild (the tag+representedObject dance from
+    // -reloadAfterPlaylistChange). Group/country names ride on representedObject as DATA, untranslated.
+    NSMenuItem* prev = _filter.selectedItem;
+    const NSInteger prevTag = prev ? prev.tag : kFilterAll;
+    // RETAIN across the rebuild: rebuildFilterMenu's [removeAllItems] releases the old items, each
+    // of which owns its representedObject string — so a bare pointer here would dangle before the
+    // isEqualToString: below (MRC use-after-free, adversarially reproduced). autorelease so it lives.
+    NSString* const prevRep = prev ? [[(NSString*)prev.representedObject retain] autorelease] : nil;
+    [self rebuildFilterMenu];
+    for (NSMenuItem* it in _filter.itemArray) {
+        if (it.isSeparatorItem) continue;
+        NSString* rep = (NSString*)it.representedObject;
+        const BOOL repEq = (!rep && !prevRep) || (rep && prevRep && [rep isEqualToString:prevRep]);
+        if (it.tag == prevTag && repEq) { [_filter selectItem:it]; break; }
+    }
+
+    // Status line — best-effort re-derive (a transient in-progress message can't be reconstructed;
+    // it re-renders in the new language on the next event). Playing → StatusPlaying, else the count.
+    if (ap && ap->channelId)
+        [self setStatus:TrF(StringId::StatusPlaying, {ns(ap->channel.name)})];
+    else
+        [self setStatus:TrF(StringId::MacMainWindowChannelCountStatus,
+                         {[NSString stringWithFormat:@"%lu", (unsigned long)_channels.size()],
+                          _search.stringValue.length ? Tr(StringId::MacMainWindowSearchSuffix) : @""})];
+
+    // Views that re-read Tr() in drawRect: — a repaint refreshes their text; the meter also caches a
+    // hover toolTip, so it gets a dedicated relabel entry point.
+    for (int i = 0; i < 4; ++i) [_meters[i] relabelForLanguageChange];
+
+    // Modeless windows are lazily created + REUSED (nil until first opened). Relabel in place if
+    // present — never nil-and-rebuild while visible (would dangle their self-referencing
+    // dataSource/delegate/target back-refs → message-to-freed crash).
+    if (_recordingsWC) [(RecordingsWindowController*)_recordingsWC relabelForLanguageChange];
+    if (_guideWC)      [(TvGuideWindowController*)_guideWC relabelForLanguageChange];
+}
+
 // ---- playlist load / filter model ----
 
 - (void)restoreLastPlaylist {
@@ -681,7 +766,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     NSMenuItem* it = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
     it.tag = tag;
     it.representedObject = group;
-    [_filter.menu addItem:it];
+    [_filter.menu addItem:it];  // the menu retains it
+    [it release];               // balance the +1 alloc (MRC) — else a leak per item, per rebuild
 }
 
 - (void)rebuildFilterMenu {
@@ -1954,7 +2040,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 
     [[m addItemWithTitle:Tr(StringId::MenuMeters) action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
 
-    // Language ▸ (mirrors the Win32 gear; the AppDelegate owns the selection + restart-to-apply).
+    // Language ▸ (mirrors the Win32 gear; the AppDelegate owns the selection + live apply). Built
+    // fresh on each gear open, so the ✓ tracks the active language without an explicit rebuild.
     [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem* langItem = [m addItemWithTitle:Tr(StringId::MenuLanguage) action:nil keyEquivalent:@""];
     NSMenu* langMenu = [[NSMenu alloc] init];
@@ -2036,7 +2123,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // to All. When the playlist itself changed, a fresh view legitimately starts at All.
     NSMenuItem* prev = _filter.selectedItem;
     const NSInteger prevTag = prev ? prev.tag : kFilterAll;
-    NSString* const prevRep = prev ? (NSString*)prev.representedObject : nil;
+    // RETAIN across the rebuild: rebuildFilterMenu's [removeAllItems] releases the old items, each
+    // of which owns its representedObject string — so a bare pointer here would dangle before the
+    // isEqualToString: below (MRC use-after-free, adversarially reproduced). autorelease so it lives.
+    NSString* const prevRep = prev ? [[(NSString*)prev.representedObject retain] autorelease] : nil;
     [self rebuildFilterMenu];
     if (currentOK) {
         for (NSMenuItem* it in _filter.itemArray) {

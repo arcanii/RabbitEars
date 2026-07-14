@@ -41,4 +41,5 @@ typedef NS_ENUM(NSInteger, REGuideShowResult) {
                            showChannel:(NSString*)tvgId
                                 onPlay:(void (^)(NSString* tvgId, NSString* channelName))onPlay;
 - (void)hide;  // order the window out (kept alive for a later re-open)
+- (void)relabelForLanguageChange;  // live language switch (window reused across opens)
 @end

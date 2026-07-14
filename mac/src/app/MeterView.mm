@@ -141,6 +141,13 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     [self setNeedsDisplay:YES];
 }
 
+// Live language switch: the drawn "needs permission" text re-reads Tr() on redraw, but the cached
+// hover toolTip does not — re-apply it (matching the current availability) + repaint.
+- (void)relabelForLanguageChange {
+    self.toolTip = _available ? nil : Tr(StringId::MacMeterViewSpectrumUnavailableTooltip);
+    [self setNeedsDisplay:YES];
+}
+
 - (BOOL)consumeHadEnergy {
     os_unfair_lock_lock(&_lock);
     const BOOL e = _hadEnergy;

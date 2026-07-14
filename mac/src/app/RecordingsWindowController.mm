@@ -62,6 +62,14 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     NSTableView* _schedTable;
     NSTableView* _ruleTable;
     NSTextField* _hint;
+    // Tab items + bottom-bar buttons — held so a live language switch can relabel them (ARC file).
+    NSTabViewItem* _schedTabItem;
+    NSTabViewItem* _ruleTabItem;
+    NSButton*    _cancelSchedBtn;
+    NSButton*    _toggleRuleBtn;
+    NSButton*    _delRuleBtn;
+    NSButton*    _newRuleBtn;
+    NSButton*    _editRuleBtn;
     NSButton*    _ruleEditOk;  // the rule-editor sheet's OK button, while it is up (else nil)
     void (^_onChange)(void);
     std::vector<ScheduledRecording> _schedules;
@@ -106,6 +114,41 @@ NSString* whenText(long long startUtc, long long stopUtc) {
                 [_ruleTable selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
                 break;
             }
+}
+
+// Live language switch (this window is built once + reused). Relabel every built-once string in
+// place — safe whether the window is open or closed, and it preserves the frame/selection/scroll
+// and any in-progress rule edit (nil-and-rebuild would dangle self-referencing dataSource/delegate/
+// target back-refs). Cell text (status labels, "(any channel)", time ranges) re-reads Tr on reload;
+// the rule-editor sheet + all NSAlerts are built on demand and auto-update.
+- (void)relabelForLanguageChange {
+    if (!_window) return;
+    _window.title = Tr(StringId::MacRecordingsWindowTitle);
+    _schedTabItem.label = Tr(StringId::MacRecordingsTabScheduled);
+    _ruleTabItem.label  = Tr(StringId::MacRecordingsTabSeriesRules);
+
+    [_schedTable tableColumnWithIdentifier:@"chan"].title   = Tr(StringId::LabelChannel);
+    [_schedTable tableColumnWithIdentifier:@"title"].title  = Tr(StringId::ScheduleColTitle);
+    [_schedTable tableColumnWithIdentifier:@"when"].title   = Tr(StringId::ScheduleColWhen);
+    [_schedTable tableColumnWithIdentifier:@"fmt"].title    = Tr(StringId::MacRecordingsColFormat);
+    [_schedTable tableColumnWithIdentifier:@"status"].title = Tr(StringId::ScheduleColStatus);
+
+    [_ruleTable tableColumnWithIdentifier:@"on"].title    = Tr(StringId::RuleStateEnabled);
+    [_ruleTable tableColumnWithIdentifier:@"chan"].title  = Tr(StringId::LabelChannel);
+    [_ruleTable tableColumnWithIdentifier:@"title"].title = Tr(StringId::MacRecordingsColMatchesTitle);
+    [_ruleTable tableColumnWithIdentifier:@"fmt"].title   = Tr(StringId::MacRecordingsColFormat);
+
+    _cancelSchedBtn.title = Tr(StringId::MacRecordingsCancelSelectedButton);
+    _toggleRuleBtn.title  = Tr(StringId::MacRecordingsToggleRuleButton);
+    _delRuleBtn.title     = Tr(StringId::MacRecordingsDeleteRuleButton);
+    _newRuleBtn.title     = Tr(StringId::ScheduleManagerNewButton);
+    _editRuleBtn.title    = Tr(StringId::RuleEditButton);
+    _hint.stringValue     = Tr(StringId::MacRecordingsWakeHint);
+
+    [_schedTable reloadData];  // re-Tr the cell text (status/format/time-range)
+    [_ruleTable reloadData];
+    [_schedTable.headerView setNeedsDisplay:YES];
+    [_ruleTable.headerView setNeedsDisplay:YES];
 }
 
 - (NSTableView*)makeTableInScroll:(NSScrollView*)scroll columns:(NSArray<NSString*>*)titles
@@ -153,6 +196,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
                                       ids:@[ @"chan", @"title", @"when", @"fmt", @"status" ]];
     schedItem.view = schedScroll;
     [tabs addTabViewItem:schedItem];
+    _schedTabItem = schedItem;
 
     // Series rules tab.
     NSTabViewItem* ruleItem = [[NSTabViewItem alloc] initWithIdentifier:@"rules"];
@@ -165,6 +209,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
                                      ids:@[ @"on", @"chan", @"title", @"fmt" ]];
     ruleItem.view = ruleScroll;
     [tabs addTabViewItem:ruleItem];
+    _ruleTabItem = ruleItem;
 
     // Bottom bar: action buttons + the honest wake note (Phase 7).
     NSButton* cancelSched = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsCancelSelectedButton)
@@ -172,24 +217,29 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     cancelSched.frame = NSMakeRect(12, 44, 150, 26);
     cancelSched.autoresizingMask = NSViewMaxYMargin;
     [cv addSubview:cancelSched];
+    _cancelSchedBtn = cancelSched;
     NSButton* toggleRule = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsToggleRuleButton)
                                               target:self action:@selector(toggleRule:)];
     toggleRule.frame = NSMakeRect(170, 44, 150, 26);
     [cv addSubview:toggleRule];
+    _toggleRuleBtn = toggleRule;
     NSButton* delRule = [NSButton buttonWithTitle:Tr(StringId::MacRecordingsDeleteRuleButton)
                                            target:self action:@selector(deleteRule:)];
     delRule.frame = NSMakeRect(324, 44, 110, 26);
     [cv addSubview:delRule];
+    _delRuleBtn = delRule;
     // New… / Edit… a series rule (the mac peer of Win32's Recording-Rules manager). Rules could
     // previously only be born from the guide's "Record Series"; these create/edit them directly.
     NSButton* newRule = [NSButton buttonWithTitle:Tr(StringId::ScheduleManagerNewButton)
                                            target:self action:@selector(newRule:)];
     newRule.frame = NSMakeRect(444, 44, 100, 26);
     [cv addSubview:newRule];
+    _newRuleBtn = newRule;
     NSButton* editRule = [NSButton buttonWithTitle:Tr(StringId::RuleEditButton)
                                             target:self action:@selector(editRule:)];
     editRule.frame = NSMakeRect(548, 44, 100, 26);
     [cv addSubview:editRule];
+    _editRuleBtn = editRule;
     // Double-clicking a rule row edits it.
     _ruleTable.target = self;
     _ruleTable.doubleAction = @selector(editRule:);

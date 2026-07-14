@@ -175,6 +175,17 @@ std::wstring normId(const std::wstring& s) {
 
 - (void)hide { [_window orderOut:nil]; }
 
+// Live language switch (this window is built once + reused). EpgGuideView re-reads its Tr() labels
+// (no-guide message, column/time headers) in its draw path, so a repaint refreshes those. But
+// buildRows BAKES the translated "(no title)" placeholder into a row's title for programmes with an
+// empty XMLTV <title>, so re-run buildRows to re-translate it (accepting a scroll reset). Real
+// channel/programme names come from the DB and are re-read verbatim (not translated).
+- (void)relabelForLanguageChange {
+    if (!_window) return;
+    _window.title = Tr(StringId::TvGuideTitle);
+    [_guideView setRows:[self buildRows] nowUtc:(long long)time(nullptr)];  // redraws; re-Tr's "(no title)"
+}
+
 // A programme block was clicked: show its details with a Play action.
 - (void)guideView:(EpgGuideView*)__unused view
     didActivateProgramme:(REGuideProgramme*)programme
