@@ -7,6 +7,36 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🌐 i18n — native CJK translation review (shared `common/i18n`) · flagged by the macOS team, 2026-07-15
+
+The macOS team ran an AI-assisted, adversarially-verified quality pass over the machine-draft
+**JA / zh-Hant / zh-HK** catalog and opened a PR (branch **`i18n-cjk-quality-fixes`**) applying
+**36 verified consistency fixes** — *no* mistranslations and *no* placeholder breaks (all terminology,
+native-punctuation, or regional word-choice polish). Nothing structural: **no ids added or removed**,
+placeholder parity preserved, `core-selftest` green on both platforms. Most fixes touch `Mac*`-prefixed
+ids (mac-only display), **but 14 changed ids are Windows-facing** (referenced in `Win32/` source), so they
+change what Windows 日本語 / 繁體中文 / 香港 users see — **please eyeball the Windows rendering:**
+
+- **JA "wake" strings — a *Windows* feature (mac can't wake):** `MenuRunWakeTaskNow`,
+  `StatusWakeTaskStarted`, `StatusWakeTaskFailed` — unified 復帰 → **スリープ解除** to match the rest of the
+  wake-to-record UI (`MenuWakeToRecord`, `StatusWakeToRecordOff`). Worth a native glance since these are
+  primarily Windows-facing.
+- **JA shared:** `StatusAiringCancelledRule` (シリーズのルール→シリーズルール); `DialogDeletePlaylistBody`
+  (half-width `?` → full-width `？`); `AboutLibVlcCredit` (VLC 貢献者 → VLC の貢献者);
+  `ExportFavouritesNoneBody`, `ImportFavouritesSkippedLine` (half-width → full-width `（）`).
+- **zh-Hant shared:** `RuleColMatch` (相符 → 比對方式); `EpgRulesQueuedDetail` (個新的播出 → 個新的播出項目);
+  `TooltipMeterFrames` (掉幀 → 掉影格, the Taiwan form, matching 影格率 in the same string);
+  `TermsBodyText` (clause-5 parens → full-width `（）`, body text otherwise unchanged).
+- **zh-HK new overrides on shared ids** (these now differ from zh-Hant on Windows too): `RecordSeriesTitle`,
+  `RecordSeriesAlreadyHeading`, `StatusAiringCancelledRule` — 影集 → **劇集** (HK reads 影集 as "photo album").
+
+Full per-string rationale + verifier verdicts are in the PR. Any pushback → ping the macOS team and they'll
+adjust the JSON (the shared catalog is edited via `common/i18n/*.json` + `tools/i18n/gen_i18n.py`, never the
+generated `Strings.cpp`). A separate small macOS PR (`prune-dead-catalog-ids`) removes 6 dead ids
+(`LangRestart*` + 2 unused mac ids) — independent, also Windows-safe.
+
+---
+
 ## 🎨 Theme engine — ✅ SHIPPED in v0.2.0 (this section is kept as the design record)
 
 All four skins (Dark / Light / Cyberpunk / Steampunk) and the complete authored GPU-effect set

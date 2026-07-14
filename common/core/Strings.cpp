@@ -581,7 +581,7 @@ constexpr std::array<const char*, N> kJa = {{
     "録画予約…",  // MenuScheduledRecordings
     "録画ルール…",  // MenuRecordingRules
     "録画のためにこのPCをスリープ解除",  // MenuWakeToRecord
-    "復帰タスクを今すぐ実行",  // MenuRunWakeTaskNow
+    "スリープ解除タスクを今すぐ実行",  // MenuRunWakeTaskNow
     "メーター…",  // MenuMeters
     "ビデオのみ\\tCtrl+Shift+V",  // MenuVideoOnly
     "前回のチャンネルを再開",  // MenuResumeLastChannel
@@ -718,14 +718,14 @@ constexpr std::array<const char*, N> kJa = {{
     "● {0} を録画中  →  {1}",  // StatusRecordingNow
     "録画予約を保存しました。",  // StatusScheduledRecordingSaved
     "● 録画中（予約）{0}",  // StatusRecordingScheduledNow
-    "放送をキャンセルしました — シリーズのルールによるものなので、キャンセル済みとして一覧に残ります。シリーズを停止するにはルールを削除してください。",  // StatusAiringCancelledRule
+    "放送をキャンセルしました — シリーズルールによるものなので、キャンセル済みとして一覧に残ります。シリーズを停止するにはルールを削除してください。",  // StatusAiringCancelledRule
     "フィルターするカテゴリがありません — このライブラリにはグループタイトルがありません。",  // StatusNoCategories
     "レイアウトを適用しました: {0}",  // StatusLayoutApplied
     "レイアウトを削除しました: {0}",  // StatusLayoutDeleted
     "録画のためのスリープ解除がオフです — 録画にはアプリが起動している必要があります。",  // StatusWakeToRecordOff
     "このPCは録画予約のためにスリープ解除します。",  // StatusWakeWillWake
-    "復帰タスクを開始しました — 予約復帰の起動処理が実行中です。",  // StatusWakeTaskStarted
-    "復帰タスクを開始できませんでした。ログを確認してください。予約はありますか？",  // StatusWakeTaskFailed
+    "スリープ解除タスクを開始しました — 予約スリープ解除の起動処理が実行中です。",  // StatusWakeTaskStarted
+    "スリープ解除タスクを開始できませんでした。ログを確認してください。予約はありますか？",  // StatusWakeTaskFailed
     "{0} チャンネル",  // StatusChannelCount
     "PIP: {0}",  // StatusPipChannel
     "プレイリストをダウンロード中…",  // StatusDownloadingPlaylist
@@ -739,7 +739,7 @@ constexpr std::array<const char*, N> kJa = {{
     "プレイリストを削除",  // DeletePlaylistTitle
     "プレイリストの名前を変更",  // DialogRenamePlaylistTitle
     "プレイリスト名:",  // DialogRenamePlaylistLabel
-    "プレイリスト「{0}」を削除しますか?\n\nこのプレイリストのチャンネルが RabbitEars から削除されます。",  // DialogDeletePlaylistBody
+    "プレイリスト「{0}」を削除しますか？\n\nこのプレイリストのチャンネルが RabbitEars から削除されます。",  // DialogDeletePlaylistBody
     "プレイリストを追加",  // AddPlaylistDialogTitle
     "プレイリスト URL (.m3u / .m3u8):",  // AddPlaylistUrlPrompt
     "ソース:  {0}\r\n\r\n",  // PlaylistSourceLine
@@ -893,7 +893,7 @@ constexpr std::array<const char*, N> kJa = {{
     "（ARM64上でエミュレート）",  // AboutArchEmulatedOnArm64
     "（エミュレート）",  // AboutArchEmulated
     "Windows向けのシンプルなIPTVビューアー。\r\nバージョン {0}  ·  {1}",  // AboutVersionLine
-    "libVLC (LGPL-2.1) でメディアを再生\r\n© VideoLAN および VLC 貢献者。",  // AboutLibVlcCredit
+    "libVLC (LGPL-2.1) でメディアを再生\r\n© VideoLAN および VLC の貢献者。",  // AboutLibVlcCredit
     "RabbitEars は教育目的のみで提供されており、これを使って行ういかなる違法行為も支援するものではありません。私たちは知りませんし、気にもしません。",  // AboutEducationalDisclaimer
     "RabbitEars について",  // AboutWindowTitle
     "更新を確認…",  // AboutCheckForUpdatesButton
@@ -941,13 +941,13 @@ constexpr std::array<const char*, N> kJa = {{
     "ピクチャー・イン・ピクチャー\r\nチャンネルを右クリック ▸ PIPで再生",  // HintEmptyPip
     "お気に入りをエクスポート",  // ExportFavouritesTitle
     "お気に入りがまだありません",  // ExportFavouritesNoneHeading
-    "先にチャンネルにスターを付けてください(チャンネル一覧の ★ 列、または番組表の行を右クリック)。それからエクスポートしてください。\r\n",  // ExportFavouritesNoneBody
+    "先にチャンネルにスターを付けてください（チャンネルリストの ★ 列、または番組表の行を右クリック）。それからエクスポートしてください。\r\n",  // ExportFavouritesNoneBody
     "{0} 件のお気に入りをエクスポートしました",  // ExportFavouritesDoneHeading
     "ファイル:  {0}\r\n",  // FileLineDetail
     "お気に入りをインポート",  // ImportFavouritesTitle
     "チャンネルが見つかりません",  // ImportFavouritesNoChannelsHeading
     "ファイル:  {0}\r\nファイル内のエントリ:  {1}\r\nスターを付けたチャンネル:  {2}\r\n",  // ImportFavouritesDetails
-    "ライブラリにありません(スキップ):  {0}\r\n",  // ImportFavouritesSkippedLine
+    "ライブラリにありません（スキップ）:  {0}\r\n",  // ImportFavouritesSkippedLine
     "{0} 件のチャンネルにスターを付けました",  // ImportFavouritesStarredHeading
     "マイレイアウト",  // LayoutDefaultName
     "レイアウトを保存",  // SaveLayoutDialogTitle
@@ -1307,7 +1307,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "音訊頻譜（此應用程式的聲音）",  // TooltipMeterSpectrum
     "訊號強度（串流狀態）",  // TooltipMeterSignal
     "串流位元率歷程",  // TooltipMeterBitrate
-    "影格率（掉幀時閃紅）",  // TooltipMeterFrames
+    "影格率（掉影格時閃紅）",  // TooltipMeterFrames
     "暫停",  // TooltipBtnPause
     "停止",  // TooltipBtnStop
     "停止錄影",  // TooltipBtnStopRecording
@@ -1384,7 +1384,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "要刪除「{0}」的規則嗎？\r\n\r\n它排入佇列且即將進行的錄影將被移除。已經執行的錄影會保留。",  // RuleDeleteConfirm
     "錄影規則",  // RecordingRulesTitle
     "節目",  // RuleColShow
-    "相符",  // RuleColMatch
+    "比對方式",  // RuleColMatch
     "狀態",  // RuleColState
     "規則是從節目表建立的：點選一個節目，然後選擇「錄製影集」。之後的每次播出都會自動排入佇列。",  // RulesEmptyHint
     "啟用 / 停用",  // RuleToggleButton
@@ -1395,7 +1395,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "提前開始：",  // RuleFieldLead
     "延後結束：",  // RuleFieldTrail
     "分鐘",  // RuleMinutesSuffix
-    "\r\n錄影規則已排入 {0} 個新的播出。\r\n",  // EpgRulesQueuedDetail
+    "\r\n錄影規則已排入 {0} 個新的播出項目。\r\n",  // EpgRulesQueuedDetail
     "錄製影集",  // RecordSeriesTitle
     "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody
     "已在錄製此影集",  // RecordSeriesAlreadyHeading
@@ -1444,7 +1444,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "關於 RabbitEars",  // AboutWindowTitle
     "檢查更新…",  // AboutCheckForUpdatesButton
     // --- DialogTerms ---
-    "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC(© VideoLAN 與 VLC 貢獻者)，在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
+    "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC（© VideoLAN 與 VLC 貢獻者），在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
     "RabbitEars — 使用條款",  // TermsWindowTitle
     "使用條款",  // TermsHeading
     "我接受",  // TermsAcceptButton
@@ -1505,7 +1505,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     // --- MacMenu ---
     "結束 RabbitEars",  // MenuQuit
     "檔案",  // MenuFile
-    "加入播放清單…",  // MenuAddPlaylist
+    "新增播放清單…",  // MenuAddPlaylist
     "開啟播放清單檔案…",  // MenuOpenPlaylistFile
     "管理播放清單…",  // MenuManagePlaylists
     "編輯",  // MenuEdit
@@ -1520,7 +1520,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "顯示頻道清單",  // MenuShowChannelList
     "隱藏工具列",  // MenuHideToolbar
     "顯示工具列",  // MenuShowToolbar
-    "結束純影像顯示",  // MenuExitVideoOnly
+    "結束僅影片",  // MenuExitVideoOnly
     // --- DialogAbout ---
     "適用於 macOS 的簡易 IPTV 觀看程式。\n\n使用 libVLC（LGPL-2.1）播放媒體\n© VideoLAN 及 VLC 貢獻者。\n\nRabbitEars 僅供教育用途，並不代表支持您使用它所進行的任何非法行為。我們不知道，我們也不在乎。",  // AboutMacCredits
     // --- MacUI ---
@@ -1528,7 +1528,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "停止錄製此窗格",  // MacMainWindowStopRecordingPaneTooltip
     "停止",  // MacMainWindowStopButton
     "就緒。",  // MacMainWindowStatusReady
-    "顯示／隱藏儀表",  // MacMainWindowToggleMetersTooltip
+    "顯示／隱藏量表",  // MacMainWindowToggleMetersTooltip
     "切換我的最愛",  // MacMainWindowToggleFavourite
     "設定頻道號碼…",  // MacMainWindowSetChannelNumber
     "資料庫無法使用 — 請檢查磁碟權限並重新啟動。",  // MacMainWindowDbUnavailableRestart
@@ -1556,8 +1556,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "已排程：{0} — {1}",  // MacMainWindowScheduledStatus
     "錄影",  // MacMainWindowScheduledFallbackTitle
     "已排程：{0}",  // MacMainWindowScheduledTitle
-    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄製，請讓 Mac 保持開啟並掀開螢幕（「設定 ▸ 錄製 ▸ 錄製項目」會列出您的佇列）。",  // MacMainWindowScheduledWakeCaveat
-    "無法儲存排程錄製。",  // MacMainWindowScheduleSaveFailedBody
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄影，請讓 Mac 保持開啟並掀開螢幕（「設定 ▸ 錄影 ▸ 錄影項目」會列出您的佇列）。",  // MacMainWindowScheduledWakeCaveat
+    "無法儲存排程錄影。",  // MacMainWindowScheduleSaveFailedBody
     "已加入影集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",  // MacMainWindowSeriesRuleAdded
     "無法加入規則",  // MacMainWindowCantAddRuleHeading
     "無法儲存影集規則。",  // MacMainWindowSeriesRuleSaveFailedBody
@@ -1577,9 +1577,9 @@ constexpr std::array<const char*, N> kZhHant = {{
     "刪除版面配置「{0}」？",  // MacMainWindowDeleteLayoutConfirm
     "這會移除已儲存的版面配置。您的頻道與播放清單不受影響。",  // MacMainWindowDeleteLayoutBody
     "MPEG-TS (.ts) — 最安全",  // MacMainWindowFormatTsSafest
-    "錄製項目…",  // MacMainWindowRecordingsMenuItem
-    "錄製格式：{0}",  // MacMainWindowRecordingFormatStatus
-    "已儲存儀表設定。",  // MacMainWindowMeterSettingsSaved
+    "錄影項目…",  // MacMainWindowRecordingsMenuItem
+    "錄影格式：{0}",  // MacMainWindowRecordingFormatStatus
+    "已儲存量表設定。",  // MacMainWindowMeterSettingsSaved
     "您已啟用的播放清單中，沒有任何一個帶有 XMLTV 節目表網址（#EXTM3U 標頭中的 x-tvg-url）。\n\n請加入一個包含該網址的播放清單，或在「管理播放清單 ▸ 📅 設定節目表網址」中為每個播放清單設定一個，然後再試一次。",  // MacMainWindowNoGuideSourceBody
     "{0}：  {1}\n",  // MacMainWindowEpgErrorLine
     "在您的播放清單中找不到「{0}」對應的頻道。\n\n節目表會依 tvg-id 將節目對應到頻道；此節目的 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（管理播放清單 ▸ 📅 設定節目表網址）。",  // MacMainWindowGuideNoMatchBody
@@ -1605,7 +1605,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "背景窗格",  // MacMainWindowBackgroundPane
     "RabbitEars — {0}",  // MacMainWindowTitleWithChannel
     "使用中窗格：{0}",  // MacMainWindowActivePaneChannel
-    "錄製項目",  // MacRecordingsWindowTitle
+    "錄影項目",  // MacRecordingsWindowTitle
     "已排程",  // MacRecordingsTabScheduled
     "影集規則",  // MacRecordingsTabSeriesRules
     "格式",  // MacRecordingsColFormat
@@ -1613,21 +1613,21 @@ constexpr std::array<const char*, N> kZhHant = {{
     "取消所選項目",  // MacRecordingsCancelSelectedButton
     "啟用／停用規則",  // MacRecordingsToggleRuleButton
     "刪除規則",  // MacRecordingsDeleteRuleButton
-    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製。它無法喚醒睡眠中的 Mac 來錄製 — 排程錄製期間請讓 Mac 保持開啟（掀開螢幕、接上電源）。",  // MacRecordingsWakeHint
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影。它無法喚醒睡眠中的 Mac 來錄影 — 排程錄影期間請讓 Mac 保持開啟（掀開螢幕、接上電源）。",  // MacRecordingsWakeHint
     "此播出項目是由影集規則排入佇列的",  // MacRecordingsAiringQueuedByRuleHeading
-    "它已取消且不會錄製。此項目仍會留在清單中，因為現在移除它會讓其影集規則再次將同一播出項目排入佇列；等播出項目的排定時間過後，您即可移除它。",  // MacRecordingsAiringQueuedByRuleBody
+    "它已取消且不會錄影。此項目仍會留在清單中，因為現在移除它會讓其影集規則再次將同一播出項目排入佇列；等播出項目的排定時間過後，您即可移除它。",  // MacRecordingsAiringQueuedByRuleBody
     "刪除此影集規則？",  // MacRecordingsDeleteRuleConfirmHeading
-    "其仍待處理的佇列錄製也會一併移除。已執行完成的錄製則會保留。",  // MacRecordingsDeleteRuleConfirmBody
+    "其仍待處理的佇列錄影也會一併移除。已執行完成的錄影則會保留。",  // MacRecordingsDeleteRuleConfirmBody
     "背景",  // MacMetersTipBackground
     "未點亮",  // MacMetersTipUnlit
-    "設定每個儀表的顯示、樣式、色彩與調校 — 預覽會即時更新。",  // MacMetersDialogSubheading
+    "設定每個量表的顯示、樣式、色彩與調校 — 預覽會即時更新。",  // MacMetersDialogSubheading
     "樣式：",  // MacMetersStyleLabel
     "色彩：",  // MacMetersColoursLabel
     "調校：",  // MacMetersTuningLabel
     "{0}（0–1，0.5 = 預設）",  // MacMetersKnobTooltip
     "關閉播放清單可將其頻道從格狀檢視與篩選器中隱藏，或將其完全刪除。",  // MacPlaylistsHeaderHint
     "完成",  // MacPlaylistsDoneButton
-    "尚無播放清單 — 請關閉此視窗，然後使用「＋ 加入播放清單」。",  // MacPlaylistsEmptyHint
+    "尚無播放清單 — 請關閉此視窗，然後使用「＋ 新增播放清單」。",  // MacPlaylistsEmptyHint
     "顯示或隱藏此播放清單的頻道",  // MacPlaylistsToggleTooltip
     "{0} 個頻道 · {1}",  // MacPlaylistsChannelCountSource
     "從來源重新下載／重新讀取",  // MacPlaylistsRefreshTooltip
@@ -1646,8 +1646,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "RabbitEars 無法讀取自身的音訊輸出，因此無法繪製頻譜。\n\n請在「系統設定 ▸ 隱私權與安全性」中允許 RabbitEars 進行音訊錄製，然後重新啟動應用程式。",  // MacMeterViewSpectrumUnavailableTooltip
     "頻譜需要音訊權限",  // MacMeterViewSpectrumNeedsPermission
     "頻譜",  // MacMeterNameSpectrum
-    "信號",  // MacMeterNameSignal
-    "幀",  // MacMeterNameFrames
+    "訊號",  // MacMeterNameSignal
+    "影格",  // MacMeterNameFrames
 }};
 
 // 繁體中文（香港）
@@ -1810,7 +1810,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "● 正在錄影 {0}  →  {1}",  // StatusRecordingNow
     "已儲存排程錄影。",  // StatusScheduledRecordingSaved
     "● 錄影中（排程）{0}",  // StatusRecordingScheduledNow
-    "已取消此播出 — 它來自影集規則，因此仍會列為已取消。刪除該規則以停止整部影集。",  // StatusAiringCancelledRule
+    "已取消此播出 — 它來自劇集規則，因此仍會列為已取消。刪除該規則以停止整部劇集。",  // StatusAiringCancelledRule
     "沒有可篩選的分類 — 此媒體庫沒有群組標題。",  // StatusNoCategories
     "已套用版面配置：{0}",  // StatusLayoutApplied
     "已刪除版面配置：{0}",  // StatusLayoutDeleted
@@ -1853,7 +1853,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "音訊頻譜（此應用程式的聲音）",  // TooltipMeterSpectrum
     "訊號強度（串流狀態）",  // TooltipMeterSignal
     "串流位元率歷程",  // TooltipMeterBitrate
-    "影格率（掉幀時閃紅）",  // TooltipMeterFrames
+    "影格率（掉影格時閃紅）",  // TooltipMeterFrames
     "暫停",  // TooltipBtnPause
     "停止",  // TooltipBtnStop
     "停止錄影",  // TooltipBtnStopRecording
@@ -1930,7 +1930,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "要刪除「{0}」的規則嗎？\r\n\r\n它排入佇列且即將進行的錄影將被移除。已經執行的錄影會保留。",  // RuleDeleteConfirm
     "錄影規則",  // RecordingRulesTitle
     "節目",  // RuleColShow
-    "相符",  // RuleColMatch
+    "比對方式",  // RuleColMatch
     "狀態",  // RuleColState
     "規則是從節目表建立的：點選一個節目，然後選擇「錄製影集」。之後的每次播出都會自動排入佇列。",  // RulesEmptyHint
     "啟用 / 停用",  // RuleToggleButton
@@ -1941,10 +1941,10 @@ constexpr std::array<const char*, N> kZhHK = {{
     "提前開始：",  // RuleFieldLead
     "延後結束：",  // RuleFieldTrail
     "分鐘",  // RuleMinutesSuffix
-    "\r\n錄影規則已排入 {0} 個新的播出。\r\n",  // EpgRulesQueuedDetail
-    "錄製影集",  // RecordSeriesTitle
+    "\r\n錄影規則已排入 {0} 個新的播出項目。\r\n",  // EpgRulesQueuedDetail
+    "錄製劇集",  // RecordSeriesTitle
     "無法將「{0}」對應至您媒體庫中可播放的頻道。",  // RecordSeriesChannelNotFoundBody
-    "已在錄製此影集",  // RecordSeriesAlreadyHeading
+    "已在錄製此劇集",  // RecordSeriesAlreadyHeading
     "在 {1} 上「{0}」的規則已存在。\r\n請參閱 設定 ▸ 錄影規則…。",  // RecordSeriesAlreadyBody
     "無法儲存規則",  // RecordSeriesCouldNotSaveHeading
     "無法儲存錄影規則。",  // RecordSeriesCouldNotSaveBody
@@ -1990,7 +1990,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "關於 RabbitEars",  // AboutWindowTitle
     "檢查更新…",  // AboutCheckForUpdatesButton
     // --- DialogTerms ---
-    "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC(© VideoLAN 與 VLC 貢獻者)，在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
+    "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC（© VideoLAN 與 VLC 貢獻者），在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
     "RabbitEars — 使用條款",  // TermsWindowTitle
     "使用條款",  // TermsHeading
     "我接受",  // TermsAcceptButton
@@ -2051,7 +2051,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     // --- MacMenu ---
     "結束 RabbitEars",  // MenuQuit
     "檔案",  // MenuFile
-    "加入播放清單…",  // MenuAddPlaylist
+    "新增播放清單…",  // MenuAddPlaylist
     "開啟播放清單檔案…",  // MenuOpenPlaylistFile
     "管理播放清單…",  // MenuManagePlaylists
     "編輯",  // MenuEdit
@@ -2061,12 +2061,12 @@ constexpr std::array<const char*, N> kZhHK = {{
     "拷貝",  // MenuCopy
     "貼上",  // MenuPaste
     "全選",  // MenuSelectAll
-    "進入全螢幕",  // MenuEnterFullScreen
+    "進入全熒幕",  // MenuEnterFullScreen
     "隱藏頻道清單",  // MenuHideChannelList
     "顯示頻道清單",  // MenuShowChannelList
     "隱藏工具列",  // MenuHideToolbar
     "顯示工具列",  // MenuShowToolbar
-    "結束純影像顯示",  // MenuExitVideoOnly
+    "結束僅影片",  // MenuExitVideoOnly
     // --- DialogAbout ---
     "適用於 macOS 的簡易 IPTV 觀看程式。\n\n使用 libVLC（LGPL-2.1）播放媒體\n© VideoLAN 及 VLC 貢獻者。\n\nRabbitEars 僅供教育用途，並不代表支持您使用它所進行的任何非法行為。我們不知道，我們也不在乎。",  // AboutMacCredits
     // --- MacUI ---
@@ -2074,7 +2074,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "停止錄製此窗格",  // MacMainWindowStopRecordingPaneTooltip
     "停止",  // MacMainWindowStopButton
     "就緒。",  // MacMainWindowStatusReady
-    "顯示／隱藏儀表",  // MacMainWindowToggleMetersTooltip
+    "顯示／隱藏量表",  // MacMainWindowToggleMetersTooltip
     "切換我的最愛",  // MacMainWindowToggleFavourite
     "設定頻道號碼…",  // MacMainWindowSetChannelNumber
     "資料庫無法使用 — 請檢查磁碟權限並重新啟動。",  // MacMainWindowDbUnavailableRestart
@@ -2102,9 +2102,9 @@ constexpr std::array<const char*, N> kZhHK = {{
     "已排程：{0} — {1}",  // MacMainWindowScheduledStatus
     "錄影",  // MacMainWindowScheduledFallbackTitle
     "已排程：{0}",  // MacMainWindowScheduledTitle
-    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄製，請讓 Mac 保持開啟並掀開螢幕（「設定 ▸ 錄製 ▸ 錄製項目」會列出您的佇列）。",  // MacMainWindowScheduledWakeCaveat
-    "無法儲存排程錄製。",  // MacMainWindowScheduleSaveFailedBody
-    "已加入影集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",  // MacMainWindowSeriesRuleAdded
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄影，請讓 Mac 保持開啟並掀開熒幕（「設定 ▸ 錄影 ▸ 錄影項目」會列出您的佇列）。",  // MacMainWindowScheduledWakeCaveat
+    "無法儲存排程錄影。",  // MacMainWindowScheduleSaveFailedBody
+    "已加入劇集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",  // MacMainWindowSeriesRuleAdded
     "無法加入規則",  // MacMainWindowCantAddRuleHeading
     "無法儲存影集規則。",  // MacMainWindowSeriesRuleSaveFailedBody
     "分割檢視（2×2）— 按一下窗格使其成為使用中窗格，然後選擇頻道。",  // MacMainWindowSplitViewStatus
@@ -2123,9 +2123,9 @@ constexpr std::array<const char*, N> kZhHK = {{
     "刪除版面配置「{0}」？",  // MacMainWindowDeleteLayoutConfirm
     "這會移除已儲存的版面配置。您的頻道與播放清單不受影響。",  // MacMainWindowDeleteLayoutBody
     "MPEG-TS (.ts) — 最安全",  // MacMainWindowFormatTsSafest
-    "錄製項目…",  // MacMainWindowRecordingsMenuItem
-    "錄製格式：{0}",  // MacMainWindowRecordingFormatStatus
-    "已儲存儀表設定。",  // MacMainWindowMeterSettingsSaved
+    "錄影項目…",  // MacMainWindowRecordingsMenuItem
+    "錄影格式：{0}",  // MacMainWindowRecordingFormatStatus
+    "已儲存量表設定。",  // MacMainWindowMeterSettingsSaved
     "您已啟用的播放清單中，沒有任何一個帶有 XMLTV 節目表網址（#EXTM3U 標頭中的 x-tvg-url）。\n\n請加入一個包含該網址的播放清單，或在「管理播放清單 ▸ 📅 設定節目表網址」中為每個播放清單設定一個，然後再試一次。",  // MacMainWindowNoGuideSourceBody
     "{0}：  {1}\n",  // MacMainWindowEpgErrorLine
     "在您的播放清單中找不到「{0}」對應的頻道。\n\n節目表會依 tvg-id 將節目對應到頻道；此節目的 ID 沒有相符項目。請將播放清單指向 ID 相符的節目表（管理播放清單 ▸ 📅 設定節目表網址）。",  // MacMainWindowGuideNoMatchBody
@@ -2151,29 +2151,29 @@ constexpr std::array<const char*, N> kZhHK = {{
     "背景窗格",  // MacMainWindowBackgroundPane
     "RabbitEars — {0}",  // MacMainWindowTitleWithChannel
     "使用中窗格：{0}",  // MacMainWindowActivePaneChannel
-    "錄製項目",  // MacRecordingsWindowTitle
+    "錄影項目",  // MacRecordingsWindowTitle
     "已排程",  // MacRecordingsTabScheduled
-    "影集規則",  // MacRecordingsTabSeriesRules
+    "劇集規則",  // MacRecordingsTabSeriesRules
     "格式",  // MacRecordingsColFormat
     "符合標題",  // MacRecordingsColMatchesTitle
     "取消所選項目",  // MacRecordingsCancelSelectedButton
     "啟用／停用規則",  // MacRecordingsToggleRuleButton
     "刪除規則",  // MacRecordingsDeleteRuleButton
-    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄製。它無法喚醒睡眠中的 Mac 來錄製 — 排程錄製期間請讓 Mac 保持開啟（掀開螢幕、接上電源）。",  // MacRecordingsWakeHint
+    "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影。它無法喚醒睡眠中的 Mac 來錄影 — 排程錄影期間請讓 Mac 保持開啟（掀開熒幕、接上電源）。",  // MacRecordingsWakeHint
     "此播出項目是由影集規則排入佇列的",  // MacRecordingsAiringQueuedByRuleHeading
-    "它已取消且不會錄製。此項目仍會留在清單中，因為現在移除它會讓其影集規則再次將同一播出項目排入佇列；等播出項目的排定時間過後，您即可移除它。",  // MacRecordingsAiringQueuedByRuleBody
+    "它已取消且不會錄影。此項目仍會留在清單中，因為現在移除它會讓其影集規則再次將同一播出項目排入佇列；等播出項目的排定時間過後，您即可移除它。",  // MacRecordingsAiringQueuedByRuleBody
     "刪除此影集規則？",  // MacRecordingsDeleteRuleConfirmHeading
-    "其仍待處理的佇列錄製也會一併移除。已執行完成的錄製則會保留。",  // MacRecordingsDeleteRuleConfirmBody
+    "其仍待處理的佇列錄影也會一併移除。已執行完成的錄影則會保留。",  // MacRecordingsDeleteRuleConfirmBody
     "背景",  // MacMetersTipBackground
     "未點亮",  // MacMetersTipUnlit
-    "設定每個儀表的顯示、樣式、色彩與調校 — 預覽會即時更新。",  // MacMetersDialogSubheading
+    "設定每個量表的顯示、樣式、色彩與調校 — 預覽會即時更新。",  // MacMetersDialogSubheading
     "樣式：",  // MacMetersStyleLabel
     "色彩：",  // MacMetersColoursLabel
     "調校：",  // MacMetersTuningLabel
     "{0}（0–1，0.5 = 預設）",  // MacMetersKnobTooltip
     "關閉播放清單可將其頻道從格狀檢視與篩選器中隱藏，或將其完全刪除。",  // MacPlaylistsHeaderHint
     "完成",  // MacPlaylistsDoneButton
-    "尚無播放清單 — 請關閉此視窗，然後使用「＋ 加入播放清單」。",  // MacPlaylistsEmptyHint
+    "尚無播放清單 — 請關閉此視窗，然後使用「＋ 新增播放清單」。",  // MacPlaylistsEmptyHint
     "顯示或隱藏此播放清單的頻道",  // MacPlaylistsToggleTooltip
     "{0} 個頻道 · {1}",  // MacPlaylistsChannelCountSource
     "從來源重新下載／重新讀取",  // MacPlaylistsRefreshTooltip
@@ -2192,8 +2192,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     "RabbitEars 無法讀取自身的音訊輸出，因此無法繪製頻譜。\n\n請在「系統設定 ▸ 隱私權與安全性」中允許 RabbitEars 進行音訊錄製，然後重新啟動應用程式。",  // MacMeterViewSpectrumUnavailableTooltip
     "頻譜需要音訊權限",  // MacMeterViewSpectrumNeedsPermission
     "頻譜",  // MacMeterNameSpectrum
-    "信號",  // MacMeterNameSignal
-    "幀",  // MacMeterNameFrames
+    "訊號",  // MacMeterNameSignal
+    "影格",  // MacMeterNameFrames
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).
