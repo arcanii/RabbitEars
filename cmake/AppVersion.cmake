@@ -22,8 +22,10 @@ set(APP_VERSION "0.2.11")
 # + 日本語; 0.2.9 added the recording-rule editor, series-rule episode dedup (schema v6), Traditional
 # Chinese (zh-Hant + zh-HK) in the selector, and the GPL-3.0 notices; 0.2.10 makes Settings ▸ Language
 # apply LIVE (no restart), the mac peer of Windows 0.2.11. (Windows 0.2.10 was a Win32-only
-# Chinese-selection hotfix, N/A to mac.) (mac history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8 → 0.2.9
-# → 0.2.10.)
+# Chinese-selection hotfix, N/A to mac.) 0.2.11 is an i18n-polish release: an AI-assisted,
+# adversarially-verified CJK translation-quality pass (36 verified JA/zh-Hant/zh-HK consistency
+# fixes) plus a dead-catalog-id prune (6 ids). (mac history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8
+# → 0.2.9 → 0.2.10 → 0.2.11.)
 if(APPLE)
-  set(APP_VERSION "0.2.10")
+  set(APP_VERSION "0.2.11")
 endif()
