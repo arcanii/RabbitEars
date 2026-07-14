@@ -306,30 +306,6 @@
     "comment": ""
   },
   {
-    "id": "LangRestartInstruction",
-    "cluster": "Menu",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
-    "id": "LangRestartBody",
-    "cluster": "Menu",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
-    "id": "LangRestartNow",
-    "cluster": "Menu",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
-    "id": "LangRestartLater",
-    "cluster": "Menu",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
     "id": "MenuSetGuideUrl",
     "cluster": "Nav",
     "placeholders": [],
@@ -2916,12 +2892,6 @@
     "comment": ""
   },
   {
-    "id": "MacMainWindowLayoutsMenu",
-    "cluster": "MacUI",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
     "id": "MacMainWindowSaveCurrentLayout",
     "cluster": "MacUI",
     "placeholders": [],
@@ -2943,12 +2913,6 @@
   },
   {
     "id": "MacMainWindowDeleteLayoutBody",
-    "cluster": "MacUI",
-    "placeholders": [],
-    "comment": ""
-  },
-  {
-    "id": "MacMainWindowFormatHeader",
     "cluster": "MacUI",
     "placeholders": [],
     "comment": ""

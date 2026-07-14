@@ -66,10 +66,6 @@ constexpr std::array<const char*, N> kEn = {{
     "繁體中文（香港）",  // LangTraditionalChineseHK
     "Channels",  // MenuChannels
     "Recording",  // MenuRecording
-    "Restart to change the display language",  // LangRestartInstruction
-    "RabbitEars needs to restart to apply the new language.",  // LangRestartBody
-    "Restart now",  // LangRestartNow
-    "Later",  // LangRestartLater
     // --- Nav ---
     "Set Guide URL…",  // MenuSetGuideUrl
     "Set Guide URL… (no playlists)",  // MenuGuideSetUrlNoPlaylists
@@ -484,12 +480,10 @@ constexpr std::array<const char*, N> kEn = {{
     "Couldn't apply layout",  // MacMainWindowLayoutApplyFailedHeading
     "“{0}” is missing or unreadable.",  // MacMainWindowLayoutMissingBody
     " ({0} channels no longer in your playlists)",  // MacMainWindowLayoutMissingChannelsSuffix
-    "Layouts",  // MacMainWindowLayoutsMenu
     "Save Current Layout…",  // MacMainWindowSaveCurrentLayout
     "No saved layouts",  // MacMainWindowNoSavedLayouts
     "Delete layout “{0}”?",  // MacMainWindowDeleteLayoutConfirm
     "This removes the saved layout. Your channels and playlists are untouched.",  // MacMainWindowDeleteLayoutBody
-    "Format",  // MacMainWindowFormatHeader
     "MPEG-TS (.ts) — safest",  // MacMainWindowFormatTsSafest
     "Recordings…",  // MacMainWindowRecordingsMenuItem
     "Recording format: {0}",  // MacMainWindowRecordingFormatStatus
@@ -618,10 +612,6 @@ constexpr std::array<const char*, N> kJa = {{
     "繁體中文（香港）",  // LangTraditionalChineseHK
     "チャンネル",  // MenuChannels
     "録画",  // MenuRecording
-    "表示言語を変更するには再起動してください",  // LangRestartInstruction
-    "新しい言語を適用するには RabbitEars を再起動する必要があります。",  // LangRestartBody
-    "今すぐ再起動",  // LangRestartNow
-    "後で",  // LangRestartLater
     // --- Nav ---
     "番組表URLを設定…",  // MenuSetGuideUrl
     "番組表URLを設定…（プレイリストなし）",  // MenuGuideSetUrlNoPlaylists
@@ -1036,12 +1026,10 @@ constexpr std::array<const char*, N> kJa = {{
     "レイアウトを適用できません",  // MacMainWindowLayoutApplyFailedHeading
     "「{0}」が見つからないか、読み取れません。",  // MacMainWindowLayoutMissingBody
     "（{0} チャンネルはプレイリストに存在しません）",  // MacMainWindowLayoutMissingChannelsSuffix
-    "レイアウト",  // MacMainWindowLayoutsMenu
     "現在のレイアウトを保存…",  // MacMainWindowSaveCurrentLayout
     "保存されたレイアウトがありません",  // MacMainWindowNoSavedLayouts
     "レイアウト「{0}」を削除しますか？",  // MacMainWindowDeleteLayoutConfirm
     "保存されたレイアウトを削除します。チャンネルとプレイリストはそのまま残ります。",  // MacMainWindowDeleteLayoutBody
-    "フォーマット",  // MacMainWindowFormatHeader
     "MPEG-TS (.ts) — 最も安全",  // MacMainWindowFormatTsSafest
     "録画予約…",  // MacMainWindowRecordingsMenuItem
     "録画フォーマット: {0}",  // MacMainWindowRecordingFormatStatus
@@ -1170,10 +1158,6 @@ constexpr std::array<const char*, N> kZhHant = {{
     "繁體中文（香港）",  // LangTraditionalChineseHK
     "頻道",  // MenuChannels
     "錄影",  // MenuRecording
-    "重新啟動以變更顯示語言",  // LangRestartInstruction
-    "RabbitEars 需要重新啟動才能套用新語言。",  // LangRestartBody
-    "立即重新啟動",  // LangRestartNow
-    "稍後",  // LangRestartLater
     // --- Nav ---
     "設定節目表 URL…",  // MenuSetGuideUrl
     "設定節目表 URL…（無播放清單）",  // MenuGuideSetUrlNoPlaylists
@@ -1588,12 +1572,10 @@ constexpr std::array<const char*, N> kZhHant = {{
     "無法套用版面配置",  // MacMainWindowLayoutApplyFailedHeading
     "「{0}」遺失或無法讀取。",  // MacMainWindowLayoutMissingBody
     "（{0} 個頻道已不在您的播放清單中）",  // MacMainWindowLayoutMissingChannelsSuffix
-    "版面配置",  // MacMainWindowLayoutsMenu
     "儲存目前版面配置…",  // MacMainWindowSaveCurrentLayout
     "沒有已儲存的版面配置",  // MacMainWindowNoSavedLayouts
     "刪除版面配置「{0}」？",  // MacMainWindowDeleteLayoutConfirm
     "這會移除已儲存的版面配置。您的頻道與播放清單不受影響。",  // MacMainWindowDeleteLayoutBody
-    "格式",  // MacMainWindowFormatHeader
     "MPEG-TS (.ts) — 最安全",  // MacMainWindowFormatTsSafest
     "錄製項目…",  // MacMainWindowRecordingsMenuItem
     "錄製格式：{0}",  // MacMainWindowRecordingFormatStatus
@@ -1722,10 +1704,6 @@ constexpr std::array<const char*, N> kZhHK = {{
     "繁體中文（香港）",  // LangTraditionalChineseHK
     "頻道",  // MenuChannels
     "錄影",  // MenuRecording
-    "重新啟動以變更顯示語言",  // LangRestartInstruction
-    "RabbitEars 需要重新啟動才能套用新語言。",  // LangRestartBody
-    "立即重新啟動",  // LangRestartNow
-    "稍後",  // LangRestartLater
     // --- Nav ---
     "設定節目表 URL…",  // MenuSetGuideUrl
     "設定節目表 URL…（無播放清單）",  // MenuGuideSetUrlNoPlaylists
@@ -2140,12 +2118,10 @@ constexpr std::array<const char*, N> kZhHK = {{
     "無法套用版面配置",  // MacMainWindowLayoutApplyFailedHeading
     "「{0}」遺失或無法讀取。",  // MacMainWindowLayoutMissingBody
     "（{0} 個頻道已不在您的播放清單中）",  // MacMainWindowLayoutMissingChannelsSuffix
-    "版面配置",  // MacMainWindowLayoutsMenu
     "儲存目前版面配置…",  // MacMainWindowSaveCurrentLayout
     "沒有已儲存的版面配置",  // MacMainWindowNoSavedLayouts
     "刪除版面配置「{0}」？",  // MacMainWindowDeleteLayoutConfirm
     "這會移除已儲存的版面配置。您的頻道與播放清單不受影響。",  // MacMainWindowDeleteLayoutBody
-    "格式",  // MacMainWindowFormatHeader
     "MPEG-TS (.ts) — 最安全",  // MacMainWindowFormatTsSafest
     "錄製項目…",  // MacMainWindowRecordingsMenuItem
     "錄製格式：{0}",  // MacMainWindowRecordingFormatStatus
