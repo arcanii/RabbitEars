@@ -1,4 +1,12 @@
 {
   "Fullscreen": "全熒幕",
-  "TooltipNetworkBuffer": "網絡緩衝：%.1f 秒（接收→顯示延遲）"
+  "TooltipNetworkBuffer": "網絡緩衝：%.1f 秒（接收→顯示延遲）",
+  "MenuEnterFullScreen": "進入全熒幕",
+  "MacMainWindowScheduledWakeCaveat": "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄影，請讓 Mac 保持開啟並掀開熒幕（「設定 ▸ 錄影 ▸ 錄影項目」會列出您的佇列）。",
+  "MacRecordingsWakeHint": "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影。它無法喚醒睡眠中的 Mac 來錄影 — 排程錄影期間請讓 Mac 保持開啟（掀開熒幕、接上電源）。",
+  "RecordSeriesTitle": "錄製劇集",
+  "RecordSeriesAlreadyHeading": "已在錄製此劇集",
+  "MacRecordingsTabSeriesRules": "劇集規則",
+  "MacMainWindowSeriesRuleAdded": "已加入劇集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",
+  "StatusAiringCancelledRule": "已取消此播出 — 它來自劇集規則，因此仍會列為已取消。刪除該規則以停止整部劇集。"
 }

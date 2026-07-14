@@ -563,10 +563,15 @@ the USER's real defaults. Bumping the version re-triggers the ToU gate (keyed on
 
 NEXT: mac is at 0.2.10 (live language switch, parity with Windows 0.2.11); Windows is at 0.2.11. The 0.2.7
 recording/scheduler is ON-DEVICE VERIFIED (+ its 2nd-recording crash fixed in 0.2.9), that long-open item is
-CLOSED. Candidate targets: (a) **NATIVE TRANSLATION REVIEW — now the top priority:** 0.2.9 exposed Traditional
-Chinese + 0.2.10 makes switching frictionless, so JA *and* zh-Hant *and* zh-HK all shipping as machine drafts is
-increasingly user-facing — `gen_i18n.py --review ja` / `zh-Hant` / `zh-HK` is the gate before truly advertising
-CJK; (b) the `MenuVideoOnly` `\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator
+CLOSED. Candidate targets: (a) **NATIVE TRANSLATION REVIEW — IN PROGRESS:** testers are doing the human native
+sign-off; alongside it an AI-assisted, adversarially-verified QA pass (branch `i18n-cjk-quality-fixes`,
+2026-07-15) landed **36 verified consistency fixes** to the JA/zh-Hant/zh-HK catalog — NO mistranslations or
+placeholder breaks found (all terminology / native-punctuation / regional-word-choice polish; e.g. JA 復帰→
+スリープ解除 for "wake", zh-Hant 儀表→量表 + 信號→訊號/幀→影格 TW forms, zh-HK 影集→劇集 overrides). 38-agent fan-out
++ skeptic verify (rejected 4 over-eager changes; **caught a truncation bug** where a reviewer abbreviated the
+long TermsBodyText to one clause — applied as a minimal substring edit instead). 14 changed ids are
+Windows-facing → flagged to the Win32 team in `Win32/BACKLOG.md`. The **human native review remains the gate**
+before truly advertising CJK; (b) the `MenuVideoOnly` `\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator
 (a literal `\t` on the Windows menu), left for a Windows-side check; (c) whatever the Windows team ships next past
 0.2.11 (read Win32/HANDOVER.md; skip the theme engine + wake, N/A on mac). Backlog: promote MeterModel to
 common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two now-unused catalog
