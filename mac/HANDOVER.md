@@ -11,9 +11,9 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 *headers*), **`Win32/`** (the Windows app), **`mac/`** (this — the Cocoa app), under a unified root
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
-`main` carries **both platforms at decoupled versions**: **Windows 0.2.10** (theme engine + EPG/TV Guide,
+`main` carries **both platforms at decoupled versions**: **Windows 0.2.11** (theme engine + EPG/TV Guide,
 scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
-recording — the Windows team ships from `main`) and **mac 0.2.9** (the parity line). The version split lives in
+recording, live language switch — the Windows team ships from `main`) and **mac 0.2.10** (the parity line). The version split lives in
 `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac). **That file is the one
 recurring merge conflict** between the two teams — keep the Windows line and the `if(APPLE)` override intact.
 Keep all mac work **Windows-safe** and let `windows-core` / `macOS core` CI confirm.
@@ -83,9 +83,29 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — v0.2.9-mac SHIPPED (2026-07-13)
+## Current state — v0.2.10-mac SHIPPED (2026-07-14)
 
-**Latest: `v0.2.9-mac`** (build 261, universal, notarized, appcast live @ `cb14d56`) — **Windows-0.2.9 parity**:
+**Latest: `v0.2.10-mac`** (build 269, universal, notarized, appcast live @ `0e961bd`) — **LIVE LANGUAGE SWITCH**
+(parity with Windows 0.2.11). Settings ▸ Language (the App-menu submenu **or** the gear ▸ 言語) now applies
+**live — no restart** (was restart-to-apply). `AppDelegate -selectLanguage:` flips `i18n::setActiveLang(...)`
+then rebuilds every built-once surface: a new **`MainWindowController -applyLanguageLive`** relabels the window
+title, top-bar buttons (Add Playlist / gear / Stop / record / meter — 3 new UNRETAINED ivars `_addBtn`/`_setBtn`/
+`_stopBtn` since they were setup-locals), search placeholder, grid column headers, the row context menu (rebuilt
+wholesale), the empty-pane hint, the filter popup (**selection preserved**), and the status line — then fans out
+to the 4 `MeterView` + the two reused modeless windows via a new **`-relabelForLanguageChange`** on each (RELABEL
+IN PLACE — nil-and-rebuild would dangle their self-referencing dataSource/delegate/target back-refs). The menu bar
+is rebuilt via `-buildMenu` (also moves the ✓); the gear pull-down + all NSAlerts are built on-open so they
+auto-localize; no font work (the mac system font cascades to CJK). Removed the restart TaskDialog + `-relaunch`.
+**ZERO `common/`/`Win32/` changes.** Built by an **inventory workflow** (mapped every relabel surface) + an
+**adversarial review workflow** (MRC-memory/completeness/behavior lenses, each finding independently verified),
+which **caught a real MRC use-after-free**: the filter-selection preserve read a BARE pointer to a menu item's
+`representedObject`, freed by `rebuildFilterMenu`'s `removeAllItems` before the `isEqualToString:` compare
+(reproduced via NSZombie) — fixed with `[[rep retain] autorelease]` in `applyLanguageLive` **and** the identical
+**pre-existing shipped bug in `reloadAfterPlaylistChange`** (same bare-pointer-into-freed-collection class as the
+0.2.9 `recordingPathFor:` crash — a recurring MRC trap here); also fixed a now-recurring `buildMenu` leak
+(autoreleased the ~11 menu allocs) + a TvGuide "(no title)" staleness. **On-device verified:** en → 日本語 → 繁體中文
+switched **live** via both entry points, every surface re-rendered, the active "Parity" group filter was preserved
+across switches, no restart, no crash. **Before it: `v0.2.9-mac`** (build 261, appcast @ `cb14d56`) — **Windows-0.2.9 parity**:
 a **recording-rule editor** (New…/Edit… + double-click in the Recordings window's *Series Rules* tab — channel-or-
 `(any channel)`, title, Exact/Contains, lead/trail minutes; OK gated on a non-empty title; New→`addRule`,
 Edit→`updateRule`+`clearPendingForRule`+re-expand — in `RecordingsWindowController`, **zero new catalog strings**,
@@ -428,9 +448,9 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions via cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.10; an if(APPLE) override = mac 0.2.9) — that file is the recurring cross-team merge conflict,
-keep both lines. mac is SHIPPED + auto-updating: v0.2.9-mac (build 261, universal, notarized,
-self-contained, LOCALIZED EN + 日本語 + 繁體中文/香港; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
+Windows 0.2.11; an if(APPLE) override = mac 0.2.10) — that file is the recurring cross-team merge conflict,
+keep both lines. mac is SHIPPED + auto-updating: v0.2.10-mac (build 269, universal, notarized,
+self-contained, LOCALIZED EN + 日本語 + 繁體中文/香港 with a LIVE language switch; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
 scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only; the build-mac
 CMakeCache can hold a stale universal arch). Release: scripts/package-mac.sh + the mac-release-deployment
 memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal;
@@ -442,7 +462,28 @@ VlcPlayerMac.mm are MRC. Run an adversarial ObjC++ review before merging (it has
 EVERY native phase). Dev testing: launch with RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a
 local m3u/XMLTV fixture over http://127.0.0.1 (ATS-exempt loopback).
 
-STATE: v0.2.9-mac SHIPPED 2026-07-13 (build 261, universal, notarized; appcast @ cb14d56; PRs #31 code + #32 the
+STATE: v0.2.10-mac SHIPPED 2026-07-14 (build 269, universal, notarized; appcast @ 0e961bd; PR #33 merged by the
+user) = LIVE LANGUAGE SWITCH (mac peer of Windows 0.2.11): Settings ▸ Language (App-menu submenu OR gear ▸ 言語)
+applies LIVE, no restart. AppDelegate -selectLanguage: → setLanguagePref → setActiveLang(macResolveLang(code)) →
+[self buildMenu] → [_mainController applyLanguageLive]. -applyLanguageLive relabels every built-once surface IN
+PLACE (window title, top-bar buttons via 3 new UNRETAINED ivars _addBtn/_setBtn/_stopBtn since they were
+setup-locals, search placeholder, grid headers, row menu rebuilt wholesale, empty hint, filter popup w/ selection
+preserved, status re-derived) + fans out to the 4 MeterView + the two reused modeless windows via a new
+-relabelForLanguageChange on each (RELABEL-IN-PLACE — nil-and-rebuild would dangle their self-referencing
+dataSource/delegate/target back-refs). Gear pull-down + NSAlerts built on-open → auto-localize; no font work (mac
+system font cascades to CJK); removed the restart TaskDialog + -relaunch. ZERO common/Win32 changes. Version mac
+0.2.9 → 0.2.10 (Windows stays 0.2.11; its 0.2.11 "single-source version" refactor added common/version.h.in,
+verified mac-safe). METHOD = inventory workflow (map every relabel surface) + adversarial review workflow
+(MRC-memory/completeness/behavior lenses, each finding independently verified) → CAUGHT a real MRC USE-AFTER-FREE:
+the filter-selection preserve read a BARE pointer to a menu item's representedObject, freed by removeAllItems
+before the isEqualToString: compare (reproduced via NSZombie), fixed with [[rep retain] autorelease] in
+applyLanguageLive AND the identical PRE-EXISTING shipped bug in reloadAfterPlaylistChange (same
+bare-pointer-into-freed-collection class as the 0.2.9 recordingPathFor crash — a recurring MRC trap); also fixed a
+now-recurring buildMenu leak + a TvGuide "(no title)" staleness. On-device VERIFIED: en→日本語→繁體中文 live via BOTH
+entry points, every surface re-renders, the active group filter preserved across switches, no restart, no crash.
+RELEASE: same recipe as 0.2.9; git push HUNG for the appcast this time → landed via gh api PUT contents;
+sign_update + generate_keys both prompt keychain (skip the generate_keys re-check — key stable since 0.2.9).
+BEFORE it — v0.2.9-mac SHIPPED 2026-07-13 (build 261, universal, notarized; appcast @ cb14d56; PRs #31 code + #32 the
 i18n fix, both merged by the user) = WINDOWS-0.2.9 PARITY: a recording-rule editor (New…/Edit… + double-click in
 the Recordings window's Series Rules tab — channel/(any channel), title, Exact/Contains, lead/trail min; OK gated
 on a non-empty title; New→addRule, Edit→updateRule+clearPendingForRule+re-expand; in RecordingsWindowController;
@@ -520,15 +561,16 @@ app's NSUserDefaults domain (com.rabbitears.RabbitEars) with any installed Rabbi
 isolates the DB but NOT the defaults (ui_language, window frames), so switching language while testing writes
 the USER's real defaults. Bumping the version re-triggers the ToU gate (keyed on full version incl. build).
 
-NEXT: mac is at 0.2.9 (parity with Windows 0.2.9); Windows is at 0.2.10 (a Win32-only Chinese-selection hotfix,
-already N/A to mac). The 0.2.7 recording/scheduler is now ON-DEVICE VERIFIED (+ its 2nd-recording crash fixed in
-0.2.9), so that long-open item is CLOSED. Candidate targets: (a) **NATIVE TRANSLATION REVIEW — now the priority:**
-0.2.9 EXPOSES Traditional Chinese to users, so JA *and* zh-Hant *and* zh-HK are all shipping as machine drafts —
-`gen_i18n.py --review ja` / `zh-Hant` / `zh-HK` is the gate before truly advertising CJK; (b) the `MenuVideoOnly`
-`\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator (a literal `\t` on the
-Windows menu), left for a Windows-side check; (c) whatever the Windows team ships next past 0.2.10 (read
-Win32/HANDOVER.md; skip the theme engine + wake, N/A on mac). Backlog: promote MeterModel to common/ui (E3,
-Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two now-unused catalog ids
-(MacMainWindowLayoutsMenu, MacMainWindowFormatHeader).
+NEXT: mac is at 0.2.10 (live language switch, parity with Windows 0.2.11); Windows is at 0.2.11. The 0.2.7
+recording/scheduler is ON-DEVICE VERIFIED (+ its 2nd-recording crash fixed in 0.2.9), that long-open item is
+CLOSED. Candidate targets: (a) **NATIVE TRANSLATION REVIEW — now the top priority:** 0.2.9 exposed Traditional
+Chinese + 0.2.10 makes switching frictionless, so JA *and* zh-Hant *and* zh-HK all shipping as machine drafts is
+increasingly user-facing — `gen_i18n.py --review ja` / `zh-Hant` / `zh-HK` is the gate before truly advertising
+CJK; (b) the `MenuVideoOnly` `\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator
+(a literal `\t` on the Windows menu), left for a Windows-side check; (c) whatever the Windows team ships next past
+0.2.11 (read Win32/HANDOVER.md; skip the theme engine + wake, N/A on mac). Backlog: promote MeterModel to
+common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope); prune two now-unused catalog
+ids (MacMainWindowLayoutsMenu, MacMainWindowFormatHeader); the LangRestart* catalog ids are now DEAD on both
+platforms (both do live switch) — pruneable.
 ```
 ```
