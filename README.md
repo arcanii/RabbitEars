@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/CMake-Ninja-064F8C?style=for-the-badge&logo=cmake&logoColor=white" alt="CMake + Ninja">
   <img src="https://img.shields.io/badge/Direct2D-Win32-8A2BE2?style=for-the-badge" alt="Direct2D / Win32">
   <img src="https://img.shields.io/badge/Cocoa-AppKit-1575F9?style=for-the-badge&logo=apple&logoColor=white" alt="Cocoa / AppKit">
-  <img src="https://img.shields.io/badge/i18n-EN%20%2F%20JA-D97757?style=for-the-badge" alt="English / Japanese">
+  <img src="https://img.shields.io/badge/i18n-EN%20%2F%20JA%20%2F%20%E7%B9%81%E4%B8%AD-D97757?style=for-the-badge" alt="English / Japanese / Traditional Chinese">
   <img src="https://img.shields.io/badge/License-GPL--3.0-D97757?style=for-the-badge" alt="License: GPL-3.0">
 </p>
 
@@ -69,6 +69,9 @@ Both auto-update in place once installed.
 - **Recording & DVR** — record a channel to a lossless file, schedule recordings
   from the guide, or set an **EPG series rule** to catch every airing of a show.
 - **Playback** — full libVLC transport with volume and fullscreen.
+- **Localization** — the interface ships in **English, 日本語, and 繁體中文**
+  (Traditional Chinese, including a Hong Kong variant); switch languages **live**
+  from Settings with no restart, or follow your system language.
 - **Persistence & updates** — everything saved locally in SQLite; in-app
   auto-update (WinSparkle / Sparkle).
 
@@ -81,14 +84,12 @@ Both auto-update in place once installed.
   app closed, with a preflight that warns when the power plan won't allow it.
 - **Native ARM64** — a first-class Windows-on-ARM build (owner-measured ~4× faster
   than emulated x64), with per-arch auto-update and a universal installer.
-- **Localization** — ships **English + 日本語**, following your system language with
-  a Settings toggle.
 - **Audio & signal meters** — a WASAPI audio-spectrum analyser plus signal /
   bitrate / frame-rate and realtime buffering meters.
 
-Planned: a native-Japanese translation pass and more languages, transcoding on
-record, a background dead-link checker, and closing the macOS feature gap. See
-[Win32/BACKLOG.md](Win32/BACKLOG.md).
+Planned: an in-progress native-speaker review of the Japanese & Chinese
+translations, more languages, transcoding on record, a background dead-link
+checker, and closing the macOS feature gap. See [Win32/BACKLOG.md](Win32/BACKLOG.md).
 
 ## Build
 
