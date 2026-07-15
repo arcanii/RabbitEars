@@ -173,7 +173,8 @@ an appcast comment — **always `xmllint` the appcast before publishing**).
 
 The app **plays IPTV** via libVLC in a native window:
 - **rich channel grid** — ★ / # / name / group columns, live **search**, filter popup
-  (All / ★ Favourites / groups / **countries**), **favourite** toggle + **LCN edit** (row menu),
+  (All / ★ Favourites / groups / **countries**), a **Categories** multi-select include filter
+  (Settings ⚙ ▸ Channels ▸ Categories…, persisted `category_filter`), **favourite** toggle + **LCN edit** (row menu),
   **resume-last-played**; single click selects, **double-click / Return plays**;
 - **Terms-of-Use gate** on first launch + after any version change (see below);
 - **playlist management** — Settings ▸ Manage Playlists… (enable/disable/rename/refresh/delete);
