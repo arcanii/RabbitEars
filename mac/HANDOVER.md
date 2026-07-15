@@ -211,6 +211,8 @@ The app **plays IPTV** via libVLC in a native window:
   Updates / About) + search + filter; plus a full **menu bar** (App / File / Edit / View);
 - **split view** (grid | video) that fills correctly + **remembers window size/position**;
 - **volume + mute**, native **fullscreen** (⌃⌘F) + **Video Only** (⌥⌘F), a **custom About**;
+- **right-click the video** for a context menu (Video Only / Fullscreen / Single / Split / PiP — Win32 parity);
+  the **screen saver / display sleep is suspended** while in full screen or Video Only (IOPMAssertion);
 - **Sparkle auto-update**; **self-contained** (`scripts/package-mac.sh` bundles libvlc + ~343 plugins,
   so it runs with **no VLC.app installed**); an app icon; CI on both platforms.
 

@@ -141,6 +141,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSPopUpButton* _filter;
     RETableView*   _table;
     NSView*        _videoView;
+    NSMenu*        _videoMenu;    // right-click context menu on any pane's video (Win32-parity view menu)
     MeterView*     _meters[4];   // Spectrum / Signal / Bitrate / Frames (index = (int)MeterKind)
     DraggableMeterBar* _meterBar;  // floats the meters over the video; user-draggable
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
@@ -157,6 +158,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
     BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
+    IOPMAssertionID _keepDisplayAwake;  // display-sleep/screen-saver assertion held while fullscreen or video-only
     // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
     // recordings, independent of the visible panes' manual recorders. A ~30s tick applies the
     // shared planScheduler() core and expands EPG rules.
@@ -272,6 +274,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _window.contentMinSize = NSMakeSize(560, 360);  // keep both split panes usable
     _window.collectionBehavior |= NSWindowCollectionBehaviorFullScreenPrimary;  // ⌃⌘F / green button
     _window.frameAutosaveName = @"RabbitEarsMainWindow";  // remember size + position across launches
+    _window.delegate = self;  // windowDidEnter/ExitFullScreen: -> screen-saver (display-sleep) assertion
     NSView* content = _window.contentView;
     const NSSize cs = content.bounds.size;  // real content size — frameAutosave may restore a larger frame
 
@@ -438,6 +441,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [videoPane addSubview:_videoView];
     _panes[0]->view = _videoView;  // pane 0's surface is the active video view (aliased above)
+    _videoMenu = [[NSMenu alloc] init];  // MRC: app-lifetime; the ivar + each pane view's .menu hold it
+    _videoMenu.delegate = self;          // -menuNeedsUpdate: fills it with live state on each right-click
+    _videoMenu.autoenablesItems = NO;
+    _videoView.menu = _videoMenu;        // right-click the video -> the Win32-parity view menu
     NSClickGestureRecognizer* dbl =
         [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(videoDoubleClicked:)];
     dbl.numberOfClicksRequired = 2;
@@ -601,6 +608,53 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     if (v) [self installEscMonitor];
     else   [self removeEscMonitor];
+    [self updateDisplaySleepAssertion];  // Video Only is an immersive full-screen viewing mode
+}
+
+// Suspend the screen saver / display idle-sleep while the user is in an immersive viewing mode
+// (native full screen or Video Only), so a movie isn't interrupted. A SEPARATE assertion from the
+// recording keep-awake (_keepAwake, which prevents SYSTEM idle-sleep) — this one prevents DISPLAY
+// idle-sleep (which also blocks the screen saver). Released the moment we leave the immersive mode.
+- (void)updateDisplaySleepAssertion {
+    const BOOL immersive = ((_window.styleMask & NSWindowStyleMaskFullScreen) != 0) || _videoOnly;
+    if (immersive && _keepDisplayAwake == 0) {
+        IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep,
+                                    kIOPMAssertionLevelOn, CFSTR("RabbitEars full-screen playback"),
+                                    &_keepDisplayAwake);
+    } else if (!immersive && _keepDisplayAwake != 0) {
+        IOPMAssertionRelease(_keepDisplayAwake);
+        _keepDisplayAwake = 0;
+    }
+}
+
+// NSWindowDelegate — native full-screen enter/exit drives the display-sleep assertion above.
+- (void)windowDidEnterFullScreen:(NSNotification*)__unused n { [self updateDisplaySleepAssertion]; }
+- (void)windowDidExitFullScreen:(NSNotification*)__unused n  { [self updateDisplaySleepAssertion]; }
+
+// NSMenuDelegate — rebuild the video right-click menu fresh on each open so its checkmarks track the
+// live state (the mac peer of the Win32 WM_RBUTTONUP view menu: Video Only / Fullscreen / view modes).
+- (void)menuNeedsUpdate:(NSMenu*)menu {
+    if (menu != _videoMenu) return;
+    [menu removeAllItems];
+    NSMenuItem* vo = [menu addItemWithTitle:Tr(StringId::MenuVideoOnlyPlain)
+                                     action:@selector(toggleVideoOnly:) keyEquivalent:@""];
+    vo.target = NSApp.delegate;  // the AppDelegate owns Video Only (also the View menu-bar item)
+    vo.state = _videoOnly ? NSControlStateValueOn : NSControlStateValueOff;
+    NSMenuItem* fs = [menu addItemWithTitle:Tr(StringId::Fullscreen)
+                                     action:@selector(toggleFullScreen:) keyEquivalent:@""];
+    fs.target = _window;  // NSWindow handles native full screen (⌃⌘F / green button)
+    fs.state = ((_window.styleMask & NSWindowStyleMaskFullScreen) != 0)
+                   ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:[NSMenuItem separatorItem]];
+    struct { NSString* title; SEL sel; ViewMode vm; } rows[] = {
+        { Tr(StringId::MenuSingleView),       @selector(setViewSingle:), ViewMode::Single },
+        { Tr(StringId::MenuSplitView),        @selector(setViewSplit:),  ViewMode::Split  },
+        { Tr(StringId::MenuPictureInPicture), @selector(setViewPip:),    ViewMode::Pip    } };
+    for (auto& r : rows) {
+        NSMenuItem* it = [menu addItemWithTitle:r.title action:r.sel keyEquivalent:@""];
+        it.target = self;
+        it.state = (_viewMode == r.vm) ? NSControlStateValueOn : NSControlStateValueOff;
+    }
 }
 
 - (void)videoDoubleClicked:(id)__unused g {
@@ -1466,6 +1520,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         [[NSPanGestureRecognizer alloc] initWithTarget:self action:@selector(paneDragged:)];
     [v addGestureRecognizer:pan];
     [pan release];
+    v.menu = _videoMenu;  // same right-click view menu on every pane
     [_videoContainer addSubview:v positioned:NSWindowBelow relativeTo:_meterBar];  // under the meters
     [v release];    // MRC: the container retains it now
     pane->view = v;
