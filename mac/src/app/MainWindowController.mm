@@ -155,6 +155,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSButton*      _setBtn;      // ⚙ gear
     NSButton*      _stopBtn;     // "Stop"
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
+    BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
     // recordings, independent of the visible panes' manual recorders. A ~30s tick applies the
@@ -735,19 +736,36 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self selectLastPlayed];
 }
 
-// Highlight (don't auto-play) the channel that was playing when the app last quit.
+// The channel that was playing when the app last quit (saved as "last_channel_id" on every play).
+// On launch either RESUME it (auto-play — Win32 parity, when "resume_last" is on) or just highlight
+// it with a "double-click to resume" hint. The row is selected/scrolled-to when it's in the current
+// view; auto-play resolves by id via channelById so a channel outside the current filter/playlist
+// still resumes (channelById returns nullopt if the channel/playlist was deleted — then do nothing).
 - (void)selectLastPlayed {
     if (!_db) return;
     const auto s = _db->getSetting(L"last_channel_id");
     if (!s || s->empty()) return;
     const long long cid = std::wcstoll(s->c_str(), nullptr, 10);
-    for (size_t i = 0; i < _channels.size(); ++i) {
-        if (_channels[i].id != cid) continue;
-        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
-        [_table scrollRowToVisible:(NSInteger)i];
-        [self setStatus:TrF(StringId::MacMainWindowLastPlayedResume, {ns(_channels[i].name)})];
-        return;
+
+    NSInteger vis = -1;
+    for (size_t i = 0; i < _channels.size(); ++i)
+        if (_channels[i].id == cid) { vis = (NSInteger)i; break; }
+    if (vis >= 0) {
+        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)vis] byExtendingSelection:NO];
+        [_table scrollRowToVisible:vis];
     }
+
+    if (_resumeLast) {
+        if (auto ch = _db->channelById(cid)) [self playChannel:*ch];  // auto-play into the active pane
+    } else if (vis >= 0) {
+        [self setStatus:TrF(StringId::MacMainWindowLastPlayedResume, {ns(_channels[(size_t)vis].name)})];
+    }
+}
+
+// Settings ⚙ ▸ Channels ▸ Resume last channel — toggle auto-play-on-launch (persists "resume_last").
+- (void)toggleResumeLast:(id)__unused sender {
+    _resumeLast = !_resumeLast;
+    if (_db) _db->setSetting(L"resume_last", _resumeLast ? L"1" : L"0");
 }
 
 // Make `pid` the active playlist: reset search/filter, rebuild groups, reload.
@@ -1360,6 +1378,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _recFormat = L"ts";
         if (auto r = _db->getSetting(L"rec_format"))
             if (*r == L"mp4" || *r == L"ts") _recFormat = *r;
+
+        // Resume last channel on launch (Win32 parity, default ON). Stored "1"/"0"; unset => on.
+        _resumeLast = YES;
+        if (auto rl = _db->getSetting(L"resume_last")) _resumeLast = (*rl == L"1");
     }
 }
 
@@ -1970,6 +1992,12 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     NSMenu* chan = [[NSMenu alloc] init];
     [[chan addItemWithTitle:Tr(StringId::MenuImportFavourites) action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
     [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
+    // Resume last channel (checkbox) — auto-play the last-watched channel on launch (Win32 parity).
+    // Built fresh on each gear open, so the ✓ tracks _resumeLast without an explicit rebuild.
+    [chan addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* resume = [chan addItemWithTitle:Tr(StringId::MenuResumeLastChannel) action:@selector(toggleResumeLast:) keyEquivalent:@""];
+    resume.target = self;
+    resume.state = _resumeLast ? NSControlStateValueOn : NSControlStateValueOff;
     chanItem.submenu = chan;
 
     // TV Guide + Refresh + Recording ▸.
