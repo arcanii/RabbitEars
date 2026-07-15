@@ -47,6 +47,7 @@
 #import "MeterView.h"
 #import "MetersDialog.h"
 #import "PlaylistsDialog.h"
+#import "CategoriesDialog.h"
 #import "RecordingsWindowController.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
@@ -139,6 +140,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSWindow*      _window;
     NSSearchField* _search;
     NSPopUpButton* _filter;
+    std::set<std::wstring> _categoryFilter;  // include-set of group-titles ("category_filter"); empty = show all
     RETableView*   _table;
     NSView*        _videoView;
     NSMenu*        _videoMenu;    // right-click context menu on any pane's video (Win32-parity view menu)
@@ -897,6 +899,17 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             if (keep.count(c.id)) _channels.push_back(std::move(c));
     }
 
+    // Categories include-filter: keep only channels whose group is checked (blank groups always show,
+    // matching Win32). Applied after the popup/search filters so it composes with them.
+    if (!_categoryFilter.empty()) {
+        std::vector<Channel> kept;
+        kept.reserve(_channels.size());
+        for (auto& c : _channels)
+            if (c.groupTitle.empty() || _categoryFilter.count(c.groupTitle))
+                kept.push_back(std::move(c));
+        _channels = std::move(kept);
+    }
+
     [_table deselectAll:nil];
     [_table reloadData];
     [self setStatus:TrF(StringId::MacMainWindowChannelCountStatus,
@@ -1436,6 +1449,20 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         // Resume last channel on launch (Win32 parity, default ON). Stored "1"/"0"; unset => on.
         _resumeLast = YES;
         if (auto rl = _db->getSetting(L"resume_last")) _resumeLast = (*rl == L"1");
+
+        // Categories include-filter (newline-delimited group-titles; empty = show all).
+        _categoryFilter.clear();
+        if (auto cf = _db->getSetting(L"category_filter"); cf && !cf->empty()) {
+            const std::wstring& s = *cf;
+            size_t pos = 0;
+            while (pos <= s.size()) {
+                const size_t nl = s.find(L'\n', pos);
+                std::wstring g = s.substr(pos, nl == std::wstring::npos ? std::wstring::npos : nl - pos);
+                if (!g.empty()) _categoryFilter.insert(g);
+                if (nl == std::wstring::npos) break;
+                pos = nl + 1;
+            }
+        }
     }
 }
 
@@ -2040,16 +2067,17 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [[m addItemWithTitle:Tr(StringId::MenuOpenPlaylistFile) action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:Tr(StringId::MenuManagePlaylists) action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
 
-    // Channels ▸ — favourites import/export (Win32 also carries Hide-unavailable / Categories,
-    // which the mac channel list does not have).
+    // Channels ▸ — favourites import/export + Categories include-filter (Win32 also carries
+    // Hide-unavailable, which the mac channel list does not have).
     [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem* chanItem = [m addItemWithTitle:Tr(StringId::MenuChannels) action:nil keyEquivalent:@""];
     NSMenu* chan = [[NSMenu alloc] init];
     [[chan addItemWithTitle:Tr(StringId::MenuImportFavourites) action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
     [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
+    [chan addItem:[NSMenuItem separatorItem]];
+    [[chan addItemWithTitle:Tr(StringId::MenuCategories) action:@selector(showCategories:) keyEquivalent:@""] setTarget:self];
     // Resume last channel (checkbox) — auto-play the last-watched channel on launch (Win32 parity).
     // Built fresh on each gear open, so the ✓ tracks _resumeLast without an explicit rebuild.
-    [chan addItem:[NSMenuItem separatorItem]];
     NSMenuItem* resume = [chan addItemWithTitle:Tr(StringId::MenuResumeLastChannel) action:@selector(toggleResumeLast:) keyEquivalent:@""];
     resume.target = self;
     resume.state = _resumeLast ? NSControlStateValueOn : NSControlStateValueOff;
@@ -2184,6 +2212,32 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     PlaylistsDialog* dlg = [[PlaylistsDialog alloc] initWithDatabase:_db.get()];
     [dlg presentForWindow:_window onChange:^{ [self reloadAfterPlaylistChange]; }];
     [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
+}
+
+// Settings ⚙ ▸ Channels ▸ Categories… — a checklist of group-titles; the grid then shows only the
+// checked ones (empty = show all). Persisted in "category_filter" and applied by -refreshChannels.
+- (void)showCategories:(id)__unused sender {
+    if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailable)]; return; }
+    NSMutableArray<NSString*>* groups = [NSMutableArray array];
+    for (const auto& g : _db->listGroups()) [groups addObject:ns(g)];
+    NSMutableSet<NSString*>* sel = [NSMutableSet set];
+    for (const auto& g : _categoryFilter) [sel addObject:ns(g)];
+    CategoriesDialog* dlg = [[CategoriesDialog alloc] initWithGroups:groups selected:sel];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    [dlg presentForWindow:_window onApply:^(NSSet<NSString*>* selected) {
+        me->_categoryFilter.clear();
+        for (NSString* g in selected) me->_categoryFilter.insert(ws(g));
+        [me persistCategoryFilter];
+        [me refreshChannels];
+    }];
+    [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
+}
+
+- (void)persistCategoryFilter {
+    if (!_db) return;
+    std::wstring joined;
+    for (const auto& g : _categoryFilter) { if (!joined.empty()) joined += L'\n'; joined += g; }
+    _db->setSetting(L"category_filter", joined);
 }
 
 // Re-sync the grid after Manage Playlists enables/disables/deletes something. If the
