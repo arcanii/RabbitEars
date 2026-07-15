@@ -95,10 +95,18 @@ A gap-scan (mac vs Win32) drove four parity features, each its own branch off `m
 gear item and an `init` settings-load line at the same spots) — resolved by merging `main` into each branch
 and keeping every block (the merged gear submenu now reads Import/Export ▸ Categories ▸ Hide-unavailable ▸
 Resume-last; all three keys `resume_last`/`category_filter`/`hide_dead` load), **CI green on both platforms
-before each merge**. On-device GUI verification is **still deferred** (the installed `/Applications` app was
-running → the dual-instance/bundle-id trap makes composited-window clicks unsafe); each was build-verified +
-headless-smoke-tested + CI-compiled on both platforms — **a quick on-device visual pass is the open
-follow-up before the next release advertises them**.
+before each merge**. **On-device GUI verification is now DONE (2026-07-15)** — all four were driven via
+computer-use against an **isolated seeded DB** (a fresh arm64 build at `main`, run as the *sole* instance
+after quitting the installed app + moving the stale universal bundle aside, so the dual-instance/bundle-id
+trap was neutralised): #36 auto-played the seeded last channel on launch (gear ▸ Channels ▸ ✓ Resume last
+channel checked); #37's right-click video menu showed Video only / Fullscreen / Single / Split(2×2) / PiP,
+and entering Video-only **held** the `PreventUserIdleDisplaySleep` assertion "RabbitEars full-screen
+playback" (verified via `pmset -g assertions`) which **released** on exit (correctly scoped, no leak);
+#38's Categories dialog listed all 3 fixture groups and filtering to one narrowed the grid 6→2 then reset
+to 6; #39's dead row rendered grey (`tertiaryLabelColor`) and the toggle hid it (6→5) / restored it greyed
+(5→6) with the ✓ tracking state. The merged gear submenu reads Import/Export ▸ Categories ▸ Hide-unavailable
+▸ ✓ Resume-last — the exact conflict-resolution result, no missing/duplicated items. **This closes the open
+follow-up; the batch is now GUI-verified and ready to ride the next release.**
 
 | PR | Feature | Review caught |
 |----|---------|---------------|
