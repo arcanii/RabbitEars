@@ -56,6 +56,13 @@ public:
     // frames meters with NO audio capture (no consent prompt, no A/V desync).
     FlowStats sampleStats();
 
+    // Coarse playback state for the "Hide unavailable channels" heuristic: Playing = the stream is up;
+    // Error = a FATAL player error (any — an open failure OR a mid-playback input error, and terminal);
+    // Other = idle/opening/buffering/ended. The caller only demotes a channel to Dead on Error when it
+    // never reached Playing this attempt (a true open failure), so a mid-playback blip can't latch it dead.
+    enum class PlayState { Other, Playing, Error };
+    PlayState playState() const;
+
     // Whether the current media has at least one audio track (false when stopped or for
     // a video-only stream). Gates the Spectrum consent cross-check so a legitimately
     // silent stream isn't mistaken for denied audio capture.

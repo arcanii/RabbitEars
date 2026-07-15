@@ -108,6 +108,7 @@ struct MacVideoPane {
     std::unique_ptr<rabbitears::VlcPlayerMac> player;
     rabbitears::Channel                    channel;      // currently playing (empty when idle)
     long long                              channelId = 0;
+    bool                                   everPlayed = false;  // reached Playing since last play() (dead-status heuristic)
 };
 
 // Filter popup tags.
@@ -155,6 +156,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSButton*      _setBtn;      // ⚙ gear
     NSButton*      _stopBtn;     // "Stop"
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
+    BOOL           _hideDead;    // Settings ⚙ ▸ Channels ▸ Hide unavailable channels ("hide_dead")
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
     // recordings, independent of the visible panes' manual recorders. A ~30s tick applies the
@@ -825,6 +827,15 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             if (keep.count(c.id)) _channels.push_back(std::move(c));
     }
 
+    // Hide unavailable: drop channels marked Dead (Settings ⚙ ▸ Channels ▸ Hide unavailable channels).
+    if (_hideDead) {
+        std::vector<Channel> kept;
+        kept.reserve(_channels.size());
+        for (auto& c : _channels)
+            if (c.deadStatus != DeadStatus::Dead) kept.push_back(std::move(c));
+        _channels = std::move(kept);
+    }
+
     [_table deselectAll:nil];
     [_table reloadData];
     [self setStatus:TrF(StringId::MacMainWindowChannelCountStatus,
@@ -837,6 +848,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 // (in Split it would sit in the top-left quadrant; in PiP it hides behind the inset).
 - (void)updateEmptyHint {
     _emptyHint.hidden = !_channels.empty() || _viewMode != ViewMode::Single;
+}
+
+// Settings ⚙ ▸ Channels ▸ Hide unavailable channels — toggle + persist, then re-filter the grid.
+- (void)toggleHideDead:(id)__unused sender {
+    _hideDead = !_hideDead;
+    if (_db) _db->setSetting(L"hide_dead", _hideDead ? L"1" : L"0");
+    [self refreshChannels];
 }
 
 // ---- actions ----
@@ -1299,6 +1317,37 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         for (int i = 0; i < (int)_panes.size(); ++i)
             _panes[(size_t)i]->player->setMuted(i != _activePane);
 
+    // "Hide unavailable channels" heuristic: judge ONLY the active pane's channel (the one being
+    // watched). libVLC Playing -> mark it Alive; Error (failed to open) -> Dead; other states leave
+    // the mark unchanged. Marked at most once per change (ap->channel.deadStatus tracks the last
+    // mark), so a background/never-played channel is never touched and a working channel can't be
+    // flagged dead by a pane the user isn't watching.
+    if (MacVideoPane* ap = [self activePane]; ap && ap->channelId && _db) {
+        DeadStatus want = DeadStatus::Unknown;
+        switch (ap->player->playState()) {
+            case VlcPlayerMac::PlayState::Playing: want = DeadStatus::Alive; ap->everPlayed = true; break;
+            case VlcPlayerMac::PlayState::Error:   want = DeadStatus::Dead;  break;
+            default: break;
+        }
+        // Only DEMOTE to Dead on a genuine OPEN failure (never reached Playing this attempt). libvlc_Error
+        // is ANY fatal error incl. mid-playback, and it is TERMINAL (never recovers on its own), so a blip
+        // on a channel that WAS live must not latch it Dead+hidden with no way back.
+        const bool demoteBlocked = (want == DeadStatus::Dead && ap->everPlayed);
+        if (want != DeadStatus::Unknown && want != ap->channel.deadStatus && !demoteBlocked) {
+            ap->channel.deadStatus = want;
+            _db->setDeadStatus(ap->channelId, want, (long long)time(nullptr));
+            // Reflect it in the visible list WITHOUT the heavy -refreshChannels (which deselects + resets
+            // the status line): update the row in place, dropping it only if it is now Dead and Hide is on.
+            for (auto it = _channels.begin(); it != _channels.end(); ++it) {
+                if (it->id != ap->channelId) continue;
+                if (want == DeadStatus::Dead && _hideDead) _channels.erase(it);
+                else it->deadStatus = want;
+                break;
+            }
+            [_table reloadData];  // re-grey / drop; preserves the selection (unlike -refreshChannels)
+        }
+    }
+
     const FlowStats fs = _player->sampleStats();
     // NOTE: do NOT reset _spectrumSilentTicks here. libVLC's is_playing() dips false at HLS
     // segment boundaries, and zeroing the denial counter on every dip meant it could never
@@ -1360,6 +1409,9 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _recFormat = L"ts";
         if (auto r = _db->getSetting(L"rec_format"))
             if (*r == L"mp4" || *r == L"ts") _recFormat = *r;
+
+        _hideDead = false;  // Hide unavailable channels (default off — opt-in).
+        if (auto hd = _db->getSetting(L"hide_dead")) _hideDead = (*hd == L"1");
     }
 }
 
@@ -1970,6 +2022,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     NSMenu* chan = [[NSMenu alloc] init];
     [[chan addItemWithTitle:Tr(StringId::MenuImportFavourites) action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
     [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
+    [chan addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* hide = [chan addItemWithTitle:Tr(StringId::MenuHideUnavailable) action:@selector(toggleHideDead:) keyEquivalent:@""];
+    hide.target = self;
+    hide.state = _hideDead ? NSControlStateValueOn : NSControlStateValueOff;
     chanItem.submenu = chan;
 
     // TV Guide + Refresh + Recording ▸.
@@ -2464,6 +2520,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     p->player->setMuted(idx != _activePane);         // single-audio: only the active pane
     p->channel = c;
     p->channelId = c.id;
+    p->everPlayed = false;  // new play attempt — reset the "was ever live" flag (dead-status heuristic)
     if (idx != _activePane) {
         [self setStatus:TrF(StringId::MacMainWindowPlayingInPane,
                          {Tr(_viewMode == ViewMode::Pip ? StringId::MacMainWindowPipShort
@@ -2495,6 +2552,25 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if ([id_ isEqualToString:@"num"])   return c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
     if ([id_ isEqualToString:@"group"]) return ns(c.groupTitle);
     return ns(c.name);  // "name"
+}
+
+// Grey out unavailable (Dead) rows so they read as inactive even when not hidden. Cells are reused,
+// so set the colour for EVERY row (reset non-dead/selected), not just the dead ones.
+- (void)tableView:(NSTableView*)t willDisplayCell:(id)cell
+   forTableColumn:(NSTableColumn*)__unused col row:(NSInteger)row {
+    if (![cell respondsToSelector:@selector(setTextColor:)]) return;
+    const BOOL dead = row >= 0 && row < (NSInteger)_channels.size()
+                      && _channels[(size_t)row].deadStatus == DeadStatus::Dead;
+    const BOOL selected = [t.selectedRowIndexes containsIndex:(NSUInteger)row];
+    // An emphasized selection (table is first responder in the key window) draws WHITE text; an
+    // unemphasized one draws dark text — only use the alternate (white) colour when emphasized.
+    const BOOL emphasized = t.window.isKeyWindow && t.window.firstResponder == t;
+    NSColor* color;
+    if (dead && !selected) color = NSColor.tertiaryLabelColor;  // grey out unavailable rows
+    else if (selected)     color = emphasized ? NSColor.alternateSelectedControlTextColor
+                                              : NSColor.controlTextColor;
+    else                   color = NSColor.controlTextColor;
+    [cell setTextColor:color];  // cell is id + guarded by respondsToSelector: above
 }
 
 @end
