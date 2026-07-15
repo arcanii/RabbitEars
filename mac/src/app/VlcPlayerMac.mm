@@ -226,6 +226,20 @@ FlowStats VlcPlayerMac::sampleStats() {
     return fs;
 }
 
+// Coarse state for the "Hide unavailable channels" dead-status heuristic (see VlcPlayerMac.h).
+VlcPlayerMac::PlayState VlcPlayerMac::playState() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return PlayState::Other;
+    switch (libvlc_media_player_get_state(impl_->player)) {
+        case libvlc_Playing: return PlayState::Playing;
+        case libvlc_Error:   return PlayState::Error;
+        default:             return PlayState::Other;
+    }
+#else
+    return PlayState::Other;
+#endif
+}
+
 bool VlcPlayerMac::hasAudioTrack() const {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return false;
