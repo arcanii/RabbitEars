@@ -83,9 +83,11 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — v0.2.11-mac SHIPPED (2026-07-15)
+## Current state — v0.2.12-mac SHIPPED (2026-07-16)
 
-### ✅ Merged — the Win32-gap parity batch (on `main` @ `223b055`, 2026-07-15; NOT in a release yet)
+**`v0.2.12-mac`** (build 293, universal, notarized; release [`v0.2.12-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.12-mac), appcast live @ `816e9f0`) **ships the four Win32-gap parity features below** — the batch that was merged + on-device GUI-verified is now released. Version bumped 0.2.11→0.2.12 (APPLE override in `cmake/AppVersion.cmake`; Windows stays 0.2.11). Standard universal recipe (cached `vlc-3.0.23-universal.dmg` → `package-mac.sh --sign --vlc <universal>` → `hdiutil` dmg → sign → `notarytool --keychain-profile SQLTerminal-notarize --wait` Accepted → `stapler staple` → `sign_update --account SQLTerminal` [keychain prompt — user clicked Allow] → `gh release create --latest=false` → appcast via `gh api PUT`). Verified end-to-end: downloaded asset **sha256 byte-identical** to the signed dmg (edSignature `ezJsOy61…` valid), `length=85492936` matches, spctl "Notarized Developer ID", staple validates, embedded SUPublicEDKey matches, sparkle:version 293 > 276, live raw feed serves 0.2.12. `git push` hung for all three main writes (version bump, HANDOVER, appcast) → each landed via `gh api PUT contents`.
+
+### ✅ Shipped in v0.2.12-mac — the Win32-gap parity batch (merged @ `223b055`, 2026-07-15/16)
 
 A gap-scan (mac vs Win32) drove four parity features, each its own branch off `main`, each with an
 **adversarial ObjC++ review** (the reviews caught real bugs — see the notes). All mac-only (**zero
