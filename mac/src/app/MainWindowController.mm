@@ -143,6 +143,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     std::set<std::wstring> _categoryFilter;  // include-set of group-titles ("category_filter"); empty = show all
     RETableView*   _table;
     NSView*        _videoView;
+    NSMenu*        _videoMenu;    // right-click context menu on any pane's video (Win32-parity view menu)
     MeterView*     _meters[4];   // Spectrum / Signal / Bitrate / Frames (index = (int)MeterKind)
     DraggableMeterBar* _meterBar;  // floats the meters over the video; user-draggable
     NSTextField*   _emptyHint;   // "no channels yet" hint centered over the empty video pane
@@ -157,7 +158,9 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSButton*      _setBtn;      // ⚙ gear
     NSButton*      _stopBtn;     // "Stop"
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
+    BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
+    IOPMAssertionID _keepDisplayAwake;  // display-sleep/screen-saver assertion held while fullscreen or video-only
     // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
     // recordings, independent of the visible panes' manual recorders. A ~30s tick applies the
     // shared planScheduler() core and expands EPG rules.
@@ -273,6 +276,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _window.contentMinSize = NSMakeSize(560, 360);  // keep both split panes usable
     _window.collectionBehavior |= NSWindowCollectionBehaviorFullScreenPrimary;  // ⌃⌘F / green button
     _window.frameAutosaveName = @"RabbitEarsMainWindow";  // remember size + position across launches
+    _window.delegate = self;  // windowDidEnter/ExitFullScreen: -> screen-saver (display-sleep) assertion
     NSView* content = _window.contentView;
     const NSSize cs = content.bounds.size;  // real content size — frameAutosave may restore a larger frame
 
@@ -439,6 +443,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _videoView.layer.backgroundColor = NSColor.blackColor.CGColor;
     [videoPane addSubview:_videoView];
     _panes[0]->view = _videoView;  // pane 0's surface is the active video view (aliased above)
+    _videoMenu = [[NSMenu alloc] init];  // MRC: app-lifetime; the ivar + each pane view's .menu hold it
+    _videoMenu.delegate = self;          // -menuNeedsUpdate: fills it with live state on each right-click
+    _videoMenu.autoenablesItems = NO;
+    _videoView.menu = _videoMenu;        // right-click the video -> the Win32-parity view menu
     NSClickGestureRecognizer* dbl =
         [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(videoDoubleClicked:)];
     dbl.numberOfClicksRequired = 2;
@@ -602,6 +610,53 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     if (v) [self installEscMonitor];
     else   [self removeEscMonitor];
+    [self updateDisplaySleepAssertion];  // Video Only is an immersive full-screen viewing mode
+}
+
+// Suspend the screen saver / display idle-sleep while the user is in an immersive viewing mode
+// (native full screen or Video Only), so a movie isn't interrupted. A SEPARATE assertion from the
+// recording keep-awake (_keepAwake, which prevents SYSTEM idle-sleep) — this one prevents DISPLAY
+// idle-sleep (which also blocks the screen saver). Released the moment we leave the immersive mode.
+- (void)updateDisplaySleepAssertion {
+    const BOOL immersive = ((_window.styleMask & NSWindowStyleMaskFullScreen) != 0) || _videoOnly;
+    if (immersive && _keepDisplayAwake == 0) {
+        IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep,
+                                    kIOPMAssertionLevelOn, CFSTR("RabbitEars full-screen playback"),
+                                    &_keepDisplayAwake);
+    } else if (!immersive && _keepDisplayAwake != 0) {
+        IOPMAssertionRelease(_keepDisplayAwake);
+        _keepDisplayAwake = 0;
+    }
+}
+
+// NSWindowDelegate — native full-screen enter/exit drives the display-sleep assertion above.
+- (void)windowDidEnterFullScreen:(NSNotification*)__unused n { [self updateDisplaySleepAssertion]; }
+- (void)windowDidExitFullScreen:(NSNotification*)__unused n  { [self updateDisplaySleepAssertion]; }
+
+// NSMenuDelegate — rebuild the video right-click menu fresh on each open so its checkmarks track the
+// live state (the mac peer of the Win32 WM_RBUTTONUP view menu: Video Only / Fullscreen / view modes).
+- (void)menuNeedsUpdate:(NSMenu*)menu {
+    if (menu != _videoMenu) return;
+    [menu removeAllItems];
+    NSMenuItem* vo = [menu addItemWithTitle:Tr(StringId::MenuVideoOnlyPlain)
+                                     action:@selector(toggleVideoOnly:) keyEquivalent:@""];
+    vo.target = NSApp.delegate;  // the AppDelegate owns Video Only (also the View menu-bar item)
+    vo.state = _videoOnly ? NSControlStateValueOn : NSControlStateValueOff;
+    NSMenuItem* fs = [menu addItemWithTitle:Tr(StringId::Fullscreen)
+                                     action:@selector(toggleFullScreen:) keyEquivalent:@""];
+    fs.target = _window;  // NSWindow handles native full screen (⌃⌘F / green button)
+    fs.state = ((_window.styleMask & NSWindowStyleMaskFullScreen) != 0)
+                   ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:[NSMenuItem separatorItem]];
+    struct { NSString* title; SEL sel; ViewMode vm; } rows[] = {
+        { Tr(StringId::MenuSingleView),       @selector(setViewSingle:), ViewMode::Single },
+        { Tr(StringId::MenuSplitView),        @selector(setViewSplit:),  ViewMode::Split  },
+        { Tr(StringId::MenuPictureInPicture), @selector(setViewPip:),    ViewMode::Pip    } };
+    for (auto& r : rows) {
+        NSMenuItem* it = [menu addItemWithTitle:r.title action:r.sel keyEquivalent:@""];
+        it.target = self;
+        it.state = (_viewMode == r.vm) ? NSControlStateValueOn : NSControlStateValueOff;
+    }
 }
 
 - (void)videoDoubleClicked:(id)__unused g {
@@ -737,19 +792,36 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [self selectLastPlayed];
 }
 
-// Highlight (don't auto-play) the channel that was playing when the app last quit.
+// The channel that was playing when the app last quit (saved as "last_channel_id" on every play).
+// On launch either RESUME it (auto-play — Win32 parity, when "resume_last" is on) or just highlight
+// it with a "double-click to resume" hint. The row is selected/scrolled-to when it's in the current
+// view; auto-play resolves by id via channelById so a channel outside the current filter/playlist
+// still resumes (channelById returns nullopt if the channel/playlist was deleted — then do nothing).
 - (void)selectLastPlayed {
     if (!_db) return;
     const auto s = _db->getSetting(L"last_channel_id");
     if (!s || s->empty()) return;
     const long long cid = std::wcstoll(s->c_str(), nullptr, 10);
-    for (size_t i = 0; i < _channels.size(); ++i) {
-        if (_channels[i].id != cid) continue;
-        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO];
-        [_table scrollRowToVisible:(NSInteger)i];
-        [self setStatus:TrF(StringId::MacMainWindowLastPlayedResume, {ns(_channels[i].name)})];
-        return;
+
+    NSInteger vis = -1;
+    for (size_t i = 0; i < _channels.size(); ++i)
+        if (_channels[i].id == cid) { vis = (NSInteger)i; break; }
+    if (vis >= 0) {
+        [_table selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)vis] byExtendingSelection:NO];
+        [_table scrollRowToVisible:vis];
     }
+
+    if (_resumeLast) {
+        if (auto ch = _db->channelById(cid)) [self playChannel:*ch];  // auto-play into the active pane
+    } else if (vis >= 0) {
+        [self setStatus:TrF(StringId::MacMainWindowLastPlayedResume, {ns(_channels[(size_t)vis].name)})];
+    }
+}
+
+// Settings ⚙ ▸ Channels ▸ Resume last channel — toggle auto-play-on-launch (persists "resume_last").
+- (void)toggleResumeLast:(id)__unused sender {
+    _resumeLast = !_resumeLast;
+    if (_db) _db->setSetting(L"resume_last", _resumeLast ? L"1" : L"0");
 }
 
 // Make `pid` the active playlist: reset search/filter, rebuild groups, reload.
@@ -1374,6 +1446,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         if (auto r = _db->getSetting(L"rec_format"))
             if (*r == L"mp4" || *r == L"ts") _recFormat = *r;
 
+        // Resume last channel on launch (Win32 parity, default ON). Stored "1"/"0"; unset => on.
+        _resumeLast = YES;
+        if (auto rl = _db->getSetting(L"resume_last")) _resumeLast = (*rl == L"1");
+
         // Categories include-filter (newline-delimited group-titles; empty = show all).
         _categoryFilter.clear();
         if (auto cf = _db->getSetting(L"category_filter"); cf && !cf->empty()) {
@@ -1471,6 +1547,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         [[NSPanGestureRecognizer alloc] initWithTarget:self action:@selector(paneDragged:)];
     [v addGestureRecognizer:pan];
     [pan release];
+    v.menu = _videoMenu;  // same right-click view menu on every pane
     [_videoContainer addSubview:v positioned:NSWindowBelow relativeTo:_meterBar];  // under the meters
     [v release];    // MRC: the container retains it now
     pane->view = v;
@@ -1990,8 +2067,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [[m addItemWithTitle:Tr(StringId::MenuOpenPlaylistFile) action:@selector(openFile:) keyEquivalent:@""] setTarget:self];
     [[m addItemWithTitle:Tr(StringId::MenuManagePlaylists) action:@selector(showPlaylists:) keyEquivalent:@""] setTarget:self];
 
-    // Channels ▸ — favourites import/export (Win32 also carries Hide-unavailable / Categories,
-    // which the mac channel list does not have).
+    // Channels ▸ — favourites import/export + Categories include-filter (Win32 also carries
+    // Hide-unavailable, which the mac channel list does not have).
     [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem* chanItem = [m addItemWithTitle:Tr(StringId::MenuChannels) action:nil keyEquivalent:@""];
     NSMenu* chan = [[NSMenu alloc] init];
@@ -1999,6 +2076,11 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
     [chan addItem:[NSMenuItem separatorItem]];
     [[chan addItemWithTitle:Tr(StringId::MenuCategories) action:@selector(showCategories:) keyEquivalent:@""] setTarget:self];
+    // Resume last channel (checkbox) — auto-play the last-watched channel on launch (Win32 parity).
+    // Built fresh on each gear open, so the ✓ tracks _resumeLast without an explicit rebuild.
+    NSMenuItem* resume = [chan addItemWithTitle:Tr(StringId::MenuResumeLastChannel) action:@selector(toggleResumeLast:) keyEquivalent:@""];
+    resume.target = self;
+    resume.state = _resumeLast ? NSControlStateValueOn : NSControlStateValueOff;
     chanItem.submenu = chan;
 
     // TV Guide + Refresh + Recording ▸.

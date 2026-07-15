@@ -85,6 +85,33 @@ traps that cost hours are listed under Working rules.**
 
 ## Current state — v0.2.11-mac SHIPPED (2026-07-15)
 
+### ⏳ Open PRs — the Win32-gap parity batch (unmerged, awaiting the user; NOT in a release yet)
+
+A gap-scan (mac vs Win32) drove five parity features, each its own branch off `main`, each with an
+**adversarial ObjC++ review** (the reviews caught real bugs — see the notes). All mac-only (**zero
+`common/`/`Win32/`**), no version bump — they ride the **next** release once merged (plain `gh pr merge
+--merge` works; only `--admin` is auto-mode-blocked). On-device GUI verification was **deferred on all of
+them** because the installed `/Applications` app was running (the dual-instance/bundle-id trap makes
+composited-window clicks unsafe) — each was build-verified + headless-smoke-tested; **a quick on-device
+visual pass is the open follow-up**.
+
+| PR | Feature | Review caught |
+|----|---------|---------------|
+| [#36](https://github.com/arcanii/RabbitEars/pull/36) `mac-resume-last-channel` | Resume last channel on launch (auto-play, default on) + gear toggle | (clean; a headless "point the stream at a logging 127.0.0.1 server, watch the access log" trick verified auto-play fired iff `resume_last`) |
+| [#37](https://github.com/arcanii/RabbitEars/pull/37) `mac-video-menu-screensaver` | Right-click video context menu (Video Only/Fullscreen/Single/Split/PiP) + **suspend screen saver** in fullscreen/video-only (a `PreventUserIdleDisplaySleep` IOPMAssertion) | clean |
+| [#38](https://github.com/arcanii/RabbitEars/pull/38) `mac-categories-filter` | **Categories** multi-select include filter (new `CategoriesDialog` ARC sheet; `category_filter` key) | a stale-category ghost could silently discard a real filter → intersect the saved set with live groups in `init` |
+| [#39](https://github.com/arcanii/RabbitEars/pull/39) `mac-hide-unavailable` | **Hide unavailable channels** (dead-status): `VlcPlayerMac::playState()` polled in `tickStats`, grey/hide dead rows, `hide_dead` toggle | a healthy stream hitting terminal `libvlc_Error` mid-playback could latch Dead+hidden → demote to Dead ONLY on a true OPEN failure (per-pane `everPlayed` gate) |
+
+**Still on the Win32-gap backlog (not started):** the two **shared-core `common/` P2 fixes** (series-rule
+phantom-`Missed` when a rule's lead time is edited mid-recording → fix in `common/core/RecordingRules`; the
+Xtream **group-title→country fallback** in `common/` — both Windows-affecting, so **flag the Win32 team**);
+**channel-logo thumbnails** in the grid (async fetch/disk-cache/draw — the one non-wiring item); the **appcast
+host move** off `raw.githubusercontent.com` (SUFeedURL + GitHub Pages, infra). Full prioritized shortlist +
+evidence: the gap-scan (22 items) — the P3/parked tail is now/next readout, EPG genre tags, locale schedule
+dates, layout "reset to default", PiP always-on-top, in-app Licenses viewer, the 250 ms bg-pane audio bleed,
+3 MRC dialog leaks, meter fine-tuning, Intel-slice QA. Explicitly N/A to mac: transcoding + JSON profiles
+(deferred both platforms), `E3` MeterModel promotion (Win32-owned), the `MenuVideoOnly \t` escape (Win32).
+
 **Latest: `v0.2.11-mac`** (build 276, universal, notarized, appcast live @ `437ed49`) — an **i18n-polish release**:
 PR #34 (dead-catalog-id prune: `LangRestart*` + 2 unused mac ids → 531→525 keys) + PR #35 (an AI-assisted,
 adversarially-verified **CJK translation-quality pass**: 36 verified consistency fixes across 日本語 / 繁體中文 /
@@ -175,7 +202,9 @@ The app **plays IPTV** via libVLC in a native window:
 - **rich channel grid** — ★ / # / name / group columns, live **search**, filter popup
   (All / ★ Favourites / groups / **countries**), a **Categories** multi-select include filter
   (Settings ⚙ ▸ Channels ▸ Categories…, persisted `category_filter`), **favourite** toggle + **LCN edit** (row menu),
-  **resume-last-played**; single click selects, **double-click / Return plays**;
+  **resume-last-channel** (auto-plays the last-watched channel on launch — Settings ⚙ ▸ Channels ▸
+  "Resume last channel", default on; toggle off for highlight-only); single click selects,
+  **double-click / Return plays**;
 - **Terms-of-Use gate** on first launch + after any version change (see below);
 - **playlist management** — Settings ▸ Manage Playlists… (enable/disable/rename/refresh/delete);
 - **audio/stream meters** — 4 kinds × 4 styles + a config dialog (see below);
@@ -183,6 +212,8 @@ The app **plays IPTV** via libVLC in a native window:
   Updates / About) + search + filter; plus a full **menu bar** (App / File / Edit / View);
 - **split view** (grid | video) that fills correctly + **remembers window size/position**;
 - **volume + mute**, native **fullscreen** (⌃⌘F) + **Video Only** (⌥⌘F), a **custom About**;
+- **right-click the video** for a context menu (Video Only / Fullscreen / Single / Split / PiP — Win32 parity);
+  the **screen saver / display sleep is suspended** while in full screen or Video Only (IOPMAssertion);
 - **Sparkle auto-update**; **self-contained** (`scripts/package-mac.sh` bundles libvlc + ~343 plugins,
   so it runs with **no VLC.app installed**); an app icon; CI on both platforms.
 
