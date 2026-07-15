@@ -83,9 +83,22 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — v0.2.10-mac SHIPPED (2026-07-14)
+## Current state — v0.2.11-mac SHIPPED (2026-07-15)
 
-**Latest: `v0.2.10-mac`** (build 269, universal, notarized, appcast live @ `0e961bd`) — **LIVE LANGUAGE SWITCH**
+**Latest: `v0.2.11-mac`** (build 276, universal, notarized, appcast live @ `437ed49`) — an **i18n-polish release**:
+PR #34 (dead-catalog-id prune: `LangRestart*` + 2 unused mac ids → 531→525 keys) + PR #35 (an AI-assisted,
+adversarially-verified **CJK translation-quality pass**: 36 verified consistency fixes across 日本語 / 繁體中文 /
+香港 — no mistranslations, all terminology / native-punctuation / regional word-choice polish; e.g. JA 復帰→
+スリープ解除, zh-Hant 儀表→量表 + Taiwan-form 訊號/影格, zh-HK 影集→劇集 overrides). **14 changed ids are
+Windows-facing** → flagged to the Win32 team in `Win32/BACKLOG.md`. Version bumped 0.2.10→0.2.11 (APPLE
+override). Shipped via the standard universal recipe (universal VLC → `package-mac.sh --sign --vlc <universal>`
+→ hdiutil dmg → notarize → staple → `sign_update` → `gh release create` → appcast via `gh api PUT`); verified
+end-to-end (downloaded asset sha256 byte-identical to the signed dmg, edSignature valid, spctl "Notarized
+Developer ID", sparkle:version 276 > 269). Both PRs merged with plain `gh pr merge --merge` (works on
+agent-authored PRs — only `--admin` is auto-mode-blocked). The human native CJK review (testers) is still the
+gate before *advertising* CJK; this pass shipped the machine-error fixes it surfaced.
+
+**Before it: `v0.2.10-mac`** (build 269, universal, notarized, appcast live @ `0e961bd`) — **LIVE LANGUAGE SWITCH**
 (parity with Windows 0.2.11). Settings ▸ Language (the App-menu submenu **or** the gear ▸ 言語) now applies
 **live — no restart** (was restart-to-apply). `AppDelegate -selectLanguage:` flips `i18n::setActiveLang(...)`
 then rebuilds every built-once surface: a new **`MainWindowController -applyLanguageLive`** relabels the window
