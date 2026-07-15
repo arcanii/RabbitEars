@@ -85,15 +85,20 @@ traps that cost hours are listed under Working rules.**
 
 ## Current state — v0.2.11-mac SHIPPED (2026-07-15)
 
-### ⏳ Open PRs — the Win32-gap parity batch (unmerged, awaiting the user; NOT in a release yet)
+### ✅ Merged — the Win32-gap parity batch (on `main` @ `223b055`, 2026-07-15; NOT in a release yet)
 
-A gap-scan (mac vs Win32) drove five parity features, each its own branch off `main`, each with an
+A gap-scan (mac vs Win32) drove four parity features, each its own branch off `main`, each with an
 **adversarial ObjC++ review** (the reviews caught real bugs — see the notes). All mac-only (**zero
-`common/`/`Win32/`**), no version bump — they ride the **next** release once merged (plain `gh pr merge
---merge` works; only `--admin` is auto-mode-blocked). On-device GUI verification was **deferred on all of
-them** because the installed `/Applications` app was running (the dual-instance/bundle-id trap makes
-composited-window clicks unsafe) — each was build-verified + headless-smoke-tested; **a quick on-device
-visual pass is the open follow-up**.
+`common/`/`Win32/`**), no version bump — they ride the **next** release. **All four merged to `main`**
+(`gh pr merge --merge`, order #36→#39). #36/#37 were fast-forward-clean; **#38 and #39 both collided** with
+#36's/#37's gear-menu + settings-load edits in `MainWindowController.mm` (all four features add a Channels ▸
+gear item and an `init` settings-load line at the same spots) — resolved by merging `main` into each branch
+and keeping every block (the merged gear submenu now reads Import/Export ▸ Categories ▸ Hide-unavailable ▸
+Resume-last; all three keys `resume_last`/`category_filter`/`hide_dead` load), **CI green on both platforms
+before each merge**. On-device GUI verification is **still deferred** (the installed `/Applications` app was
+running → the dual-instance/bundle-id trap makes composited-window clicks unsafe); each was build-verified +
+headless-smoke-tested + CI-compiled on both platforms — **a quick on-device visual pass is the open
+follow-up before the next release advertises them**.
 
 | PR | Feature | Review caught |
 |----|---------|---------------|
