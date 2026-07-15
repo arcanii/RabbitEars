@@ -73,6 +73,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/MeterView.mm
     src/app/MetersDialog.mm
     src/app/PlaylistsDialog.mm
+    src/app/CategoriesDialog.mm
     src/app/TermsDialog.mm
     src/app/EpgGuideView.mm
     src/app/TvGuideWindowController.mm
@@ -90,7 +91,7 @@ if(RABBITEARS_BUILD_MAC)
   # rest of the app is MRC-style.
   set_source_files_properties(
     src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
-    src/app/PlaylistsDialog.mm src/app/TermsDialog.mm
+    src/app/PlaylistsDialog.mm src/app/CategoriesDialog.mm src/app/TermsDialog.mm
     src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
     src/app/RecordingsWindowController.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

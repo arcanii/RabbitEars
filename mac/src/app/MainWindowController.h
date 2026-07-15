@@ -10,7 +10,7 @@
 
 #import <Cocoa/Cocoa.h>
 
-@interface MainWindowController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSSplitViewDelegate>
+@interface MainWindowController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSSplitViewDelegate, NSWindowDelegate, NSMenuDelegate>
 - (void)showWindow;
 // Re-label every built-once UI surface in the CURRENT active language (Settings ▸ Language applies
 // live, no restart). The caller must flip i18n::setActiveLang(...) BEFORE calling this. Main thread.
