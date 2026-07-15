@@ -24,8 +24,10 @@ set(APP_VERSION "0.2.11")
 # apply LIVE (no restart), the mac peer of Windows 0.2.11. (Windows 0.2.10 was a Win32-only
 # Chinese-selection hotfix, N/A to mac.) 0.2.11 is an i18n-polish release: an AI-assisted,
 # adversarially-verified CJK translation-quality pass (36 verified JA/zh-Hant/zh-HK consistency
-# fixes) plus a dead-catalog-id prune (6 ids). (mac history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8
-# → 0.2.9 → 0.2.10 → 0.2.11.)
+# fixes) plus a dead-catalog-id prune (6 ids). 0.2.12 ships four Win32-gap parity features
+# (resume-last-channel, right-click video menu + fullscreen screen-saver suspend, Categories
+# include-filter, hide-unavailable-channels — PRs #36-#39, all on-device GUI-verified). (mac
+# history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8 → 0.2.9 → 0.2.10 → 0.2.11 → 0.2.12.)
 if(APPLE)
-  set(APP_VERSION "0.2.11")
+  set(APP_VERSION "0.2.12")
 endif()
