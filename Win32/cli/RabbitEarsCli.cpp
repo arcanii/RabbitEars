@@ -878,6 +878,14 @@ int selftest() {
             "#EXTINF:-1 group-title=\"4K| SPORT\",X4k\nhttp://x/4k1\n"
             "#EXTINF:-1 group-title=\"USA| NEWS\",XUsa\nhttp://x/usa1\n"
             "#EXTINF:-1 group-title=\"DOCUMENTARIES\",XDoc\nhttp://x/doc1\n"
+            "#EXTINF:-1 group-title=\"(PL) NEWS\",XPl\nhttp://x/pl1\n"
+            "#EXTINF:-1 group-title=\"SD| CINE\",XSd\nhttp://x/sd1\n"
+            "#EXTINF:-1 group-title=\"EN| SERIES\",XEn\nhttp://x/en1\n"
+            "#EXTINF:-1 group-title=\"XX| ADULT\",XXx\nhttp://x/xx1\n"
+            "#EXTINF:-1 group-title=\"EX-YU| SPORT\",XExyu\nhttp://x/ex1\n"
+            "#EXTINF:-1 group-title=\"ON - DEMAND\",XOn\nhttp://x/on1\n"
+            "#EXTINF:-1 group-title=\"DE\",XBare\nhttp://x/de1\n"
+            "#EXTINF:-1 tvg-id=\"12345\" group-title=\"PT| CANAIS\",XOpq\nhttp://x/pt1\n"
             "#EXTINF:-1 tvg-id=\"BBC.uk\" group-title=\"US| MIX\",XPrec\nhttp://x/prec1\n";
         const long long pid3 = db.addPlaylist(L"Xtream", L"http://xt", true, 4000);
         db.bulkInsertChannels(pid3, parseM3u(xSample).channels, 4000);
@@ -895,6 +903,15 @@ int selftest() {
         expect(db.channelsByCountry(L"fr").size() == 1 && db.channelsByCountry(L"es").size() == 1,
                "group-title-only channels are filterable by country");
         expect(db.channelsByCountry(L"US").size() == 4, "country query is case-insensitive");
+        expect(hasGroup(countries, L"pl"), "parenthesised prefix '(PL)' derives pl");
+        expect(!hasGroup(countries, L"sd") && !hasGroup(countries, L"en") &&
+                   !hasGroup(countries, L"xx") && !hasGroup(countries, L"ex") &&
+                   !hasGroup(countries, L"on"),
+               "deny-listed SD/EN/XX/EX/ON prefixes are not countries");
+        expect(!hasGroup(countries, L"de") && db.channelsByCountry(L"de").empty(),
+               "a bare 2-letter group name ('DE') claims no country");
+        expect(db.channelsByCountry(L"pt").size() == 1,
+               "opaque numeric tvg-id + country group (the canonical Xtream shape) -> pt");
         db.deletePlaylist(pid3);  // restore the shared fixture state for the sections below
         expect(db.channelsByCountry(L"fr").empty(), "Xtream playlist removed (cascade) -> fr gone");
     }

@@ -15,9 +15,15 @@ tvg-id carries no `".cc"` suffix — so **your Countries nav-tree gains entries 
 previously showed none. The tvg-id stays authoritative; the fallback needs an explicit delimiter (a bare
 space never counts: "IT MOVIES" ≠ Italy) and deny-lists HD/SD/TV/EN/XX. 3-letter tokens ("USA|") are
 deliberately rejected — say the word if you want a small alias map and we'll extend the shared rule.
-`channelsByCountry` moved from SQL `LIKE '%.cc'` to a C++-side effective-country filter (same scan shape
-as `allChannels()`), so the list and the filter can't drift. No schema change. Twin selftests extended
-(the CLI "By country" block). Any pushback → ping the macOS team.
+The rule runs as a registered SQLite scalar (`effective_country(tvg_id, group_title)`, deterministic,
+registered in `Database::open`) so `channelsByCountry` filters **server-side** — the adversarial review
+benchmarked a C++-side materialize-all filter at ~30 ms/call at 14k channels on a per-keystroke mac path;
+the scalar restores the sub-millisecond shape, and the list and the filter share one rule so they can't
+drift. Deny-list: HD/SD/TV/EN/XX + **EX** ("EX-YU|" Balkan groups) + **ON** ("ON-DEMAND"). **Known-wrong,
+kept deliberately:** "AR|" on pan-Arabic groups files under Argentina in your nav tree (`countryLabel`
+renders the localized name) — 'ar' is genuinely Argentina on Latino panels, so neither denying nor keeping
+is right for both; an ISO-whitelist or playlist-majority disambiguation would be follow-ups. No schema
+change. Twin selftests extended (the CLI "By country" block). Any pushback → ping the macOS team.
 
 ---
 

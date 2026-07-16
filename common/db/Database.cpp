@@ -4,6 +4,7 @@
 #include <sqlite3.h>
 
 #include <set>
+#include <string_view>
 
 #include "platform/Encoding.h"
 
@@ -176,16 +177,21 @@ std::vector<Channel> runChannelQuery(sqlite3* db, const std::string& sql,
     return out;
 }
 
+// Country derivation operates on raw UTF-8 bytes: every significant character in the grammar
+// is ASCII, and any non-ASCII byte (>= 0x80) simply fails the letter/delimiter tests exactly
+// as the equivalent wide-char check would — so byte-wise parsing is semantically identical and
+// lets the SQL scalar below run with zero encoding conversions per row.
+
 // The 2-letter country code from an iptv-org-style tvg-id ("<name>.<cc>"): the last
 // dot-segment iff it is exactly two ASCII letters, lowercased. "" otherwise.
-std::wstring countryFromTvgId(const std::wstring& tvgId) {
-    const size_t dot = tvgId.find_last_of(L'.');
-    if (dot == std::wstring::npos || dot + 3 != tvgId.size()) return L"";
-    auto isAlpha = [](wchar_t c) { return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); };
-    auto lower = [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c; };
-    const wchar_t a = tvgId[dot + 1], b = tvgId[dot + 2];
-    if (!isAlpha(a) || !isAlpha(b)) return L"";
-    return std::wstring{lower(a), lower(b)};
+std::string countryFromTvgIdU8(std::string_view tvgId) {
+    const size_t dot = tvgId.find_last_of('.');
+    if (dot == std::string_view::npos || dot + 3 != tvgId.size()) return {};
+    auto isAlpha = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+    auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; };
+    const char a = tvgId[dot + 1], b = tvgId[dot + 2];
+    if (!isAlpha(a) || !isAlpha(b)) return {};
+    return std::string{lower(a), lower(b)};
 }
 
 // FALLBACK country derivation for Xtream-style playlists, whose channels typically carry an
@@ -193,34 +199,59 @@ std::wstring countryFromTvgId(const std::wstring& tvgId) {
 // "[UK] SPORTS", "|FR| CINEMA", "es:CINE". Accepted shape: optional leading decoration
 // (spaces / '|' / '[' / '('), exactly TWO ASCII letters, optional spaces, then an EXPLICIT
 // delimiter ('|' '-' ':' ']' ')'). A bare space is deliberately NOT a delimiter — "IT MOVIES"
-// is a genre, not Italy, and "TV SHOWS" is not Tuvalu. A short deny-list drops the ubiquitous
-// non-country tech prefixes that would otherwise pollute the country list: HD (not ISO),
-// SD (Sudan, but virtually always "standard definition" here), TV (Tuvalu, but virtually
-// always "television"), EN (a language tag, not ISO 3166), XX (adult marker, not assigned).
+// is a genre, not Italy, and "TV SHOWS" is not Tuvalu. A short deny-list drops prefixes that
+// would otherwise pollute the country list: HD/EN/XX/EX/ON are not assigned ISO 3166 codes
+// (EX-YU| and ON-DEMAND are real group idioms), and SD (Sudan) / TV (Tuvalu) are assigned but
+// virtually always mean "standard definition" / "television" in a group-title — the sacrifice
+// is deliberate. KNOWN-WRONG, kept: "AR|" on pan-Arabic groups reads as Argentina — 'ar' is
+// genuinely Argentina on Latino panels, so neither denying nor keeping it is right for both;
+// keeping it preserves the true positives. 3+-letter tokens ("USA|", "FRANCE|") are
+// structurally rejected; an alpha-3 alias table is a possible follow-up (see Win32/BACKLOG).
 // Lowercased 2-letter code, or "" when the title doesn't open with a recognisable prefix.
-std::wstring countryFromGroupTitle(const std::wstring& group) {
-    auto isAlpha = [](wchar_t c) { return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); };
-    auto lower = [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c; };
+std::string countryFromGroupTitleU8(std::string_view group) {
+    auto isAlpha = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+    auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; };
     size_t i = 0;
-    while (i < group.size() && group[i] == L' ') ++i;
-    if (i < group.size() && (group[i] == L'|' || group[i] == L'[' || group[i] == L'(')) ++i;
-    while (i < group.size() && group[i] == L' ') ++i;
-    if (i + 2 > group.size() || !isAlpha(group[i]) || !isAlpha(group[i + 1])) return L"";
-    const std::wstring cc{lower(group[i]), lower(group[i + 1])};
+    while (i < group.size() && group[i] == ' ') ++i;
+    if (i < group.size() && (group[i] == '|' || group[i] == '[' || group[i] == '(')) ++i;
+    while (i < group.size() && group[i] == ' ') ++i;
+    if (i + 2 > group.size() || !isAlpha(group[i]) || !isAlpha(group[i + 1])) return {};
+    const std::string cc{lower(group[i]), lower(group[i + 1])};
     i += 2;
-    while (i < group.size() && group[i] == L' ') ++i;
-    if (i >= group.size()) return L"";  // just a 2-letter group name — no delimiter, no claim
-    const wchar_t d = group[i];
-    if (d != L'|' && d != L'-' && d != L':' && d != L']' && d != L')') return L"";
-    if (cc == L"hd" || cc == L"sd" || cc == L"tv" || cc == L"en" || cc == L"xx") return L"";
+    while (i < group.size() && group[i] == ' ') ++i;
+    if (i >= group.size()) return {};  // just a 2-letter group name — no delimiter, no claim
+    const char d = group[i];
+    if (d != '|' && d != '-' && d != ':' && d != ']' && d != ')') return {};
+    if (cc == "hd" || cc == "sd" || cc == "tv" || cc == "en" || cc == "xx" || cc == "ex" ||
+        cc == "on")
+        return {};
     return cc;
 }
 
 // The country a channel belongs to: the tvg-id suffix is authoritative (machine-authored);
 // the group-title prefix is consulted only when the tvg-id yields nothing.
-std::wstring effectiveCountry(const std::wstring& tvgId, const std::wstring& group) {
-    std::wstring cc = countryFromTvgId(tvgId);
-    return cc.empty() ? countryFromGroupTitle(group) : cc;
+std::string effectiveCountryU8(std::string_view tvgId, std::string_view group) {
+    std::string cc = countryFromTvgIdU8(tvgId);
+    return cc.empty() ? countryFromGroupTitleU8(group) : cc;
+}
+
+// SQL scalar `effective_country(tvg_id, group_title)` — the same rule, callable from SQL so
+// channelsByCountry can filter WITHOUT materializing every channel row (the C++-side filter
+// this replaces cost ~30 ms per call at 14k channels, and the mac search path evaluates the
+// country filter per keystroke). SQLITE_DETERMINISTIC: same inputs, same answer.
+void effectiveCountrySqlFn(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+    if (argc != 2) {
+        sqlite3_result_text(ctx, "", 0, SQLITE_STATIC);
+        return;
+    }
+    auto sv = [](sqlite3_value* v) -> std::string_view {
+        const auto* p = sqlite3_value_text(v);  // NULL column -> nullptr
+        return p ? std::string_view(reinterpret_cast<const char*>(p),
+                                    static_cast<size_t>(sqlite3_value_bytes(v)))
+                 : std::string_view();
+    };
+    const std::string cc = effectiveCountryU8(sv(argv[0]), sv(argv[1]));
+    sqlite3_result_text(ctx, cc.c_str(), static_cast<int>(cc.size()), SQLITE_TRANSIENT);
 }
 
 }  // namespace
@@ -262,6 +293,10 @@ bool Database::open(const std::wstring& path, std::wstring* error) {
     exec("PRAGMA journal_mode=WAL;");
     exec("PRAGMA synchronous=NORMAL;");
     exec("PRAGMA foreign_keys=ON;");
+    // The country-derivation rule as a SQL scalar (see effectiveCountrySqlFn) — lets the
+    // Countries queries filter server-side instead of materializing every channel row.
+    sqlite3_create_function(db_, "effective_country", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
+                            nullptr, &effectiveCountrySqlFn, nullptr, nullptr);
     if (!createSchema()) {
         if (error) *error = lastError_;
         close();
@@ -649,35 +684,39 @@ std::vector<std::wstring> Database::listGroups() {
 
 std::vector<std::wstring> Database::listCountries() {
     // Effective country per channel: the tvg-id suffix, else the Xtream-style group-title
-    // prefix (see effectiveCountry above) — so Xtream playlists, whose tvg-ids carry no
-    // ".<cc>", still populate the Countries filter.
-    std::set<std::wstring> codes;  // sorted + distinct
-    Stmt q(db_, (std::string("SELECT tvg_id, group_title FROM channels WHERE ") + kEnabledOnly).c_str());
-    if (!q) return {};
+    // prefix (the effective_country SQL scalar) — so Xtream playlists, whose tvg-ids carry
+    // no ".<cc>", still populate the Countries filter. Codes are ASCII, so ORDER BY's binary
+    // sort matches the old std::set ordering.
+    std::vector<std::wstring> out;
+    Stmt q(db_, (std::string("SELECT DISTINCT effective_country(tvg_id, group_title) "
+                             "FROM channels WHERE ") +
+                 kEnabledOnly + " ORDER BY 1")
+                    .c_str());
+    if (!q) return out;
     while (q.step()) {
-        std::wstring cc = effectiveCountry(q.textCol(0), q.textCol(1));
-        if (!cc.empty()) codes.insert(std::move(cc));
+        std::wstring cc = q.textCol(0);
+        if (!cc.empty()) out.push_back(std::move(cc));
     }
-    return std::vector<std::wstring>(codes.begin(), codes.end());
+    return out;
 }
 
 std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
-    // Filter on the same effective country as listCountries (tvg-id suffix, else the
-    // group-title prefix), so the two stay in lockstep. The old SQL "tvg_id LIKE '%.<cc>'"
-    // could not see the group-title fallback; deriving in C++ keeps one rule for both. The
-    // scan is the same shape as allChannels() — fine at playlist scale.
+    // Filter on the same effective country as listCountries (one rule, the SQL scalar), so
+    // the two stay in lockstep. Filtering server-side matters: the mac search path evaluates
+    // the active country filter per keystroke, and materializing every channel row here
+    // (allChannels-shaped) cost ~30 ms at 14k channels; with the scalar only matches are
+    // materialized. The code is lowercased to match the scalar's output (the old LIKE was
+    // ASCII-case-insensitive).
     std::wstring want;
     want.reserve(code.size());
     for (wchar_t c : code)
         want.push_back((c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c);
-    std::vector<Channel> rows = runChannelQuery(
-        db_, std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + kEnabledOnly +
-                 " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
-    std::vector<Channel> out;
-    out.reserve(rows.size());
-    for (Channel& c : rows)
-        if (effectiveCountry(c.tvgId, c.groupTitle) == want) out.push_back(std::move(c));
-    return out;
+    return runChannelQuery(db_,
+                           std::string("SELECT ") + kChannelCols +
+                               " FROM channels WHERE effective_country(tvg_id, group_title)=? AND " +
+                               kEnabledOnly +
+                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
+                           &want);
 }
 
 void Database::setFavourite(long long channelId, bool favourite) {
