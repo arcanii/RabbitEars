@@ -660,6 +660,60 @@ int selftest() {
                        blocks(ScheduleStatus::Pending) && blocks(ScheduleStatus::Recording),
                    "an existing row of ANY status blocks re-creating that airing");
         }
+        {  // --- Padding-independent dedup: a rule row owns its airing across lead/trail edits ---
+           // The slot key is the PADDED start, so editing a rule's lead used to orphan the
+           // existing row: a mid-recording lead edit spawned a duplicate Pending row that could
+           // never start (recorder busy) and rotted into a phantom Missed, and a Cancelled
+           // future airing's tombstone was resurrected. A rule row's window always contains its
+           // programme's unpadded window (padding >= 0), so containment is the padding-proof
+           // identity. Manual rows (ruleId 0) deliberately keep slot-only dedup.
+            ScheduledRecording rec;  // created when the rule had leadSec=60 / trailSec=120
+            rec.channelId = L"CNN.us";
+            rec.startUtc = 1940;  // 2000 - 60 (the OLD lead)
+            rec.stopUtc = 3120;   // 3000 + 120
+            rec.status = ScheduleStatus::Recording;
+            rec.ruleId = 5;
+            RecordingRule edited = rule(5, L"cnn.us", L"News", RuleMatch::Exact);  // lead now 0
+            auto v = expandRules({edited}, progs, {rec}, 2500 /*mid-airing*/, 100000);
+            expect(v.size() == 1 && v[0].startUtc == 90000,
+                   "a lead edit mid-recording does not duplicate the in-progress airing");
+
+            rec.status = ScheduleStatus::Cancelled;  // future tombstone, padding since edited
+            auto w = expandRules({edited}, progs, {rec}, 1000, 100000);
+            expect(w.size() == 1 && w[0].startUtc == 90000,
+                   "a cancelled airing stays cancelled after a lead edit");
+
+            ScheduledRecording manual;  // ruleId 0: spans both near airings, suppresses neither
+            manual.channelId = L"CNN.us";
+            manual.startUtc = 1000;
+            manual.stopUtc = 20000;
+            manual.status = ScheduleStatus::Pending;
+            auto m = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {manual},
+                                 1000, 100000);
+            expect(m.size() == 2, "a spanning manual row does not suppress rule airings");
+
+            // Two rules with DIFFERENT padding matching the same airing still collapse to one
+            // row (the "two rules -> one recording" promise, previously defeated by padding).
+            RecordingRule a = rule(1, L"cnn.us", L"News", RuleMatch::Exact);
+            a.leadSec = 60;
+            auto t = expandRules({a, rule(2, L"cnn.us", L"New", RuleMatch::Contains)}, progs, {},
+                                 1000, 100000);
+            expect(t.size() == 2, "different-padding rules still collapse onto one row per airing");
+
+            // The other direction: lead INCREASED, so the new padded start lands EARLIER than
+            // the stored one — the slot key differs either way; containment still owns it.
+            ScheduledRecording bare;  // created with lead 0
+            bare.channelId = L"CNN.us";
+            bare.startUtc = 2000;
+            bare.stopUtc = 3000;
+            bare.status = ScheduleStatus::Recording;
+            bare.ruleId = 5;
+            RecordingRule wider = rule(5, L"cnn.us", L"News", RuleMatch::Exact);
+            wider.leadSec = 300;
+            auto u = expandRules({wider}, progs, {bare}, 2500, 100000);
+            expect(u.size() == 1 && u[0].startUtc == 89700,  // 90000 - lead 300
+                   "a lead increase mid-recording does not duplicate the in-progress airing");
+        }
         {  // --- Episode dedup: skip a REPEAT airing of an already-scheduled episode ---
             auto ep = [](const wchar_t* chan, const wchar_t* title, long long a, long long b,
                          const wchar_t* epnum, const wchar_t* sub) {

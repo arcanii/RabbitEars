@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -63,6 +64,23 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
     for (const ScheduledRecording& s : existing)
         taken.emplace(normaliseTvgId(s.channelId), s.startUtc);
 
+    // Padding-independent airing identity. The slot key above uses the PADDED start, which is
+    // a poor identity for the airing: editing a rule's leadSec changes it, so an existing row
+    // created under the old padding no longer matches and the airing is re-created — a
+    // mid-recording lead edit spawned a duplicate Pending row that could never start (the
+    // recorder was busy with the real one) and rotted into a phantom Missed; a Cancelled
+    // future airing's tombstone was silently resurrected. But every rule-created row was
+    // built as [start-lead, stop+trail] with lead/trail >= 0 (both editors clamp), so its
+    // window always CONTAINS its programme's unpadded window no matter how the padding has
+    // since been edited — "some rule row's window contains this programme's own window" is
+    // the padding-proof form of "this airing already has a row". Manual rows (ruleId == 0)
+    // are deliberately excluded and keep slot-only dedup: a long manual recording spanning
+    // an airing must not suppress the rule's row for it.
+    std::map<std::wstring, std::vector<std::pair<long long, long long>>> ruleWindows;
+    for (const ScheduledRecording& s : existing)
+        if (s.ruleId != 0)
+            ruleWindows[normaliseTvgId(s.channelId)].emplace_back(s.startUtc, s.stopUtc);
+
     // Episode dedup seed: a show already queued/recorded (any status) claims its episode, so a
     // later airing of the SAME episode is skipped. Keyed by folded title + episode key; rows with
     // no episode key (manual / pre-v6 / no-episode-num) don't participate — they slot-dedup only.
@@ -106,6 +124,16 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
 
             // Slot dedup: an existing row (any status) or an already-created row owns this airing.
             if (!taken.emplace(c.chan, start).second) continue;
+            // Padding-independent dedup (see the ruleWindows comment above): a rule row whose
+            // window contains this programme's unpadded window owns the airing, whatever
+            // padding it was created under. Checked before the episode claim below so a
+            // skipped candidate cannot claim an episode it did not schedule.
+            if (const auto it = ruleWindows.find(c.chan); it != ruleWindows.end()) {
+                bool owned = false;
+                for (const auto& [ws, we] : it->second)
+                    if (ws <= p.startUtc && we >= p.stopUtc) { owned = true; break; }
+                if (owned) continue;
+            }
             // Episode dedup: skip a repeat airing of an episode this series already has. Committed
             // only AFTER the slot check passes, so a slot-deduped candidate can't wrongly claim
             // the episode. Empty key (no episode-num/sub-title) never dedups here.
@@ -124,6 +152,10 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
             s.mux = r.mux;
             s.status = ScheduleStatus::Pending;
             s.episodeKey = ek;
+            // The new row claims the airing padding-independently too, so a LATER rule in this
+            // same pass with different lead/trail cannot create a second row for it (the
+            // header's "two rules matching the same airing collapse to one recording").
+            ruleWindows[c.chan].emplace_back(s.startUtc, s.stopUtc);
             out.push_back(std::move(s));
         }
     }
