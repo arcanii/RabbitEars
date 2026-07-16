@@ -133,8 +133,23 @@ manual rows unchanged; the mac rule editor now clamps lead/trail 0..240 min (Win
 Regression tests in `RabbitEarsCli --selftest` ("Padding-proof dedup (v7)"); core-selftest green on both
 platforms; **Win32 team flagged in `Win32/BACKLOG.md` (schema-v7 note)**. Rides the next release.
 
-**Still on the Win32-gap backlog (not started):** the second **shared-core `common/` P2 fix** — the
-Xtream **group-title→country fallback** in `common/` (Windows-affecting, **flag the Win32 team**);
+**✅ DONE (2026-07-16, [PR #41](https://github.com/arcanii/RabbitEars/pull/41), merged @ `6d90de6`): the
+Xtream group-title→country fallback — the second and last shared-core P2 fix.** Xtream-panel playlists
+(opaque/empty tvg-id, country in the group-title prefix: `US| NEWS`, `[UK] SPORTS`, `FR - CINEMA`) never
+appeared in the Countries filter on either platform. New conservative `countryFromGroupTitle` fallback in
+`common/db/Database.cpp` — 2 ASCII letters + an EXPLICIT delimiter (a bare space never counts: `IT MOVIES`
+≠ Italy), deny-list `HD SD TV EN XX EX ON`, tvg-id authoritative — running as a **registered deterministic
+SQLite scalar** `effective_country(tvg_id, group_title)` so both `listCountries` and `channelsByCountry`
+filter server-side with one shared rule. The adversarial review earned its keep twice more: the integration
+lens **benchmarked my first C++-side filter at ~30 ms/call and traced it onto the mac per-keystroke search
+path** (→ the scalar), and the parsing lens ran an executed input corpus that added `EX`/`ON` to the
+deny-list (`EX-YU|`, `ON-DEMAND`) and documented the unfixable `AR|`-Arabic→Argentina collision as
+deliberately-kept. No schema change. Twin selftests extended to 17 country assertions (mac twin verified
+locally against real sqlite, suite exit 0; the Windows CLI twin ran green in CI). **Win32 flagged in
+`Win32/BACKLOG.md`** (their Countries nav gains Xtream entries; alpha-3 alias table + ISO whitelist noted
+as opt-in follow-ups). Rides the next release.
+
+**Still on the Win32-gap backlog (not started):**
 **channel-logo thumbnails** in the grid (async fetch/disk-cache/draw — the one non-wiring item); the **appcast
 host move** off `raw.githubusercontent.com` (SUFeedURL + GitHub Pages, infra). Full prioritized shortlist +
 evidence: the gap-scan (22 items) — the P3/parked tail is now/next readout, EPG genre tags, locale schedule
