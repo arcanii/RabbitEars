@@ -27,7 +27,10 @@ set(APP_VERSION "0.2.11")
 # fixes) plus a dead-catalog-id prune (6 ids). 0.2.12 ships four Win32-gap parity features
 # (resume-last-channel, right-click video menu + fullscreen screen-saver suspend, Categories
 # include-filter, hide-unavailable-channels — PRs #36-#39, all on-device GUI-verified). (mac
-# history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8 → 0.2.9 → 0.2.10 → 0.2.11 → 0.2.12.)
+# history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8 → 0.2.9 → 0.2.10 → 0.2.11 → 0.2.12 → 0.2.13.)
+# 0.2.13 is a launch-hang hotfix: the Terms-of-Use gate now shows as a sheet on the (already
+# shown) window instead of a pre-window app-modal, so a Sparkle post-update relaunch can no
+# longer come up as a buried modal / beachball.
 if(APPLE)
-  set(APP_VERSION "0.2.12")
+  set(APP_VERSION "0.2.13")
 endif()
