@@ -9,6 +9,7 @@ using namespace rabbitears::i18n;  // StringId
 @implementation TermsDialog {
     NSWindow* _panel;
     NSString* _version;
+    __weak NSWindow* _parent;  // the window the sheet hangs from (endSheet target)
 }
 
 - (instancetype)initWithVersion:(NSString*)version {
@@ -16,15 +17,18 @@ using namespace rabbitears::i18n;  // StringId
     return self;
 }
 
-- (BOOL)runModal {
+- (void)beginSheetForWindow:(NSWindow*)parent completion:(void (^)(BOOL accepted))completion {
     [self build];
-    // The gate runs from applicationDidFinishLaunching, before -showWindow activates the
-    // app — so bring the app + panel frontmost, else on a non-Finder launch (login item,
-    // `open -a`) the modal can appear behind the previously-active app.
+    _parent = parent;
+    // Best-effort activation, but robustness comes from being a sheet on an ALREADY-VISIBLE
+    // window (it can't be buried on its own) — not from activation, which is unreliable on a
+    // Sparkle post-update relaunch.
     [NSApp activateIgnoringOtherApps:YES];
-    const NSModalResponse r = [NSApp runModalForWindow:_panel];
-    [_panel orderOut:nil];
-    return r == NSModalResponseOK;
+    __strong TermsDialog* keepAlive = self;  // the sheet is async — keep the button target
+    [parent beginSheet:_panel completionHandler:^(NSModalResponse r) {
+        (void)keepAlive;  // strong capture: the dialog outlives the caller's reference
+        if (completion) completion(r == NSModalResponseOK);
+    }];
 }
 
 - (void)build {
@@ -101,7 +105,7 @@ using namespace rabbitears::i18n;  // StringId
     [_panel center];
 }
 
-- (void)accept:(id)__unused sender  { [NSApp stopModalWithCode:NSModalResponseOK]; }
-- (void)decline:(id)__unused sender { [NSApp stopModalWithCode:NSModalResponseCancel]; }
+- (void)accept:(id)__unused sender  { [_parent endSheet:_panel returnCode:NSModalResponseOK]; }
+- (void)decline:(id)__unused sender { [_parent endSheet:_panel returnCode:NSModalResponseCancel]; }
 
 @end

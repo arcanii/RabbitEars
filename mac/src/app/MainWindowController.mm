@@ -137,6 +137,13 @@ static const int kPipMinH = 90;
 static const int kMaxSavedLayouts = 10;
 static const int kMaxPanes = 4;  // 2×2 is the largest grid
 
+@interface MainWindowController ()
+// Post-Terms-of-Use startup (playback attach, meter tap, stats timer, resume auto-play,
+// recording scheduler) — deferred until the window is shown and the ToU sheet (if any) is
+// accepted, so none of it runs behind a hidden gate on a non-activating launch.
+- (void)finishStartup;
+@end
+
 @implementation MainWindowController {
     NSWindow*      _window;
     NSSearchField* _search;
@@ -161,6 +168,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
     BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     BOOL           _hideDead;    // Settings ⚙ ▸ Channels ▸ Hide unavailable channels ("hide_dead")
+    BOOL           _startupFinished;  // YES once -finishStartup ran (ToU accepted); gates the menu until then
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     IOPMAssertionID _keepDisplayAwake;  // display-sleep/screen-saver assertion held while fullscreen or video-only
     // Recording scheduler (Phase 5/6): a DEDICATED headless recorder drives scheduled + rule
@@ -288,28 +296,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
 
-    // Terms-of-Use gate (peer of the Win32 gate): the user must accept before the app is
-    // usable, and must RE-ACCEPT on every version change (fresh install OR update).
-    // `tos_accepted` stores the full version it was last accepted for, so any bump
-    // re-prompts; every other launch is silent. Runs before the window is shown; declining
-    // quits the app.
-    if (_db) {
-        const std::wstring tosVer = RE_VERSION_FULL_W;
-        const auto accepted = _db->getSetting(L"tos_accepted");
-        if (!accepted || *accepted != tosVer) {
-            TermsDialog* terms = [[TermsDialog alloc] initWithVersion:ns(RE_VERSION_W)];
-            const BOOL ok = [terms runModal];
-            [terms release];  // MRC: balance the alloc (runModal has returned)
-            if (!ok) {
-                diag::info(L"Terms declined — exiting");
-                [NSApp terminate:nil];
-                return;
-            }
-            _db->setSetting(L"tos_accepted", tosVer);
-            diag::info(L"Terms accepted for " + tosVer);
-        }
-    }
-
+    // The Terms-of-Use gate used to run here (blocking, before the window was built). It now
+    // runs at the END of -showWindow, as a SHEET on the shown window — see below.
     [self loadMeterConfig];  // per-kind enable/style/colours from settings
 
     // ---- top bar (one row): [+ Add Playlist] [⚙] … [search] [filter] [Stop]
@@ -494,6 +482,41 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _gridWidth = 380;
     [self layoutSplitPanes:split];  // fill now — no blank strip before the first resize
     [self applyVideoPaneLayout];    // position pane 0 to fill (owns pane frames now)
+    // The window + all its chrome are built — SHOW IT before any launch-time modal, so the app
+    // always has a visible, front window. (A Sparkle post-update relaunch may not activate the
+    // app; the old app-modal Terms panel then came up buried with no main window, reading as a
+    // hang/beachball.)
+    [_window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+
+    // Terms-of-Use gate (peer of the Win32 gate): re-accept on every version change (fresh
+    // install OR update); `tos_accepted` stores the full version last accepted. Presented as a
+    // SHEET on the now-visible window (a sheet cannot be buried independently of its window).
+    // Declining quits; the "usage" side effects (playback, tap, scheduler) start only on Accept.
+    if (_db) {
+        const std::wstring tosVer = RE_VERSION_FULL_W;
+        const auto accepted = _db->getSetting(L"tos_accepted");
+        if (!accepted || *accepted != tosVer) {
+            TermsDialog* terms = [[TermsDialog alloc] initWithVersion:ns(RE_VERSION_W)];
+            MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle
+            [terms beginSheetForWindow:_window completion:^(BOOL ok) {
+                if (!ok) { diag::info(L"Terms declined — exiting"); [NSApp terminate:nil]; return; }
+                if (me->_db) me->_db->setSetting(L"tos_accepted", tosVer);
+                diag::info(L"Terms accepted for " + tosVer);
+                [me finishStartup];
+            }];
+            [terms release];  // MRC: the sheet + its completion block keep the dialog alive
+            return;           // -finishStartup runs from the completion handler after Accept
+        }
+    }
+    [self finishStartup];  // already accepted (or no DB) — start up immediately
+}
+
+// Post-Terms-of-Use startup: the "usage" side effects, split out of -showWindow so they run
+// only after the ToU sheet is accepted (or immediately when no gate is needed) — never behind
+// a hidden modal on a non-activating launch.
+- (void)finishStartup {
+    _startupFinished = YES;         // the app is now usable — re-enables the gated menu commands
     [self applyMeterConfig];        // configure + show the enabled meters (start the tap if Spectrum is on)
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
@@ -505,9 +528,6 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
     [self restoreLastPlaylist];
     [self startScheduler];  // begin the ~30s recording-scheduler tick
-
-    [_window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
 }
 
 // ---- multi-view pane accessors ----
@@ -571,6 +591,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (BOOL)channelListHidden { return _gridHidden; }
 - (BOOL)toolbarHidden { return _toolbarHidden; }
+- (BOOL)startupFinished { return _startupFinished; }
 
 - (void)toggleChannelList {
     _gridHidden = !_gridHidden;

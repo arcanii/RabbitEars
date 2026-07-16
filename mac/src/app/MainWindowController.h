@@ -26,6 +26,11 @@
 - (BOOL)toolbarHidden;
 - (BOOL)videoOnly;
 
+// YES once -showWindow has finished startup: the Terms-of-Use sheet (if shown) was accepted and
+// -finishStartup ran. AppDelegate's -validateMenuItem: disables app commands until then, so the
+// ToU sheet gates the WHOLE app — a sheet alone blocks only its own window, not the menu bar.
+- (BOOL)startupFinished;
+
 // Multi-view layout (View menu): Single / Split (2×2) / Picture-in-Picture. The getters
 // back the menu checkmarks.
 - (void)setViewSingle:(id)sender;

@@ -208,6 +208,14 @@ using namespace rabbitears::i18n;  // StringId
 
 // Reflect current state in the menu titles (Hide ⇄ Show).
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
+    // Terms-of-Use gate: until -showWindow finishes startup (the ToU sheet, if shown, was
+    // accepted), the app is not usable. A document-modal sheet blocks only its own window, not
+    // the menu bar — so disable every command routed through here while startup is pending, to
+    // match the old app-modal gate. The About box (informational) stays available; Quit routes
+    // to NSApp (not here), so it remains available too.
+    if (_mainController && ![_mainController startupFinished]
+        && item.action != @selector(showAboutPanel:))
+        return NO;
     if (item.action == @selector(toggleChannelList:))
         item.title = Tr(_mainController.channelListHidden ? StringId::MenuShowChannelList : StringId::MenuHideChannelList);
     else if (item.action == @selector(toggleToolbar:))
