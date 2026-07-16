@@ -188,6 +188,41 @@ std::wstring countryFromTvgId(const std::wstring& tvgId) {
     return std::wstring{lower(a), lower(b)};
 }
 
+// FALLBACK country derivation for Xtream-style playlists, whose channels typically carry an
+// opaque/empty tvg-id but prefix the country onto the group-title: "US| NEWS", "US - NEWS",
+// "[UK] SPORTS", "|FR| CINEMA", "es:CINE". Accepted shape: optional leading decoration
+// (spaces / '|' / '[' / '('), exactly TWO ASCII letters, optional spaces, then an EXPLICIT
+// delimiter ('|' '-' ':' ']' ')'). A bare space is deliberately NOT a delimiter — "IT MOVIES"
+// is a genre, not Italy, and "TV SHOWS" is not Tuvalu. A short deny-list drops the ubiquitous
+// non-country tech prefixes that would otherwise pollute the country list: HD (not ISO),
+// SD (Sudan, but virtually always "standard definition" here), TV (Tuvalu, but virtually
+// always "television"), EN (a language tag, not ISO 3166), XX (adult marker, not assigned).
+// Lowercased 2-letter code, or "" when the title doesn't open with a recognisable prefix.
+std::wstring countryFromGroupTitle(const std::wstring& group) {
+    auto isAlpha = [](wchar_t c) { return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'); };
+    auto lower = [](wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c; };
+    size_t i = 0;
+    while (i < group.size() && group[i] == L' ') ++i;
+    if (i < group.size() && (group[i] == L'|' || group[i] == L'[' || group[i] == L'(')) ++i;
+    while (i < group.size() && group[i] == L' ') ++i;
+    if (i + 2 > group.size() || !isAlpha(group[i]) || !isAlpha(group[i + 1])) return L"";
+    const std::wstring cc{lower(group[i]), lower(group[i + 1])};
+    i += 2;
+    while (i < group.size() && group[i] == L' ') ++i;
+    if (i >= group.size()) return L"";  // just a 2-letter group name — no delimiter, no claim
+    const wchar_t d = group[i];
+    if (d != L'|' && d != L'-' && d != L':' && d != L']' && d != L')') return L"";
+    if (cc == L"hd" || cc == L"sd" || cc == L"tv" || cc == L"en" || cc == L"xx") return L"";
+    return cc;
+}
+
+// The country a channel belongs to: the tvg-id suffix is authoritative (machine-authored);
+// the group-title prefix is consulted only when the tvg-id yields nothing.
+std::wstring effectiveCountry(const std::wstring& tvgId, const std::wstring& group) {
+    std::wstring cc = countryFromTvgId(tvgId);
+    return cc.empty() ? countryFromGroupTitle(group) : cc;
+}
+
 }  // namespace
 
 Database::~Database() { close(); }
@@ -613,27 +648,36 @@ std::vector<std::wstring> Database::listGroups() {
 }
 
 std::vector<std::wstring> Database::listCountries() {
+    // Effective country per channel: the tvg-id suffix, else the Xtream-style group-title
+    // prefix (see effectiveCountry above) — so Xtream playlists, whose tvg-ids carry no
+    // ".<cc>", still populate the Countries filter.
     std::set<std::wstring> codes;  // sorted + distinct
-    Stmt q(db_, (std::string("SELECT tvg_id FROM channels WHERE tvg_id IS NOT NULL AND tvg_id<>'' AND ") +
-                 kEnabledOnly)
-                    .c_str());
+    Stmt q(db_, (std::string("SELECT tvg_id, group_title FROM channels WHERE ") + kEnabledOnly).c_str());
     if (!q) return {};
     while (q.step()) {
-        std::wstring cc = countryFromTvgId(q.textCol(0));
+        std::wstring cc = effectiveCountry(q.textCol(0), q.textCol(1));
         if (!cc.empty()) codes.insert(std::move(cc));
     }
     return std::vector<std::wstring>(codes.begin(), codes.end());
 }
 
 std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
-    // Match tvg-ids ending in ".<code>". LIKE is ASCII-case-insensitive, and the code
-    // is exactly two letters, so this mirrors countryFromTvgId's last-segment rule.
-    const std::wstring pattern = L"%." + code;
-    return runChannelQuery(db_,
-                           std::string("SELECT ") + kChannelCols +
-                               " FROM channels WHERE tvg_id LIKE ? AND " + kEnabledOnly +
-                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
-                           &pattern);
+    // Filter on the same effective country as listCountries (tvg-id suffix, else the
+    // group-title prefix), so the two stay in lockstep. The old SQL "tvg_id LIKE '%.<cc>'"
+    // could not see the group-title fallback; deriving in C++ keeps one rule for both. The
+    // scan is the same shape as allChannels() — fine at playlist scale.
+    std::wstring want;
+    want.reserve(code.size());
+    for (wchar_t c : code)
+        want.push_back((c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c);
+    std::vector<Channel> rows = runChannelQuery(
+        db_, std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + kEnabledOnly +
+                 " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
+    std::vector<Channel> out;
+    out.reserve(rows.size());
+    for (Channel& c : rows)
+        if (effectiveCountry(c.tvgId, c.groupTitle) == want) out.push_back(std::move(c));
+    return out;
 }
 
 void Database::setFavourite(long long channelId, bool favourite) {

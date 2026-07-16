@@ -863,6 +863,40 @@ int selftest() {
         expect(db.channelsByCountry(L"us").size() == 2, "channelsByCountry('us') -> 2 (CNN, Fox)");
         expect(db.channelsByCountry(L"uk").size() == 1, "channelsByCountry('uk') -> 1 (BBC)");
         expect(db.channelsByCountry(L"de").empty(), "channelsByCountry('de') -> 0");
+
+        // --- Xtream fallback: country from the group-title prefix when the tvg-id has none ---
+        const std::string xSample =
+            "#EXTM3U\n"
+            "#EXTINF:-1 group-title=\"US| NEWS\",XNews\nhttp://x/us1\n"
+            "#EXTINF:-1 group-title=\"US | ENTERTAINMENT\",XEnt\nhttp://x/us2\n"
+            "#EXTINF:-1 group-title=\"[UK] SPORTS\",XSport\nhttp://x/uk1\n"
+            "#EXTINF:-1 group-title=\"FR - CINEMA\",XCine\nhttp://x/fr1\n"
+            "#EXTINF:-1 group-title=\"es:CINE\",XEs\nhttp://x/es1\n"
+            "#EXTINF:-1 group-title=\"|IT| CALCIO\",XIt\nhttp://x/it1\n"
+            "#EXTINF:-1 group-title=\"HD| MOVIES\",XHd\nhttp://x/hd1\n"
+            "#EXTINF:-1 group-title=\"TV | SHOWS\",XTv\nhttp://x/tv1\n"
+            "#EXTINF:-1 group-title=\"4K| SPORT\",X4k\nhttp://x/4k1\n"
+            "#EXTINF:-1 group-title=\"USA| NEWS\",XUsa\nhttp://x/usa1\n"
+            "#EXTINF:-1 group-title=\"DOCUMENTARIES\",XDoc\nhttp://x/doc1\n"
+            "#EXTINF:-1 tvg-id=\"BBC.uk\" group-title=\"US| MIX\",XPrec\nhttp://x/prec1\n";
+        const long long pid3 = db.addPlaylist(L"Xtream", L"http://xt", true, 4000);
+        db.bulkInsertChannels(pid3, parseM3u(xSample).channels, 4000);
+        countries = db.listCountries();
+        expect(hasGroup(countries, L"fr") && hasGroup(countries, L"es") && hasGroup(countries, L"it"),
+               "listCountries derives fr/es/it from Xtream group-title prefixes");
+        expect(!hasGroup(countries, L"hd") && !hasGroup(countries, L"tv"),
+               "deny-listed tech prefixes (HD/TV) are not countries");
+        expect(!hasGroup(countries, L"do") && hasGroup(countries, L"us"),
+               "no delimiter -> no country (DOCUMENTARIES); us still present");
+        expect(db.channelsByCountry(L"us").size() == 4,
+               "channelsByCountry('us') -> CNN+Fox + 2 Xtream ('USA|' rejected; tvg-id wins over 'US| MIX')");
+        expect(db.channelsByCountry(L"uk").size() == 3,
+               "channelsByCountry('uk') -> BBC + [UK] SPORTS + BBC.uk-in-US-group (tvg-id authoritative)");
+        expect(db.channelsByCountry(L"fr").size() == 1 && db.channelsByCountry(L"es").size() == 1,
+               "group-title-only channels are filterable by country");
+        expect(db.channelsByCountry(L"US").size() == 4, "country query is case-insensitive");
+        db.deletePlaylist(pid3);  // restore the shared fixture state for the sections below
+        expect(db.channelsByCountry(L"fr").empty(), "Xtream playlist removed (cascade) -> fr gone");
     }
 
     out("\n== Dock layout ==\n");
