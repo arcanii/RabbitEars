@@ -151,9 +151,10 @@ locally against real sqlite, suite exit 0; the Windows CLI twin ran green in CI)
 `Win32/BACKLOG.md`** (their Countries nav gains Xtream entries; alpha-3 alias table + ISO whitelist noted
 as opt-in follow-ups). Rides the next release.
 
-**Still on the Win32-gap backlog (not started):**
-**channel-logo thumbnails** in the grid (async fetch/disk-cache/draw — the one non-wiring item); the **appcast
-host move** off `raw.githubusercontent.com` (SUFeedURL + GitHub Pages, infra). Full prioritized shortlist +
+**⏳ READY TO MERGE — [PR #42](https://github.com/arcanii/RabbitEars/pull/42) `mac-logo-thumbnails` (channel-logo thumbnails, mac-only, branch @ `35e5210`, NOT merged):** a logo column (`NSImageCell`) between `#` and `Channel`, fed by a new **`LogoLoader`** (ARC, app-lifetime) — main-thread `-imageForURL:` returns a cached thumbnail or nil + kicks off an async load (memory `NSCache` → disk cache `<dataDir>/logos` honouring `RABBITEARS_DATA_DIR`, storing the ~96px PNG THUMBNAIL → a streamed `NSURLSessionDataDelegate` download capped at 3 MB), then hops to main to coalesce a reload of the VISIBLE logo cells; keyed by URL (cell-reuse-safe). Logo-less / failed / cleartext-http (ATS-blocked) rows show a faint placeholder. `tvg-logo` was already parsed+stored → **mac-only, zero `common/`/`Win32/`**. Bomb-safe decode (ImageIO `CGImageSource` reads pixel dims from the header, rejects >2048px WITHOUT rasterizing, then downsamples). **Two review passes + on-device BOTH caught real issues:** on-device caught an MRC crash (`_logoPlaceholder` stored an autoreleased NSImage without `retain` → over-release → `objc_retain` EXC_BAD_ACCESS; fixed + the tint moved off the undeclared `-imageWithTintColor:` to a source-atop fill); the first find→verify workflow found 2 medium hardening findings (points-vs-pixels bomb bypass + unbounded chunked buffering → the streamed-cap + ImageIO rewrite); the focused re-review (`wve3zwr2h`) found 3 more (all LOW) — 2 fixed (`35e5210`: cache the thumbnail not the raw ≤3 MB source; decode/write OFF the serial delegate queue), the 2048px cap kept as intentional bomb-safety. **CI FULLY GREEN; on-device VERIFIED (5 https logos render as thumbnails, placeholders elsewhere, no crash, cache = PNG thumbnails; bomb rejection empirically proven). READY TO MERGE (`gh pr merge 42 --merge`), then cut v0.2.15-mac.** Follow-up flagged in the PR: the app has NO ATS exceptions, so cleartext-http logos (and http m3u/epg) don't load — a pre-existing app-wide policy, a separate decision.
+
+**Still on the Win32-gap backlog (not started):** the **appcast
+host move** off `raw.githubusercontent.com` (SUFeedURL + GitHub Pages, infra) — the LAST backlog item after logos. Full prioritized shortlist +
 evidence: the gap-scan (22 items) — the P3/parked tail is now/next readout, EPG genre tags, locale schedule
 dates, layout "reset to default", PiP always-on-top, in-app Licenses viewer, the 250 ms bg-pane audio bleed,
 3 MRC dialog leaks, meter fine-tuning, Intel-slice QA. Explicitly N/A to mac: transcoding + JSON profiles
@@ -540,136 +541,66 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions via cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.11; an if(APPLE) override = mac 0.2.10) — that file is the recurring cross-team merge conflict,
-keep both lines. mac is SHIPPED + auto-updating: v0.2.10-mac (build 269, universal, notarized,
-self-contained, LOCALIZED EN + 日本語 + 繁體中文/香港 with a LIVE language switch; Sparkle proven end-to-end). App min macOS 26 (Apple-Silicon-only). Build:
-scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only; the build-mac
-CMakeCache can hold a stale universal arch). Release: scripts/package-mac.sh + the mac-release-deployment
-memory (Dev ID 386M76FV3K, notary profile SQLTerminal-notarize, sign_update --account SQLTerminal;
-universal needs vlc-3.0.23-universal.dmg; ALWAYS xmllint appcast-mac.xml). GUI/audio can't be verified
-headlessly — real Mac testing required (computer-use MCP). mac .mm are MRC-style (app-lifetime leaks OK);
--fobjc-arc PER-FILE only (list in mac/CMakeLists.txt: MeterView/MetersDialog/SpectrumTap/PlaylistsDialog/
-TermsDialog/EpgGuideView/TvGuideWindowController/RecordingsWindowController) — MainWindowController.mm &
-VlcPlayerMac.mm are MRC. Run an adversarial ObjC++ review before merging (it has caught a real bug in
-EVERY native phase). Dev testing: launch with RABBITEARS_DATA_DIR=<scratch> for an isolated DB, serve a
-local m3u/XMLTV fixture over http://127.0.0.1 (ATS-exempt loopback).
+Windows 0.2.11; an if(APPLE) override = mac 0.2.14) — that file is the recurring cross-team merge conflict,
+keep both lines. mac is SHIPPED + auto-updating: v0.2.14-mac (build 311, universal, notarized; appcast @
+87a8a8e). App min macOS 26 (Apple-Silicon-only). Build: scripts/build-mac.sh --app
+-DCMAKE_OSX_ARCHITECTURES=arm64 (a stock VLC.app is arm64-only; the build-mac CMakeCache can hold a stale
+universal arch). Release: scripts/package-mac.sh + the mac-release-deployment memory (Dev ID 386M76FV3K,
+notary profile SQLTerminal-notarize, sign_update --account SQLTerminal [keychain prompt]; universal needs
+vlc-3.0.23-universal.dmg — check /tmp/claude-501/*/scratchpad for a cached one; ALWAYS xmllint
+appcast-mac.xml; verify any schema migration on the SHIPPED artifact, not just a dev build). GUI/audio can't
+be verified headlessly — real Mac testing (computer-use MCP); the INSTALLED /Applications app shares the
+bundle id with a dev build (dual-instance composite trap -> clicks unsafe) so QUIT it + run the dev build as
+the SOLE instance against an isolated RABBITEARS_DATA_DIR DB (serve a 127.0.0.1 m3u/XMLTV fixture — loopback
+is ATS-exempt; https logo/stream URLs work, cleartext-http does NOT — no ATS exceptions). mac .mm are
+MRC-style (app-lifetime leaks OK); -fobjc-arc PER-FILE only (list in mac/CMakeLists.txt) —
+MainWindowController.mm & VlcPlayerMac.mm & AppDelegate.mm are MRC (watch the recurring MRC trap: an
+autoreleased object stored into an ivar without retain -> over-release crash; caught 3x now incl. the logo
+placeholder). ALWAYS run an adversarial ObjC++ review (a find->verify Workflow: memory/threading/logic
+lenses) before merging a native change AND on-device-verify — together they've caught a real bug in EVERY
+phase. i18n: edit common/i18n/*.json + run tools/i18n/gen_i18n.py (never hand-edit Strings.cpp); mac Tr/TrF
+in mac/src/app/Tr.h.
 
-STATE: v0.2.10-mac SHIPPED 2026-07-14 (build 269, universal, notarized; appcast @ 0e961bd; PR #33 merged by the
-user) = LIVE LANGUAGE SWITCH (mac peer of Windows 0.2.11): Settings ▸ Language (App-menu submenu OR gear ▸ 言語)
-applies LIVE, no restart. AppDelegate -selectLanguage: → setLanguagePref → setActiveLang(macResolveLang(code)) →
-[self buildMenu] → [_mainController applyLanguageLive]. -applyLanguageLive relabels every built-once surface IN
-PLACE (window title, top-bar buttons via 3 new UNRETAINED ivars _addBtn/_setBtn/_stopBtn since they were
-setup-locals, search placeholder, grid headers, row menu rebuilt wholesale, empty hint, filter popup w/ selection
-preserved, status re-derived) + fans out to the 4 MeterView + the two reused modeless windows via a new
--relabelForLanguageChange on each (RELABEL-IN-PLACE — nil-and-rebuild would dangle their self-referencing
-dataSource/delegate/target back-refs). Gear pull-down + NSAlerts built on-open → auto-localize; no font work (mac
-system font cascades to CJK); removed the restart TaskDialog + -relaunch. ZERO common/Win32 changes. Version mac
-0.2.9 → 0.2.10 (Windows stays 0.2.11; its 0.2.11 "single-source version" refactor added common/version.h.in,
-verified mac-safe). METHOD = inventory workflow (map every relabel surface) + adversarial review workflow
-(MRC-memory/completeness/behavior lenses, each finding independently verified) → CAUGHT a real MRC USE-AFTER-FREE:
-the filter-selection preserve read a BARE pointer to a menu item's representedObject, freed by removeAllItems
-before the isEqualToString: compare (reproduced via NSZombie), fixed with [[rep retain] autorelease] in
-applyLanguageLive AND the identical PRE-EXISTING shipped bug in reloadAfterPlaylistChange (same
-bare-pointer-into-freed-collection class as the 0.2.9 recordingPathFor crash — a recurring MRC trap); also fixed a
-now-recurring buildMenu leak + a TvGuide "(no title)" staleness. On-device VERIFIED: en→日本語→繁體中文 live via BOTH
-entry points, every surface re-renders, the active group filter preserved across switches, no restart, no crash.
-RELEASE: same recipe as 0.2.9; git push HUNG for the appcast this time → landed via gh api PUT contents;
-sign_update + generate_keys both prompt keychain (skip the generate_keys re-check — key stable since 0.2.9).
-BEFORE it — v0.2.9-mac SHIPPED 2026-07-13 (build 261, universal, notarized; appcast @ cb14d56; PRs #31 code + #32 the
-i18n fix, both merged by the user) = WINDOWS-0.2.9 PARITY: a recording-rule editor (New…/Edit… + double-click in
-the Recordings window's Series Rules tab — channel/(any channel), title, Exact/Contains, lead/trail min; OK gated
-on a non-empty title; New→addRule, Edit→updateRule+clearPendingForRule+re-expand; in RecordingsWindowController;
-ZERO new catalog strings — reuses the shared Win32 rule ids); series-rule EPISODE DEDUP (shared schema-v6
-episode_key + episodeKey/expandRules were already compiled in; the mac 0.2.9 change is the PRE-FILTER — restrict
-the channel-blind expander to RECORDABLE programmes BEFORE dedup, normalised @feed-safe, in expandRecordingRules:);
-TRADITIONAL CHINESE zh-Hant+zh-HK in the selector + Tr.h routing (Simplified/bare-zh → English); GPL-3.0 notices
-(LICENSE+THIRD-PARTY-NOTICES.txt+licenses/) bundled into Contents/Resources + About-box NSHumanReadableCopyright.
-ZERO common/Win32 SOURCE changes (PR #31). TWO fixes rode along: (1) a SHIPPED-SINCE-0.2.7 CRASH — recordingPathFor:
-cached its filename-scrub NSCharacterSet in a `static` from the AUTORELEASED characterSetWithCharactersInString:
-without retain (MRC file) → the 2nd recording of a session (2nd manual record OR the scheduler tick) messaged a
-freed object → EXC_BAD_ACCESS; fixed with a retain (474004d); (2) a SHARED-CATALOG \r\n bug (PR #32, common/i18n) —
-27 strings were double-escaped (\\r\\n) so BOTH platforms rendered a literal \r\n; collapsed to real newlines +
-regenerated Strings.cpp. ON-DEVICE VERIFIED (isolated RABBITEARS_DATA_DIR + a 127.0.0.1 m3u/XMLTV fixture of PUBLIC
-HLS streams — mux.dev x36xhzz + Apple bipbop): playback, manual recording→valid h264+aac .ts (ffprobe), rule editor
-CRUD+validation+round-trip, episode dedup (3 airings→2 schedules), the scheduler (tick→Recording→auto-Done, playable
-.ts, NO crash), and 繁體中文 rendering + selector (系統預設/English/日本語/✓繁體中文/繁體中文（香港）). Adversarial ObjC++/ARC +
-logic reviews: 0 code defects (1 low zh-Hans-region routing edge fixed). RELEASE: universal VLC (vlc-3.0.23-universal.dmg)
-→ package-mac.sh --sign → hdiutil+ditto dmg → sign dmg → notarytool --keychain-profile SQLTerminal-notarize --wait
-(Accepted) → stapler staple → sign_update --account SQLTerminal (PROMPTS keychain — click Allow; the first run
-blocks/times-out) → gh release create v0.2.9-mac --target main --latest=false → appcast via git push (WORKED this
-session). GOTCHA: a STALE build-mac-universal/ from a prior release held a signed .app whose sealed Info.plist EPERM'd
-the cmake regen ("Operation not permitted", NOT TCC) → rm -rf build-mac-universal before the universal configure.
-GOTCHA: the installed app + a dev build SHARE the bundle id → a dual-instance screen composites both windows, clicks
-unsafe for real data → verify the running PID's DB via lsof/ps eww + prefer a HEADLESS scheduler re-test.
-BEFORE it — v0.2.8-mac SHIPPED 2026-07-12 (build 248, universal, notarized; appcast @ 03048ec, PR #30) = LOCALIZATION
-(English + 日本語 over the shared common/i18n catalog; a Tr/TrF AppKit layer = peer of Win32/ui/Tr.h; Language
-selector System/English/日本語 + restart-to-apply, pref in NSUserDefaults read BEFORE buildMenu; ~290 UI strings
-wrapped across all 10 mac .mm; +145 mac-only ids Mac*-prefixed with machine-draft JA + zh-Hant) + the GEAR MENU
-regrouped to match Win32 (Channels/Recording/View/Layout/Language submenus; dropped Theme + wake, N/A on mac).
-FIRST mac change to touch common/ since 0.2.0 — mac now MERGES the shared catalog to main. main advanced hard
-mid-work (Windows added zh-Hant/zh-HK + went 0.2.9); merged cleanly to 531 ids × 4 langs (zh-HK inherits zh-Hant
-via "base"; the mac-only Chinese is NEVER displayed — the mac selector offers only System/English/日本語 — it
-exists only for catalog completeness so the Windows core-selftest CI passes). On-device VERIFIED (switch→restart→
-JA across menus/dialogs/About/Terms; one meter-label overflow found+fixed). Adversarial review: 292 wrap sites,
-0 findings. The i18n bulk ran via workflows (per-file wrap+review agents); the first heavy-schema INVENTORY
-workflow STALLED on giant structured output — fixed by edit-in-place agents returning only new-ids. PR #30
-needed the USER to merge (auto-mode BLOCKS self-merging an agent-authored PR); branch pushed via the git-data
-REST API (git push hangs); the shared-catalog PR CI runs on the head+base MERGE, which is what caught the
-missing zh-Hant. i18n = mac/src/app/Tr.h (Tr/TrF) + common/i18n/*.json + common/core/Strings.{h,cpp} (GENERATED
-by tools/i18n/gen_i18n.py — edit the JSON, never the .cpp; run gen_i18n.py + it validates completeness/parity).
-BEFORE it — v0.2.7-mac SHIPPED 2026-07-11 (build 234, universal, notarized; appcast @ 3c832cf). The
-0.2.6/0.2.7 PARITY STACK MERGED to main in order #25->#29 (merge commits f387ad0->de240fd), the mac version
-bumped to 0.2.7 (f9f7404), and the PiP-switch freeze fix (0ab8618) rode in too. ZERO common/Win32 edits — every
-core was already compiled into the mac binary (wiring, not porting). What shipped:
- #25 favourites import/export (M3uWriter) + Show in TV Guide
- #26 PiP inset resize (top-left grip, pin bottom-right) + persist size/pos
- #27 named saved multi-view layouts (settings K/V, mac-local serialization)
- #28 per-pane recording (2nd headless libVLC player, :sout=#std, ts/mp4; NO mkv — bundled VLC has no mkv muxer)
- #29 dedicated headless recorder + ~30s NSTimer tick over planScheduler(); schedule-from-guide; EPG series
-     rules (expandRules); Recordings window; honest wake messaging
- +   PiP-switch fix: libvlc_media_player_stop() before set_media in VlcPlayerMac::play()
-CAUTION: #28 recording + #29 scheduler shipped WITHOUT on-device verification (owner chose "ship it") — the
-file-muxing paths never ran on real hardware; the PiP-switch fix is likewise unconfirmed on the affected IPTV
-channels. P1-3 WERE device-verified. A recording/scheduler/PiP bug in the wild → a 0.2.8-mac patch, not a
-blocked merge. git push STILL HANGS this session — the 5 PRs were merged with gh pr merge --merge, and the
-version bump + appcast landed via gh api PUT contents (git REST works; push does not). Release recipe +
-gotchas: the mac-release-deployment memory.
+STATE: v0.2.14-mac SHIPPED 2026-07-16 (build 311; PRs #40 + #41) = the two shared-core common/ P2 fixes, both
+Windows-affecting -> flagged in Win32/BACKLOG.md. PR #40 series-rule phantom-Missed after a lead-time edit ->
+SCHEMA v7 (scheduled_recordings.prog_start_utc = the padding-proof airing identity; dedup rule rows on
+(channel, progStartUtc); pre-v7 rows fall back to title-scoped containment). PR #41 Xtream group-title->country
+fallback (registered SQLite scalar effective_country(tvg_id,group_title); 2 ASCII letters + an EXPLICIT
+delimiter — a bare space never counts; deny HD SD TV EN XX EX ON; AR|-Arabic->Argentina = documented
+known-wrong). Prior: v0.2.13 ToU-SHEET launch-hang hotfix (show the window BEFORE the Terms — now a document
+SHEET — + an AppDelegate validateMenuItem gate; the old pre-window app-modal came up BURIED on a Sparkle
+relaunch = beachball); v0.2.12 = the four Win32-gap parity features #36-#39 (resume-last-channel, right-click
+video menu + fullscreen screensaver-suspend, Categories filter, hide-unavailable). Windows is still 0.2.11
+(no new upstream features to chase).
 
-DO NOT REGRESS (multi-view): the pane's NSView must be RETAINED across the async player stop (libVLC's vout
-renders into it via set_nsobject); applyViewMode re-points the _player/_videoView aliases at a SURVIVING pane
-BEFORE any teardown; Stop clears the pane's channelId or a later collapse resurrects the stream. DB is
-MAIN-THREAD ONLY. Recording: destroy players (incl. recorders) before the engine; the borrowed libVLC
-instance + the engine LEAK on quit (so a detached async stop is safe past termination, but an open recording
-must be finalized in -finalizeRecordingsForQuit).
+⏳ OPEN AT HANDOFF, READY TO MERGE: PR #42 mac-logo-thumbnails (channel-logo thumbnails, mac-only, zero
+common/Win32; branch @ 35e5210) — a logo NSImageCell column between # and Channel, fed by a new ARC
+LogoLoader: main-thread -imageForURL: -> memory NSCache -> disk cache <dataDir>/logos (stores the ~96px PNG
+thumbnail) -> streamed NSURLSessionDataDelegate download with a 3MB cap -> bomb-safe ImageIO decode (pixel
+dims from the header, reject >2048px, downsample); keyed by URL (cell-reuse-safe); faint placeholder for
+logo-less/http-ATS/404 rows. CI FULLY GREEN; on-device VERIFIED (logos render as thumbnails, placeholders
+elsewhere, no crash, cache = PNG thumbnails; bomb rejection empirically proven). TWO review passes + on-device
+caught: an MRC autoreleased-placeholder over-release CRASH (fixed), 2 medium hardening findings (fixed by the
+streamed-cap + ImageIO rewrite), and 3 low re-review findings (2 fixed in 35e5210: cache thumbnail not raw
+source, decode off the serial delegate queue; the 2048px cap kept intentional). => merge (gh pr merge 42
+--merge), then cut v0.2.15-mac. NOTE: cleartext-http logos (and http m3u/epg) don't load — the app has NO ATS
+exceptions (pre-existing app-wide policy; enabling arbitrary loads is a separate decision, flagged in the PR).
 
-ON-DEVICE TRAPS (each cost hours): `open` can launch a DIFFERENT RabbitEars.app (several share the bundle id
-— /Applications, build-mac/, build-mac-universal/) — ALWAYS confirm the banner "==== RabbitEars (macOS)
-X.Y.Z (build) ====" in rabbitears.log. Codesign a dev build (Dev ID + --options runtime + the entitlements
-file with com.apple.security.device.audio-input) to test Spectrum. The repo is under ~/Desktop which macOS
-TCC protects — access can be revoked MID-SESSION (every read incl. git EPERMs); fix:
-`tccutil reset SystemPolicyDesktopFolder com.anthropic.claude-code` (no relaunch). Closing the main window
-QUITS the app. The BUILD_NUMBER only refreshes on cmake RECONFIGURE, not per-build. The dev build SHARES the
-app's NSUserDefaults domain (com.rabbitears.RabbitEars) with any installed RabbitEars — RABBITEARS_DATA_DIR
-isolates the DB but NOT the defaults (ui_language, window frames), so switching language while testing writes
-the USER's real defaults. Bumping the version re-triggers the ToU gate (keyed on full version incl. build).
+NEXT after logos: the LAST Win32-gap backlog item = the appcast host move off raw.githubusercontent.com
+(SUFeedURL in Info.plist.in -> GitHub Pages; 301 the raw URL for shipped clients; cuts the ~5min feed-cache
+lag). Then the P3/parked tail (now/next readout, EPG genre tags, locale schedule dates, layout reset, PiP
+always-on-top, in-app Licenses viewer, 250ms bg-audio bleed, 3 MRC dialog leaks, meter fine-tuning, Intel
+QA). N/A to mac: theme engine, wake-to-record, transcoding, JSON profiles, E3 MeterModel (Win32-owned). Or
+re-run the gap-scan Workflow vs the current Win32/HANDOVER.md.
 
-NEXT: mac is at 0.2.10 (live language switch, parity with Windows 0.2.11); Windows is at 0.2.11. The 0.2.7
-recording/scheduler is ON-DEVICE VERIFIED (+ its 2nd-recording crash fixed in 0.2.9), that long-open item is
-CLOSED. Candidate targets: (a) **NATIVE TRANSLATION REVIEW — IN PROGRESS:** testers are doing the human native
-sign-off; alongside it an AI-assisted, adversarially-verified QA pass (branch `i18n-cjk-quality-fixes`,
-2026-07-15) landed **36 verified consistency fixes** to the JA/zh-Hant/zh-HK catalog — NO mistranslations or
-placeholder breaks found (all terminology / native-punctuation / regional-word-choice polish; e.g. JA 復帰→
-スリープ解除 for "wake", zh-Hant 儀表→量表 + 信號→訊號/幀→影格 TW forms, zh-HK 影集→劇集 overrides). 38-agent fan-out
-+ skeptic verify (rejected 4 over-eager changes; **caught a truncation bug** where a reviewer abbreviated the
-long TermsBodyText to one clause — applied as a minimal substring edit instead). 14 changed ids are
-Windows-facing → flagged to the Win32 team in `Win32/BACKLOG.md`. The **human native review remains the gate**
-before truly advertising CJK; (b) the `MenuVideoOnly` `\t` follow-up — same double-escape root cause as PR #32 but a Win32 menu accelerator
-(a literal `\t` on the Windows menu), left for a Windows-side check; (c) whatever the Windows team ships next past
-0.2.11 (read Win32/HANDOVER.md; skip the theme engine + wake, N/A on mac). Backlog: promote MeterModel to
-common/ui (E3, Win32-team owned); on-device meter fine-tuning (fillCell/strokeScope). DONE (dead-catalog-id
-prune): the 6 dead ids — LangRestartInstruction/Body/Now/Later (both platforms live-switch now, no restart
-dialog) + MacMainWindowLayoutsMenu + MacMainWindowFormatHeader — were removed from common/i18n/*.json and
-Strings.{h,cpp} regenerated (531→525 keys × 4 langs; gen_i18n --check green, mac core+selftest green, ZERO
-Win32/mac source refs, and a whole-repo sweep confirmed NO other orphaned ids remain).
-```
+WORKFLOW GOTCHAS: git push HANGS intermittently AND GitHub itself throws intermittent 5xx/HTML on gh api
+(commits/main + releases/latest + release-view + git/refs), esp. right after a release create — BOTH can be
+down at once. Land on main via gh api PUT contents (blob sha ?ref=main, PUT base64+sha+branch=main); push a
+feature branch via plain git push (retry — it recovers) OR the Git Data API (blobs->tree->commit->ref, VERIFY
+the returned tree sha == git rev-parse HEAD^{tree}). ⚠ NEVER `git reset --hard origin/<branch>` while a push
+is failing — origin is STALE and it DISCARDS your local commit + uncommitted doc edits (happened 2x this
+session; recover via git reflog). COMMIT doc edits before any git reset. If gh release endpoints flake, use
+the releases-LIST endpoint + curl the browser_download_url. ALWAYS git checkout -b <branch> main PER PR.
+Passing args to the Workflow tool arrives undefined — hardcode small manifests in the script. Release recipe +
+all gotchas: the mac-release-deployment memory.
 ```
