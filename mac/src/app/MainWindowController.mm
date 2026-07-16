@@ -48,6 +48,7 @@
 #import "MetersDialog.h"
 #import "PlaylistsDialog.h"
 #import "CategoriesDialog.h"
+#import "LogoLoader.h"
 #import "RecordingsWindowController.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
@@ -150,6 +151,9 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSPopUpButton* _filter;
     std::set<std::wstring> _categoryFilter;  // include-set of group-titles ("category_filter"); empty = show all
     RETableView*   _table;
+    LogoLoader*    _logoLoader;         // async channel-logo image cache (app-lifetime)
+    NSImage*       _logoPlaceholder;    // shown while a logo loads / for logo-less channels
+    BOOL           _logoReloadScheduled;  // coalesces logo-load reloads to one per runloop turn
     NSView*        _videoView;
     NSMenu*        _videoMenu;    // right-click context menu on any pane's video (Win32-parity view menu)
     MeterView*     _meters[4];   // Spectrum / Signal / Bitrate / Frames (index = (int)MeterKind)
@@ -409,8 +413,20 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _table.doubleAction = @selector(playSelectedRow:);  // double-click / Return plays
     [self addColumn:@"fav" title:@"★" width:26];
     [self addColumn:@"num" title:@"#" width:46];
-    [self addColumn:@"name" title:Tr(StringId::LabelChannel) width:200];
+    // Channel-logo thumbnail column: an image cell fed an NSImage by -objectValueForTableColumn.
+    NSTableColumn* logoCol = [[NSTableColumn alloc] initWithIdentifier:@"logo"];
+    logoCol.title = @"";
+    logoCol.width = 28;
+    logoCol.minWidth = 20;
+    logoCol.maxWidth = 40;
+    NSImageCell* logoCell = [[NSImageCell alloc] init];
+    logoCell.imageScaling = NSImageScaleProportionallyUpOrDown;
+    logoCell.imageAlignment = NSImageAlignCenter;
+    logoCol.dataCell = logoCell;
+    [_table addTableColumn:logoCol];
+    [self addColumn:@"name" title:Tr(StringId::LabelChannel) width:172];
     [self addColumn:@"group" title:Tr(StringId::GridHeaderGroup) width:120];
+    _table.rowHeight = 24;  // taller rows so the logo thumbnails are legible
     _table.headerView = [[NSTableHeaderView alloc] init];
     _table.dataSource = self;
     _table.delegate = self;
@@ -419,6 +435,26 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _table.menu = [self makeRowMenu];  // right-click: Play / Toggle Favourite
     scroll.documentView = _table;
     [split addSubview:scroll];
+
+    // Channel-logo cache. The disk cache lives beside the DB (honouring RABBITEARS_DATA_DIR),
+    // under .../RabbitEars/logos. onReady fires on the main thread as images arrive -> a
+    // coalesced reload of the visible logo cells (see -logosDidLoad).
+    // A faint generic glyph shown while a logo loads and for logo-less channels (an image cell
+    // does not auto-tint a template image, so bake the tint in via a source-atop fill — all
+    // fully-declared AppKit APIs; NSImage has no -imageWithTintColor:). MRC: the returned image is
+    // autoreleased, so RETAIN it into the app-lifetime ivar (else it dangles after this pool drains
+    // and the first table draw over-releases it).
+    NSImage* tv = [NSImage imageWithSystemSymbolName:@"tv" accessibilityDescription:nil];
+    _logoPlaceholder = [[NSImage imageWithSize:tv.size flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        [tv drawInRect:rect];
+        [NSColor.tertiaryLabelColor set];
+        NSRectFillUsingOperation(rect, NSCompositingOperationSourceAtop);  // tint the glyph
+        return YES;
+    }] retain];
+    NSString* dbPath = ns(Database::defaultDbPath());
+    NSString* logosDir = [dbPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"logos"];
+    MainWindowController* __unsafe_unretained meLogos = self;  // app-lifetime; no retain cycle
+    _logoLoader = [[LogoLoader alloc] initWithCacheDir:logosDir onReady:^{ [meLogos logosDidLoad]; }];
 
     // Right split pane: the video, with both meters on ONE fixed-width line pinned to
     // the bottom-left (siblings, not overlaid — no z-order fight with libVLC's surface).
@@ -2708,8 +2744,32 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     NSString* id_ = col.identifier;
     if ([id_ isEqualToString:@"fav"])   return c.favourite ? @"★" : @"☆";  // both clickable to toggle
     if ([id_ isEqualToString:@"num"])   return c.lcn ? [NSString stringWithFormat:@"%d", *c.lcn] : @"";
+    if ([id_ isEqualToString:@"logo"]) {
+        // Kicks off an async load on a cache miss; the placeholder holds the cell meanwhile.
+        NSImage* img = c.logoUrl.empty() ? nil : [_logoLoader imageForURL:ns(c.logoUrl)];
+        return img ?: _logoPlaceholder;
+    }
     if ([id_ isEqualToString:@"group"]) return ns(c.groupTitle);
     return ns(c.name);  // "name"
+}
+
+// A logo finished loading — reload just the VISIBLE logo cells so the new image appears.
+// Coalesced to one reload per runloop turn (many logos can arrive in a burst), and confined to
+// the visible rows (loads are only ever kicked off for visible cells, and the loader is keyed
+// by URL so a row that scrolled away is harmless). Main thread (LogoLoader hops here).
+- (void)logosDidLoad {
+    if (_logoReloadScheduled) return;
+    _logoReloadScheduled = YES;
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime
+    dispatch_async(dispatch_get_main_queue(), ^{
+        me->_logoReloadScheduled = NO;
+        const NSInteger col = [me->_table columnWithIdentifier:@"logo"];
+        if (col < 0) return;
+        const NSRange vis = [me->_table rowsInRect:me->_table.visibleRect];
+        if (vis.length == 0) return;
+        [me->_table reloadDataForRowIndexes:[NSIndexSet indexSetWithIndexesInRange:vis]
+                              columnIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)col]];
+    });
 }
 
 // Grey out unavailable (Dead) rows so they read as inactive even when not hidden. Cells are reused,
