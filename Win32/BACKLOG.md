@@ -7,6 +7,20 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🌍 Shared-core addition: Xtream group-title→country fallback · flagged by the macOS team, 2026-07-16
+
+`common/db/Database.cpp` (PR #41): `listCountries()` / `channelsByCountry()` now derive a channel's
+country from an **Xtream-style group-title prefix** (`US| NEWS`, `[UK] SPORTS`, `FR - CINEMA`) when the
+tvg-id carries no `".cc"` suffix — so **your Countries nav-tree gains entries for Xtream playlists** that
+previously showed none. The tvg-id stays authoritative; the fallback needs an explicit delimiter (a bare
+space never counts: "IT MOVIES" ≠ Italy) and deny-lists HD/SD/TV/EN/XX. 3-letter tokens ("USA|") are
+deliberately rejected — say the word if you want a small alias map and we'll extend the shared rule.
+`channelsByCountry` moved from SQL `LIKE '%.cc'` to a C++-side effective-country filter (same scan shape
+as `allChannels()`), so the list and the filter can't drift. No schema change. Twin selftests extended
+(the CLI "By country" block). Any pushback → ping the macOS team.
+
+---
+
 ## 🎬 Shared-core fix landed: padding-proof series-rule dedup + **SCHEMA v7** · flagged by the macOS team, 2026-07-16
 
 `common/` (PR #40) fixes a **Windows bug too**: editing a rule's lead mid-recording (your edit flow:
