@@ -119,9 +119,22 @@ follow-up; the batch is now GUI-verified and ready to ride the next release.**
 | [#38](https://github.com/arcanii/RabbitEars/pull/38) `mac-categories-filter` | **Categories** multi-select include filter (new `CategoriesDialog` ARC sheet; `category_filter` key) | a stale-category ghost could silently discard a real filter → intersect the saved set with live groups in `init` |
 | [#39](https://github.com/arcanii/RabbitEars/pull/39) `mac-hide-unavailable` | **Hide unavailable channels** (dead-status): `VlcPlayerMac::playState()` polled in `tickStats`, grey/hide dead rows, `hide_dead` toggle | a healthy stream hitting terminal `libvlc_Error` mid-playback could latch Dead+hidden → demote to Dead ONLY on a true OPEN failure (per-pane `everPlayed` gate) |
 
-**Still on the Win32-gap backlog (not started):** the two **shared-core `common/` P2 fixes** (series-rule
-phantom-`Missed` when a rule's lead time is edited mid-recording → fix in `common/core/RecordingRules`; the
-Xtream **group-title→country fallback** in `common/` — both Windows-affecting, so **flag the Win32 team**);
+**✅ DONE (2026-07-16, [PR #40](https://github.com/arcanii/RabbitEars/pull/40), merged @ `8e18aad`): the
+series-rule phantom-`Missed` shared-core fix — with a SCHEMA MIGRATION (v6→v7).** The slot key was the
+PADDED start, so editing a rule's lead mid-recording orphaned the existing row and re-created the airing
+(duplicate Pending → recorder busy → phantom Missed; also resurrected Cancelled tombstones and defeated the
+two-rules→one-recording collapse). Fix: persist the programme's UNPADDED start as
+`scheduled_recordings.prog_start_utc` (v7) and dedup rule rows on `(channel, progStartUtc)` — exact,
+padding-proof. The adversarial review REFUTED the first (heuristic window-containment) design with a decisive
+counterexample — a padded window also contains *adjacent* airings when trail ≥ the next airing's duration —
+and the empirical migration test caught the `migrate()` early-exit gate still at `v>=6` (the v7 step never
+ran on a real DB until bumped). Pre-v7 rows use a title-scoped containment fallback (age out in ≤14 days);
+manual rows unchanged; the mac rule editor now clamps lead/trail 0..240 min (Win32 `readMinutes` parity).
+Regression tests in `RabbitEarsCli --selftest` ("Padding-proof dedup (v7)"); core-selftest green on both
+platforms; **Win32 team flagged in `Win32/BACKLOG.md` (schema-v7 note)**. Rides the next release.
+
+**Still on the Win32-gap backlog (not started):** the second **shared-core `common/` P2 fix** — the
+Xtream **group-title→country fallback** in `common/` (Windows-affecting, **flag the Win32 team**);
 **channel-logo thumbnails** in the grid (async fetch/disk-cache/draw — the one non-wiring item); the **appcast
 host move** off `raw.githubusercontent.com` (SUFeedURL + GitHub Pages, infra). Full prioritized shortlist +
 evidence: the gap-scan (22 items) — the P3/parked tail is now/next readout, EPG genre tags, locale schedule
