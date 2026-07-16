@@ -7,6 +7,30 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🎬 Shared-core fix landed: padding-proof series-rule dedup + **SCHEMA v7** · flagged by the macOS team, 2026-07-16
+
+`common/` (PR #40) fixes a **Windows bug too**: editing a rule's lead mid-recording (your edit flow:
+`updateRule` + `clearPendingForRule` + re-expand, `MainWindowCommands.cpp:~1174`) used to spawn a
+duplicate Pending row for the in-progress airing — the slot key is the PADDED start, which the edit
+moved — that could never start (single recorder busy) and rotted into a **phantom Missed**; a
+**Cancelled** future airing's tombstone was resurrected by the same edit; and two rules with
+different padding defeated the "two rules → one recording" collapse.
+
+**⚠ This adds a schema migration — v6 → v7:** `scheduled_recordings.prog_start_utc` (the programme's
+UNPADDED start, set by `expandRules`; 0 for manual/pre-v7 rows). Rule rows now dedup on
+`(channel, prog_start_utc)` — exact and immune to padding edits. An adversarial review showed why a
+heuristic can't do it: a rule row's padded window also *contains* adjacent/nested airings whenever
+trail ≥ the next airing's duration, so window containment silently swallowed every second
+back-to-back bulletin. Pre-v7 rows fall back to title-scoped containment for the transition (they
+age out of the 14-day horizon); manual rows keep slot-only dedup, unchanged. The migrate() gate is
+bumped (`v>=7`), the v6→v7 path is empirically verified (hand-built v6 DB → open → v7, rows intact),
+and regression tests are in `RabbitEarsCli --selftest` (the "Padding-proof dedup (v7)" block). The
+mac rule editor now clamps lead/trail to 0..240 min matching your `readMinutes`. Windows needs no
+source change — `addSchedule`/`readSchedule` carry the column via the shared DAO. Any pushback →
+ping the macOS team.
+
+---
+
 ## 🌐 i18n — native CJK translation review (shared `common/i18n`) · flagged by the macOS team, 2026-07-15
 
 The macOS team ran an AI-assisted, adversarially-verified quality pass over the machine-draft

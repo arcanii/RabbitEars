@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -63,6 +64,38 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
     for (const ScheduledRecording& s : existing)
         taken.emplace(normaliseTvgId(s.channelId), s.startUtc);
 
+    // Padding-independent airing identity. The slot key above uses the PADDED start, which is
+    // a poor identity for the airing: editing a rule's leadSec changes it, so an existing row
+    // created under the old padding no longer matched and the airing was re-created — a
+    // mid-recording lead edit spawned a duplicate Pending row that could never start (the
+    // recorder was busy with the real one) and rotted into a phantom Missed; a Cancelled
+    // future airing's tombstone was silently resurrected. The real identity is the
+    // programme's UNPADDED start, persisted as progStartUtc (schema v7): a rule row (any
+    // status) claims (channel, progStartUtc), and no padding edit can move it. Manual rows
+    // (ruleId == 0, progStartUtc 0) keep slot-only dedup.
+    std::set<std::pair<std::wstring, long long>> takenAirings;
+    for (const ScheduledRecording& s : existing)
+        if (s.ruleId != 0 && s.progStartUtc != 0)
+            takenAirings.emplace(normaliseTvgId(s.channelId), s.progStartUtc);
+
+    // Legacy fallback (pre-v7 rows: ruleId set but progStartUtc 0 — they age out of the
+    // horizon within days). Their unpadded start is unrecoverable, but every rule row was
+    // built as [start-lead, stop+trail] with non-negative padding, so its window CONTAINS
+    // its programme's unpadded window under any later edit. Identity heuristic: same folded
+    // title AND the row's window contains the programme's own window. Title-scoping keeps a
+    // legacy row from swallowing a DIFFERENT programme nested in its padding; a same-title
+    // nested repeat is the residual (transitional) exposure, matching what episode dedup
+    // already accepts by scoping on the folded title.
+    struct LegacyWindow {
+        long long start, stop;
+        std::wstring title;  // folded
+    };
+    std::map<std::wstring, std::vector<LegacyWindow>> legacyWindows;
+    for (const ScheduledRecording& s : existing)
+        if (s.ruleId != 0 && s.progStartUtc == 0)
+            legacyWindows[normaliseTvgId(s.channelId)].push_back(
+                {s.startUtc, s.stopUtc, foldTitle(s.title)});
+
     // Episode dedup seed: a show already queued/recorded (any status) claims its episode, so a
     // later airing of the SAME episode is skipped. Keyed by folded title + episode key; rows with
     // no episode key (manual / pre-v6 / no-episode-num) don't participate — they slot-dedup only.
@@ -106,6 +139,23 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
 
             // Slot dedup: an existing row (any status) or an already-created row owns this airing.
             if (!taken.emplace(c.chan, start).second) continue;
+            // Padding-proof dedup (see the takenAirings comment above): the airing identity is
+            // (channel, unpadded programme start) — immune to lead/trail edits. Emplacing here
+            // also collapses two rules matching the same airing with DIFFERENT padding onto one
+            // row. Checked before the episode claim below so a skipped candidate cannot claim
+            // an episode it did not schedule.
+            if (!takenAirings.emplace(c.chan, p.startUtc).second) continue;
+            // Legacy fallback for pre-v7 rows (no persisted progStartUtc): same title + the
+            // row's window contains the programme's own window.
+            if (const auto it = legacyWindows.find(c.chan); it != legacyWindows.end()) {
+                bool owned = false;
+                for (const auto& w : it->second)
+                    if (w.start <= p.startUtc && w.stop >= p.stopUtc && w.title == c.title) {
+                        owned = true;
+                        break;
+                    }
+                if (owned) continue;
+            }
             // Episode dedup: skip a repeat airing of an episode this series already has. Committed
             // only AFTER the slot check passes, so a slot-deduped candidate can't wrongly claim
             // the episode. Empty key (no episode-num/sub-title) never dedups here.
@@ -124,6 +174,7 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
             s.mux = r.mux;
             s.status = ScheduleStatus::Pending;
             s.episodeKey = ek;
+            s.progStartUtc = p.startUtc;  // persist the padding-proof airing identity (v7)
             out.push_back(std::move(s));
         }
     }

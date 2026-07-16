@@ -660,6 +660,112 @@ int selftest() {
                        blocks(ScheduleStatus::Pending) && blocks(ScheduleStatus::Recording),
                    "an existing row of ANY status blocks re-creating that airing");
         }
+        {  // --- Padding-proof dedup (v7): a rule row owns its airing across lead/trail edits ---
+           // The slot key is the PADDED start, so editing a rule's lead used to orphan the
+           // existing row: a mid-recording lead edit spawned a duplicate Pending row that could
+           // never start (recorder busy) and rotted into a phantom Missed, and a Cancelled
+           // future airing's tombstone was resurrected. The stable identity is the programme's
+           // unpadded start, persisted as progStartUtc (schema v7); pre-v7 rows fall back to
+           // title-scoped window containment. Manual rows (ruleId 0) keep slot-only dedup.
+            ScheduledRecording rec;  // created when the rule had leadSec=60 / trailSec=120
+            rec.channelId = L"CNN.us";
+            rec.title = L"News";
+            rec.startUtc = 1940;  // 2000 - 60 (the OLD lead)
+            rec.stopUtc = 3120;   // 3000 + 120
+            rec.status = ScheduleStatus::Recording;
+            rec.ruleId = 5;
+            rec.progStartUtc = 2000;  // the airing's unpadded start (v7)
+            RecordingRule edited = rule(5, L"cnn.us", L"News", RuleMatch::Exact);  // lead now 0
+            auto v = expandRules({edited}, progs, {rec}, 2500 /*mid-airing*/, 100000);
+            expect(v.size() == 1 && v[0].startUtc == 90000,
+                   "a lead edit mid-recording does not duplicate the in-progress airing");
+            expect(v.size() == 1 && v[0].progStartUtc == 90000,
+                   "new rows persist the unpadded programme start");
+
+            rec.status = ScheduleStatus::Cancelled;  // future tombstone, padding since edited
+            auto w = expandRules({edited}, progs, {rec}, 1000, 100000);
+            expect(w.size() == 1 && w[0].startUtc == 90000,
+                   "a cancelled airing stays cancelled after a lead edit");
+
+            // Pre-v7 row (progStartUtc 0): the title-scoped containment fallback still owns it.
+            rec.status = ScheduleStatus::Recording;
+            rec.progStartUtc = 0;
+            auto lg = expandRules({edited}, progs, {rec}, 2500, 100000);
+            expect(lg.size() == 1 && lg[0].startUtc == 90000,
+                   "legacy (pre-v7) row: containment fallback prevents the duplicate");
+            // ...but the fallback is title-scoped: a DIFFERENT programme nested inside a rule
+            // row's padding window is NOT swallowed (its recording would be silently lost when
+            // the containing row is Cancelled/Failed).
+            ScheduledRecording game;  // legacy row [1000, 20000] spans the Movie airing
+            game.channelId = L"CNN.us";
+            game.title = L"Football";
+            game.startUtc = 1000;
+            game.stopUtc = 20000;
+            game.status = ScheduleStatus::Failed;
+            game.ruleId = 9;
+            auto nest = expandRules({rule(5, L"cnn.us", L"Movie", RuleMatch::Exact)}, progs,
+                                    {game}, 1000, 100000);
+            expect(nest.size() == 1 && nest[0].startUtc == 3000,
+                   "a different programme nested in a legacy row's window is still scheduled");
+
+            ScheduledRecording manual;  // ruleId 0: spans both near airings, suppresses neither
+            manual.channelId = L"CNN.us";
+            manual.startUtc = 1000;
+            manual.stopUtc = 20000;
+            manual.status = ScheduleStatus::Pending;
+            auto m = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {manual},
+                                 1000, 100000);
+            expect(m.size() == 2, "a spanning manual row does not suppress rule airings");
+
+            // Two rules with DIFFERENT padding matching the same airing still collapse to one
+            // row (the "two rules -> one recording" promise, previously defeated by padding).
+            RecordingRule a = rule(1, L"cnn.us", L"News", RuleMatch::Exact);
+            a.leadSec = 60;
+            auto t = expandRules({a, rule(2, L"cnn.us", L"New", RuleMatch::Contains)}, progs, {},
+                                 1000, 100000);
+            expect(t.size() == 2, "different-padding rules still collapse onto one row per airing");
+
+            // The other direction: lead INCREASED, so the new padded start lands EARLIER than
+            // the stored one — the slot key differs either way; the airing identity still owns it.
+            ScheduledRecording bare;  // created with lead 0
+            bare.channelId = L"CNN.us";
+            bare.title = L"News";
+            bare.startUtc = 2000;
+            bare.stopUtc = 3000;
+            bare.status = ScheduleStatus::Recording;
+            bare.ruleId = 5;
+            bare.progStartUtc = 2000;
+            RecordingRule wider = rule(5, L"cnn.us", L"News", RuleMatch::Exact);
+            wider.leadSec = 300;
+            auto u = expandRules({wider}, progs, {bare}, 2500, 100000);
+            expect(u.size() == 1 && u[0].startUtc == 89700,  // 90000 - lead 300
+                   "a lead increase mid-recording does not duplicate the in-progress airing");
+
+            // Back-to-back SAME-TITLE bulletins with trail >= the next airing's duration: the
+            // unpadded identity keeps them distinct (window containment alone would swallow
+            // every second bulletin — no row, no Missed, silent loss).
+            std::vector<Programme> bulletins = {prog(L"CNN.us", L"News", 2000, 3000),
+                                                prog(L"CNN.us", L"News", 3000, 4000)};
+            RecordingRule longTrail = rule(4, L"cnn.us", L"News", RuleMatch::Exact);
+            longTrail.trailSec = 3000;  // >= the 1000-second bulletin length
+            auto bb = expandRules({longTrail}, bulletins, {}, 1000, 100000);
+            expect(bb.size() == 2, "back-to-back same-title airings each keep their own row");
+
+            // Edit flow with a big trail: the surviving in-progress row must not suppress the
+            // rule's NEXT airing (whose Pending row the edit just cleared for re-creation).
+            ScheduledRecording live;  // recording News [2000,3000], trail spans far beyond
+            live.channelId = L"CNN.us";
+            live.title = L"News";
+            live.startUtc = 2000;
+            live.stopUtc = 95000;  // huge trail: window covers the 90000 airing entirely
+            live.status = ScheduleStatus::Recording;
+            live.ruleId = 5;
+            live.progStartUtc = 2000;
+            auto fut = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {live},
+                                   2500, 100000);
+            expect(fut.size() == 1 && fut[0].startUtc == 90000 && fut[0].progStartUtc == 90000,
+                   "a big-trail in-progress row does not suppress the rule's next airing");
+        }
         {  // --- Episode dedup: skip a REPEAT airing of an already-scheduled episode ---
             auto ep = [](const wchar_t* chan, const wchar_t* title, long long a, long long b,
                          const wchar_t* epnum, const wchar_t* sub) {
