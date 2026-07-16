@@ -140,17 +140,36 @@ didReceiveResponse:(NSURLResponse*)resp
               task:(NSURLSessionTask*)task
 didCompleteWithError:(NSError*)error {
     NSString* url = task.taskDescription;
-    NSMutableData* buf = _rx[@(task.taskIdentifier)];
+    NSData* bytes = _rx[@(task.taskIdentifier)];  // pull on the (serial) delegate queue
     [_rx removeObjectForKey:@(task.taskIdentifier)];
     if (!url) return;
-    if (error || buf.length == 0) { [self failURL:url]; return; }
-    NSImage* img = [self decodeThumbnail:buf];
-    if (!img) { [self failURL:url]; return; }
-    NSString* file = [_dir stringByAppendingPathComponent:cacheKey(url)];
-    [[NSFileManager defaultManager] createDirectoryAtPath:_dir withIntermediateDirectories:YES
-                                               attributes:nil error:nil];
-    [buf writeToFile:file atomically:YES];  // best-effort; a miss just re-fetches next launch
-    [self publish:img forURL:url];
+    if (error || bytes.length == 0) { [self failURL:url]; return; }
+    NSData* body = [bytes copy];  // detach from the mutable receive buffer
+    __weak LogoLoader* weakSelf = self;
+    // The decode + thumbnail-encode + disk write are heavy; get them OFF the serial delegate
+    // queue (matching the disk-hit path) so other in-flight tasks' callbacks aren't blocked.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        LogoLoader* self1 = weakSelf;
+        if (!self1) return;
+        NSImage* img = [self1 decodeThumbnail:body];
+        if (!img) { [self1 failURL:url]; return; }
+        // Cache the small THUMBNAIL, not the up-to-3 MB source: keeps the disk cache tiny, and
+        // next launch decodes a ~96px PNG instead of re-thumbnailing the full source.
+        if (NSData* png = [self1 pngThumbnail:img]) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:self1->_dir
+                withIntermediateDirectories:YES attributes:nil error:nil];
+            [png writeToFile:[self1->_dir stringByAppendingPathComponent:cacheKey(url)] atomically:YES];
+        }
+        [self1 publish:img forURL:url];
+    });
+}
+
+// The decoded thumbnail as PNG bytes, for the disk cache (small + cheap to re-decode next launch).
+- (nullable NSData*)pngThumbnail:(NSImage*)img {
+    CGImageRef cg = [img CGImageForProposedRect:NULL context:nil hints:nil];
+    if (!cg) return nil;
+    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithCGImage:cg];
+    return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
 }
 
 #pragma mark decode + publish

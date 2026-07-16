@@ -440,11 +440,17 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // under .../RabbitEars/logos. onReady fires on the main thread as images arrive -> a
     // coalesced reload of the visible logo cells (see -logosDidLoad).
     // A faint generic glyph shown while a logo loads and for logo-less channels (an image cell
-    // does not auto-tint a template image, so bake the tint in).
+    // does not auto-tint a template image, so bake the tint in via a source-atop fill — all
+    // fully-declared AppKit APIs; NSImage has no -imageWithTintColor:). MRC: the returned image is
+    // autoreleased, so RETAIN it into the app-lifetime ivar (else it dangles after this pool drains
+    // and the first table draw over-releases it).
     NSImage* tv = [NSImage imageWithSystemSymbolName:@"tv" accessibilityDescription:nil];
-    // MRC: imageWithTintColor: returns an autoreleased image — RETAIN it into the ivar (app-lifetime;
-    // never released), or it dangles after this pool drains and the first table draw over-releases it.
-    _logoPlaceholder = [[tv imageWithTintColor:NSColor.tertiaryLabelColor] retain];  // macOS 12+
+    _logoPlaceholder = [[NSImage imageWithSize:tv.size flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        [tv drawInRect:rect];
+        [NSColor.tertiaryLabelColor set];
+        NSRectFillUsingOperation(rect, NSCompositingOperationSourceAtop);  // tint the glyph
+        return YES;
+    }] retain];
     NSString* dbPath = ns(Database::defaultDbPath());
     NSString* logosDir = [dbPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"logos"];
     MainWindowController* __unsafe_unretained meLogos = self;  // app-lifetime; no retain cycle
