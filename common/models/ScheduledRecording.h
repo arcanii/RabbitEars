@@ -42,6 +42,12 @@ struct ScheduledRecording {
     // already queued/recorded — dedup keys on (folded title, episodeKey). Empty for manual rows
     // and for programmes carrying neither field: those dedup by airing slot only.
     std::wstring   episodeKey;
+    // The programme's UNPADDED start (its EPG start_utc), set by expandRules. startUtc above is
+    // the PADDED recording start (start - leadSec), which moves when the rule's padding is
+    // edited — so it cannot identify the airing across edits. (chan, progStartUtc) can: it is
+    // the padding-proof airing identity the expander dedups rule rows on. 0 for manual rows and
+    // rows created before schema v7 (those fall back to a containment heuristic).
+    long long      progStartUtc = 0;
 };
 
 }  // namespace rabbitears

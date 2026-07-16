@@ -49,15 +49,18 @@ std::wstring normaliseTvgId(const std::wstring& tvgId);
 // already Done/Missed, must never be silently recreated on the next expansion pass. It also
 // collapses two rules that match the same airing down to one recording.
 //
-// Because the padded start changes when a rule's lead is edited, slot dedup alone is not a
-// stable airing identity: a rule-created row (`ruleId` != 0, any status) ALSO owns every
-// programme whose unpadded [start, stop] window its own window contains — a rule row is always
-// built as [start-lead, stop+trail] with non-negative padding, so containment recognises "this
-// airing already has a row" under any later padding edit. Without this, editing a rule's lead
-// mid-recording created a duplicate Pending row that could never start (the recorder was busy
-// with the real one) and became a phantom Missed, and a Cancelled future airing was resurrected.
-// Manual rows (ruleId == 0) keep slot-only dedup, so a long manual recording spanning an airing
-// does not suppress the rule's row for it.
+// Because the padded start changes when a rule's lead is edited, the slot key alone is not a
+// stable airing identity: without more, editing a rule's lead mid-recording created a duplicate
+// Pending row that could never start (the recorder was busy with the real one) and became a
+// phantom Missed, and a Cancelled future airing's tombstone was resurrected. The stable identity
+// is the programme's UNPADDED start, persisted per row as `progStartUtc` (schema v7): a
+// rule-created row (`ruleId` != 0, any status) owns (channel, progStartUtc), immune to padding
+// edits; two rules matching the same airing with different padding collapse onto one row the
+// same way. Pre-v7 rule rows (progStartUtc == 0) fall back to a transitional heuristic — same
+// folded title AND the row's window contains the programme's unpadded window (a rule row is
+// always [start-lead, stop+trail] with non-negative padding, so containment holds under any
+// edit). Manual rows (ruleId == 0) keep slot-only dedup, so a long manual recording spanning an
+// airing does not suppress the rule's row for it.
 //
 // EPISODE dedup then drops a REPEAT airing of a show already scheduled: a candidate is skipped
 // when some `existing` row (any status) shares its folded title AND its episode key (from

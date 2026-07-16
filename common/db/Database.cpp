@@ -122,7 +122,7 @@ Programme readProgramme(Stmt& q) {
 // SELECT column order shared by every scheduled-recording query below.
 constexpr const char* kScheduleCols =
     "id,channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
-    "status,file_path,created_at,rule_id,episode_key";
+    "status,file_path,created_at,rule_id,episode_key,prog_start_utc";
 
 ScheduledRecording readSchedule(Stmt& q) {
     ScheduledRecording s;
@@ -141,6 +141,7 @@ ScheduledRecording readSchedule(Stmt& q) {
     s.createdAt = q.intCol(12);
     s.ruleId = q.intCol(13);  // NULL (pre-v5 / one-off rows) reads back as 0
     s.episodeKey = q.textCol(14);  // '' for manual / pre-v6 rows (no episode dedup)
+    s.progStartUtc = q.intCol(15);  // 0 for manual / pre-v7 rows (containment fallback)
     return s;
 }
 
@@ -287,6 +288,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v4: scheduled_recordings — the recording scheduler queue.
 //   v5: recording_rules (EPG-driven series rules) + scheduled_recordings.rule_id.
 //   v6: scheduled_recordings.episode_key — per-episode identity for series-rule episode dedup.
+//   v7: scheduled_recordings.prog_start_utc — the unpadded programme start; the padding-proof
+//       airing identity for series-rule slot dedup (start_utc moves when a rule's lead is edited).
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -295,7 +298,7 @@ void Database::migrate() {
         Stmt q(db_, "PRAGMA user_version");
         if (q && q.step()) v = q.intCol(0);
     }
-    if (v >= 6) return;  // newest schema; bump in lockstep with the highest step below
+    if (v >= 7) return;  // newest schema; bump in lockstep with the highest step below
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -373,6 +376,15 @@ void Database::migrate() {
     if (!hasColumn("scheduled_recordings", "episode_key"))
         exec("ALTER TABLE scheduled_recordings ADD COLUMN episode_key TEXT");
 
+    // v7: prog_start_utc on scheduled_recordings — the programme's UNPADDED start, set by
+    // core/RecordingRules. start_utc is the PADDED recording start, which moves when a rule's
+    // lead is edited, so it cannot identify the airing across edits: a mid-recording lead edit
+    // re-created the airing as a duplicate Pending row that rotted into a phantom Missed, and
+    // resurrected Cancelled tombstones. (chan, prog_start_utc) is the padding-proof identity.
+    // 0 for manual and pre-v7 rows: those fall back to a containment heuristic in the expander.
+    if (!hasColumn("scheduled_recordings", "prog_start_utc"))
+        exec("ALTER TABLE scheduled_recordings ADD COLUMN prog_start_utc INTEGER NOT NULL DEFAULT 0");
+
     // Advance user_version to reflect exactly what actually landed, so a partial
     // failure retries the missing step next open instead of skipping it. (hasColumn on a
     // column of a table doubles as a table-exists check — table_info is empty if absent.)
@@ -382,7 +394,9 @@ void Database::migrate() {
     const bool haveV5 =
         haveV4 && hasColumn("recording_rules", "id") && hasColumn("scheduled_recordings", "rule_id");
     const bool haveV6 = haveV5 && hasColumn("scheduled_recordings", "episode_key");
-    if (haveV6) exec("PRAGMA user_version=6");
+    const bool haveV7 = haveV6 && hasColumn("scheduled_recordings", "prog_start_utc");
+    if (haveV7) exec("PRAGMA user_version=7");
+    else if (haveV6) exec("PRAGMA user_version=6");
     else if (haveV5) exec("PRAGMA user_version=5");
     else if (haveV4) exec("PRAGMA user_version=4");
     else if (haveV3) exec("PRAGMA user_version=3");
@@ -749,7 +763,8 @@ long long Database::addSchedule(const ScheduledRecording& s) {
     Stmt q(db_,
            "INSERT INTO scheduled_recordings("
            "channel_id,channel_name,stream_url,user_agent,referrer,title,start_utc,stop_utc,mux,"
-           "status,file_path,created_at,rule_id,episode_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+           "status,file_path,created_at,rule_id,episode_key,prog_start_utc)"
+           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     if (!q) return 0;
     q.bindText(1, s.channelId);
     q.bindText(2, s.channelName);
@@ -765,6 +780,7 @@ long long Database::addSchedule(const ScheduledRecording& s) {
     q.bindInt(12, s.createdAt);
     q.bindInt(13, s.ruleId);  // 0 == a one-off schedule (no owning rule)
     q.bindText(14, s.episodeKey);  // '' for manual rows (no episode dedup)
+    q.bindInt(15, s.progStartUtc);  // 0 for manual rows (no airing identity)
     if (q.stepDone() != SQLITE_DONE) return 0;
     return sqlite3_last_insert_rowid(db_);
 }

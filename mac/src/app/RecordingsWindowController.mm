@@ -473,8 +473,10 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         r.id = ruleId;
         r.titleMatch = ws(title);
         r.match = (matchPop.indexOfSelectedItem == 1) ? RuleMatch::Contains : RuleMatch::Exact;
-        r.leadSec  = std::max(0, (int)leadField.intValue) * 60;
-        r.trailSec = std::max(0, (int)trailField.intValue) * 60;
+        // Clamp to 0..240 min, matching the Win32 editor (Dialogs.cpp readMinutes) — the rule
+        // engine's padding invariants assume non-negative, bounded lead/trail.
+        r.leadSec  = std::clamp((int)leadField.intValue, 0, 240) * 60;
+        r.trailSec = std::clamp((int)trailField.intValue, 0, 240) * 60;
         const NSInteger tag = chanPop.selectedItem.tag;  // 0 == any; k == chans[k-1]
         if (tag <= 0) {
             r.channelId.clear();
