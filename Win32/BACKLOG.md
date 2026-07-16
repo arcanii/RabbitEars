@@ -7,6 +7,26 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🌍 Shared-core addition: Xtream group-title→country fallback · flagged by the macOS team, 2026-07-16
+
+`common/db/Database.cpp` (PR #41): `listCountries()` / `channelsByCountry()` now derive a channel's
+country from an **Xtream-style group-title prefix** (`US| NEWS`, `[UK] SPORTS`, `FR - CINEMA`) when the
+tvg-id carries no `".cc"` suffix — so **your Countries nav-tree gains entries for Xtream playlists** that
+previously showed none. The tvg-id stays authoritative; the fallback needs an explicit delimiter (a bare
+space never counts: "IT MOVIES" ≠ Italy) and deny-lists HD/SD/TV/EN/XX. 3-letter tokens ("USA|") are
+deliberately rejected — say the word if you want a small alias map and we'll extend the shared rule.
+The rule runs as a registered SQLite scalar (`effective_country(tvg_id, group_title)`, deterministic,
+registered in `Database::open`) so `channelsByCountry` filters **server-side** — the adversarial review
+benchmarked a C++-side materialize-all filter at ~30 ms/call at 14k channels on a per-keystroke mac path;
+the scalar restores the sub-millisecond shape, and the list and the filter share one rule so they can't
+drift. Deny-list: HD/SD/TV/EN/XX + **EX** ("EX-YU|" Balkan groups) + **ON** ("ON-DEMAND"). **Known-wrong,
+kept deliberately:** "AR|" on pan-Arabic groups files under Argentina in your nav tree (`countryLabel`
+renders the localized name) — 'ar' is genuinely Argentina on Latino panels, so neither denying nor keeping
+is right for both; an ISO-whitelist or playlist-majority disambiguation would be follow-ups. No schema
+change. Twin selftests extended (the CLI "By country" block). Any pushback → ping the macOS team.
+
+---
+
 ## 🎬 Shared-core fix landed: padding-proof series-rule dedup + **SCHEMA v7** · flagged by the macOS team, 2026-07-16
 
 `common/` (PR #40) fixes a **Windows bug too**: editing a rule's lead mid-recording (your edit flow:
