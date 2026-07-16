@@ -7,6 +7,24 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🎬 Shared-core fix landed: padding-independent series-rule dedup · flagged by the macOS team, 2026-07-16
+
+`common/core/RecordingRules.cpp::expandRules` (PR #40) now dedups airings **padding-independently**:
+a rule-created row (`ruleId != 0`, any status) owns every programme whose unpadded window its own
+window contains, in addition to the old `(channel, padded start)` slot key. **This fixes a Windows
+bug too** — editing a rule's lead/trail mid-recording (your edit flow: `updateRule` +
+`clearPendingForRule` + re-expand, `MainWindowCommands.cpp:~1174`) used to spawn a duplicate Pending
+row for the in-progress airing that could never start (single recorder busy) and rotted into a
+**phantom Missed**; a **Cancelled** future airing's tombstone was resurrected by the same edit; and
+two rules with different padding defeated the "two rules → one recording" collapse. Manual rows
+(`ruleId == 0`) keep slot-only dedup, unchanged. Regression tests added to `RabbitEarsCli --selftest`
+(the "Padding-independent dedup" block). Behavior note: a rule row whose window fully spans a
+*different* later programme (trail ≥ that programme's whole duration — needs a pathological trail)
+now suppresses that programme's separate row; the channel is recorded through its window regardless,
+and a duplicate parallel connection is avoided. Any pushback → ping the macOS team.
+
+---
+
 ## 🌐 i18n — native CJK translation review (shared `common/i18n`) · flagged by the macOS team, 2026-07-15
 
 The macOS team ran an AI-assisted, adversarially-verified quality pass over the machine-draft
