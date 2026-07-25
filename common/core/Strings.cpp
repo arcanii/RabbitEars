@@ -351,6 +351,13 @@ constexpr std::array<const char*, N> kEn = {{
     "Rabbit Ears is provided only for educational purposes, and does not represent supporting any illegal activity that you do with it. We don't know, we don't care.",  // AboutEducationalDisclaimer
     "About RabbitEars",  // AboutWindowTitle
     "Check for Updates…",  // AboutCheckForUpdatesButton
+    "Buy me a coffee",  // BuyMeACoffeeButton
+    // --- DialogSupport ---
+    "Support RabbitEars",  // SupportWindowTitle
+    "Enjoying RabbitEars?",  // SupportHeading
+    "RabbitEars is free and open source, built by one developer in his spare time. If it has been useful to you, a small tip helps keep it going.\r\n\r\nNo pressure — if you'd rather not, choose “Not interested” and this won't come up again.",  // SupportBody
+    "Remind me later",  // SupportRemindLaterButton
+    "Not interested",  // SupportNotInterestedButton
     // --- DialogTerms ---
     "Please read these terms before using RabbitEars. By choosing “I Accept” you agree to them. If you do not agree, choose “Decline” and the application will close.\r\n\r\n1.  Educational purpose.  RabbitEars is a media player provided for educational and personal use only. It is offered “as is”, without warranty of any kind, and you use it entirely at your own risk.\r\n\r\n2.  No content is included.  RabbitEars ships with no channels, playlists, or media of any kind. It plays only the playlists that you choose to add. You are solely responsible for obtaining your playlists from lawful sources and for ensuring that your use complies with all applicable laws and the rights of content owners in your jurisdiction.\r\n\r\n3.  No endorsement.  The authors of RabbitEars do not provide, host, recommend, or endorse any stream or content, and have no knowledge of or control over what you choose to play. As the project puts it: we don’t know, and we don’t care.\r\n\r\n4.  Your responsibility.  Any illegal activity carried out with this software is yours alone and is not supported, encouraged, or condoned by the authors.\r\n\r\n5.  Open source.  RabbitEars plays media using libVLC, © VideoLAN and the VLC contributors, under the GNU LGPL v2.1.\r\n\r\nBy clicking “I Accept”, you confirm that you have read, understood, and agree to these terms.",  // TermsBodyText
     "RabbitEars — Terms of Use",  // TermsWindowTitle
@@ -897,6 +904,13 @@ constexpr std::array<const char*, N> kJa = {{
     "RabbitEars は教育目的のみで提供されており、これを使って行ういかなる違法行為も支援するものではありません。私たちは知りませんし、気にもしません。",  // AboutEducationalDisclaimer
     "RabbitEars について",  // AboutWindowTitle
     "更新を確認…",  // AboutCheckForUpdatesButton
+    "コーヒーを一杯おごる",  // BuyMeACoffeeButton
+    // --- DialogSupport ---
+    "RabbitEars を支援する",  // SupportWindowTitle
+    "RabbitEars はお役に立っていますか？",  // SupportHeading
+    "RabbitEars は、一人の開発者が余暇に作っている無料のオープンソースソフトウェアです。お役に立っているなら、少しのご支援が開発を続ける力になります。\r\n\r\n強制ではありません。ご興味がなければ「今後表示しない」を選んでください。二度と表示されません。",  // SupportBody
+    "後で通知",  // SupportRemindLaterButton
+    "今後表示しない",  // SupportNotInterestedButton
     // --- DialogTerms ---
     "RabbitEars をご利用になる前に、本規約をお読みください。「同意する」を選択すると、本規約に同意したものとみなされます。同意されない場合は「同意しない」を選択してください。アプリケーションは終了します。\r\n\r\n1.  教育目的。  RabbitEars は、教育および個人利用のみを目的として提供されるメディアプレーヤーです。いかなる種類の保証もなく「現状のまま」提供され、その利用はすべてお客様ご自身の責任において行われます。\r\n\r\n2.  コンテンツは含まれません。  RabbitEars には、チャンネル、プレイリスト、その他いかなる種類のメディアも同梱されていません。お客様が追加を選択したプレイリストのみを再生します。プレイリストを適法な提供元から入手すること、および、その利用がお客様の管轄地域において適用されるすべての法律とコンテンツ所有者の権利を遵守していることを確保することについては、お客様が単独で責任を負うものとします。\r\n\r\n3.  推奨はしません。  RabbitEars の作者は、いかなるストリームまたはコンテンツも提供、ホスト、推薦、または推奨するものではなく、お客様が再生を選択する内容について何ら把握しておらず、管理もしていません。本プロジェクトの言葉を借りれば、私たちは知りませんし、気にもしません。\r\n\r\n4.  お客様の責任。  本ソフトウェアを用いて行われるいかなる違法行為も、お客様のみの責任であり、作者によって支持、奨励、または容認されるものではありません。\r\n\r\n5.  オープンソース。  RabbitEars は、GNU LGPL v2.1 のもとで、libVLC(© VideoLAN および VLC の貢献者)を使用してメディアを再生します。\r\n\r\n「同意する」をクリックすることにより、お客様は本規約を読み、理解し、これに同意したことを確認するものとします。",  // TermsBodyText
     "RabbitEars — 利用規約",  // TermsWindowTitle
@@ -1443,6 +1457,13 @@ constexpr std::array<const char*, N> kZhHant = {{
     "Rabbit Ears 僅供教育用途，並不代表支持您使用它進行的任何違法行為。我們不知道，我們也不在乎。",  // AboutEducationalDisclaimer
     "關於 RabbitEars",  // AboutWindowTitle
     "檢查更新…",  // AboutCheckForUpdatesButton
+    "請我喝杯咖啡",  // BuyMeACoffeeButton
+    // --- DialogSupport ---
+    "支持 RabbitEars",  // SupportWindowTitle
+    "喜歡 RabbitEars 嗎？",  // SupportHeading
+    "RabbitEars 是免費的開源軟體，由一位開發者利用業餘時間打造。如果它對你有幫助，一點小小的贊助能讓它繼續走下去。\r\n\r\n沒有任何壓力 — 如果不需要，請選擇「沒興趣」，這則訊息不會再出現。",  // SupportBody
+    "稍後提醒",  // SupportRemindLaterButton
+    "沒興趣",  // SupportNotInterestedButton
     // --- DialogTerms ---
     "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC（© VideoLAN 與 VLC 貢獻者），在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
     "RabbitEars — 使用條款",  // TermsWindowTitle
@@ -1989,6 +2010,13 @@ constexpr std::array<const char*, N> kZhHK = {{
     "Rabbit Ears 僅供教育用途，並不代表支持您使用它進行的任何違法行為。我們不知道，我們也不在乎。",  // AboutEducationalDisclaimer
     "關於 RabbitEars",  // AboutWindowTitle
     "檢查更新…",  // AboutCheckForUpdatesButton
+    "請我飲杯咖啡",  // BuyMeACoffeeButton
+    // --- DialogSupport ---
+    "支持 RabbitEars",  // SupportWindowTitle
+    "喜歡 RabbitEars 嗎？",  // SupportHeading
+    "RabbitEars 是免費的開源軟體，由一位開發者利用業餘時間打造。如果它對你有幫助，一點小小的贊助能讓它繼續走下去。\r\n\r\n沒有任何壓力 — 如果不需要，請選擇「沒興趣」，這則訊息不會再出現。",  // SupportBody
+    "稍後提醒",  // SupportRemindLaterButton
+    "沒興趣",  // SupportNotInterestedButton
     // --- DialogTerms ---
     "使用 RabbitEars 前，請先閱讀本條款。選擇「我接受」即表示您同意這些條款。若您不同意，請選擇「拒絕」，應用程式將會關閉。\r\n\r\n1.  教育用途。  RabbitEars 是一款僅供教育與個人使用的媒體播放器。它以「現狀」提供，不含任何形式的擔保，您需自行承擔使用的一切風險。\r\n\r\n2.  不含任何內容。  RabbitEars 不隨附任何頻道、播放清單或任何形式的媒體。它只會播放您選擇加入的播放清單。您需自行負責從合法來源取得您的播放清單，並確保您的使用符合您所在司法管轄區的所有適用法律及內容擁有者的權利。\r\n\r\n3.  不作任何背書。  RabbitEars 的作者不提供、不代管、不推薦，也不背書任何串流或內容，且對您選擇播放的內容一無所知，亦無任何控制。如同本專案所言：我們不知道，也不在乎。\r\n\r\n4.  您的責任。  使用本軟體進行的任何違法行為，均由您獨自負責，作者不予支持、鼓勵或縱容。\r\n\r\n5.  開放原始碼。  RabbitEars 使用 libVLC（© VideoLAN 與 VLC 貢獻者），在 GNU LGPL v2.1 授權下播放媒體。\r\n\r\n點選「我接受」，即表示您確認已閱讀、了解並同意這些條款。",  // TermsBodyText
     "RabbitEars — 使用條款",  // TermsWindowTitle

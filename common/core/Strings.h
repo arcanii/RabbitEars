@@ -352,6 +352,13 @@ enum class StringId {
     AboutEducationalDisclaimer,
     AboutWindowTitle,
     AboutCheckForUpdatesButton,
+    BuyMeACoffeeButton,
+    // --- DialogSupport ---
+    SupportWindowTitle,
+    SupportHeading,
+    SupportBody,
+    SupportRemindLaterButton,
+    SupportNotInterestedButton,
     // --- DialogTerms ---
     TermsBodyText,
     TermsWindowTitle,

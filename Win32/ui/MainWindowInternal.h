@@ -43,6 +43,7 @@ constexpr UINT WM_APP_EPG_PROGRESS = WM_APP + 4;  // EPG worker progress text (h
 // the handler returns the new host HWND. Window create/size lives on the UI thread (Win32 affinity).
 constexpr UINT WM_APP_MAKE_VOUT_HOST = WM_APP + 5;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
+constexpr UINT_PTR kSupportPromptTimer = 0xA3;  // ONE-SHOT: the "support RabbitEars" tip prompt
 
 // ---- command ids ----------------------------------------------------------
 constexpr int ID_ADD_URL = 2001;

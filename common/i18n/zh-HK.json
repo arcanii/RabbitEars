@@ -1,5 +1,6 @@
 {
   "Fullscreen": "全熒幕",
+  "BuyMeACoffeeButton": "請我飲杯咖啡",
   "TooltipNetworkBuffer": "網絡緩衝：%.1f 秒（接收→顯示延遲）",
   "MenuEnterFullScreen": "進入全熒幕",
   "MacMainWindowScheduledWakeCaveat": "RabbitEars 只會在其執行中且您的 Mac 處於喚醒狀態時錄影此項目。它無法喚醒睡眠中的 Mac — 若要進行無人看管的錄影，請讓 Mac 保持開啟並掀開熒幕（「設定 ▸ 錄影 ▸ 錄影項目」會列出您的佇列）。",

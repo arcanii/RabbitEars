@@ -437,6 +437,60 @@ void createChildren(HWND hwnd, AppState* st) {
     channelGridSetCallbacks(st->grid, cb);
 }
 
+// ---- "Support RabbitEars" prompt ------------------------------------------------------
+// A once-ever plea to tip via Buy Me a Coffee, shown after the app has been around for a day.
+// The dialog is pure UI (Dialogs.cpp); the scheduling + persistence live here, in two settings:
+//   support_first_run   epoch seconds of the launch that first armed the prompt (informational)
+//   support_prompt_due  epoch seconds when it may next appear, or "never" once answered for good
+// It is never armed on an unattended wake-launch, and never fires while another modal is up or
+// while the user is watching (fullscreen / video-only) — those cases retry rather than consume
+// the prompt, so a user who is busy is asked later instead of never.
+constexpr wchar_t  kSupportFirstRunKey[] = L"support_first_run";
+constexpr wchar_t  kSupportDueKey[] = L"support_prompt_due";
+constexpr long long kSupportFirstDelaySec = 24LL * 60 * 60;      // first ask: a day after install
+constexpr long long kSupportSnoozeSec = 7LL * 24 * 60 * 60;      // "Remind me later": a week
+constexpr UINT      kSupportStartupDelayMs = 8000;                // let the app settle after launch
+constexpr UINT      kSupportRetryMs = 60000;                      // busy right now? try again later
+
+void maybeShowSupportPrompt(HWND hwnd, AppState* st) {
+    if (!st || !st->db.isOpen()) return;
+    const auto due = st->db.getSetting(kSupportDueKey);
+    if (due && *due == L"never") return;  // "Not interested" / already opened the tip page
+
+    const long long now = static_cast<long long>(time(nullptr));
+    if (!due || due->empty()) {  // first launch that ever saw this feature: arm it, don't ask now
+        st->db.setSetting(kSupportFirstRunKey, std::to_wstring(now));
+        st->db.setSetting(kSupportDueKey, std::to_wstring(now + kSupportFirstDelaySec));
+        return;
+    }
+    const long long dueAt = _wtoi64(due->c_str());
+    // Re-arm on a garbled value, or one implausibly far ahead (a wrong RTC that has since been
+    // corrected) — otherwise the prompt would either fire instantly or never fire again.
+    if (dueAt <= 0 || dueAt > now + kSupportSnoozeSec) {
+        st->db.setSetting(kSupportDueKey, std::to_wstring(now + kSupportFirstDelaySec));
+        return;
+    }
+    if (now < dueAt) return;  // not due yet
+
+    // Don't interrupt. Every modal in this app disables the main window, so !IsWindowEnabled
+    // means another dialog is already up (the Terms gate included).
+    if (!IsWindowEnabled(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd) || st->fullscreen ||
+        st->videoOnly) {
+        SetTimer(hwnd, kSupportPromptTimer, kSupportRetryMs, nullptr);
+        return;
+    }
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+    switch (showSupportPrompt(hwnd, hInst, st->dpi)) {
+        case SupportChoice::Later:  // ask again in a week — exactly what the button promises
+            st->db.setSetting(kSupportDueKey, std::to_wstring(now + kSupportSnoozeSec));
+            break;
+        case SupportChoice::Never:   // "Not interested" — never bother them again
+        case SupportChoice::Donate:  // they went to the tip page; nagging a supporter is rude
+            st->db.setSetting(kSupportDueKey, L"never");
+            break;
+    }
+}
+
 LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_NCCREATE) {
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
@@ -660,6 +714,13 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_TIMER:
             if (st && wParam == kSchedulerTimer) {
                 onSchedulerTick(st);
+                return 0;
+            }
+            if (st && wParam == kSupportPromptTimer) {
+                // One-shot: kill it first, since maybeShowSupportPrompt re-arms it itself if the
+                // moment is wrong (a modal is up / the user is watching fullscreen).
+                KillTimer(hwnd, kSupportPromptTimer);
+                maybeShowSupportPrompt(hwnd, st);
                 return 0;
             }
 #ifdef RABBITEARS_THEME_ENGINE
@@ -1795,6 +1856,11 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
     // a machine woken by the recording task has a deadline. This also expands any EPG rules and
     // (re)registers the wake task for whatever is still queued.
     if (st->db.isOpen()) onSchedulerTick(st);
+
+    // Arm the one-shot "support RabbitEars" prompt a few seconds after the window is up (so it
+    // never lands on top of the splash or the Terms gate, both of which are done by here). Not on
+    // an unattended wake-launch: nobody is there to answer, and a modal would block the recording.
+    if (!scheduledWake) SetTimer(hwnd, kSupportPromptTimer, kSupportStartupDelayMs, nullptr);
 
     // Ctrl+Shift+V toggles "Video only" from anywhere (an accelerator, so it fires whatever
     // child control has focus); it routes to WM_COMMAND(ID_VIDEO_ONLY) on the main window.

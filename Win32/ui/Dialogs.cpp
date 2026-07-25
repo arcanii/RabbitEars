@@ -52,9 +52,14 @@ void clampToWorkArea(HWND parent, int W, int H, int& x, int& y) {
 }
 
 constexpr int ID_CHECK_UPDATES = 1201;
+constexpr int ID_BUY_COFFEE = 1202;
 
 // The project's GitHub — shown as a clickable link in the About box.
 constexpr wchar_t kGithubUrl[] = L"https://github.com/arcanii/RabbitEars";
+
+// The author's tip page — opened from the About box's "Buy me a coffee" button and from the
+// periodic support prompt (showSupportPrompt).
+constexpr wchar_t kCoffeeUrl[] = L"https://buymeacoffee.com/bryanmarkh";
 
 // The architecture this build actually runs as, for the About box — distinguishes the native
 // ARM64 build from the x64 build, and flags an x64 build running under emulation on an ARM64
@@ -242,6 +247,8 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_COMMAND:
             if (LOWORD(wParam) == ID_CHECK_UPDATES) {
                 checkForUpdates();
+            } else if (LOWORD(wParam) == ID_BUY_COFFEE) {
+                ShellExecuteW(hwnd, L"open", kCoffeeUrl, nullptr, nullptr, SW_SHOWNORMAL);
             } else if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
                 if (st) st->done = true;
                 DestroyWindow(hwnd);
@@ -586,8 +593,18 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
                                    dp(20, dpi), cr.bottom - bh - dp(14, dpi), uw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CHECK_UPDATES)),
                                    hInst, nullptr);
+        // "Buy me a coffee" — the author's tip page, opened in the browser. Sits between
+        // Check-for-Updates and OK; dp(150) fits the longest localized label.
+        const int cw = dp(150, dpi);
+        HWND coffee = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
+                                      WS_CHILD | WS_VISIBLE,
+                                      dp(20, dpi) + uw + dp(8, dpi), cr.bottom - bh - dp(14, dpi), cw,
+                                      bh, dlg,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUY_COFFEE)),
+                                      hInst, nullptr);
         SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
         SendMessageW(upd, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
+        SendMessageW(coffee, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
         applyDialogDarkMode(dlg);
         EnableWindow(parent, FALSE);
         ShowWindow(dlg, SW_SHOW);
@@ -618,6 +635,152 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
     if (st.altStream) st.altStream->Release();
     if (st.titleFont) DeleteObject(st.titleFont);
     if (st.bodyFont) DeleteObject(st.bodyFont);
+}
+
+// ---- "Support RabbitEars" prompt (shown once the app has been in use a while) ----
+namespace {
+constexpr int ID_SUPPORT_BUY = 1211, ID_SUPPORT_LATER = 1212, ID_SUPPORT_NEVER = 1213;
+
+struct SupportDlgState {
+    SupportChoice choice = SupportChoice::Later;  // X / Esc == Later (never a permanent refusal)
+    bool          done = false;
+};
+
+LRESULT CALLBACK SupportDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<SupportDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+            return dialogCtlColor(msg, w);
+        case WM_COMMAND:
+            if (!st) return 0;
+            switch (LOWORD(w)) {
+                case ID_SUPPORT_BUY:
+                    // Open the tip page, then close: the prompt has done its job either way, and
+                    // the caller records Donate so a supporter is never asked again.
+                    ShellExecuteW(hwnd, L"open", kCoffeeUrl, nullptr, nullptr, SW_SHOWNORMAL);
+                    st->choice = SupportChoice::Donate;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                case ID_SUPPORT_NEVER:
+                    st->choice = SupportChoice::Never;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                case ID_SUPPORT_LATER:
+                case IDCANCEL:
+                    st->choice = SupportChoice::Later;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            if (st) st->done = true;  // choice stays Later
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+}  // namespace
+
+SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = SupportDlgProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsSupport";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    SupportDlgState st;
+    HFONT headFont = themeFont(FontRole::Title, dpi, 17, FW_SEMIBOLD);
+    HFONT bodyFont = themeFont(FontRole::Body, dpi, 13, FW_NORMAL);
+
+    const int W = dp(500, dpi), H = dp(250, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsSupport",
+                               tr(i18n::StringId::SupportWindowTitle).c_str(),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(headFont);
+        DeleteObject(bodyFont);
+        return SupportChoice::Later;  // couldn't ask ⇒ don't burn the one permanent answer
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(22, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
+
+    HWND head = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::SupportHeading).c_str(),
+                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, m, dp(20, dpi),
+                                cr.right - 2 * m, dp(26, dpi), dlg, nullptr, hInst, nullptr);
+    // Plain STATIC (wraps by default) rather than an EDIT: the copy is short + fixed, so there is
+    // nothing to scroll and nothing to select.
+    HWND body = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::SupportBody).c_str(),
+                                WS_CHILD | WS_VISIBLE, m, dp(54, dpi), cr.right - 2 * m,
+                                btnY - dp(66, dpi), dlg, nullptr, hInst, nullptr);
+
+    const int cw = dp(160, dpi), lw = dp(140, dpi), nw = dp(130, dpi), gap = dp(8, dpi);
+    HWND buy = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, m, btnY, cw, bh,
+                               dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_BUY)),
+                               hInst, nullptr);
+    HWND later = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SupportRemindLaterButton).c_str(),
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + cw + gap, btnY, lw, bh, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_LATER)),
+                                 hInst, nullptr);
+    HWND never = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SupportNotInterestedButton).c_str(),
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + cw + gap + lw + gap, btnY, nw,
+                                 bh, dlg,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_NEVER)),
+                                 hInst, nullptr);
+    SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
+    for (HWND h : {body, buy, later, never})
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    UpdateWindow(dlg);
+    SetFocus(buy);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) {  // WM_QUIT (e.g. WinSparkle wants to install) — re-post so runApp exits too
+            PostQuitMessage(static_cast<int>(msg.wParam));
+            DestroyWindow(dlg);
+            break;
+        }
+        if (r == -1) {
+            DestroyWindow(dlg);
+            break;
+        }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(headFont);
+    DeleteObject(bodyFont);
+    return st.choice;
 }
 
 bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,

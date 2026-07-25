@@ -29,6 +29,20 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
 // they declined (the caller should then exit the app). Blocks until answered.
 bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi);
 
+// The user's answer to the "support this project" prompt (see showSupportPrompt).
+enum class SupportChoice {
+    Later,   // "Remind me later" — ask again after the caller's deferral period
+    Never,   // "Not interested" — never ask again
+    Donate,  // opened the tip page; the caller also stops asking (nagging a supporter is rude)
+};
+
+// Modal, low-pressure "support RabbitEars" prompt: Buy me a coffee / Remind me later /
+// Not interested. On Donate it opens the author's tip page in the browser itself (it owns
+// the URL) and returns Donate so the caller can record the outcome. Closing the window
+// (X / Esc) returns Later — a dismissal must never be read as a permanent refusal.
+// The CALLER owns the scheduling + persistence (MainWindow's `support_*` settings).
+SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi);
+
 // Modal themed info popup: a bold one-line `summary` headline over a scrollable,
 // read-only `details` body. Used for post-import results and other notices.
 void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,

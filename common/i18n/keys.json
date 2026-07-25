@@ -2095,6 +2095,42 @@
     "comment": ""
   },
   {
+    "id": "BuyMeACoffeeButton",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": "Button opening the author's Buy Me a Coffee tip page. Used in the About box and the support prompt."
+  },
+  {
+    "id": "SupportWindowTitle",
+    "cluster": "DialogSupport",
+    "placeholders": [],
+    "comment": "Title of the one-time 'support this project' prompt."
+  },
+  {
+    "id": "SupportHeading",
+    "cluster": "DialogSupport",
+    "placeholders": [],
+    "comment": "Headline of the support prompt."
+  },
+  {
+    "id": "SupportBody",
+    "cluster": "DialogSupport",
+    "placeholders": [],
+    "comment": "Body of the support prompt. Keep it warm and low-pressure; it must make clear the user will not be nagged."
+  },
+  {
+    "id": "SupportRemindLaterButton",
+    "cluster": "DialogSupport",
+    "placeholders": [],
+    "comment": "Defers the support prompt; it reappears after a week."
+  },
+  {
+    "id": "SupportNotInterestedButton",
+    "cluster": "DialogSupport",
+    "placeholders": [],
+    "comment": "Dismisses the support prompt permanently — it is never shown again."
+  },
+  {
     "id": "TermsBodyText",
     "cluster": "DialogTerms",
     "placeholders": [],
