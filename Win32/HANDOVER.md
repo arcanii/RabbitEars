@@ -31,7 +31,48 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.11 SHIPPED (live language switch + single-source version)** · v0.2.10 · macOS 0.2.7
+## Current state — **v0.2.12 SHIPPED (Buy Me a Coffee + CJK QA + Xtream countries + schema v7)** · v0.2.11 · macOS 0.2.15
+
+**Released:** **`v0.2.12`** (2026-07-25), tag `v0.2.12` @ `76c6a46`, full version **`0.2.12.325`** (tag ==
+the version-bump commit; installers + `version.h` + both appcasts all agree on 0.2.12.325, cleanly
+`> 0.2.11.265`). Three installers on GitHub release `v0.2.12` — x64 `35,317,578` / arm64 `30,167,274` /
+universal `63,182,362` bytes — **two appcasts** (`0.2.12.325`) committed @ `e4fb965` and LIVE (raw feeds
+serve 0.2.12.325; both enclosures HTTP 200). Owner-signed on the Mac (`sign_update --account SQLTerminal`);
+each signature was **byte-length-verified against the exact built file** before publishing, and the two
+appcasts cross-checked so the x64/arm64 signatures can't be swapped. Contents:
+- **☕ Buy Me a Coffee** (`73addb6` + hardening `686e987`) — an About-box **"Buy me a coffee"** button
+  (`ID_BUY_COFFEE` → `ShellExecuteW` on `kCoffeeUrl`, beside Check-for-Updates/OK) **and** a one-time
+  **support prompt** (`showSupportPrompt`, `Dialogs.{h,cpp}`) with Buy / Remind me later / Not interested.
+  Scheduling + persistence are host-side (`maybeShowSupportPrompt`, MainWindow.cpp): settings
+  **`support_first_run`** + **`support_prompt_due`** (epoch seconds, or the literal `"never"`); first
+  launch ARMS without asking, first ask **a day** later, "Later" snoozes **7 days**, "Not interested" —
+  and *any* visit to the tip page, including from the About box (`showAbout`'s new `tipPageOpened`
+  out-param → `markSupportTipOpened`) — writes `"never"` for good. A **one-shot** `kSupportPromptTimer`
+  (`0xA3`) armed 8 s after startup, and **never armed on a `scheduledWake` launch**.
+- **🌏 CJK translation quality** — the mac team's 36 verified JA/zh-Hant/zh-HK consistency fixes
+  (`c892309`) + a 6-id dead-catalog prune (`9e18f05`) reach Windows here. Catalog now **531 keys × 4
+  languages**.
+- **🌍 Xtream countries** (`641e57f`, `76617f0`) — channels whose `tvg-id` carries no country code fall
+  back to the **group title**, so the Countries filter populates for Xtream-style feeds; country
+  derivation moved into a **SQLite scalar** (faster on large libraries; EX/ON prefixes denied).
+- **⏺ Padding-proof series-rule dedup** (`975fb3b`, `82fdba8`) — editing a rule's lead time no longer
+  resurrects queued airings as phantom **Missed**. Identity is now the *unpadded* airing start,
+  persisted as `scheduled_recordings.prog_start_utc` — **schema v7, migrates on first launch**.
+
+**Adversarial review of the tip feature: FIX-FIRST → all 7 fixed in `686e987`** (the feature was committed
+mid-review, then hardened). The two that mattered: **(1)** the "don't interrupt" guard assumed *every*
+dialog is modal and disables the main window — but the **TV Guide** and the **topmost "please wait" box are
+MODELESS**. The guide case wasn't cosmetic: from the still-live guide the user can open a dialog whose exit
+path calls `EnableWindow(mainWnd, TRUE)`, **re-enabling the main window underneath the prompt's nested modal
+loop** and breaking its modality. Guard now also defers on `epgGuideOpen()` / `st->busy` / `st->loadingDlg`
+/ `GetForegroundWindow() != hwnd`. **(2)** "Buy me a coffee" was the **default + focused** button on a dialog
+that appears *unsolicited and takes activation*, so an Enter already in flight would open the browser **and**
+permanently write `"never"` — the one irreversible choice. "Remind me later" is now the default/focused.
+Plus: body height `dp(250)→dp(290)` (the non-scrolling STATIC clipped the ja/zh "you won't be asked again"
+reassurance on a taller CJK fallback face), a **re-entry latch** (`KillTimer` does not purge an
+already-posted `WM_TIMER`), and the About button widened `dp(150)→dp(160)`. Reviewed-clean and unchanged:
+`AppState` lifetime across the nested modal, timer-id uniqueness, font/`EnableWindow` pairing on every exit,
+that "Not interested" sticks, and the wake-launch exclusion.
 
 **Released:** **`v0.2.10`** (2026-07-13), tag `v0.2.10` @ `3da1096`, full version **`0.2.10.253`** (the
 installers were built at commit `7c3727e`/count 253; the tag sits a couple of doc commits later — the
@@ -807,6 +848,22 @@ scripts\build-installer.cmd                       :: -> build\installer\RabbitEa
 - **Stop the `SpectrumTap` before the meter HWNDs die** — its capture thread pushes to
   `meterSpectrum`, so `WM_DESTROY` calls `spectrumTap.stop()` (joins the thread) first;
   child windows are destroyed only after the parent's `WM_DESTROY` returns.
+- **`make-appcast.ps1 -Tag` defaults to `v<Version>` — i.e. `v0.2.12.325`, NOT `v0.2.12`.** Omit it and the
+  enclosure URL points at a release tag that doesn't exist, so every auto-update 404s. **Always pass
+  `-Tag v<marketing.version>` explicitly** (bitten twice; `docs/RELEASING.md` step 5 now shows it).
+- **`build-arm64.cmd` needs the right vcvars for the HOST** — `vcvarsarm64.bat` is the ARM64-**native**
+  toolchain and exists only on a Windows-on-ARM box; on an x64 dev machine the same VS component installs
+  `vcvarsamd64_arm64.bat` (x64→ARM64 **cross**). The script prefers native and falls back to cross (0.2.12).
+  Both target ARM64 — `LibVlc.cmake` keys on `CMAKE_CXX_COMPILER_ARCHITECTURE_ID` (the **target**), not the
+  host, so the arm64 libVLC/WinSparkle slices are picked either way. **Verify the output is really ARM64**:
+  PE machine at `e_lfanew+4` should be `0xAA64`.
+- **"Every modal disables the main window" is ALMOST true — two surfaces are MODELESS**: the TV Guide
+  (`epgGuideOpen()`) and the topmost "please wait" box (`st->loadingDlg`, with `st->busy` for its worker).
+  Anything gating on `IsWindowEnabled(hwnd)` must name those explicitly. Worse, a dialog opened *from* the
+  live guide calls `EnableWindow(mainWnd, TRUE)` on exit, which can **re-enable the main window underneath
+  an unrelated nested modal loop** and silently break its modality.
+- **`KillTimer` does not purge a `WM_TIMER` already posted** — if the handler then runs a nested modal
+  loop, that stale message can re-enter it. Use a re-entry latch (see `maybeShowSupportPrompt`).
 
 ## Backlog
 
@@ -819,8 +876,11 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…`v0.2.2`; **v0.2.2 released @ `059b632`** (full `0.2.2.153`; appcast @ `fcdac10`) — EPG `@feed`
-fix + clockwork icon + About/PIP polish; now on **0.2.3 dev**. **Release-tooling note (0.2.2):** this machine now
+Tags `v0.1.0`…**`v0.2.12`**; **v0.2.12 released @ `76c6a46`** (full `0.2.12.325`; both appcasts @ `e4fb965`)
+— Buy Me a Coffee + CJK QA + Xtream countries + schema v7; now on **0.2.13 dev**. The **mac line is
+decoupled** (`if(APPLE)` in `cmake/AppVersion.cmake`, currently **0.2.15**) and the mac team pushes to
+`main` too, so **`git fetch` + rebase before every release** — the 0.2.0 cut had a push rejected mid-flight
+by a concurrent mac commit. **Release-tooling note (0.2.2):** this machine now
 has **`gh` CLI (2.96) AND Inno Setup**, so the whole release ran locally: commit → push → build →
 `build-installer.cmd` (Inno) → `gh release create v0.2.2` + upload → `make-appcast.ps1` → commit/push
 `appcast.xml`. **Only EdDSA signing stays on the Mac** (`scripts/sign-release.sh` → `sign_update` + the key).
@@ -838,6 +898,28 @@ owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — nev
 commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
+
+✅ **0.2.12 SHIPPED** (2026-07-25) — tag `v0.2.12` @ `76c6a46`, `0.2.12.325`, three signed installers on
+GitHub release `v0.2.12`, both appcasts LIVE @ `e4fb965`. Buy Me a Coffee (About button + support prompt),
+the CJK translation-quality pass, the Xtream group-title→country fallback, and the padding-proof
+series-rule dedup (**schema v7**). Built green x64 BOTH theme flags + ARM64, selftest ALL PASS, tip feature
+adversarially reviewed (FIX-FIRST → 7 fixed). `main` is clean; now on **0.2.13 dev**.
+
+**Pending the owner's on-device pass:**
+- **schema v7 migration** on a real library — the one item in 0.2.12 with real blast radius (already
+  shipped + verified on mac, but Windows hasn't had a live look).
+- **The support prompt has NOT been seen live** — it can't appear until a day after a 0.2.12 first launch.
+  To exercise it now: set `support_prompt_due` to a past epoch in `%LOCALAPPDATA%\RabbitEars\rabbitears.db`,
+  or delete both `support_*` keys to replay the first-run arming. Check the ja/zh layouts too — the body is
+  a non-scrolling STATIC sized for ~6 lines.
+- **CJK copy for the new strings is a draft** (6 ids: `BuyMeACoffeeButton`, `Support*`) — same native-review
+  gate as the rest of the catalog (`gen_i18n.py --review ja|zh-Hant|zh-HK`).
+
+**Candidates for 0.2.13:** the Microsoft Store track (researched — take the **EXE/MSI path**, Policy 10.2.9,
+which keeps the Inno installer *and* WinSparkle; the blocker is Authenticode, and Azure Artifact Signing is
+**not available to individuals in Japan**, so SignPath Foundation (free, OSS) is the route — see
+`Win32/BACKLOG.md`); Authenticode signing generally (also kills the SmartScreen warning on direct
+downloads); or extend `SkinGpu` to the GDI+ button glow.
 
 ✅ **0.2.8 SHIPPED** (2026-07-11) — tag `v0.2.8` @ `e45adb6`, `0.2.8.217`, three signed installers on GitHub
 release `v0.2.8`, two appcasts LIVE @ `5404004`. Three features: the **wake-timer preflight**, a **TV Guide
@@ -1233,15 +1315,21 @@ Paste this verbatim to start a fresh session with working context restored:
 > You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC 3.0.23**
 > with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome (coral
 > `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps vendored/NuGet.
-> **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.8 block)
+> **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.12 block)
 > — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
-> **State: last SHIPPED = `v0.2.8`** (2026-07-11, tag @ `e45adb6`, `0.2.8.217`, appcasts @ `5404004`).
-> `main` is clean. Everything shipped is LIVE and auto-updating (raw feeds serve 0.2.8.217, enclosures
-> HTTP 200). 0.2.8 = **localization (EN + 日本語)** + wake-timer preflight + TV Guide loading box. i18n
-> source of truth is `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*`
-> (never hand-edit). **Japanese is a machine draft** — native review (`gen_i18n.py --review ja`) is the
-> gate before advertising JP support.
+> **State: last SHIPPED = `v0.2.12`** (2026-07-25, tag @ `76c6a46`, `0.2.12.325`, both appcasts @
+> `e4fb965`). `main` is clean; now on **0.2.13 dev**. Everything shipped is LIVE and auto-updating (raw
+> feeds serve 0.2.12.325 for x64 **and** arm64, enclosures HTTP 200). 0.2.12 = **Buy Me a Coffee** (About
+> button + a one-time support prompt, state in the `support_*` settings) + the **CJK translation-quality
+> pass** + the **Xtream group-title→country fallback** + **padding-proof series-rule dedup (schema v7,
+> migrates on first launch)**. **Windows and mac versions are DECOUPLED** — bump only `APP_VERSION` in
+> `cmake/AppVersion.cmake` (one place; everything derives), leaving the `if(APPLE)` override (mac 0.2.15)
+> alone. i18n source of truth is `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates
+> `common/core/Strings.*` (never hand-edit); the catalog is **531 keys × 4 languages**. **CJK is still a
+> machine draft** — native review (`gen_i18n.py --review ja|zh-Hant|zh-HK`) is the gate before advertising
+> it. **Not yet seen live: the support prompt** (needs a day after first launch — or edit
+> `support_prompt_due`) and the **schema v7 migration** on a real Windows library.
 >
 > **The app.** `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = a video
 > HWND + `VlcPlayer` + channel; `AppState` holds the vector + `active` + `ViewMode`). Single / Split (2×2

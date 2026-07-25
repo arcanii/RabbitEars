@@ -336,13 +336,42 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
   (`Win32/ui/Dialogs.cpp`, next to Check-for-Updates/OK) opening a scrollable, read-only themed panel
   listing each bundled component (libVLC LGPL-2.1 + its GPL plugins, SQLite public-domain,
   miniz/WinSparkle/Sparkle MIT) with copyright + source links, sourced from the i18n catalog so it
-  localizes. Low-risk, self-contained. Also (small): vendor the WinSparkle/Sparkle upstream `LICENSE`
+  localizes. Low-risk, self-contained. **NB (0.2.12):** that button row now holds **three** buttons —
+  Check-for-Updates `dp(140)` · Buy-me-a-coffee `dp(160)` · OK `dp(90)` — in a `dp(530)` client, so a
+  fourth needs the About box widened or the row re-laid-out (don't just wedge it in). Also (small): vendor the WinSparkle/Sparkle upstream `LICENSE`
   files into `third_party/` for picture-perfect MIT notices, and have the **mac** DMG ship the same
   `THIRD-PARTY-NOTICES.txt` + `licenses/` (mac-team packaging).
 - **Authenticode** code-signing of the exe + installer (silences SmartScreen; separate from the EdDSA
   update signature). **Recipe + where it slots into the release flow is documented in
   `docs/RELEASING.md` ("Not yet covered")** — blocked only on the owner buying/provisioning a
-  code-signing cert (Azure Trusted Signing is the low-friction, headless-capable option).
+  code-signing cert. ⚠️ **Azure Artifact Signing (formerly Trusted Signing, ~$10/mo) is NOT available to
+  individual developers in Japan** — Microsoft lists individuals in the **USA and Canada only** (orgs:
+  US/CA/EU/UK). So the realistic options are **[SignPath Foundation](https://signpath.org/terms.html)**
+  (free OV-level signing for OSS, and recommended by Microsoft's own code-signing doc — RabbitEars'
+  GPL-3.0 + libVLC looks eligible; caveat: the cert subject reads "SignPath Foundation", not the owner's
+  name) or a ~$200/yr OV cert (Sectigo/DigiCert; HSM/token required since 2023). **Do NOT pay for EV
+  expecting instant SmartScreen trust — that bypass was removed in 2024.**
+- **Microsoft Store listing** (researched 2026-07-25, not started). **Registration is now FREE** — the $19
+  individual / $99 company fees were waived (Sept 2025 / May 2026); sign up **only** via
+  `https://storedeveloper.microsoft.com` (entering through Partner Center can still show the legacy paid
+  flow). Verification is government ID + selfie. **Recommended path: the EXE/MSI submission (Store Policy
+  10.2.9)** — the Store downloads and runs *your* Inno installer from a versioned HTTPS URL (GitHub
+  Releases), which **keeps WinSparkle**: Policy 10.2.5's "update only through the Store" explicitly
+  exempts 10.2.9, and Microsoft documents updates on this path as the app's own responsibility. It also
+  keeps the GPL/LGPL story clean (the user gets the byte-identical binary you published source for).
+  **Do NOT use MSIX** — free Microsoft signing, but you lose WinSparkle, seal libVLC behind an
+  unmodifiable package (weakening LGPL-2.1 §6's relink guarantee), and ship a re-signed binary.
+  **Blocker: 10.2.9 requires Authenticode** (self-signed rejected) — see the entry above; that is the only
+  hard prerequisite. Other gotchas: the policy says the installer **and every PE inside it** must be
+  signed (that's the whole libVLC `plugins\` tree — though the certification page softens it to "highly
+  recommended"; ask support); a **privacy policy URL is mandatory** for Win32 products (10.5.1) and we
+  have none; certification will fail as "not testable" unless the **cert notes carry a public free-to-air
+  M3U URL + steps through the T&C gate**; screenshots must not show real broadcast streams or
+  broadcaster logos (11.2); set **"Applicable license terms" to GPL-3.0-or-later** (the default Store
+  terms forbid redistribution and are GPL-incompatible — your own terms override); and check the name
+  against **RabbitEars.info** (an established US OTA-TV database) before reserving it. Publishing solves
+  SmartScreen *for Store installs only*. GPL apps are accepted (VLC itself ships there) and several
+  M3U/IPTV players are already listed.
 - **Portable-zip** artifact on releases (alongside the auto-updating installer).
 - **ARM64 `plugins.dat`** — no ARM64 `vlc-cache-gen` exists upstream; would mean building the tiny
   tool against the NuGet's arm64 `libvlccore`. LOW value (native ARM64 scan is already ~3 s). The x64

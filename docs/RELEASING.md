@@ -78,13 +78,16 @@ portable zip for people who prefer it; those users update manually).
    - Windows (if the key is there): `sign_update.exe build\installer\RabbitEars-<ver>-setup.exe`
 5. **Generate the appcast(s)** at the repo root — one per arch you built:
    ```cmd
-   pwsh scripts\make-appcast.ps1 -Version <ver.build> ^
+   pwsh scripts\make-appcast.ps1 -Version <ver.build> -Tag v<ver> ^
         -SetupExe build\installer\RabbitEars-<ver>-setup.exe -Signature <sig-x64>
-   pwsh scripts\make-appcast.ps1 -Arch arm64 -Version <ver.build> ^
+   pwsh scripts\make-appcast.ps1 -Arch arm64 -Version <ver.build> -Tag v<ver> ^
         -SetupExe build\installer\RabbitEars-<ver>-arm64-setup.exe -Signature <sig-arm64>
    ```
    (`-Version` must equal `RE_VERSION_FULL` of that build, i.e. `APP_VERSION.BUILD`; the plain
    form writes `appcast.xml`, `-Arch arm64` writes `appcast-arm64.xml`.)
+   > ⚠️ **Always pass `-Tag v<ver>`.** It defaults to `v<Version>` — i.e. `v0.2.12.325`, the *full*
+   > version — which is not the release tag (`v0.2.12`), so the enclosure URL would point at a tag
+   > that doesn't exist and every auto-update would 404. Verify the printed `url=` before publishing.
 6. **Publish on GitHub**: create a Release tagged `v<ver>`, upload **both** setup `.exe`s as
    assets (each appcast's enclosure URL points at its own file in this release).
 7. **Commit & push** the appcast(s) you regenerated (`appcast.xml` and/or `appcast-arm64.xml`)
