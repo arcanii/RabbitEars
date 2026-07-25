@@ -831,8 +831,8 @@ until that expires (looked like "0.2.1 doesn't detect the update" for a few min;
 branch was **merged to `main` + deleted** (only
 `main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
 **`git fetch` + rebase before a release** — the 0.2.0 push integrated a concurrent mac commit mid-flight
-(the first push was rejected until re-fetched). Working tree otherwise clean (the owner's
-`art/logo_basic*.png` stay untracked). Build number = git commit count, baked at CMake configure time
+(the first push was rejected until re-fetched). Working tree clean.
+Build number = git commit count, baked at CMake configure time
 **after** the commit — so a build must follow the release commit to stamp the matching `0.2.0.<count>`. Commit/push only when the
 owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`); end
 commit messages with the Co-Authored-By trailer.
