@@ -1597,10 +1597,13 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_OPEN_FILE:
             onOpenFile(st);
             break;
-        case ID_ABOUT:
+        case ID_ABOUT: {
+            bool tipOpened = false;
             showAbout(hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
-                      st->dpi);
+                      st->dpi, &tipOpened);
+            if (tipOpened) markSupportTipOpened(st);  // already visited the tip jar — never prompt
             break;
+        }
         case ID_FMT_TS:
             st->recFormat = L"ts";
             st->db.setSetting(L"rec_format", L"ts");

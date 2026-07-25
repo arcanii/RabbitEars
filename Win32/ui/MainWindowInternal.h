@@ -363,6 +363,9 @@ std::wstring recordingsDir();
 std::wstring recordingPath(const std::wstring& channelName, const std::wstring& ext);
 void onToggleRecord(AppState* st);
 void onSchedulerTick(AppState* st);
+// Stop ever scheduling the "support RabbitEars" prompt — call after the user has opened the tip
+// page (the About box's "Buy me a coffee" button reports this via showAbout's out-param).
+void markSupportTipOpened(AppState* st);
 void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::wstring& channelName, const std::wstring& title, long long startUtc, long long stopUtc);
 void onManageSchedules(AppState* st);
 // Recording Phase 3 (0.2.7)

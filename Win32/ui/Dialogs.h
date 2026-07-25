@@ -17,8 +17,11 @@
 
 namespace rabbitears {
 
-// Modal About box: artwork + name/version + libVLC attribution + Check-for-Updates.
-void showAbout(HWND parent, HINSTANCE hInst, UINT dpi);
+// Modal About box: artwork + name/version + libVLC attribution + Check-for-Updates + a
+// "Buy me a coffee" button. If `tipPageOpened` is non-null it is set to true when the user
+// opened the tip page from here, so the caller can stop scheduling the support prompt —
+// someone who has already visited the tip jar must not be asked again (see showSupportPrompt).
+void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened = nullptr);
 
 // Modal single-line prompt (used for the Add-Playlist URL). Returns true if the
 // user pressed OK, with `value` holding the edited text.

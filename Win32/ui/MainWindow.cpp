@@ -452,8 +452,19 @@ constexpr long long kSupportSnoozeSec = 7LL * 24 * 60 * 60;      // "Remind me l
 constexpr UINT      kSupportStartupDelayMs = 8000;                // let the app settle after launch
 constexpr UINT      kSupportRetryMs = 60000;                      // busy right now? try again later
 
+// Records that the user has visited the tip page (from here or from the About box), so the
+// support prompt is never scheduled again — asking someone who already went to the tip jar is
+// exactly the nagging this feature is meant to avoid.
+void markSupportTipOpened(AppState* st) {
+    if (st && st->db.isOpen()) st->db.setSetting(kSupportDueKey, L"never");
+}
+
 void maybeShowSupportPrompt(HWND hwnd, AppState* st) {
     if (!st || !st->db.isOpen()) return;
+    // KillTimer does not purge a WM_TIMER already posted, so a stale one dispatched by this
+    // prompt's own nested message pump could otherwise stack a second prompt on top of the first.
+    static bool inPrompt = false;
+    if (inPrompt) return;
     const auto due = st->db.getSetting(kSupportDueKey);
     if (due && *due == L"never") return;  // "Not interested" / already opened the tip page
 
@@ -472,21 +483,34 @@ void maybeShowSupportPrompt(HWND hwnd, AppState* st) {
     }
     if (now < dueAt) return;  // not due yet
 
-    // Don't interrupt. Every modal in this app disables the main window, so !IsWindowEnabled
-    // means another dialog is already up (the Terms gate included).
+    // Don't interrupt — retry rather than consume the prompt. !IsWindowEnabled covers every MODAL
+    // dialog (they all disable the main window, the Terms gate included), but two surfaces are
+    // MODELESS and leave it enabled, so they need naming explicitly:
+    //   • the TV Guide (epgGuideOpen) — worse than a cosmetic clash: from the still-live guide the
+    //     user can open a dialog whose exit path calls EnableWindow(mainWnd, TRUE), re-enabling the
+    //     main window *underneath* this prompt's nested modal loop and breaking its modality;
+    //   • the topmost "please wait" box + its worker (loadingDlg / busy), which would otherwise
+    //     float over the prompt mid-fetch.
+    // GetForegroundWindow: never steal focus from whatever the user actually alt-tabbed to.
     if (!IsWindowEnabled(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd) || st->fullscreen ||
-        st->videoOnly) {
+        st->videoOnly || epgGuideOpen() || st->busy || st->loadingDlg ||
+        GetForegroundWindow() != hwnd) {
         SetTimer(hwnd, kSupportPromptTimer, kSupportRetryMs, nullptr);
         return;
     }
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-    switch (showSupportPrompt(hwnd, hInst, st->dpi)) {
+    inPrompt = true;
+    const SupportChoice choice = showSupportPrompt(hwnd, hInst, st->dpi);
+    inPrompt = false;
+    switch (choice) {
         case SupportChoice::Later:  // ask again in a week — exactly what the button promises
             st->db.setSetting(kSupportDueKey, std::to_wstring(now + kSupportSnoozeSec));
             break;
         case SupportChoice::Never:   // "Not interested" — never bother them again
-        case SupportChoice::Donate:  // they went to the tip page; nagging a supporter is rude
             st->db.setSetting(kSupportDueKey, L"never");
+            break;
+        case SupportChoice::Donate:  // they went to the tip page; nagging a supporter is rude
+            markSupportTipOpened(st);
             break;
     }
 }
@@ -928,9 +952,13 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             switch (id) {
                 case ID_ADD_URL: onAddUrl(st); return 0;
                 case ID_OPEN_FILE: onOpenFile(st); return 0;
-                case ID_ABOUT:
-                    showAbout(hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), st->dpi);
+                case ID_ABOUT: {
+                    bool tipOpened = false;
+                    showAbout(hwnd, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
+                              st->dpi, &tipOpened);
+                    if (tipOpened) markSupportTipOpened(st);  // visited the tip jar — never prompt
                     return 0;
+                }
                 case ID_BTN_PLAY: st->ap().player.togglePause(); return 0;
                 case ID_BTN_STOP:
                     st->ap().player.stop();

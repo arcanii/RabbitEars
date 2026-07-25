@@ -104,6 +104,7 @@ struct AboutState {
     HFONT           bodyFont = nullptr;
     UINT            dpi = 96;
     bool            done = false;
+    bool            tipPageOpened = false;  // "Buy me a coffee" was clicked (reported to the caller)
 };
 
 Gdiplus::Image* loadPngResource(HINSTANCE hInst, int id, IStream** outStream) {
@@ -249,6 +250,7 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 checkForUpdates();
             } else if (LOWORD(wParam) == ID_BUY_COFFEE) {
                 ShellExecuteW(hwnd, L"open", kCoffeeUrl, nullptr, nullptr, SW_SHOWNORMAL);
+                if (st) st->tipPageOpened = true;  // caller stops scheduling the support prompt
             } else if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
                 if (st) st->done = true;
                 DestroyWindow(hwnd);
@@ -547,7 +549,7 @@ LRESULT CALLBACK ImportResultsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
 }  // namespace
 
-void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
+void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
     static bool registered = false;
     if (!registered) {
         WNDCLASSEXW wc{};
@@ -594,8 +596,9 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CHECK_UPDATES)),
                                    hInst, nullptr);
         // "Buy me a coffee" — the author's tip page, opened in the browser. Sits between
-        // Check-for-Updates and OK; dp(150) fits the longest localized label.
-        const int cw = dp(150, dpi);
+        // Check-for-Updates and OK. dp(160) matches the support prompt's button and leaves room
+        // for the longest localized label (ja "コーヒーを一杯おごる" ≈ 140px at this 14px face).
+        const int cw = dp(160, dpi);
         HWND coffee = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
                                       WS_CHILD | WS_VISIBLE,
                                       dp(20, dpi) + uw + dp(8, dpi), cr.bottom - bh - dp(14, dpi), cw,
@@ -629,6 +632,7 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi) {
         EnableWindow(parent, TRUE);
         SetForegroundWindow(parent);
     }
+    if (tipPageOpened) *tipPageOpened = st.tipPageOpened;
     delete st.img;
     if (st.stream) st.stream->Release();
     delete st.altImg;
@@ -708,7 +712,10 @@ SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi) {
     HFONT headFont = themeFont(FontRole::Title, dpi, 17, FW_SEMIBOLD);
     HFONT bodyFont = themeFont(FontRole::Body, dpi, 13, FW_NORMAL);
 
-    const int W = dp(500, dpi), H = dp(250, dpi);
+    // H is generous on purpose: the body is a non-scrolling STATIC, and the ja / zh copy runs
+    // ~6 lines — at dp(250) the last line (the "you won't be asked again" reassurance, i.e. the
+    // sentence that makes this prompt trustworthy) clipped silently on a taller CJK fallback face.
+    const int W = dp(500, dpi), H = dp(290, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
@@ -737,12 +744,17 @@ SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi) {
                                 btnY - dp(66, dpi), dlg, nullptr, hInst, nullptr);
 
     const int cw = dp(160, dpi), lw = dp(140, dpi), nw = dp(130, dpi), gap = dp(8, dpi);
+    // NB: "Remind me later" — not "Buy me a coffee" — is the default + focused button. This dialog
+    // appears UNSOLICITED and takes activation, so an Enter/Space already in flight (the user was
+    // typing in the search box) would otherwise fire the default. Buy is the one irreversible
+    // choice here (it opens a browser AND permanently stops the prompt), so it must be deliberate.
     HWND buy = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
-                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, m, btnY, cw, bh,
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, cw, bh,
                                dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_BUY)),
                                hInst, nullptr);
     HWND later = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SupportRemindLaterButton).c_str(),
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + cw + gap, btnY, lw, bh, dlg,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                 m + cw + gap, btnY, lw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_LATER)),
                                  hInst, nullptr);
     HWND never = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SupportNotInterestedButton).c_str(),
@@ -758,7 +770,7 @@ SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi) {
     EnableWindow(parent, FALSE);
     ShowWindow(dlg, SW_SHOW);
     UpdateWindow(dlg);
-    SetFocus(buy);
+    SetFocus(later);  // see above — the safe choice takes focus, never the irreversible one
     MSG msg;
     while (!st.done) {
         const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
