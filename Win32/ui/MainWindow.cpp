@@ -1532,8 +1532,26 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 GetCursorPos(&c);
                 // Route the new size through layout(): applyUserPipSize clamps it, and the
                 // normal path re-places the popup, its vout hosts, and paneBounds together.
-                st->pipW = static_cast<int>(st->pipResizeOrigin.cx) + (c.x - st->pipResizeStart.x);
-                st->pipH = static_cast<int>(st->pipResizeOrigin.cy) + (c.y - st->pipResizeStart.y);
+                int nw = static_cast<int>(st->pipResizeOrigin.cx) + (c.x - st->pipResizeStart.x);
+                int nh = static_cast<int>(st->pipResizeOrigin.cy) + (c.y - st->pipResizeStart.y);
+                // Snap to the stream's aspect ratio. A free-form PIP letterboxes itself: libVLC
+                // fits the picture inside the window preserving aspect, so any mismatch shows up as
+                // black bars down one side (owner-reported, 0.2.14). Drive off the dominant edge —
+                // whichever dimension the user pulled further from the original — so the drag still
+                // feels like it follows the cursor. Falls back to 16:9 before the vout reports a
+                // size; a 0x0 stream (audio-only, or not yet playing) keeps the free-form behaviour.
+                unsigned vw = 0, vh = 0;
+                for (auto& p : st->panes)
+                    if (p && p->floating) { p->player.videoSize(vw, vh); break; }
+                const double aspect = (vw && vh) ? static_cast<double>(vw) / vh : 16.0 / 9.0;
+                if (aspect > 0.01) {
+                    const int dw = std::abs(nw - static_cast<int>(st->pipResizeOrigin.cx));
+                    const int dh = std::abs(nh - static_cast<int>(st->pipResizeOrigin.cy));
+                    if (dw >= dh) nh = static_cast<int>(nw / aspect + 0.5);
+                    else          nw = static_cast<int>(nh * aspect + 0.5);
+                }
+                st->pipW = nw;
+                st->pipH = nh;
                 layout(st->hwnd, st);
                 return 0;
             }

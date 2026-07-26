@@ -106,6 +106,16 @@ public:
     // PlayerEvent::Stats is posted while a stream is loaded.
     FlowStats flowStats() const;
 
+    // The stream's NATIVE video size, or 0x0 when nothing is playing / not yet known. Sampled on
+    // the worker thread alongside the flow stats (libVLC calls stay off the UI thread) and published
+    // as one atomic, so the UI can read it lock-free. Used to constrain the PIP resize to the
+    // video's aspect ratio — a free-form PIP just letterboxes itself.
+    void videoSize(unsigned& w, unsigned& h) const {
+        const uint32_t packed = videoWH_.load(std::memory_order_relaxed);
+        w = packed >> 16;
+        h = packed & 0xFFFFu;
+    }
+
     // Recording — a headless second player records `url` to `filePath` (a .ts
     // stream copy, no re-encode) on the shared instance, independent of playback,
     // so you can keep watching (even another channel). Returns immediately.
@@ -184,6 +194,8 @@ private:
     std::chrono::steady_clock::time_point lastSampleTime_{};
     mutable std::mutex statsMtx_;   // guards snapshot_ (worker writes, UI reads)
     FlowStats           snapshot_;
+    // Native video size packed as (w<<16)|h — 0 until libVLC reports one. Worker writes, UI reads.
+    std::atomic<uint32_t> videoWH_{0};
 
     std::thread              worker_;
     std::mutex               mtx_;

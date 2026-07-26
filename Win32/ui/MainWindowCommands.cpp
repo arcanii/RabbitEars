@@ -752,12 +752,15 @@ void applyViewMode(AppState* st, ViewMode mode) {
             }
         }
     }
-    // Carry the SELECTED pane's stream across the collapse. Pane 0 (the primary child surface)
-    // always persists, but only pane 0's HWND survives — not necessarily its channel. If a
-    // NON-pane-0 tile is active (e.g. you picked the bottom-right of a 2x2), remember what it was
-    // playing and replay it into pane 0 below, so leaving Split/PIP keeps what you were watching
-    // instead of snapping back to the top-left tile.
-    const bool carryStream = st->active != 0 && st->ap().nowPlayingId != 0;
+    // Carry the SELECTED pane's stream across the collapse — but ONLY when leaving SPLIT.
+    // In 2x2 the four tiles are equal peers, so collapsing to one should keep the tile you had
+    // selected rather than snapping back to the top-left. PIP is not that: the main view is the
+    // primary and the PIP is a secondary overlay, so closing the PIP must leave the main view
+    // playing exactly what it already was. Carrying there hijacked pane 0 with the PIP's channel
+    // whenever the PIP happened to be the active pane (owner-reported, 0.2.14).
+    // NB st->viewMode is still the OLD mode here — it is assigned below.
+    const bool carryStream =
+        st->viewMode == ViewMode::Split && st->active != 0 && st->ap().nowPlayingId != 0;
     const Channel carry = carryStream ? st->ap().nowPlaying : Channel{};
     // Tear the extra panes down ASYNCHRONOUSLY. libVLC 3.x stop()/release() block for seconds on a
     // stuck IPTV feed; doing that synchronously here (player.shutdown()) froze the UI thread — an

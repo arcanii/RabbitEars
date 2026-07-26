@@ -403,6 +403,15 @@ void VlcPlayer::sampleStats() {
         std::lock_guard<std::mutex> lk(statsMtx_);
         snapshot_ = fs;
     }
+    // Native video size, sampled here so the libVLC call stays on the worker thread. 0x0 until the
+    // vout is up; it can also change mid-stream (an adaptive rendition switch), which is why it is
+    // re-read every tick rather than latched once at Playing.
+    {
+        unsigned vw = 0, vh = 0;
+        if (libvlc_video_get_size(mp_, 0, &vw, &vh) == 0 && vw && vh)
+            videoWH_.store((static_cast<uint32_t>(vw & 0xFFFFu) << 16) | (vh & 0xFFFFu),
+                           std::memory_order_relaxed);
+    }
     // The 250ms flow snapshot, at TRACE — deliberately the loudest thing in the app (~4 lines/sec
     // per playing pane), which is exactly why it is TRACE and not DEBUG. It is what turns "it
     // stutters sometimes" into a timeline of throughput, buffering and loss.
