@@ -3546,5 +3546,11 @@
     "cluster": "Status",
     "placeholders": [],
     "comment": "Status line after skipping one airing of a series rule."
+  },
+  {
+    "id": "MeterLookVu",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Meter look: classic analog VU needle gauge. 'VU' is the standard audio abbreviation (volume unit) — keep it as VU."
   }
 ]

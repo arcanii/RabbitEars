@@ -549,5 +549,6 @@
   "MetersGlassLabel": "Glass:",
   "MetersGlassOff": "Off",
   "ScheduleStatusSkipped": "Skipped",
-  "StatusAiringSkippedRule": "Airing skipped — the series rule is still active and will record future episodes."
+  "StatusAiringSkippedRule": "Airing skipped — the series rule is still active and will record future episodes.",
+  "MeterLookVu": "VU needle"
 }

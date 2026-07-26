@@ -20,7 +20,11 @@ enum class MeterKind { Spectrum, Signal, Bitrate, Frames };
 
 // The visual "look" of a meter (Settings → Meters…). LED is the classic dot-matrix;
 // the others are added incrementally — an unimplemented look renders as LED.
-enum class MeterStyle { Led, Tube, Lcd, Scope };
+// Vu is the classic analog needle gauge (the Phase Linear 400 look): a swept scale with a damped
+// needle behind the glass. Appended LAST — the codec is token-based so order is not persisted, but
+// mac carries its own copy of this enum (mac/src/app/MeterModel.h) WITHOUT Vu, and its parser falls
+// back on the unknown "vu" token. Adding it there is a mac-team change, flagged in BACKLOG.md.
+enum class MeterStyle { Led, Tube, Lcd, Scope, Vu };
 
 // Fully customizable per-meter colour palette. The roles map onto the "how much is
 // lit" math so every look can honour them. `bg == CLR_INVALID` means "follow the theme's

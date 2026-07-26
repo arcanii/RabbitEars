@@ -590,6 +590,8 @@ enum class StringId {
     ScheduleStatusSkipped,
     // --- Status ---
     StatusAiringSkippedRule,
+    // --- DialogMeters ---
+    MeterLookVu,
     Count  // sentinel — MUST stay last
 };
 

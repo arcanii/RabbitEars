@@ -589,6 +589,8 @@ constexpr std::array<const char*, N> kEn = {{
     "Skipped",  // ScheduleStatusSkipped
     // --- Status ---
     "Airing skipped — the series rule is still active and will record future episodes.",  // StatusAiringSkippedRule
+    // --- DialogMeters ---
+    "VU needle",  // MeterLookVu
 }};
 
 // 日本語
@@ -1168,6 +1170,8 @@ constexpr std::array<const char*, N> kJa = {{
     "スキップ",  // ScheduleStatusSkipped
     // --- Status ---
     "この放送をスキップしました — シリーズルールは有効なままで、今後のエピソードは録画されます。",  // StatusAiringSkippedRule
+    // --- DialogMeters ---
+    "VU メーター",  // MeterLookVu
 }};
 
 // 繁體中文
@@ -1747,6 +1751,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "已略過",  // ScheduleStatusSkipped
     // --- Status ---
     "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",  // StatusAiringSkippedRule
+    // --- DialogMeters ---
+    "VU 指針",  // MeterLookVu
 }};
 
 // 繁體中文（香港）
@@ -2326,6 +2332,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     "已略過",  // ScheduleStatusSkipped
     // --- Status ---
     "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",  // StatusAiringSkippedRule
+    // --- DialogMeters ---
+    "VU 指針",  // MeterLookVu
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

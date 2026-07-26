@@ -1650,6 +1650,7 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
 // ---- Meters… setup dialog (Settings → Meters…) -----------------------------
 namespace {
 
+constexpr int  kMtrLookCount = 5;    // MeterStyle: Led, Tube, Lcd, Scope, Vu (combo index == enum)
 constexpr int  ID_MTR_GLASS = 1597;  // the single GLOBAL "glass cover" strength slider
 constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j, slider j +10+j
 constexpr int  ID_MTR_RESET = 1596;
@@ -1980,10 +1981,13 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
                                     tr(i18n::StringId::MeterNameSignalStrength),
                                     tr(i18n::StringId::MeterNameBitrate),
                                     tr(i18n::StringId::MeterNameFrameRate)};
-    const std::wstring kLooks[4] = {tr(i18n::StringId::MeterLookLed),
-                                    tr(i18n::StringId::MeterLookVacuumTube),
-                                    tr(i18n::StringId::MeterLookLcd),
-                                    tr(i18n::StringId::MeterLookOscilloscope)};
+    // ORDER IS LOAD-BEARING: the combo index is cast straight to MeterStyle (see CBN_SELCHANGE),
+    // so this must stay in enum order — Led, Tube, Lcd, Scope, Vu.
+    const std::wstring kLooks[kMtrLookCount] = {tr(i18n::StringId::MeterLookLed),
+                                                tr(i18n::StringId::MeterLookVacuumTube),
+                                                tr(i18n::StringId::MeterLookLcd),
+                                                tr(i18n::StringId::MeterLookOscilloscope),
+                                                tr(i18n::StringId::MeterLookVu)};
     const std::wstring kRoles[kMtrRoles] = {tr(i18n::StringId::MeterRoleBg),
                                             tr(i18n::StringId::MeterRoleDim),
                                             tr(i18n::StringId::MeterRoleLow),
@@ -2015,7 +2019,7 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
             0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
             m + dp(162, dpi), y0 + dp(28, dpi), dp(140, dpi), dp(180, dpi), dlg,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 1)), hInst, nullptr);
-        for (int s = 0; s < 4; ++s)
+        for (int s = 0; s < kMtrLookCount; ++s)
             SendMessageW(st.combo[r], CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(kLooks[s].c_str()));
         SendMessageW(st.combo[r], CB_SETCURSEL, static_cast<int>(st.cfg[r].style), 0);
         SendMessageW(st.combo[r], WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);

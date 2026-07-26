@@ -89,6 +89,13 @@ struct MiniMeterState {
     int   fps = 0;
     float flare = 0.0f;  // red flash on dropped frames, decays
 
+    // VU needle: its own damped position, deliberately NOT the same value the cell looks draw.
+    // A real VU movement is a mass on a spring — the standard is ~300ms to settle, symmetric on
+    // rise and fall — and that lag IS the instrument's character. Sharing the LED meters'
+    // attack-fast/decay-slow envelope would make it twitch like a peak meter, which is the one
+    // thing a VU is not. Held per-meter so switching looks doesn't fling the needle.
+    float vuNeedle = 0.0f;
+
     // Cached 32bpp top-down back-buffer. Previously onPaint created AND destroyed a
     // CreateCompatibleBitmap every paint — with 4 tray meters at ~30fps that is ~240 GDI object
     // operations per second for a surface whose size almost never changes. Caching it is a win on
@@ -229,6 +236,103 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
 // the base pass), drawn with GDI+ so they're antialiased and additively bleed across
 // cell borders. Layered like the scope bloom — a wide dim halo, an inner glow, then a
 // bright core toward the peak colour. (Alphas/radii are aesthetic — tune to taste.)
+// The 0..1 quantity this meter is currently showing, as ONE number. The cell looks render a
+// spectrum/history as many values; a needle can only point at one, so each kind collapses to its
+// headline figure. Shared by the VU needle (and anything else single-valued later).
+float scalarLevel(const MiniMeterState* st) {
+    switch (st->kind) {
+        case MeterKind::Spectrum: {  // loudness ≈ the mean of the bands
+            const int n = std::clamp(st->bands, 1, kMaxBands);
+            float sum = 0.0f;
+            for (int i = 0; i < n; ++i) sum += std::clamp(st->level[i], 0.0f, 1.0f);
+            return sum / static_cast<float>(n);
+        }
+        case MeterKind::Bitrate: {
+            const float denom = std::max(st->histMax, 1.0f);
+            if (st->histCount <= 0) return 0.0f;
+            const int idx = (st->histHead - 1 + kHist) % kHist;  // newest sample
+            return std::clamp(st->hist[idx] / denom, 0.0f, 1.0f);
+        }
+        case MeterKind::Signal: return std::clamp(st->sigLevel, 0.0f, 1.0f);
+        case MeterKind::Frames: return std::clamp(st->fps / 60.0f, 0.0f, 1.0f);
+    }
+    return 0.0f;
+}
+
+// Classic analog VU gauge: a cream face, a swept scale with ticks, a red zone over the last
+// fifth, and a damped needle. Modelled on a Phase Linear 400 — pair it with the glass overlay
+// (Settings ▸ Meters… ▸ Glass) for the full instrument look.
+//
+// Unlike the other looks this one owns its face colours: a VU that isn't cream-on-black stops
+// reading as a VU, the same way the Tube look owns its phosphor glow. The palette still drives
+// what it sensibly can — `peak` tints the red zone and `accent` the needle — so a user keeps
+// meaningful control without being able to break the idiom.
+//
+// The pivot sits BELOW the panel so the arc sweeps the full width: these meters are only ~30px
+// tall, and a needle rooted inside that would be a stub. GDI+ throughout — a jaggy needle at this
+// size looks broken.
+void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
+    const float L = static_cast<float>(in.left), R = static_cast<float>(in.right);
+    const float T = static_cast<float>(in.top), B = static_cast<float>(in.bottom);
+    const float w = R - L, h = B - T;
+    if (w < 8.0f || h < 8.0f) return;
+
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+
+    // Warm cream face, very slightly graded so it doesn't look like flat paper.
+    const Gdiplus::Color faceTop(255, 246, 232, 176), faceBot(255, 228, 206, 140);
+    {
+        Gdiplus::RectF face(L, T, w, h);
+        Gdiplus::LinearGradientBrush lg(face, faceTop, faceBot, Gdiplus::LinearGradientModeVertical);
+        g.FillRectangle(&lg, face);
+    }
+
+    // Geometry: pivot below the bottom edge, radius chosen so the arc clears the top with margin.
+    const float cx = L + w * 0.5f, cy = B + h * 1.05f;
+    const float rad = (cy - T) - h * 0.14f;
+    const float span = 52.0f;                       // total sweep, degrees
+    const float a0 = -90.0f - span * 0.5f;          // 0 == full left
+    auto ptAt = [&](float frac, float rr) {
+        const float ang = (a0 + span * std::clamp(frac, 0.0f, 1.0f)) * 3.14159265f / 180.0f;
+        return Gdiplus::PointF(cx + rr * std::cos(ang), cy + rr * std::sin(ang));
+    };
+
+    // Scale arc + ticks. Seven majors; the last fifth is the red zone, as on the real thing.
+    const Gdiplus::Color ink(255, 74, 58, 34);
+    Gdiplus::Pen arcPen(ink, std::max(1.0f, h * 0.035f));
+    Gdiplus::Pen redPen(Gdiplus::Color(255, GetRValue(st->palette.peak), GetGValue(st->palette.peak),
+                                       GetBValue(st->palette.peak)),
+                        std::max(1.5f, h * 0.055f));
+    Gdiplus::RectF arcBox(cx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
+    g.DrawArc(&arcPen, arcBox, a0, span * 0.80f);
+    g.DrawArc(&redPen, arcBox, a0 + span * 0.80f, span * 0.20f);
+
+    for (int i = 0; i <= 6; ++i) {
+        const float f = static_cast<float>(i) / 6.0f;
+        const float inner = rad - h * (i % 3 == 0 ? 0.20f : 0.12f);
+        const Gdiplus::PointF p1 = ptAt(f, rad), p2 = ptAt(f, inner);
+        Gdiplus::Pen tick(ink, std::max(1.0f, h * (i % 3 == 0 ? 0.045f : 0.03f)));
+        g.DrawLine(&tick, p2, p1);
+    }
+
+    // The needle: a tapered blade with a soft shadow just behind it, so it sits ABOVE the face
+    // rather than being painted onto it.
+    const float v = std::clamp(st->vuNeedle, 0.0f, 1.0f);
+    const Gdiplus::PointF tip = ptAt(v, rad - h * 0.06f);
+    const Gdiplus::PointF root(cx, cy - h * 0.10f);
+    Gdiplus::Pen shadow(Gdiplus::Color(70, 0, 0, 0), std::max(1.5f, h * 0.075f));
+    g.DrawLine(&shadow, Gdiplus::PointF(root.X + 1.0f, root.Y + 1.0f),
+               Gdiplus::PointF(tip.X + 1.0f, tip.Y + 1.0f));
+    Gdiplus::Pen needle(Gdiplus::Color(255, GetRValue(st->palette.accent),
+                                       GetGValue(st->palette.accent),
+                                       GetBValue(st->palette.accent)),
+                        std::max(1.2f, h * 0.055f));
+    needle.SetStartCap(Gdiplus::LineCapRound);
+    needle.SetEndCap(Gdiplus::LineCapRound);
+    g.DrawLine(&needle, root, tip);
+}
+
 void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette& pal, float glow) {
     if (cells.empty()) return;
     const float gs = glow * 2.0f;  // glow knob: 0.5 (default) -> 1.0 = current intensity
@@ -434,7 +538,9 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
     const int inset = dpx(2, st->dpi);
     RECT in{rc.left + inset, rc.top + inset, rc.right - inset, rc.bottom - inset};
     if (in.right > in.left && in.bottom > in.top) {
-        if (st->style == MeterStyle::Scope) {
+        if (st->style == MeterStyle::Vu) {
+            drawVu(mem, in, st);
+        } else if (st->style == MeterStyle::Scope) {
             drawScope(mem, in, st);
         } else {
             // Tube collects its lit cells for a soft GDI+ halo pass afterwards; the
@@ -493,6 +599,18 @@ void onTick(MiniMeterState* st) {
     st->sigLevel += (st->sigTarget - st->sigLevel) * sigEase;
     st->flare *= flareDecay;
     if (st->flare < 0.01f) st->flare = 0.0f;
+
+    // VU needle ballistics. Integrated EVERY tick regardless of the current look, so switching to
+    // Vu shows a needle already tracking the signal instead of one sweeping up from zero.
+    //
+    // A real VU movement reaches ~99% in 300ms and is SYMMETRIC — it is a damped mechanical
+    // movement, not an envelope follower, so it lags in both directions. At 33ms/tick that is a
+    // per-tick coefficient of ~1-exp(-33/65) ≈ 0.40 for a 300ms settle (t99 ≈ 4.6 time constants).
+    // The smoothing knob still scales it, so a user can have a livelier or lazier needle, but the
+    // centre of the range is the real instrument.
+    const float vuBase = 0.40f;
+    const float vuCoef = std::clamp(vuBase * (1.35f - st->tuning.smoothing * 0.70f), 0.06f, 0.75f);
+    st->vuNeedle += (scalarLevel(st) - st->vuNeedle) * vuCoef;
 }
 
 // Run the ~30fps animation timer only while the meter is actually shown.
@@ -723,6 +841,7 @@ std::wstring meterStyleToString(MeterStyle style) {
         case MeterStyle::Tube:  return L"tube";
         case MeterStyle::Lcd:   return L"lcd";
         case MeterStyle::Scope: return L"scope";
+        case MeterStyle::Vu:    return L"vu";
         case MeterStyle::Led:
         default:                return L"led";
     }
@@ -733,6 +852,7 @@ MeterStyle meterStyleFromString(const std::wstring& s, MeterStyle fallback) {
     if (s == L"tube") return MeterStyle::Tube;
     if (s == L"lcd") return MeterStyle::Lcd;
     if (s == L"scope") return MeterStyle::Scope;
+    if (s == L"vu") return MeterStyle::Vu;
     return fallback;
 }
 

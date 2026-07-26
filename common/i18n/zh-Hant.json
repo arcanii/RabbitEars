@@ -549,5 +549,6 @@
   "MetersGlassLabel": "玻璃質感：",
   "MetersGlassOff": "關閉",
   "ScheduleStatusSkipped": "已略過",
-  "StatusAiringSkippedRule": "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。"
+  "StatusAiringSkippedRule": "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",
+  "MeterLookVu": "VU 指針"
 }
