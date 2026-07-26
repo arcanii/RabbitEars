@@ -239,6 +239,23 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   lossless stream copy (`ts`/`mkv`/`mp4` mux, no re-encode).
 - **Background dead-link checker** — so "Hide unavailable" isn't purely passive: probe channels
   off-thread, write `dead_status`, throttle + cache. Pairs with the existing `setDeadStatus` DAO.
+- **⛔ TV Guide off-thread — DEFERRED, and the backlog's premise below is WRONG.** Two findings from
+  the 0.2.14 investigation, both verified against the code and the live DB:
+  1. **The "cheaper first win" described below does not exist.** `programmesInWindow` ALREADY bounds
+     by the window — `WHERE playlist_id=? AND start_utc<? AND stop_utc>?` (`common/db/Database.cpp`).
+     It does not scan the whole playlist partition. Index variants were benchmarked during the
+     design pass and every one REGRESSED (262 → 430 → 1045 ms; an unrelated count 52 → 570 ms).
+  2. **There is no evidence the problem exists at all.** The owner's library has **0 rows in
+     `epg_programmes`** (442 channels, one playlist, no XMLTV ever fetched), so the diag timer
+     `"TV guide first-open: DB+build … ms"` has never once fired. Optimising an unmeasured path —
+     by adding a second sqlite connection and an async rewrite of `onEpgGuide`, in the same area
+     where a review already caught one regression — is how you buy risk with no return.
+  **To revisit:** set a guide URL (Settings ▸ Set Guide URL…), run Settings ▸ Refresh Guide, open the
+  TV Guide once, and read that diag line. Only if the number is genuinely bad is the threading work
+  justified — and it must then use its OWN sqlite3 connection (never `st->db`, which is FULLMUTEX
+  and shared with the scheduler tick + fetch writes) and post rows back via `WM_APP+8` (the next
+  free id: +6/+7 went to the dead-link sweep, +10 is ChannelGridControl).
+  *(Original entry, retained for context — note its premise is disproven by (1) above.)*
 - **TV Guide first-open: build off the UI thread** (0.2.8-dev added a *loading box* only). The first
   `onEpgGuide` build is synchronous on the UI thread, so the window is frozen behind the "Loading TV
   guide…" box while it runs; if a build exceeds ~5 s, DWM ghosts it as "Not Responding". A diag timer
