@@ -546,5 +546,6 @@
   "LogLevelDebug": "詳細",
   "LogLevelTrace": "全部",
   "MenuPipAlwaysOnTop": "子母畫面顯示在其他應用程式上方",
-  "MetersGlassLabel": "玻璃質感："
+  "MetersGlassLabel": "玻璃質感：",
+  "MetersGlassOff": "關閉"
 }

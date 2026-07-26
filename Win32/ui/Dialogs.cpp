@@ -1696,6 +1696,7 @@ struct MetersDlgState {
     HWND  slider[4][kMtrKnobs] = {};
     HWND  bufPreview = nullptr;  // the "Data flow" (buffer/fluid) meter preview — no Look/palette
     HWND  glass = nullptr;       // global "glass cover" strength (applies to every meter)
+    HWND  glassPct = nullptr;    // live "45%" / "Off" read-out beside it
     float glassOnEntry = 0.0f;   // restored on Cancel — the slider previews LIVE, app-wide
     HWND  bufEnable = nullptr;
     bool  bufOn = true;          // working copy of the data-flow meter's visible state
@@ -1846,6 +1847,11 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // point: you judge glass against the actual tray. Cancel restores glassOnEntry.
                 const int pos = static_cast<int>(SendMessageW(bar, TBM_GETPOS, 0, 0));
                 miniMeterSetGlass(static_cast<float>(pos) / 100.0f);
+                if (st->glassPct) {  // numeric read-out: "off" is otherwise indistinguishable from
+                    wchar_t t[16];   // "on but subtle" at this size
+                    swprintf_s(t, L"%d%%", pos);
+                    SetWindowTextW(st->glassPct, pos ? t : tr(i18n::StringId::MetersGlassOff).c_str());
+                }
                 for (int r = 0; r < 4; ++r)
                     if (st->preview[r]) InvalidateRect(st->preview[r], nullptr, FALSE);
                 return 0;
@@ -2108,9 +2114,19 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_GLASS)), hInst,
                                nullptr);
     SendMessageW(st.glass, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-    SendMessageW(st.glass, TBM_SETPOS, TRUE,
-                 static_cast<LPARAM>(static_cast<int>(st.glassOnEntry * 100.0f + 0.5f)));
+    const int glassPos0 = static_cast<int>(st.glassOnEntry * 100.0f + 0.5f);
+    SendMessageW(st.glass, TBM_SETPOS, TRUE, static_cast<LPARAM>(glassPos0));
+    SendMessageW(st.glass, TBM_SETPAGESIZE, 0, 10);
+    st.glassPct = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
+                                  m + dp(436, dpi), btnY, dp(56, dpi), bh, dlg, nullptr, hInst,
+                                  nullptr);
+    {
+        wchar_t t[16];
+        swprintf_s(t, L"%d%%", glassPos0);
+        SetWindowTextW(st.glassPct, glassPos0 ? t : tr(i18n::StringId::MetersGlassOff).c_str());
+    }
     SendMessageW(glassLbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+    SendMessageW(st.glassPct, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
     HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - 2 * bw - dp(26, dpi), btnY, bw, bh, dlg,

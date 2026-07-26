@@ -546,5 +546,6 @@
   "LogLevelDebug": "Detailed",
   "LogLevelTrace": "Everything",
   "MenuPipAlwaysOnTop": "Keep PIP above other apps",
-  "MetersGlassLabel": "Glass:"
+  "MetersGlassLabel": "Glass:",
+  "MetersGlassOff": "Off"
 }

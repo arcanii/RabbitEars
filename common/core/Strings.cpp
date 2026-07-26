@@ -584,6 +584,7 @@ constexpr std::array<const char*, N> kEn = {{
     "Keep PIP above other apps",  // MenuPipAlwaysOnTop
     // --- DialogMeters ---
     "Glass:",  // MetersGlassLabel
+    "Off",  // MetersGlassOff
 }};
 
 // 日本語
@@ -1158,6 +1159,7 @@ constexpr std::array<const char*, N> kJa = {{
     "PIPを常に最前面に表示",  // MenuPipAlwaysOnTop
     // --- DialogMeters ---
     "ガラス:",  // MetersGlassLabel
+    "オフ",  // MetersGlassOff
 }};
 
 // 繁體中文
@@ -1732,6 +1734,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "子母畫面顯示在其他應用程式上方",  // MenuPipAlwaysOnTop
     // --- DialogMeters ---
     "玻璃質感：",  // MetersGlassLabel
+    "關閉",  // MetersGlassOff
 }};
 
 // 繁體中文（香港）
@@ -2306,6 +2309,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "子母畫面顯示在其他應用程式上方",  // MenuPipAlwaysOnTop
     // --- DialogMeters ---
     "玻璃質感：",  // MetersGlassLabel
+    "關閉",  // MetersGlassOff
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

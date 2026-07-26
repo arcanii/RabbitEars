@@ -546,5 +546,6 @@
   "LogLevelDebug": "詳細",
   "LogLevelTrace": "すべて",
   "MenuPipAlwaysOnTop": "PIPを常に最前面に表示",
-  "MetersGlassLabel": "ガラス:"
+  "MetersGlassLabel": "ガラス:",
+  "MetersGlassOff": "オフ"
 }

@@ -585,6 +585,7 @@ enum class StringId {
     MenuPipAlwaysOnTop,
     // --- DialogMeters ---
     MetersGlassLabel,
+    MetersGlassOff,
     Count  // sentinel — MUST stay last
 };
 

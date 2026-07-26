@@ -3528,5 +3528,11 @@
     "cluster": "DialogMeters",
     "placeholders": [],
     "comment": "Label for the global 'glass cover' strength slider in the Meters dialog."
+  },
+  {
+    "id": "MetersGlassOff",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Shown beside the glass slider when its strength is zero."
   }
 ]
