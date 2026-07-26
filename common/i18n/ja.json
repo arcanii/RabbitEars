@@ -314,6 +314,7 @@
   "MeterRoleAccent": "アクセント",
   "MeterDataFlowCheckbox": "データフロー",
   "MeterDataFlowNote": "トランスポートバーの右端に表示されるバッファリングタンクです。メーター自体を右クリックして非表示にすることもできます。",
+  "MeterFluidColour": "液体",
   "MetersResetButton": "既定値にリセット",
   "AboutGithubLinkLabel": "github.com/arcanii/RabbitEars",
   "AboutArchArm64": "ARM64",

@@ -314,6 +314,7 @@
   "MeterRoleAccent": "強調",
   "MeterDataFlowCheckbox": "資料流",
   "MeterDataFlowNote": "顯示在傳輸列最右側的緩衝槽。您也可以在該量表上按右鍵來隱藏它。",
+  "MeterFluidColour": "液體",
   "MetersResetButton": "重設為預設值",
   "AboutGithubLinkLabel": "github.com/arcanii/RabbitEars",
   "AboutArchArm64": "ARM64",

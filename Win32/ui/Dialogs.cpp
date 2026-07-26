@@ -1835,6 +1835,8 @@ struct MetersDlgState {
     float glassOnEntry = 0.0f;   // restored on Cancel — the slider previews LIVE, app-wide
     HWND  bufEnable = nullptr;
     bool  bufOn = true;          // working copy of the data-flow meter's visible state
+    HWND  bufFluid = nullptr;    // the fluid-colour swatch (this row's ONLY colour control)
+    COLORREF fluidOnEntry = kDefaultFluidColor;  // restored on Cancel — it previews LIVE, app-wide
     HFONT font = nullptr, bold = nullptr;
     UINT  dpi = 96;
     UINT  feedTick = 0;
@@ -1946,6 +1948,12 @@ void meterReset(MetersDlgState* st) {
         // the whole band rather than just reloading slider positions.
         meterSyncKnobs(st, r);
     }
+    // The fluid colour is a COLOUR, so Reset restores it alongside the palettes — unlike the glass
+    // strength, which Reset deliberately leaves alone (it is an effect level, not a colour, and a
+    // user who dialled glass in does not expect "reset the palettes" to switch it off).
+    bufferMeterSetFluidColor(kDefaultFluidColor);
+    if (st->bufFluid) InvalidateRect(st->bufFluid, nullptr, FALSE);
+    if (st->bufPreview) InvalidateRect(st->bufPreview, nullptr, FALSE);
 }
 
 // Stop feeding + destroy the preview meters before the dialog dies, so no stray
@@ -1991,6 +1999,15 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         FrameRect(di->hDC, &di->rcItem, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
                         return TRUE;
                     }
+            // The data-flow row's single fluid swatch — same look as the palette swatches above.
+            if (st->bufFluid && di->hwndItem == st->bufFluid) {
+                SetDCBrushColor(di->hDC, bufferMeterFluidColor());
+                FillRect(di->hDC, &di->rcItem, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                const bool hot = (di->itemState & (ODS_FOCUS | ODS_SELECTED)) != 0;
+                SetDCBrushColor(di->hDC, hot ? currentTheme().accent : currentTheme().border);
+                FrameRect(di->hDC, &di->rcItem, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                return TRUE;
+            }
             return TRUE;
         }
         case WM_TIMER:
@@ -2062,14 +2079,35 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 st->bufOn = SendMessageW(st->bufEnable, BM_GETCHECK, 0, 0) == BST_CHECKED;
                 return 0;
             }
+            if (ctl == st->bufFluid && code == BN_CLICKED) {  // the Data flow row's fluid colour
+                static COLORREF customFluid[16] = {};
+                CHOOSECOLORW cc{};
+                cc.lStructSize = sizeof(cc);
+                cc.hwndOwner = hwnd;
+                cc.rgbResult = bufferMeterFluidColor();
+                cc.lpCustColors = customFluid;
+                cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+                if (ChooseColorW(&cc)) {
+                    // Global + live, exactly like the glass slider: the REAL buffer meter in the
+                    // transport bar recolours as you pick, which is the only way to judge a fluid
+                    // colour honestly (the preview is a different size and sits on a dialog
+                    // background). Cancel puts it back — see fluidOnEntry.
+                    bufferMeterSetFluidColor(cc.rgbResult);
+                    InvalidateRect(st->bufFluid, nullptr, FALSE);
+                    if (st->bufPreview) InvalidateRect(st->bufPreview, nullptr, FALSE);
+                }
+                return 0;
+            }
             const int id = LOWORD(wParam);
             if (id == IDOK) {
                 st->ok = true;
                 st->done = true;
             } else if (id == IDCANCEL) {
-                // The glass slider previews live on the REAL meters (that is the point — you judge
-                // it against the actual tray), so Cancel has to put it back.
+                // The glass slider and the fluid colour both preview live on the REAL meters (that
+                // is the point — you judge them against the actual tray), so Cancel has to put both
+                // back.
                 miniMeterSetGlass(st->glassOnEntry);
+                bufferMeterSetFluidColor(st->fluidOnEntry);
                 st->done = true;
             } else if (id == ID_MTR_RESET) {
                 meterReset(st);
@@ -2082,7 +2120,8 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_CLOSE:
             if (st) {
-                miniMeterSetGlass(st->glassOnEntry);  // X == Cancel for the live glass preview
+                miniMeterSetGlass(st->glassOnEntry);           // X == Cancel for the live previews
+                bufferMeterSetFluidColor(st->fluidOnEntry);
                 st->done = true;
                 meterTeardown(hwnd, st);
             }
@@ -2247,10 +2286,25 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
             SendMessageW(st.bufEnable, BM_SETCHECK, hidden ? BST_UNCHECKED : BST_CHECKED, 0);
         });
 
+        // Fluid colour — this row's ONE colour control. The other rows get seven swatches from a
+        // MeterPalette; the fluid look is internal and has no palette, so it gets a single global
+        // swatch instead (see bufferMeterSetFluidColor). Parked in its own right-hand column so the
+        // note keeps a sane wrap width.
+        const int colW = dp(96, dpi), colX = cr.right - m - colW;
+        HWND fluidLbl = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::MeterFluidColour).c_str(),
+                                        WS_CHILD | WS_VISIBLE | SS_CENTER, colX, y0 + dp(32, dpi),
+                                        colW, dp(14, dpi), dlg, nullptr, hInst, nullptr);
+        SendMessageW(fluidLbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+        st.fluidOnEntry = bufferMeterFluidColor();
+        st.bufFluid = CreateWindowExW(
+            0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+            colX + (colW - dp(34, dpi)) / 2, y0 + dp(50, dpi), dp(34, dpi), dp(24, dpi), dlg,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + 4 * 16 + 3)), hInst, nullptr);
+
         HWND note = CreateWindowExW(
             0, L"STATIC", tr(i18n::StringId::MeterDataFlowNote).c_str(),
             WS_CHILD | WS_VISIBLE, m + dp(190, dpi), y0 + dp(30, dpi),
-            cr.right - dp(190, dpi) - 2 * m, dp(72, dpi), dlg, nullptr, hInst, nullptr);
+            colX - dp(8, dpi) - (m + dp(190, dpi)), dp(72, dpi), dlg, nullptr, hInst, nullptr);
         SendMessageW(note, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
     }
 

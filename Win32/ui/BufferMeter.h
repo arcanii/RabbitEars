@@ -32,4 +32,20 @@ void bufferMeterSetHidden(HWND meter, bool hidden);
 void bufferMeterSetOnHiddenChanged(HWND meter, std::function<void(bool)> cb);
 void bufferMeterSetDpi(HWND meter, UINT dpi);
 
+// ---- fluid colour ----------------------------------------------------------
+// The liquid's body colour, as seen at the SURFACE; depth shades it darker (see the note in
+// renderLedBits on why the three channels darken at different rates). Foam and the specular
+// highlight stay near-white on purpose — a crest is scattered light, not tinted liquid, and
+// tinting them made the whole panel read as one flat colour.
+//
+// GLOBAL, exactly like the glass strength and for the same reason: this meter has no MeterConfig
+// at all (the Meters dialog's "Data flow" row deliberately has no Look/palette/knobs, because the
+// fluid look is internal), so there is nowhere per-meter to hang it. One app-wide value, one
+// swatch, persisted under bufferFluidColorSettingKey(). Setting it only stores the value —
+// the caller repaints.
+constexpr COLORREF kDefaultFluidColor = RGB(190, 158, 244);
+void     bufferMeterSetFluidColor(COLORREF c);
+COLORREF bufferMeterFluidColor();
+inline const char* bufferFluidColorSettingKey() { return "buffer_fluid_color"; }
+
 }  // namespace rabbitears

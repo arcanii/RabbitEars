@@ -338,6 +338,7 @@ constexpr std::array<const char*, N> kEn = {{
     "Accent",  // MeterRoleAccent
     "Data flow",  // MeterDataFlowCheckbox
     "The buffering tank shown at the far right of the transport bar. You can also hide it by right-clicking the meter itself.",  // MeterDataFlowNote
+    "Fluid",  // MeterFluidColour
     "Reset to defaults",  // MetersResetButton
     // --- DialogAbout ---
     "github.com/arcanii/RabbitEars",  // AboutGithubLinkLabel
@@ -942,6 +943,7 @@ constexpr std::array<const char*, N> kJa = {{
     "アクセント",  // MeterRoleAccent
     "データフロー",  // MeterDataFlowCheckbox
     "トランスポートバーの右端に表示されるバッファリングタンクです。メーター自体を右クリックして非表示にすることもできます。",  // MeterDataFlowNote
+    "液体",  // MeterFluidColour
     "既定値にリセット",  // MetersResetButton
     // --- DialogAbout ---
     "github.com/arcanii/RabbitEars",  // AboutGithubLinkLabel
@@ -1546,6 +1548,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "強調",  // MeterRoleAccent
     "資料流",  // MeterDataFlowCheckbox
     "顯示在傳輸列最右側的緩衝槽。您也可以在該量表上按右鍵來隱藏它。",  // MeterDataFlowNote
+    "液體",  // MeterFluidColour
     "重設為預設值",  // MetersResetButton
     // --- DialogAbout ---
     "github.com/arcanii/RabbitEars",  // AboutGithubLinkLabel
@@ -2150,6 +2153,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "強調",  // MeterRoleAccent
     "資料流",  // MeterDataFlowCheckbox
     "顯示在傳輸列最右側的緩衝槽。您也可以在該量表上按右鍵來隱藏它。",  // MeterDataFlowNote
+    "液體",  // MeterFluidColour
     "重設為預設值",  // MetersResetButton
     // --- DialogAbout ---
     "github.com/arcanii/RabbitEars",  // AboutGithubLinkLabel

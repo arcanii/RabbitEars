@@ -1487,6 +1487,15 @@ void onMeters(AppState* st) {
         swprintf_s(g, L"%.3f", miniMeterGlass());
         st->db.setSetting(wideFromUtf8(glassStrengthSettingKey()), g);
     }
+    // Same story for the fluid colour: previewed live on the REAL tank, Cancel already reverted it,
+    // so OK just persists what it now is. RRGGBB to match the meter-palette codec.
+    {
+        const COLORREF fc = bufferMeterFluidColor();
+        wchar_t f[8];
+        swprintf_s(f, L"%02X%02X%02X", GetRValue(fc), GetGValue(fc), GetBValue(fc));
+        st->db.setSetting(wideFromUtf8(bufferFluidColorSettingKey()), f);
+        if (st->bufferMeter) InvalidateRect(st->bufferMeter, nullptr, FALSE);
+    }
     for (HWND h : {st->meterSpectrum, st->meterSignal, st->meterBitrate, st->meterFrames})
         if (h) InvalidateRect(h, nullptr, FALSE);
 

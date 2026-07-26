@@ -2020,6 +2020,12 @@
     "comment": ""
   },
   {
+    "id": "MeterFluidColour",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Caption above the Data-flow meter's single colour swatch, which sets the liquid's colour. Short - it sits over a narrow swatch column."
+  },
+  {
     "id": "MetersResetButton",
     "cluster": "DialogMeters",
     "placeholders": [],

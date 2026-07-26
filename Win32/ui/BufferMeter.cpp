@@ -12,6 +12,7 @@
 #include "ui/BufferMeter.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -60,6 +61,13 @@ constexpr float VMAX      = 26.0f;   // velocity clamp (stability at dt=0.12)
 constexpr float NORMAL_FILL = 0.5f;  // a healthy (100%) stream rests ~half-full
 
 int dpx(UINT dpi, int v) { return MulDiv(v, static_cast<int>(dpi), 96); }
+
+// The user-selectable fluid colour (see BufferMeter.h). An atomic because the Meters dialog writes
+// it from the UI thread while this meter and its dialog preview read it during their own paints.
+std::atomic<uint32_t>& fluidColorRef() {
+    static std::atomic<uint32_t> c{static_cast<uint32_t>(kDefaultFluidColor)};
+    return c;
+}
 
 struct Fluid {
     std::vector<float> u, v, u0, v0, d, d0, curl, phase, phase0;
@@ -425,7 +433,21 @@ void renderLedBits(MeterState* st, const Theme& th, int W, int H) {
                 cell = off;
             } else {
                 const float depth = std::clamp((d - SURF) * 1.35f, 0.0f, 1.0f);
-                float lr = 190 - depth * 120, lg = 158 - depth * 116, lb = 244 - depth * 128;
+                // Body colour = the user's surface colour, shaded darker with depth. The three
+                // channels darken at DIFFERENT rates on purpose: red fastest, blue slowest. That is
+                // Beer-Lambert — water absorbs long wavelengths first, which is why deep water goes
+                // blue — and it is also exactly what the previous hardcoded ramp did
+                // (190,158,244 -> 70,42,116), so the default look is reproduced byte-for-byte while
+                // an arbitrary user colour still deepens plausibly instead of just going grey.
+                const float kR = 0.368f, kG = 0.266f, kB = 0.475f;  // survival at full depth
+                const COLORREF fc = static_cast<COLORREF>(
+                    fluidColorRef().load(std::memory_order_relaxed));
+                const float sR = static_cast<float>(GetRValue(fc));
+                const float sG = static_cast<float>(GetGValue(fc));
+                const float sB = static_cast<float>(GetBValue(fc));
+                float lr = sR * (1.0f - depth * (1.0f - kR));
+                float lg = sG * (1.0f - depth * (1.0f - kG));
+                float lb = sB * (1.0f - depth * (1.0f - kB));
                 const float band = 4.0f * lit * (1.0f - lit);  // peaks at the surface row
                 const float foam = band * band;
                 lr += (255 - lr) * foam * 0.80f + (coR - lr) * foam * 0.20f;
@@ -672,6 +694,16 @@ void bufferMeterSetDpi(HWND meter, UINT dpi) {
         }
         InvalidateRect(meter, nullptr, FALSE);
     }
+}
+
+// Global, HWND-less (mirrors miniMeterSetGlass): there is one fluid colour for the app, and both
+// the real meter and the Meters dialog's preview read it on their next paint. Storing only — the
+// caller repaints, which is what lets the dialog preview the choice live on the REAL meter.
+void bufferMeterSetFluidColor(COLORREF c) {
+    fluidColorRef().store(static_cast<uint32_t>(c), std::memory_order_relaxed);
+}
+COLORREF bufferMeterFluidColor() {
+    return static_cast<COLORREF>(fluidColorRef().load(std::memory_order_relaxed));
 }
 
 }  // namespace rabbitears

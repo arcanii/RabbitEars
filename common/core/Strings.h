@@ -339,6 +339,7 @@ enum class StringId {
     MeterRoleAccent,
     MeterDataFlowCheckbox,
     MeterDataFlowNote,
+    MeterFluidColour,
     MetersResetButton,
     // --- DialogAbout ---
     AboutGithubLinkLabel,

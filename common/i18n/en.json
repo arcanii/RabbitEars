@@ -314,6 +314,7 @@
   "MeterRoleAccent": "Accent",
   "MeterDataFlowCheckbox": "Data flow",
   "MeterDataFlowNote": "The buffering tank shown at the far right of the transport bar. You can also hide it by right-clicking the meter itself.",
+  "MeterFluidColour": "Fluid",
   "MetersResetButton": "Reset to defaults",
   "AboutGithubLinkLabel": "github.com/arcanii/RabbitEars",
   "AboutArchArm64": "ARM64",

@@ -588,6 +588,16 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto gl = st->db.getSetting(wideFromUtf8(glassStrengthSettingKey()));
                     gl && !gl->empty())
                     miniMeterSetGlass(static_cast<float>(_wtof(gl->c_str())));  // absent = 0 (off)
+                // Fluid colour, RRGGBB. Anything malformed keeps the default rather than falling
+                // through to black — an unreadable tank would look like the meter had broken.
+                if (auto fc = st->db.getSetting(wideFromUtf8(bufferFluidColorSettingKey()));
+                    fc && fc->size() == 6) {
+                    wchar_t* end = nullptr;
+                    const unsigned long v = wcstoul(fc->c_str(), &end, 16);
+                    if (end && *end == L'\0')
+                        bufferMeterSetFluidColor(
+                            RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
+                }
                 if (auto wr = st->db.getSetting(L"wake_to_record")) st->wakeToRecord = (*wr == L"1");
                 if (auto hd = st->db.getSetting(L"hide_dead"); hd && *hd == L"1") st->hideDead = true;
                 if (auto cf = st->db.getSetting(L"category_filter"); cf && !cf->empty()) {
