@@ -31,7 +31,77 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.13 SHIPPED (Ko-fi as a second tip backend)** · v0.2.12 · macOS 0.2.15
+## Current state — **v0.2.14 SHIPPED (System settings · beta flags · dead-link checker · VU + glass meters)** · v0.2.13 · macOS 0.2.15
+
+**Released:** **`v0.2.14`** (2026-07-26), tag `v0.2.14` @ `aa8580f`, full version **`0.2.14.349`**; three
+installers on GitHub release `v0.2.14` — x64 `35,334,214` / arm64 `30,189,007` / universal `63,226,356`
+bytes — **two appcasts** (`0.2.14.349`) committed @ `d594fd0` and LIVE (both enclosures HTTP 200).
+Owner-signed on the Mac; each signature byte-length-verified against the built file, and the two
+appcasts cross-checked so the x64/arm64 signatures cannot be swapped.
+
+⚠️ **The biggest single release of the 0.2.x line, and the least runtime-verified** — six features plus a
+background network worker. Mitigated by design, not by luck: the dead-link checker is **inert unless its
+beta flag is ticked**, and the glass overlay is **off at strength 0**, so a user who touches neither gets
+0.2.13 plus bug fixes. Owner did verify the System dialog, the PIP toggle, VU, glass and **a real
+dead-link sweep** (31 alive / 22 dead / 53 written on a 442-channel library) before the cut.
+
+**Features**
+- **⚙️ Settings ▸ System…** (`0ff649e`) — the first "organise the settings" dialog, built to grow:
+  titled sections, themed hairlines. Carries the **log level** and the **beta-feature switchboard**.
+- **📊 Log levels** (`0ff649e`, instrumented `61773c4`) — standard Trace/Debug/Info/Warn/Error with a
+  runtime threshold. **Header-only by necessity**: mac implements the same `common/platform/Log.h`
+  (`mac/platform/Log.mm`), so adding a function to it would break their link — the levels, threshold and
+  codec are inline over a function-local atomic, and **neither platform sink changed**. Deliberately **no
+  "Off"**: the log exists so a tester can send it after a failure. Instrumented in the same release
+  because levels with no call sites are a setting that lies — DEBUG carries every libVLC state
+  transition + the scheduler verdict, TRACE the 250ms flow snapshot.
+- **🧪 Beta feature flags** (`common/core/FeatureFlags.h`) — opt-in switches persisted as `beta_<id>`,
+  default OFF, with the rules written into the header (inert when off; the id is stable because it is
+  the settings key; delete the flag *with* its branch when a feature graduates). This is what let the
+  dead-link checker ship at all.
+- **🔗 Dead-link checker, BETA** (`081faf9` core + `57d4fbb` sweep) — `common/core/DeadLinkCheck` holds
+  the verdict logic (17 selftests) because that is where the danger is: a bad sweep marks thousands of
+  channels dead and, with "Hide unavailable" on, **the library disappears**. Hence: a failure to CONNECT
+  is *Inconclusive*, never Dead; **an entire sweep is discarded unless enough of it reached a server**;
+  5xx is inconclusive (an overloaded provider recovers); only 401/403/404/410 mark Dead. New
+  **`httpProbe()`** seam — `httpGet` is unusable here (a live stream's body never ends), so it reads
+  headers and closes; GET not HEAD (edges mishandle HEAD), redirects NOT followed (a 3xx is healthy).
+  Bounded at 250/run, sequential, paced — a greedy 12k sweep reads as a scraper and an Xtream
+  connection cap can kick the user's actual playback. Own sqlite connection; joined in `WM_DESTROY`.
+- **📻 VU needle meter** (`10dae97`, thinned `c87a6e9`) — fifth `MeterStyle`. **Real ballistics**: ~300ms
+  and *symmetric*, because a VU lags going down as much as up and that weight is the instrument; reusing
+  the LED attack/decay envelope would make it a peak meter. Integrates every tick regardless of the
+  active look, so switching to it shows a needle already tracking.
+- **🔍 Glass overlay** (`6c7ec62`, reworked `d3ce334`) — `common/ui/GlassMask` precomputes two LUTs
+  applied over the finished frame (frame-invariant ⇒ zero per-frame maths). Now a **beveled plate**:
+  clear centre, all the optics in a rim band. A first attempt spread gradients over the whole face and
+  read as *blur* — the owner's Phase Linear 400 photo is why. Free win alongside: `MiniMeter` now caches
+  a DIB instead of creating+destroying one **every paint** (~240 GDI ops/sec across the tray).
+  **Global** strength, not per-meter: the buffer meter has no `MeterConfig`, the knob band is full, and a
+  6th `MeterTuning` field would break mac's exact-arity parser.
+- **🖼️ PIP "Keep above other apps"** (`9774418`) — off ⇒ topmost only while RabbitEars is foreground,
+  re-raised on `WM_ACTIVATEAPP`. It can never be left plain non-topmost: an owned popup then composites
+  UNDER the main window's libVLC D3D surface.
+- **⏭️ `ScheduleStatus::Skipped`** (`af6592d`) — cancelling one airing of a series rule already behaved
+  correctly (any-status row is a tombstone); it just *said* "Cancelled", which reads as if the series was
+  stopped. The mac `switch` case shipped in the SAME commit — it is `-Wswitch -Werror` there.
+
+**Fixes**
+- **PIP no longer hijacks the main view on exit** (`a4b93aa`) — `applyViewMode` carried the active pane's
+  stream into pane 0, right for Split (equal tiles) but wrong for PIP (a secondary overlay).
+- **PIP resize snaps to the video aspect** (same commit) — needed a new worker-sampled
+  `VlcPlayer::videoSize()` (libVLC calls stay off the UI thread), published as one atomic.
+- **Unicode case-fold for rule matching** (`c7ec7b0`) — `foldTitle` used `towlower` under a comment
+  claiming it handled "any language". The app never calls `setlocale()`, so it folded **only A-Z**: a
+  Contains rule for "café" never matched "CAFÉ", "тв" never matched "ТВ" — silently. Explicit simple-fold
+  table (Latin-1, Latin Ext-A, Greek, both Cyrillic blocks); `common/` cannot use `CharLowerW`/ICU.
+- **`PRAGMA busy_timeout`** (`bb110c3`) — five writers discard `stepDone()`, so a contended write was a
+  *silently lost setting*. Also the prerequisite for any second connection.
+
+**Deferred with evidence — TV Guide off-thread.** Both premises fail: `programmesInWindow` **already**
+bounds by the window (the backlog's "cheap win" is a no-op, and index variants all regressed in
+benchmarking), and the owner's library has **zero `epg_programmes`**, so the diag timer has never fired.
+See `BACKLOG.md` for how to get a real number before anyone tries again.
 
 **Released:** **`v0.2.13`** (2026-07-25), tag `v0.2.13` @ `93dea6f`, full version **`0.2.13.329`** (tag ==
 the version-bump commit; installers + `version.h` + both appcasts agree, cleanly `> 0.2.12.325`). Three
@@ -907,9 +977,10 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…**`v0.2.13`**; **v0.2.13 released @ `93dea6f`** (full `0.2.13.329`; both appcasts @ `d57997f`)
-— Ko-fi as a second tip backend; now on **0.2.14 dev**. Prior: **v0.2.12 @ `76c6a46`** (`0.2.12.325`,
-appcasts @ `e4fb965`) — Buy Me a Coffee + CJK QA + Xtream countries + schema v7. The **mac line is
+Tags `v0.1.0`…**`v0.2.14`**; **v0.2.14 released @ `aa8580f`** (full `0.2.14.349`; both appcasts @ `d594fd0`)
+— System settings, beta flags, the beta dead-link checker, VU + glass meters, two PIP fixes; now on
+**0.2.15 dev**. Prior: **v0.2.13 @ `93dea6f`** (`0.2.13.329`, appcasts @ `d57997f`) — Ko-fi; **v0.2.12 @
+`76c6a46`** (`0.2.12.325`) — Buy Me a Coffee + CJK QA + Xtream countries + schema v7. The **mac line is
 decoupled** (`if(APPLE)` in `cmake/AppVersion.cmake`, currently **0.2.15**) and the mac team pushes to
 `main` too, so **`git fetch` + rebase before every release** — the 0.2.0 cut had a push rejected mid-flight
 by a concurrent mac commit. **Release-tooling note (0.2.2):** this machine now
@@ -930,6 +1001,24 @@ owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — nev
 commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
+
+✅ **0.2.14 SHIPPED** (2026-07-26) — tag `v0.2.14` @ `aa8580f`, `0.2.14.349`, three signed installers on
+GitHub release `v0.2.14`, both appcasts LIVE @ `d594fd0`. Six features + a background worker — see the
+"Current state" block above for the full list and the reasoning behind each.
+
+**Pending the owner's on-device pass** (0.2.14 shipped with less runtime verification than usual):
+- **"Skip this airing"** has never been exercised on a real series rule.
+- **The Unicode case-fold fix** has never been tested against a non-English guide (the owner's library
+  has no EPG at all — see the deferred TV-Guide item).
+- **The dead-link checker** got one real sweep (31 alive / 22 dead / 53 written). Worth confirming those
+  **22 are genuinely dead** rather than false positives — with "Hide unavailable" on they vanish from the
+  grid, and a wrong verdict is invisible until a user goes looking for a channel.
+- Everything else (System dialog, log levels, PIP toggle + both PIP fixes, VU, glass) was owner-seen.
+
+**Candidates for 0.2.15:** the About-box tip section (owner-requested — the tip buttons have no
+explanation); further **glass** work (a bezel/frame is the top idea — see BACKLOG for the explicit "do
+NOT reintroduce" list); the **PIP right-click menu + PIP⇄main swap**; graduating the dead-link checker
+out of beta once it has mileage; Authenticode signing (also unblocks the Microsoft Store track).
 
 ✅ **0.2.13 SHIPPED** (2026-07-25) — tag `v0.2.13` @ `93dea6f`, `0.2.13.329`, three signed installers on
 GitHub release `v0.2.13`, both appcasts LIVE @ `d57997f`. **Ko-fi as a second tip backend** (About box +
@@ -1357,21 +1446,39 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.12 block)
 > — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
-> **State: last SHIPPED = `v0.2.13`** (2026-07-25, tag @ `93dea6f`, `0.2.13.329`, both appcasts @
-> `d57997f`) — **Ko-fi added as a second tip backend** beside Buy Me a Coffee, in both the About box and
-> the support prompt (either one counts as supported and stops the prompt for good); the two dialogs were
-> widened + regrouped to fit a 4th button, and the About buttons finally got `WS_TABSTOP`. `main` is
-> clean; now on **0.2.14 dev**. Everything shipped is LIVE and auto-updating (raw feeds serve 0.2.13.329
-> for x64 **and** arm64, enclosures HTTP 200). Prior — 0.2.12 = **Buy Me a Coffee** (About
-> button + a one-time support prompt, state in the `support_*` settings) + the **CJK translation-quality
-> pass** + the **Xtream group-title→country fallback** + **padding-proof series-rule dedup (schema v7,
-> migrates on first launch)**. **Windows and mac versions are DECOUPLED** — bump only `APP_VERSION` in
-> `cmake/AppVersion.cmake` (one place; everything derives), leaving the `if(APPLE)` override (mac 0.2.15)
-> alone. i18n source of truth is `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates
-> `common/core/Strings.*` (never hand-edit); the catalog is **531 keys × 4 languages**. **CJK is still a
-> machine draft** — native review (`gen_i18n.py --review ja|zh-Hant|zh-HK`) is the gate before advertising
-> it. **Not yet seen live: the support prompt** (needs a day after first launch — or edit
-> `support_prompt_due`) and the **schema v7 migration** on a real Windows library.
+> **State: last SHIPPED = `v0.2.14`** (2026-07-26, tag @ `aa8580f`, `0.2.14.349`, both appcasts @
+> `d594fd0`) — the biggest 0.2.x release: **Settings ▸ System…** (log levels + a **beta-feature
+> switchboard**), the **beta dead-link checker**, a **VU needle** meter look, a **glass** overlay for the
+> meters, a **PIP "keep above other apps"** toggle, **`ScheduleStatus::Skipped`**, and fixes for two PIP
+> bugs + a Unicode case-fold bug that made `Contains` recording rules silently fail on non-English
+> titles. `main` is clean; now on **0.2.15 dev**. Everything shipped is LIVE and auto-updating (raw feeds
+> serve 0.2.14.349 for x64 **and** arm64, enclosures HTTP 200).
+>
+> **⚠️ 0.2.14 is the least runtime-verified release of the line** — six features at once. It is safe by
+> construction, not by luck: the dead-link checker is **inert unless its beta flag is on** and glass is
+> **off at strength 0**, so a user who touches neither gets 0.2.13 plus bug fixes. **Still unexercised:**
+> "Skip this airing" on a real series rule; the case-fold fix against a non-English guide; and whether the
+> sweep's 22 "dead" verdicts were correct (with Hide-unavailable on, a false positive is invisible).
+>
+> **Patterns worth knowing before you touch anything:**
+> • **`common/` is shared with mac and mac has its OWN copies of some things** — `Log.h` is implemented by
+> BOTH `Win32/platform/Log.cpp` and `mac/platform/Log.mm` (so a new function in that header breaks their
+> link — the log levels are header-only inline for exactly this reason); `MeterModel.h`/`MeterStyle` and
+> the meter codecs are DUPLICATED on mac with an **exact-arity** parser; a new `ScheduleStatus` needs a
+> case in mac's `RecordingsWindowController.mm` **in the same commit** (`-Wswitch -Werror`). Always grep
+> `mac/` before changing a shared model.
+> • **Command ids**: pick from a genuine gap. The COMPUTED ranges (`ID_DOCK_BASE` 2051..2062,
+> `ID_LAYOUT_APPLY_BASE` 2079..2088, `ID_LAYOUT_DELETE_BASE` 2089..2098, `ID_THEME_SKIN_BASE` 2100+) have
+> no literal to grep for — one collision already shipped as a bug. `WM_APP+1..+8` and `+10` are taken.
+> • **Version + release**: bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` (everything derives),
+> leaving the `if(APPLE)` override (mac, currently 0.2.15) alone. Windows ships **three** installers and
+> **two** appcasts; **always pass `-Tag v<ver>`** to `make-appcast.ps1` (it defaults to `v<full.version>`,
+> which 404s). Only EdDSA signing happens on the owner's Mac.
+> • **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the default is ON but build dirs cache it,
+> and a stale OFF cache once shipped a Theme-menu-less exe. Verify BOTH flags before committing.
+> • i18n source of truth is `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates
+> `common/core/Strings.*` (**never hand-edit**); the catalog is **558 keys × 4 languages**. **CJK is a
+> machine draft** — `gen_i18n.py --review ja|zh-Hant|zh-HK` is the gate before advertising it.
 >
 > **The app.** `Win32/ui/VlcEngine` owns ONE shared libVLC instance across N `VideoPane`s (each = a video
 > HWND + `VlcPlayer` + channel; `AppState` holds the vector + `active` + `ViewMode`). Single / Split (2×2
