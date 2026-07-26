@@ -1211,7 +1211,19 @@ void onManageSchedules(AppState* st) {
         // Per-pane recording: the schedule's recorder lives on its PINNED pane — the helper
         // stops the right one (stopping the active pane here once cut a manual recording).
         if (st->activeScheduleId == id) stopScheduledRecorder(st);
-        st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+        // A SERIES-RULE airing is Skipped, not Cancelled. Both are tombstones and behave
+        // identically to the expander, but the word matters: "Cancelled" on one episode reads as
+        // if the whole series was stopped, and users then go hunting for how to undo it. Skipping
+        // is the honest description — the rule is untouched and still queues future episodes.
+        bool fromRule = false;
+        for (const ScheduledRecording& s : st->db.listSchedules())
+            if (s.id == id) {
+                fromRule = s.ruleId != 0;
+                break;
+            }
+        st->db.updateScheduleStatus(id, fromRule ? ScheduleStatus::Skipped
+                                                 : ScheduleStatus::Cancelled);
+        if (fromRule) setStatus(st, tr(i18n::StringId::StatusAiringSkippedRule));
         syncWakeFromSchedules(st);  // the earliest pending start may have just moved
     };
     cb.remove = [st](long long id) {

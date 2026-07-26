@@ -547,5 +547,7 @@
   "LogLevelTrace": "全部",
   "MenuPipAlwaysOnTop": "子母畫面顯示在其他應用程式上方",
   "MetersGlassLabel": "玻璃質感：",
-  "MetersGlassOff": "關閉"
+  "MetersGlassOff": "關閉",
+  "ScheduleStatusSkipped": "已略過",
+  "StatusAiringSkippedRule": "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。"
 }

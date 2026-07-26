@@ -34,6 +34,10 @@ NSString* statusText(ScheduleStatus s) {
         case ScheduleStatus::Missed:    return Tr(StringId::ScheduleStatusMissed);
         case ScheduleStatus::Failed:    return Tr(StringId::ScheduleStatusFailed);
         case ScheduleStatus::Cancelled: return Tr(StringId::ScheduleStatusCancelled);
+        // Skipped (Win32 0.2.14): one series-rule airing passed over, the rule left running.
+        // Required here, not optional — this switch is -Wswitch under -Werror, so a new
+        // ScheduleStatus without a case breaks the mac build.
+        case ScheduleStatus::Skipped:   return Tr(StringId::ScheduleStatusSkipped);
     }
     return @"";
 }

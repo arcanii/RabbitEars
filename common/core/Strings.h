@@ -586,6 +586,10 @@ enum class StringId {
     // --- DialogMeters ---
     MetersGlassLabel,
     MetersGlassOff,
+    // --- DialogSchedule ---
+    ScheduleStatusSkipped,
+    // --- Status ---
+    StatusAiringSkippedRule,
     Count  // sentinel — MUST stay last
 };
 

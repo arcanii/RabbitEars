@@ -547,5 +547,7 @@
   "LogLevelTrace": "すべて",
   "MenuPipAlwaysOnTop": "PIPを常に最前面に表示",
   "MetersGlassLabel": "ガラス:",
-  "MetersGlassOff": "オフ"
+  "MetersGlassOff": "オフ",
+  "ScheduleStatusSkipped": "スキップ",
+  "StatusAiringSkippedRule": "この放送をスキップしました — シリーズルールは有効なままで、今後のエピソードは録画されます。"
 }

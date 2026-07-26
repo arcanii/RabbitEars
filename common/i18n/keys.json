@@ -3534,5 +3534,17 @@
     "cluster": "DialogMeters",
     "placeholders": [],
     "comment": "Shown beside the glass slider when its strength is zero."
+  },
+  {
+    "id": "ScheduleStatusSkipped",
+    "cluster": "DialogSchedule",
+    "placeholders": [],
+    "comment": "Schedule list status: this airing was skipped; its series rule is still active."
+  },
+  {
+    "id": "StatusAiringSkippedRule",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Status line after skipping one airing of a series rule."
   }
 ]

@@ -547,5 +547,7 @@
   "LogLevelTrace": "Everything",
   "MenuPipAlwaysOnTop": "Keep PIP above other apps",
   "MetersGlassLabel": "Glass:",
-  "MetersGlassOff": "Off"
+  "MetersGlassOff": "Off",
+  "ScheduleStatusSkipped": "Skipped",
+  "StatusAiringSkippedRule": "Airing skipped — the series rule is still active and will record future episodes."
 }

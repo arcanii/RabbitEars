@@ -2680,6 +2680,7 @@ std::wstring scheduleStatusText(ScheduleStatus s) {
         case ScheduleStatus::Missed: return tr(i18n::StringId::ScheduleStatusMissed);
         case ScheduleStatus::Failed: return tr(i18n::StringId::ScheduleStatusFailed);
         case ScheduleStatus::Cancelled: return tr(i18n::StringId::ScheduleStatusCancelled);
+        case ScheduleStatus::Skipped: return tr(i18n::StringId::ScheduleStatusSkipped);
     }
     return {};
 }

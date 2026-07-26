@@ -585,6 +585,10 @@ constexpr std::array<const char*, N> kEn = {{
     // --- DialogMeters ---
     "Glass:",  // MetersGlassLabel
     "Off",  // MetersGlassOff
+    // --- DialogSchedule ---
+    "Skipped",  // ScheduleStatusSkipped
+    // --- Status ---
+    "Airing skipped — the series rule is still active and will record future episodes.",  // StatusAiringSkippedRule
 }};
 
 // 日本語
@@ -1160,6 +1164,10 @@ constexpr std::array<const char*, N> kJa = {{
     // --- DialogMeters ---
     "ガラス:",  // MetersGlassLabel
     "オフ",  // MetersGlassOff
+    // --- DialogSchedule ---
+    "スキップ",  // ScheduleStatusSkipped
+    // --- Status ---
+    "この放送をスキップしました — シリーズルールは有効なままで、今後のエピソードは録画されます。",  // StatusAiringSkippedRule
 }};
 
 // 繁體中文
@@ -1735,6 +1743,10 @@ constexpr std::array<const char*, N> kZhHant = {{
     // --- DialogMeters ---
     "玻璃質感：",  // MetersGlassLabel
     "關閉",  // MetersGlassOff
+    // --- DialogSchedule ---
+    "已略過",  // ScheduleStatusSkipped
+    // --- Status ---
+    "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",  // StatusAiringSkippedRule
 }};
 
 // 繁體中文（香港）
@@ -2310,6 +2322,10 @@ constexpr std::array<const char*, N> kZhHK = {{
     // --- DialogMeters ---
     "玻璃質感：",  // MetersGlassLabel
     "關閉",  // MetersGlassOff
+    // --- DialogSchedule ---
+    "已略過",  // ScheduleStatusSkipped
+    // --- Status ---
+    "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",  // StatusAiringSkippedRule
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

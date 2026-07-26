@@ -683,6 +683,10 @@ int selftest() {
                        blocks(ScheduleStatus::Missed) && blocks(ScheduleStatus::Failed) &&
                        blocks(ScheduleStatus::Pending) && blocks(ScheduleStatus::Recording),
                    "an existing row of ANY status blocks re-creating that airing");
+            // Skipped is the whole point of the status: the rule must NOT re-queue this airing,
+            // while still queuing every other episode (the far airing at 90000 survives).
+            expect(blocks(ScheduleStatus::Skipped),
+                   "a Skipped airing is a tombstone — the rule does not re-queue it");
         }
         {  // --- Padding-proof dedup (v7): a rule row owns its airing across lead/trail edits ---
            // The slot key is the PADDED start, so editing a rule's lead used to orphan the

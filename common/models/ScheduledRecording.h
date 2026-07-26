@@ -17,6 +17,12 @@ enum class ScheduleStatus {
     Missed = 3,     // start/stop window passed without recording (app closed, or recorder busy)
     Failed = 4,     // the recorder failed to start
     Cancelled = 5,  // cancelled by the user
+    // Skipped = "not this one" for a SERIES-RULE airing: the rule stays active and keeps queuing
+    // future episodes, but this airing is passed over. Mechanically identical to Cancelled (the
+    // expander treats a row of ANY status as owning its slot, so it is the tombstone that stops
+    // the rule re-queuing it) — it exists because "Cancelled" reads like the series was stopped,
+    // which is the one thing it does NOT mean.
+    Skipped = 6,
 };
 
 struct ScheduledRecording {
