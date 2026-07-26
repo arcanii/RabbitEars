@@ -29,6 +29,7 @@
 #include "db/Database.h"
 #include "platform/Encoding.h"
 #include "ui/DockLayout.h"
+#include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
 #include "ui/Skin.h"
 #include "ui/VideoGrid.h"
@@ -1013,6 +1014,40 @@ int selftest() {
                "Pip: inset sits in the bottom-right corner");
     }
 
+    out("\n== Dead-link check (beta) ==\n");
+    {
+        // The ONLY thing that matters here: a network failure must never look like a dead channel.
+        expect(classifyProbe(ProbeTransport::NoConnect, 0) == ProbeOutcome::Inconclusive,
+               "no connection is INCONCLUSIVE, never dead (offline laptop != dead library)");
+        expect(classifyProbe(ProbeTransport::Timeout, 0) == ProbeOutcome::Inconclusive,
+               "a timeout is inconclusive");
+        expect(classifyProbe(ProbeTransport::Ok, 200) == ProbeOutcome::Alive, "200 -> alive");
+        expect(classifyProbe(ProbeTransport::Ok, 206) == ProbeOutcome::Alive, "206 partial -> alive");
+        expect(classifyProbe(ProbeTransport::Ok, 302) == ProbeOutcome::Alive,
+               "a redirect is alive (CDN edge hand-off)");
+        expect(classifyProbe(ProbeTransport::Ok, 404) == ProbeOutcome::Dead, "404 -> dead");
+        expect(classifyProbe(ProbeTransport::Ok, 410) == ProbeOutcome::Dead, "410 gone -> dead");
+        expect(classifyProbe(ProbeTransport::Ok, 403) == ProbeOutcome::Dead,
+               "403 forbidden -> dead (geo-blocked is unusable from here)");
+        expect(classifyProbe(ProbeTransport::Ok, 500) == ProbeOutcome::Inconclusive,
+               "5xx is INCONCLUSIVE — an overloaded provider recovers");
+        expect(classifyProbe(ProbeTransport::Ok, 599) == ProbeOutcome::Inconclusive,
+               "an unrecognised status is inconclusive");
+
+        // The whole-sweep guard: the thing standing between a dropped wifi link and a wiped library.
+        expect(!sweepIsTrustworthy(0, 0, 50),
+               "a sweep where NOTHING responded is discarded (the network was down)");
+        expect(!sweepIsTrustworthy(1, 1, 50), "a sweep that barely responded is discarded");
+        expect(sweepIsTrustworthy(40, 10, 50), "a sweep with a healthy response share is trusted");
+        expect(!sweepIsTrustworthy(2, 0, 0), "too few probes to conclude anything");
+        expect(sweepIsTrustworthy(5, 0, 0), "a small but fully-responding sweep is trusted");
+
+        // TTL / resume.
+        expect(needsProbe(0, 1000), "never-checked always needs a probe");
+        expect(!needsProbe(1000, 1000 + kDeadLinkTtlSeconds - 1), "inside the TTL, skip");
+        expect(needsProbe(1000, 1000 + kDeadLinkTtlSeconds), "past the TTL, re-probe");
+        expect(needsProbe(5000, 1000), "a timestamp from the future is re-probed, not trusted");
+    }
     out("\n== Glass mask (meter overlay) ==\n");
     {
         std::vector<uint8_t> add, mul;

@@ -8,6 +8,7 @@
 # RabbitEarsCore resolves "core/..", "db/..", "models/..", "platform/<seam>.h",
 # and "ui/DockLayout.h" from here.
 add_library(RabbitEarsCore STATIC
+  core/DeadLinkCheck.cpp       # pure dead-link verdict logic (beta) — unit-tested headlessly
   core/Gzip.cpp       # gunzip `.xml.gz` EPG feeds via vendored miniz — unit-tested headlessly
   core/M3uParser.cpp
   core/M3uWriter.cpp  # M3U exporter symmetric with the parser (favourites export) — unit-tested
