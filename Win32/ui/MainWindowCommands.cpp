@@ -1322,6 +1322,38 @@ void resetStatMeters(AppState* st) {
 
 // Settings → Meters → Setup…: the per-meter look + palette dialog. Seeds it from the
 // live meters, then on OK applies + persists (style, colours, enable) for each.
+// Settings ▸ System… — the app-wide plumbing dialog. Applies + persists on OK; the dialog itself
+// is pure UI. Both settings take effect immediately (no restart): the log level is a plain atomic,
+// and every beta flag is read live at its use site.
+void onSystemSettings(AppState* st) {
+    SystemSettings cur;
+    cur.logLevel = diag::level();
+    cur.betaMask = betaMaskRef().load(std::memory_order_relaxed);
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    if (!systemSettingsDialog(st->hwnd, hInst, st->dpi, cur)) return;
+
+    if (cur.logLevel != diag::level()) {
+        diag::setLevel(cur.logLevel);
+        // Written at the NEW level so the file always records the change that explains why its
+        // verbosity just shifted — at Error this is deliberately silent.
+        diag::error(std::wstring(L"log level set to ") +
+                    wideFromUtf8(diag::levelToString(cur.logLevel)));
+        if (st->db.isOpen())
+            st->db.setSetting(L"log_level", wideFromUtf8(diag::levelToString(cur.logLevel)));
+    }
+    int n = 0;
+    const BetaFeature* all = allBetaFeatures(n);
+    for (int i = 0; i < n; ++i) {
+        const bool on = (cur.betaMask & static_cast<uint32_t>(all[i])) != 0;
+        if (betaEnabled(all[i]) == on) continue;
+        setBetaEnabled(all[i], on);
+        if (st->db.isOpen())
+            st->db.setSetting(wideFromUtf8(betaFeatureSettingKey(all[i])), on ? L"1" : L"0");
+        diag::info(std::wstring(L"beta feature ") + wideFromUtf8(betaFeatureId(all[i])) +
+                   (on ? L" ENABLED" : L" disabled"));
+    }
+}
+
 void onMeters(AppState* st) {
     HWND m[4] = {st->meterSpectrum, st->meterSignal, st->meterBitrate, st->meterFrames};
     const bool en[4] = {st->showSpectrum, st->showSignal, st->showBitrate, st->showFrames};
@@ -1520,6 +1552,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(viewMenu), tr(StringId::MenuView).c_str());
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), tr(StringId::MenuLayout).c_str());
     AppendMenuW(m, MF_STRING, ID_METERS_SETUP, tr(StringId::MenuMeters).c_str());
+    AppendMenuW(m, MF_STRING, ID_SYSTEM_SETTINGS, tr(StringId::MenuSystemSettings).c_str());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(langMenu), tr(StringId::MenuLanguage).c_str());
 #ifdef RABBITEARS_THEME_ENGINE
@@ -1669,6 +1702,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_METERS_SETUP:
             onMeters(st);
+            break;
+        case ID_SYSTEM_SETTINGS:
+            onSystemSettings(st);
             break;
         case ID_VIDEO_ONLY:
             toggleVideoOnly(st);

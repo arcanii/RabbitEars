@@ -667,6 +667,246 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
     if (st.bodyFont) DeleteObject(st.bodyFont);
 }
 
+// ---- Settings ▸ System… (logging level + beta features) --------------------------------
+namespace {
+constexpr int ID_SYS_LOGLEVEL = 1221, ID_SYS_OPENLOG = 1222, ID_SYS_BETA_BASE = 1230;
+
+// The log levels offered, quietest → loudest. Deliberately no "Off": this log exists so a tester
+// can send it after something went wrong, so errors always survive (see common/platform/Log.h).
+constexpr diag::Level kLogLevels[] = {diag::Level::Error, diag::Level::Warn, diag::Level::Info,
+                                      diag::Level::Debug, diag::Level::Trace};
+constexpr i18n::StringId kLogLevelNames[] = {
+    i18n::StringId::LogLevelError, i18n::StringId::LogLevelWarn, i18n::StringId::LogLevelInfo,
+    i18n::StringId::LogLevelDebug, i18n::StringId::LogLevelTrace};
+constexpr int kLogLevelCount = static_cast<int>(sizeof(kLogLevels) / sizeof(kLogLevels[0]));
+
+struct SystemDlgState {
+    SystemSettings* io = nullptr;
+    HWND  combo = nullptr;
+    HWND  beta[8] = {};
+    int   betaCount = 0;
+    int   sepY[2] = {};  // hairlines under each section header, painted in WM_PAINT
+    bool  ok = false;
+    bool  done = false;
+};
+
+LRESULT CALLBACK SystemDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+    auto* st = reinterpret_cast<SystemDlgState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(w), &rc, themeBrush(currentTheme().panelBg));
+            return 1;
+        }
+        case WM_PAINT: {  // section-header hairlines (themed; an SS_ETCHEDHORZ static ignores the skin)
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            if (st) {
+                RECT rc;
+                GetClientRect(hwnd, &rc);
+                for (int i = 0; i < 2; ++i) {
+                    if (!st->sepY[i]) continue;
+                    RECT s{0, st->sepY[i], rc.right, st->sepY[i] + 1};
+                    InflateRect(&s, -1, 0);
+                    FillRect(hdc, &s, themeBrush(currentTheme().border));
+                }
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+        case WM_CTLCOLORLISTBOX:
+            return dialogCtlColor(msg, w);
+        case WM_COMMAND:
+            if (!st) return 0;
+            switch (LOWORD(w)) {
+                case ID_SYS_OPENLOG: {
+                    // Reveal the log in Explorer rather than opening it — the user is usually about
+                    // to attach it to a bug report, not read it in Notepad.
+                    const std::wstring p = diag::filePath();
+                    if (!p.empty())
+                        ShellExecuteW(hwnd, L"open", L"explorer.exe",
+                                      (L"/select,\"" + p + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+                    return 0;
+                }
+                case IDOK: {
+                    const int sel = static_cast<int>(SendMessageW(st->combo, CB_GETCURSEL, 0, 0));
+                    if (sel >= 0 && sel < kLogLevelCount) st->io->logLevel = kLogLevels[sel];
+                    uint32_t mask = 0;
+                    int n = 0;
+                    const BetaFeature* all = allBetaFeatures(n);
+                    for (int i = 0; i < n && i < st->betaCount; ++i)
+                        if (SendMessageW(st->beta[i], BM_GETCHECK, 0, 0) == BST_CHECKED)
+                            mask |= static_cast<uint32_t>(all[i]);
+                    st->io->betaMask = mask;
+                    st->ok = true;
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                case IDCANCEL:
+                    st->done = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            return 0;
+        case WM_CLOSE:
+            if (st) st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, w, l);
+}
+}  // namespace
+
+bool systemSettingsDialog(HWND parent, HINSTANCE hInst, UINT dpi, SystemSettings& io) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = SystemDlgProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+        wc.lpszClassName = L"RabbitEarsSystem";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    SystemDlgState st;
+    st.io = &io;
+    HFONT headFont = themeFont(FontRole::Body, dpi, 14, FW_SEMIBOLD);
+    HFONT bodyFont = themeFont(FontRole::Body, dpi, 12, FW_NORMAL);
+
+    // Generous height: the two hint lines wrap to 2-3 lines in ja/zh on a taller CJK face.
+    const int W = dp(560, dpi), H = dp(430, dpi);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsSystem",
+                               tr(i18n::StringId::SystemWindowTitle).c_str(),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
+                               nullptr);
+    if (!dlg) {
+        DeleteObject(headFont);
+        DeleteObject(bodyFont);
+        return false;
+    }
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    RECT cr;
+    GetClientRect(dlg, &cr);
+    const int m = dp(22, dpi), fullW = cr.right - 2 * m;
+    std::vector<HWND> bodyCtls;
+    auto mkStatic = [&](i18n::StringId id, int yy, int hh, bool head) {
+        HWND h = CreateWindowExW(0, L"STATIC", tr(id).c_str(), WS_CHILD | WS_VISIBLE, m, yy, fullW,
+                                 hh, dlg, nullptr, hInst, nullptr);
+        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(head ? headFont : bodyFont), TRUE);
+        return h;
+    };
+
+    // ---- Logging ----
+    int yy = dp(18, dpi);
+    mkStatic(i18n::StringId::SystemLoggingSection, yy, dp(22, dpi), /*head=*/true);
+    st.sepY[0] = yy + dp(24, dpi);
+    yy += dp(38, dpi);
+    HWND lvlLabel = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::SystemLogLevelLabel).c_str(),
+                                    WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, m, yy, dp(110, dpi),
+                                    dp(24, dpi), dlg, nullptr, hInst, nullptr);
+    bodyCtls.push_back(lvlLabel);
+    st.combo = CreateWindowExW(0, L"COMBOBOX", L"",
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                               m + dp(118, dpi), yy, dp(190, dpi), dp(240, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SYS_LOGLEVEL)), hInst,
+                               nullptr);
+    bodyCtls.push_back(st.combo);
+    for (int i = 0; i < kLogLevelCount; ++i) {
+        SendMessageW(st.combo, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(tr(kLogLevelNames[i]).c_str()));
+        if (kLogLevels[i] == io.logLevel) SendMessageW(st.combo, CB_SETCURSEL, i, 0);
+    }
+    if (SendMessageW(st.combo, CB_GETCURSEL, 0, 0) == CB_ERR)
+        SendMessageW(st.combo, CB_SETCURSEL, 2, 0);  // Info
+    yy += dp(32, dpi);
+    bodyCtls.push_back(mkStatic(i18n::StringId::SystemLogLevelHint, yy, dp(48, dpi), false));
+    yy += dp(54, dpi);
+    HWND openLog = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SystemOpenLogFolder).c_str(),
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, yy, dp(170, dpi),
+                                   dp(28, dpi), dlg,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SYS_OPENLOG)),
+                                   hInst, nullptr);
+    bodyCtls.push_back(openLog);
+
+    // ---- Beta features ----
+    yy += dp(48, dpi);
+    mkStatic(i18n::StringId::SystemBetaSection, yy, dp(22, dpi), /*head=*/true);
+    st.sepY[1] = yy + dp(24, dpi);
+    yy += dp(38, dpi);
+    bodyCtls.push_back(mkStatic(i18n::StringId::SystemBetaHint, yy, dp(38, dpi), false));
+    yy += dp(44, dpi);
+    // One checkbox per registered flag. The label ids are parallel to allBetaFeatures()'s order —
+    // add both together when a new flag lands.
+    static const i18n::StringId kBetaLabels[] = {i18n::StringId::SystemBetaDeadLinkChecker};
+    int nBeta = 0;
+    const BetaFeature* allBeta = allBetaFeatures(nBeta);
+    const int maxBeta = static_cast<int>(sizeof(st.beta) / sizeof(st.beta[0]));
+    const int labelCount = static_cast<int>(sizeof(kBetaLabels) / sizeof(kBetaLabels[0]));
+    for (int i = 0; i < nBeta && i < maxBeta && i < labelCount; ++i) {
+        st.beta[i] = CreateWindowExW(0, L"BUTTON", tr(kBetaLabels[i]).c_str(),
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, yy,
+                                     fullW, dp(24, dpi), dlg,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SYS_BETA_BASE + i)),
+                                     hInst, nullptr);
+        SendMessageW(st.beta[i], BM_SETCHECK,
+                     (io.betaMask & static_cast<uint32_t>(allBeta[i])) ? BST_CHECKED : BST_UNCHECKED, 0);
+        bodyCtls.push_back(st.beta[i]);
+        st.betaCount = i + 1;
+        yy += dp(28, dpi);
+    }
+
+    const int bw = dp(90, dpi), bh = dp(30, dpi), btnY = cr.bottom - bh - dp(16, dpi);
+    HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
+                              WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                              cr.right - 2 * bw - m - dp(8, dpi), btnY, bw, bh, dlg,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonCancel).c_str(),
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, cr.right - bw - m, btnY, bw, bh,
+                                  dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst,
+                                  nullptr);
+    bodyCtls.push_back(ok);
+    bodyCtls.push_back(cancel);
+    for (HWND h : bodyCtls) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
+    applyDialogDarkMode(dlg);
+
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    UpdateWindow(dlg);
+    SetFocus(st.combo);
+    MSG msg;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&msg, nullptr, 0, 0);
+        if (r == 0) {
+            PostQuitMessage(static_cast<int>(msg.wParam));
+            DestroyWindow(dlg);
+            break;
+        }
+        if (r == -1) {
+            DestroyWindow(dlg);
+            break;
+        }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+    DeleteObject(headFont);
+    DeleteObject(bodyFont);
+    return st.ok;
+}
+
 // ---- "Support RabbitEars" prompt (shown once the app has been in use a while) ----
 namespace {
 constexpr int ID_SUPPORT_BUY = 1211, ID_SUPPORT_LATER = 1212, ID_SUPPORT_NEVER = 1213,

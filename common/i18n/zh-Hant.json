@@ -530,5 +530,19 @@
   "MacMeterViewSpectrumNeedsPermission": "頻譜需要音訊權限",
   "MacMeterNameSpectrum": "頻譜",
   "MacMeterNameSignal": "訊號",
-  "MacMeterNameFrames": "影格"
+  "MacMeterNameFrames": "影格",
+  "MenuSystemSettings": "系統…",
+  "SystemWindowTitle": "系統設定",
+  "SystemLoggingSection": "記錄",
+  "SystemLogLevelLabel": "詳細程度：",
+  "SystemLogLevelHint": "回報問題時，提高詳細程度會很有幫助。記錄檔會寫入資料庫旁的 rabbitears.log。",
+  "SystemOpenLogFolder": "開啟記錄資料夾",
+  "SystemBetaSection": "測試中的功能",
+  "SystemBetaHint": "尚未完成的功能，預設為關閉。若要協助測試再開啟，可能會有問題。",
+  "SystemBetaDeadLinkChecker": "失效連結檢查（標記無法連線的頻道）",
+  "LogLevelError": "僅錯誤",
+  "LogLevelWarn": "警告",
+  "LogLevelInfo": "標準",
+  "LogLevelDebug": "詳細",
+  "LogLevelTrace": "全部"
 }

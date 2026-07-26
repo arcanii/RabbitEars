@@ -564,6 +564,22 @@ constexpr std::array<const char*, N> kEn = {{
     "Spectrum",  // MacMeterNameSpectrum
     "Signal",  // MacMeterNameSignal
     "Frames",  // MacMeterNameFrames
+    // --- Menu ---
+    "System…",  // MenuSystemSettings
+    // --- DialogSystem ---
+    "System Settings",  // SystemWindowTitle
+    "Logging",  // SystemLoggingSection
+    "Detail level:",  // SystemLogLevelLabel
+    "More detail helps when reporting a problem. The log is written to rabbitears.log next to your database.",  // SystemLogLevelHint
+    "Open log folder",  // SystemOpenLogFolder
+    "Beta features",  // SystemBetaSection
+    "Unfinished features, off by default. Turn one on to help test it — expect rough edges.",  // SystemBetaHint
+    "Dead-link checker (marks unreachable channels)",  // SystemBetaDeadLinkChecker
+    "Errors only",  // LogLevelError
+    "Warnings",  // LogLevelWarn
+    "Normal",  // LogLevelInfo
+    "Detailed",  // LogLevelDebug
+    "Everything",  // LogLevelTrace
 }};
 
 // 日本語
@@ -1118,6 +1134,22 @@ constexpr std::array<const char*, N> kJa = {{
     "スペクトラム",  // MacMeterNameSpectrum
     "信号",  // MacMeterNameSignal
     "フレーム",  // MacMeterNameFrames
+    // --- Menu ---
+    "システム…",  // MenuSystemSettings
+    // --- DialogSystem ---
+    "システム設定",  // SystemWindowTitle
+    "ログ",  // SystemLoggingSection
+    "詳細レベル:",  // SystemLogLevelLabel
+    "問題を報告する際は詳細レベルを上げると役立ちます。ログはデータベースと同じ場所の rabbitears.log に記録されます。",  // SystemLogLevelHint
+    "ログフォルダーを開く",  // SystemOpenLogFolder
+    "ベータ機能",  // SystemBetaSection
+    "未完成の機能です。既定ではオフになっています。テストに協力する場合のみオンにしてください。",  // SystemBetaHint
+    "リンク切れチェッカー（到達できないチャンネルを記録）",  // SystemBetaDeadLinkChecker
+    "エラーのみ",  // LogLevelError
+    "警告",  // LogLevelWarn
+    "標準",  // LogLevelInfo
+    "詳細",  // LogLevelDebug
+    "すべて",  // LogLevelTrace
 }};
 
 // 繁體中文
@@ -1672,6 +1704,22 @@ constexpr std::array<const char*, N> kZhHant = {{
     "頻譜",  // MacMeterNameSpectrum
     "訊號",  // MacMeterNameSignal
     "影格",  // MacMeterNameFrames
+    // --- Menu ---
+    "系統…",  // MenuSystemSettings
+    // --- DialogSystem ---
+    "系統設定",  // SystemWindowTitle
+    "記錄",  // SystemLoggingSection
+    "詳細程度：",  // SystemLogLevelLabel
+    "回報問題時，提高詳細程度會很有幫助。記錄檔會寫入資料庫旁的 rabbitears.log。",  // SystemLogLevelHint
+    "開啟記錄資料夾",  // SystemOpenLogFolder
+    "測試中的功能",  // SystemBetaSection
+    "尚未完成的功能，預設為關閉。若要協助測試再開啟，可能會有問題。",  // SystemBetaHint
+    "失效連結檢查（標記無法連線的頻道）",  // SystemBetaDeadLinkChecker
+    "僅錯誤",  // LogLevelError
+    "警告",  // LogLevelWarn
+    "標準",  // LogLevelInfo
+    "詳細",  // LogLevelDebug
+    "全部",  // LogLevelTrace
 }};
 
 // 繁體中文（香港）
@@ -2226,6 +2274,22 @@ constexpr std::array<const char*, N> kZhHK = {{
     "頻譜",  // MacMeterNameSpectrum
     "訊號",  // MacMeterNameSignal
     "影格",  // MacMeterNameFrames
+    // --- Menu ---
+    "系統…",  // MenuSystemSettings
+    // --- DialogSystem ---
+    "系統設定",  // SystemWindowTitle
+    "記錄",  // SystemLoggingSection
+    "詳細程度：",  // SystemLogLevelLabel
+    "回報問題時，提高詳細程度會很有幫助。記錄檔會寫入資料庫旁的 rabbitears.log。",  // SystemLogLevelHint
+    "開啟記錄資料夾",  // SystemOpenLogFolder
+    "測試中的功能",  // SystemBetaSection
+    "尚未完成的功能，預設為關閉。若要協助測試再開啟，可能會有問題。",  // SystemBetaHint
+    "失效連結檢查（標記無法連線的頻道）",  // SystemBetaDeadLinkChecker
+    "僅錯誤",  // LogLevelError
+    "警告",  // LogLevelWarn
+    "標準",  // LogLevelInfo
+    "詳細",  // LogLevelDebug
+    "全部",  // LogLevelTrace
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

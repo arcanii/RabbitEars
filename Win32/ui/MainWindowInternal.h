@@ -105,6 +105,10 @@ constexpr int ID_LANG_ZH_HANT = 2069;  // Settings → Language → 繁體中文
 // literal-id grep does NOT surface; 2062 there collided with "move channels to bottom", so selecting
 // this item fired a dock command instead of switching language.
 constexpr int ID_LANG_ZH_HK = 2049;    // Settings → Language → 繁體中文（香港） ("zh-HK")
+// NB pick ids from a genuine gap: the COMPUTED ranges (ID_DOCK_BASE 2051..2062,
+// ID_LAYOUT_APPLY_BASE 2079..2088, ID_LAYOUT_DELETE_BASE 2089..2098, ID_THEME_SKIN_BASE 2100+)
+// have no literal "= 20xx" to grep for. 2023 is inside the free 2020..2029 block.
+constexpr int ID_SYSTEM_SETTINGS = 2023;  // Settings → System… (logging level + beta features)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
@@ -382,6 +386,7 @@ void onCategories(AppState* st);
 void syncSpectrumTap(AppState* st);
 void resetStatMeters(AppState* st);
 void onMeters(AppState* st);
+void onSystemSettings(AppState* st);  // Settings ▸ System… (log level + beta features)
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor);
 // Recreate the three chrome fonts (uiFont/titleFont/glyphFont) for the active skin AND active UI
 // language, re-applying them to the controls that carry them. Not theme-gated: themeFont() resolves

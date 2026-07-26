@@ -3432,5 +3432,89 @@
     "cluster": "MacUI",
     "placeholders": [],
     "comment": ""
+  },
+  {
+    "id": "MenuSystemSettings",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Settings menu item opening the System settings dialog."
+  },
+  {
+    "id": "SystemWindowTitle",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SystemLoggingSection",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Section header above the log-level control."
+  },
+  {
+    "id": "SystemLogLevelLabel",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "SystemLogLevelHint",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Explains that more detail helps when reporting a problem, and where the file lives."
+  },
+  {
+    "id": "SystemOpenLogFolder",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Button revealing the log file in Explorer."
+  },
+  {
+    "id": "SystemBetaSection",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Section header above the beta feature toggles."
+  },
+  {
+    "id": "SystemBetaHint",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Warns that beta features are unfinished and off by default."
+  },
+  {
+    "id": "SystemBetaDeadLinkChecker",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Checkbox label for the dead-link checker beta feature."
+  },
+  {
+    "id": "LogLevelError",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Log level name."
+  },
+  {
+    "id": "LogLevelWarn",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Log level name."
+  },
+  {
+    "id": "LogLevelInfo",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Log level name (the default)."
+  },
+  {
+    "id": "LogLevelDebug",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Log level name."
+  },
+  {
+    "id": "LogLevelTrace",
+    "cluster": "DialogSystem",
+    "placeholders": [],
+    "comment": "Log level name (most verbose)."
   }
 ]

@@ -18,6 +18,11 @@ namespace {
 // outlives every individual player, so there is no per-player state to key on here.
 void vlcLogCb(void*, int level, const libvlc_log_t*, const char* fmt, va_list args) {
     if (level < LIBVLC_WARNING) return;
+    // libVLC's own warnings/errors map onto our severities, so they honour the log level too —
+    // otherwise "Error" would still be noisy with VLC-WARN. Checked BEFORE formatting: this runs
+    // on a libVLC thread and can fire often on a sick stream.
+    const diag::Level lvl = level >= LIBVLC_ERROR ? diag::Level::Error : diag::Level::Warn;
+    if (!diag::enabled(lvl)) return;
     char buf[1024];
     va_list ap;
     va_copy(ap, args);

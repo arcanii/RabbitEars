@@ -530,5 +530,19 @@
   "MacMeterViewSpectrumNeedsPermission": "Spectrum needs audio permission",
   "MacMeterNameSpectrum": "Spectrum",
   "MacMeterNameSignal": "Signal",
-  "MacMeterNameFrames": "Frames"
+  "MacMeterNameFrames": "Frames",
+  "MenuSystemSettings": "System…",
+  "SystemWindowTitle": "System Settings",
+  "SystemLoggingSection": "Logging",
+  "SystemLogLevelLabel": "Detail level:",
+  "SystemLogLevelHint": "More detail helps when reporting a problem. The log is written to rabbitears.log next to your database.",
+  "SystemOpenLogFolder": "Open log folder",
+  "SystemBetaSection": "Beta features",
+  "SystemBetaHint": "Unfinished features, off by default. Turn one on to help test it — expect rough edges.",
+  "SystemBetaDeadLinkChecker": "Dead-link checker (marks unreachable channels)",
+  "LogLevelError": "Errors only",
+  "LogLevelWarn": "Warnings",
+  "LogLevelInfo": "Normal",
+  "LogLevelDebug": "Detailed",
+  "LogLevelTrace": "Everything"
 }

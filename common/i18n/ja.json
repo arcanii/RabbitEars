@@ -530,5 +530,19 @@
   "MacMeterViewSpectrumNeedsPermission": "スペクトラムには音声の許可が必要です",
   "MacMeterNameSpectrum": "スペクトラム",
   "MacMeterNameSignal": "信号",
-  "MacMeterNameFrames": "フレーム"
+  "MacMeterNameFrames": "フレーム",
+  "MenuSystemSettings": "システム…",
+  "SystemWindowTitle": "システム設定",
+  "SystemLoggingSection": "ログ",
+  "SystemLogLevelLabel": "詳細レベル:",
+  "SystemLogLevelHint": "問題を報告する際は詳細レベルを上げると役立ちます。ログはデータベースと同じ場所の rabbitears.log に記録されます。",
+  "SystemOpenLogFolder": "ログフォルダーを開く",
+  "SystemBetaSection": "ベータ機能",
+  "SystemBetaHint": "未完成の機能です。既定ではオフになっています。テストに協力する場合のみオンにしてください。",
+  "SystemBetaDeadLinkChecker": "リンク切れチェッカー（到達できないチャンネルを記録）",
+  "LogLevelError": "エラーのみ",
+  "LogLevelWarn": "警告",
+  "LogLevelInfo": "標準",
+  "LogLevelDebug": "詳細",
+  "LogLevelTrace": "すべて"
 }

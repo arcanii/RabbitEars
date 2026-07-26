@@ -565,6 +565,22 @@ enum class StringId {
     MacMeterNameSpectrum,
     MacMeterNameSignal,
     MacMeterNameFrames,
+    // --- Menu ---
+    MenuSystemSettings,
+    // --- DialogSystem ---
+    SystemWindowTitle,
+    SystemLoggingSection,
+    SystemLogLevelLabel,
+    SystemLogLevelHint,
+    SystemOpenLogFolder,
+    SystemBetaSection,
+    SystemBetaHint,
+    SystemBetaDeadLinkChecker,
+    LogLevelError,
+    LogLevelWarn,
+    LogLevelInfo,
+    LogLevelDebug,
+    LogLevelTrace,
     Count  // sentinel — MUST stay last
 };
 

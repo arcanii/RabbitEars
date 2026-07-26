@@ -548,6 +548,24 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto lg = st->db.getSetting(L"ui_language"); lg && !lg->empty())
                     st->uiLanguage = *lg;
                 i18n::setActiveLang(resolveLang(st->uiLanguage));
+
+                // Log level + beta flags load HERE, in the first DB block, ahead of createChildren
+                // and every other restore below: a tester who set Debug/Trace to chase a startup
+                // problem must have it in force before the interesting logging happens. Both are
+                // plain atomics, so this is just seeding state — nothing else depends on them yet.
+                if (auto lv = st->db.getSetting(L"log_level"); lv && !lv->empty())
+                    diag::setLevel(diag::levelFromString(utf8FromWide(*lv), diag::Level::Info));
+                {
+                    int nBeta = 0;
+                    const BetaFeature* allBeta = allBetaFeatures(nBeta);
+                    for (int i = 0; i < nBeta; ++i) {
+                        const auto v = st->db.getSetting(wideFromUtf8(betaFeatureSettingKey(allBeta[i])));
+                        setBetaEnabled(allBeta[i], v && *v == L"1");  // absent/anything-else = OFF
+                        if (v && *v == L"1")
+                            diag::info(std::wstring(L"beta feature ENABLED: ") +
+                                       wideFromUtf8(betaFeatureId(allBeta[i])));
+                    }
+                }
             }
 
             createChildren(hwnd, st);     // creates pane 0 (window + player); built in the UI language

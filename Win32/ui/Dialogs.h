@@ -10,7 +10,11 @@
 
 #include <windows.h>
 
+#include <cstdint>
+
+#include "core/FeatureFlags.h"          // BetaFeature — the System dialog's beta toggles
 #include "models/Channel.h"             // channel pick-list for scheduleDialog
+#include "platform/Log.h"               // diag::Level — the System dialog's log-level picker
 #include "models/RecordingRule.h"       // rule rows for the recording-rules manager
 #include "models/ScheduledRecording.h"  // schedule rows for the manager + add dialogs
 #include "ui/MiniMeter.h"  // MeterConfig for chooseMeters
@@ -31,6 +35,19 @@ bool promptText(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& titl
 // First-run Terms-of-Use gate. Modal; returns true if the user accepted, false if
 // they declined (the caller should then exit the app). Blocks until answered.
 bool showTerms(HWND parent, HINSTANCE hInst, UINT dpi);
+
+// Settings ▸ System… — the app-wide "plumbing" dialog, as opposed to the look/behaviour ones.
+// Holds the diagnostic log's verbosity and the beta-feature switchboard; expect it to grow, so
+// it is laid out as titled sections rather than a flat list of controls.
+struct SystemSettings {
+    diag::Level logLevel = diag::Level::Info;  // Info == the historical always-on behaviour
+    uint32_t    betaMask = 0;                  // bitwise-OR of BetaFeature bits (see FeatureFlags.h)
+};
+
+// Modal System-settings dialog. `io` is in/out — seeded with the live values, overwritten with
+// the user's choices on OK. Returns true if OK was pressed (Cancel leaves `io` untouched).
+// Applying + persisting is the CALLER's job: this is pure UI.
+bool systemSettingsDialog(HWND parent, HINSTANCE hInst, UINT dpi, SystemSettings& io);
 
 // The user's answer to the "support this project" prompt (see showSupportPrompt).
 enum class SupportChoice {
