@@ -544,5 +544,6 @@
   "LogLevelWarn": "警告",
   "LogLevelInfo": "標準",
   "LogLevelDebug": "詳細",
-  "LogLevelTrace": "全部"
+  "LogLevelTrace": "全部",
+  "MenuPipAlwaysOnTop": "子母畫面顯示在其他應用程式上方"
 }

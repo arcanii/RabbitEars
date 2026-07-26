@@ -1322,6 +1322,30 @@ void resetStatMeters(AppState* st) {
 
 // Settings → Meters → Setup…: the per-meter look + palette dialog. Seeds it from the
 // live meters, then on OK applies + persists (style, colours, enable) for each.
+// Re-apply the PIP z-order policy (see AppState::pipAlwaysOnTop). PIP must be TOPMOST whenever it
+// is meant to be seen — an owned popup that is merely "above the main window" still composites
+// UNDER the main window's libVLC D3D surface — so the "not always on top" mode does not leave it
+// non-topmost: it drops it only while another app is in front, and re-raises it on return.
+void applyPipTopmost(AppState* st, bool appActive) {
+    if (!st) return;
+    for (auto& p : st->panes) {
+        if (!p || !p->floating || !p->hwnd || !IsWindow(p->hwnd)) continue;
+        const bool top = st->pipAlwaysOnTop || appActive;
+        SetWindowPos(p->hwnd, top ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
+void onTogglePipAlwaysOnTop(AppState* st) {
+    st->pipAlwaysOnTop = !st->pipAlwaysOnTop;
+    if (st->db.isOpen())
+        st->db.setSetting(L"pip_always_on_top", st->pipAlwaysOnTop ? L"1" : L"0");
+    // GetForegroundWindow rather than a cached flag: the menu was just dismissed, so we are
+    // unambiguously the active app right now, but this keeps the one policy expression in one place.
+    const HWND fg = GetForegroundWindow();
+    applyPipTopmost(st, fg == st->hwnd || (fg && GetAncestor(fg, GA_ROOTOWNER) == st->hwnd));
+}
+
 // Settings ▸ System… — the app-wide plumbing dialog. Applies + persists on OK; the dialog itself
 // is pure UI. Both settings take effect immediately (no restart): the log level is a plain atomic,
 // and every beta flag is read live at its use site.
@@ -1489,6 +1513,8 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 tr(StringId::MenuViewSplit).c_str());
     AppendMenuW(viewMenu, MF_STRING | (st->viewMode == ViewMode::Pip ? chk : 0u), ID_VIEW_PIP,
                 tr(StringId::MenuPictureInPicture).c_str());
+    AppendMenuW(viewMenu, MF_STRING | (st->pipAlwaysOnTop ? chk : 0u), ID_PIP_ALWAYS_ON_TOP,
+                tr(StringId::MenuPipAlwaysOnTop).c_str());
     AppendMenuW(viewMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(viewMenu, MF_STRING | (st->videoOnly ? chk : 0u), ID_VIDEO_ONLY,
                 tr(StringId::MenuVideoOnly).c_str());  // carries the \tCtrl+Shift+V accelerator hint
@@ -1705,6 +1731,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_SYSTEM_SETTINGS:
             onSystemSettings(st);
+            break;
+        case ID_PIP_ALWAYS_ON_TOP:
+            onTogglePipAlwaysOnTop(st);
             break;
         case ID_VIDEO_ONLY:
             toggleVideoOnly(st);

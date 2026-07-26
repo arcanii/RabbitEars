@@ -76,6 +76,7 @@ constexpr int ID_SCHEDULES = 2070;     // Settings → Scheduled Recordings… (
 constexpr int ID_VIEW_SINGLE = 2071;   // Settings → View: one pane (classic single-player)
 constexpr int ID_VIEW_SPLIT = 2072;    // Settings → View: 2×2 split (multiple simultaneous views)
 constexpr int ID_VIEW_PIP = 2073;      // Settings → View: picture-in-picture
+constexpr int ID_PIP_ALWAYS_ON_TOP = 2024;  // Settings → View: keep PIP above other apps (2020..2029 gap)
 // 0.2.6 batch — allocated from the free 2074..2099 block (NEVER at/above 2100: that's the
 // open-ended ID_THEME_SKIN_BASE range, which grows with builtinSkins()).
 constexpr int ID_FMT_MP4 = 2074;         // recording format: MP4 (direct mp4 mux; see onToggleRecord)
@@ -277,6 +278,12 @@ struct AppState {
                                           // resolveLang()'d into i18n::setActiveLang at startup and
                                           // re-applied LIVE on a Settings ▸ Language change (no restart)
     bool       hideDead = false;     // hide unavailable (dead/geo-blocked) channels
+    // PIP z-order policy (setting "pip_always_on_top"). true (default) == the historical behaviour:
+    // the PIP popup floats over EVERY app. false == it floats only while RabbitEars is the
+    // foreground app and drops behind other windows when you switch away. It can never simply stop
+    // being topmost: an owned, non-topmost popup is composited UNDER the main window's libVLC D3D
+    // surface and becomes invisible (see addPane), so the z-order is re-raised on WM_ACTIVATEAPP.
+    bool       pipAlwaysOnTop = true;
     bool       categoryActive = false;    // is the Categories include-filter on?
     std::set<std::wstring> categories;    // included group titles when active
     bool       showSpectrum = true;       // Settings → Meters visibility (persisted)
@@ -387,6 +394,10 @@ void syncSpectrumTap(AppState* st);
 void resetStatMeters(AppState* st);
 void onMeters(AppState* st);
 void onSystemSettings(AppState* st);  // Settings ▸ System… (log level + beta features)
+// Re-apply the PIP z-order policy. `appActive` is whether RabbitEars is the foreground app —
+// with pipAlwaysOnTop off, PIP is topmost only then. No-op when there is no floating pane.
+void applyPipTopmost(AppState* st, bool appActive);
+void onTogglePipAlwaysOnTop(AppState* st);
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor);
 // Recreate the three chrome fonts (uiFont/titleFont/glyphFont) for the active skin AND active UI
 // language, re-applying them to the controls that carry them. Not theme-gated: themeFont() resolves

@@ -3516,5 +3516,11 @@
     "cluster": "DialogSystem",
     "placeholders": [],
     "comment": "Log level name (most verbose)."
+  },
+  {
+    "id": "MenuPipAlwaysOnTop",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Checkable View-menu item: keep the PIP window above other applications."
   }
 ]

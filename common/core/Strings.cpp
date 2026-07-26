@@ -580,6 +580,8 @@ constexpr std::array<const char*, N> kEn = {{
     "Normal",  // LogLevelInfo
     "Detailed",  // LogLevelDebug
     "Everything",  // LogLevelTrace
+    // --- Menu ---
+    "Keep PIP above other apps",  // MenuPipAlwaysOnTop
 }};
 
 // 日本語
@@ -1150,6 +1152,8 @@ constexpr std::array<const char*, N> kJa = {{
     "標準",  // LogLevelInfo
     "詳細",  // LogLevelDebug
     "すべて",  // LogLevelTrace
+    // --- Menu ---
+    "PIPを常に最前面に表示",  // MenuPipAlwaysOnTop
 }};
 
 // 繁體中文
@@ -1720,6 +1724,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "標準",  // LogLevelInfo
     "詳細",  // LogLevelDebug
     "全部",  // LogLevelTrace
+    // --- Menu ---
+    "子母畫面顯示在其他應用程式上方",  // MenuPipAlwaysOnTop
 }};
 
 // 繁體中文（香港）
@@ -2290,6 +2296,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     "標準",  // LogLevelInfo
     "詳細",  // LogLevelDebug
     "全部",  // LogLevelTrace
+    // --- Menu ---
+    "子母畫面顯示在其他應用程式上方",  // MenuPipAlwaysOnTop
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

@@ -544,5 +544,6 @@
   "LogLevelWarn": "Warnings",
   "LogLevelInfo": "Normal",
   "LogLevelDebug": "Detailed",
-  "LogLevelTrace": "Everything"
+  "LogLevelTrace": "Everything",
+  "MenuPipAlwaysOnTop": "Keep PIP above other apps"
 }

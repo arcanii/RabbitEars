@@ -544,5 +544,6 @@
   "LogLevelWarn": "警告",
   "LogLevelInfo": "標準",
   "LogLevelDebug": "詳細",
-  "LogLevelTrace": "すべて"
+  "LogLevelTrace": "すべて",
+  "MenuPipAlwaysOnTop": "PIPを常に最前面に表示"
 }

@@ -581,6 +581,8 @@ enum class StringId {
     LogLevelInfo,
     LogLevelDebug,
     LogLevelTrace,
+    // --- Menu ---
+    MenuPipAlwaysOnTop,
     Count  // sentinel — MUST stay last
 };
 

@@ -581,6 +581,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     rf && (*rf == L"ts" || *rf == L"mkv" || *rf == L"mp4"))
                     st->recFormat = *rf;
                 if (auto rl = st->db.getSetting(L"resume_last")) st->resumeLast = (*rl == L"1");
+                if (auto pt = st->db.getSetting(L"pip_always_on_top"))
+                    st->pipAlwaysOnTop = (*pt == L"1");  // absent = true (the historical behaviour)
                 if (auto wr = st->db.getSetting(L"wake_to_record")) st->wakeToRecord = (*wr == L"1");
                 if (auto hd = st->db.getSetting(L"hide_dead"); hd && *hd == L"1") st->hideDead = true;
                 if (auto cf = st->db.getSetting(L"category_filter"); cf && !cf->empty()) {
@@ -753,6 +755,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_ACTIVATEAPP:
+            // Drives the "PIP only floats while RabbitEars is in front" policy. WM_ACTIVATEAPP (not
+            // WM_ACTIVATE) is the right signal: it fires when focus crosses an APPLICATION boundary,
+            // so clicking between our own windows — the PIP popup included — never demotes it.
+            if (st) applyPipTopmost(st, wParam != FALSE);
+            return 0;
         case WM_TIMER:
             if (st && wParam == kSchedulerTimer) {
                 onSchedulerTick(st);
