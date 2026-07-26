@@ -591,6 +591,14 @@ constexpr std::array<const char*, N> kEn = {{
     "Airing skipped — the series rule is still active and will record future episodes.",  // StatusAiringSkippedRule
     // --- DialogMeters ---
     "VU needle",  // MeterLookVu
+    // --- Menu ---
+    "Check for dead links  (beta)",  // MenuDeadLinkCheck
+    "Checking for dead links…",  // MenuDeadLinkChecking
+    // --- Status ---
+    "Checking channels for dead links…",  // StatusDeadLinkStarted
+    "Checking links… {0} of {1}",  // StatusDeadLinkProgress
+    "Link check done — {0} unavailable, {1} channel(s) updated.",  // StatusDeadLinkDone
+    "Link check inconclusive — nothing changed (check your connection).",  // StatusDeadLinkInconclusive
 }};
 
 // 日本語
@@ -1172,6 +1180,14 @@ constexpr std::array<const char*, N> kJa = {{
     "この放送をスキップしました — シリーズルールは有効なままで、今後のエピソードは録画されます。",  // StatusAiringSkippedRule
     // --- DialogMeters ---
     "VU メーター",  // MeterLookVu
+    // --- Menu ---
+    "リンク切れを確認（ベータ）",  // MenuDeadLinkCheck
+    "リンク切れを確認中…",  // MenuDeadLinkChecking
+    // --- Status ---
+    "チャンネルのリンク切れを確認しています…",  // StatusDeadLinkStarted
+    "確認中… {1} 件中 {0} 件",  // StatusDeadLinkProgress
+    "確認が完了しました — 視聴不可 {0} 件、{1} 件のチャンネルを更新しました。",  // StatusDeadLinkDone
+    "確認できませんでした — 変更はありません（接続を確認してください）。",  // StatusDeadLinkInconclusive
 }};
 
 // 繁體中文
@@ -1753,6 +1769,14 @@ constexpr std::array<const char*, N> kZhHant = {{
     "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",  // StatusAiringSkippedRule
     // --- DialogMeters ---
     "VU 指針",  // MeterLookVu
+    // --- Menu ---
+    "檢查失效連結（測試中）",  // MenuDeadLinkCheck
+    "正在檢查失效連結…",  // MenuDeadLinkChecking
+    // --- Status ---
+    "正在檢查頻道的失效連結…",  // StatusDeadLinkStarted
+    "檢查中… 第 {0} 個，共 {1} 個",  // StatusDeadLinkProgress
+    "檢查完成 — {0} 個無法使用，已更新 {1} 個頻道。",  // StatusDeadLinkDone
+    "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。",  // StatusDeadLinkInconclusive
 }};
 
 // 繁體中文（香港）
@@ -2334,6 +2358,14 @@ constexpr std::array<const char*, N> kZhHK = {{
     "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",  // StatusAiringSkippedRule
     // --- DialogMeters ---
     "VU 指針",  // MeterLookVu
+    // --- Menu ---
+    "檢查失效連結（測試中）",  // MenuDeadLinkCheck
+    "正在檢查失效連結…",  // MenuDeadLinkChecking
+    // --- Status ---
+    "正在檢查頻道的失效連結…",  // StatusDeadLinkStarted
+    "檢查中… 第 {0} 個，共 {1} 個",  // StatusDeadLinkProgress
+    "檢查完成 — {0} 個無法使用，已更新 {1} 個頻道。",  // StatusDeadLinkDone
+    "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。",  // StatusDeadLinkInconclusive
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

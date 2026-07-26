@@ -550,5 +550,11 @@
   "MetersGlassOff": "關閉",
   "ScheduleStatusSkipped": "已略過",
   "StatusAiringSkippedRule": "已略過此次播出 — 影集規則仍然有效，未來的集數仍會錄影。",
-  "MeterLookVu": "VU 指針"
+  "MeterLookVu": "VU 指針",
+  "MenuDeadLinkCheck": "檢查失效連結（測試中）",
+  "MenuDeadLinkChecking": "正在檢查失效連結…",
+  "StatusDeadLinkStarted": "正在檢查頻道的失效連結…",
+  "StatusDeadLinkProgress": "檢查中… 第 {0} 個，共 {1} 個",
+  "StatusDeadLinkDone": "檢查完成 — {0} 個無法使用，已更新 {1} 個頻道。",
+  "StatusDeadLinkInconclusive": "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。"
 }

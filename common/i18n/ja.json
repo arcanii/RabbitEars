@@ -550,5 +550,11 @@
   "MetersGlassOff": "オフ",
   "ScheduleStatusSkipped": "スキップ",
   "StatusAiringSkippedRule": "この放送をスキップしました — シリーズルールは有効なままで、今後のエピソードは録画されます。",
-  "MeterLookVu": "VU メーター"
+  "MeterLookVu": "VU メーター",
+  "MenuDeadLinkCheck": "リンク切れを確認（ベータ）",
+  "MenuDeadLinkChecking": "リンク切れを確認中…",
+  "StatusDeadLinkStarted": "チャンネルのリンク切れを確認しています…",
+  "StatusDeadLinkProgress": "確認中… {1} 件中 {0} 件",
+  "StatusDeadLinkDone": "確認が完了しました — 視聴不可 {0} 件、{1} 件のチャンネルを更新しました。",
+  "StatusDeadLinkInconclusive": "確認できませんでした — 変更はありません（接続を確認してください）。"
 }

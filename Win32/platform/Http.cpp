@@ -112,4 +112,66 @@ bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int
     return true;
 }
 
+
+ProbeTransport httpProbe(const std::wstring& url, int& httpStatus, int timeoutMs) {
+    httpStatus = 0;
+
+    URL_COMPONENTS uc{};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = L"", path[4096] = L"", extra[4096] = L"";
+    uc.lpszHostName = host;      uc.dwHostNameLength = ARRAYSIZE(host);
+    uc.lpszUrlPath = path;       uc.dwUrlPathLength = ARRAYSIZE(path);
+    uc.lpszExtraInfo = extra;    uc.dwExtraInfoLength = ARRAYSIZE(extra);
+    uc.dwSchemeLength = 1;
+    // A URL we cannot even parse is NOT evidence the channel is gone — it is a malformed entry in
+    // the playlist. Inconclusive keeps it out of the dead list. (Non-HTTP schemes — rtmp, udp,
+    // rtsp — land here too, which is right: we have no way to probe them.)
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return ProbeTransport::NoConnect;
+    if (uc.nScheme != INTERNET_SCHEME_HTTP && uc.nScheme != INTERNET_SCHEME_HTTPS)
+        return ProbeTransport::NoConnect;
+
+    const std::wstring object = std::wstring(path) + extra;
+    const bool secure = (uc.nScheme == INTERNET_SCHEME_HTTPS);
+
+    Handle session;
+    session.h = WinHttpOpen(L"VLC/3.0.23 LibVLC/3.0.23", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return ProbeTransport::NoConnect;
+    if (timeoutMs > 0) WinHttpSetTimeouts(session, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
+
+    Handle connect;
+    connect.h = WinHttpConnect(session, host, uc.nPort, 0);
+    if (!connect) return ProbeTransport::NoConnect;
+
+    Handle request;
+    // GET, not HEAD: a lot of IPTV edges reject or mishandle HEAD (405, or a bogus 200 with no
+    // body), which would read as a dead channel. We simply never read the body — closing the
+    // handle after the headers costs the server one aborted response.
+    // WINHTTP_FLAG_BYPASS_PROXY_CACHE so a cached 404 from an earlier probe cannot be re-served.
+    DWORD flags = WINHTTP_FLAG_BYPASS_PROXY_CACHE | (secure ? WINHTTP_FLAG_SECURE : 0u);
+    request.h = WinHttpOpenRequest(connect, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                   WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!request) return ProbeTransport::NoConnect;
+    // Do not chase redirects — a 3xx is a healthy answer in its own right (see the header).
+    DWORD noRedirect = WINHTTP_DISABLE_REDIRECTS;
+    WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &noRedirect, sizeof(noRedirect));
+
+    if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0,
+                            0) ||
+        !WinHttpReceiveResponse(request, nullptr)) {
+        // Distinguish "we ran out of time" from "we could not get there at all". Both are
+        // Inconclusive to the classifier, but the log is much easier to read with the difference.
+        const DWORD e = GetLastError();
+        return (e == ERROR_WINHTTP_TIMEOUT) ? ProbeTransport::Timeout : ProbeTransport::NoConnect;
+    }
+
+    DWORD status = 0, len = sizeof(status);
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &len, WINHTTP_NO_HEADER_INDEX))
+        return ProbeTransport::NoConnect;
+
+    httpStatus = static_cast<int>(status);
+    return ProbeTransport::Ok;  // handles close here — the body is never read
+}
+
 }  // namespace rabbitears

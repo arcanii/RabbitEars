@@ -45,6 +45,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/Dialogs.h"
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
+#include "ui/DeadLinkSweep.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
@@ -759,6 +760,23 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_APP_DEADLINK_PROGRESS:
+            if (st)
+                setStatus(st, trf(i18n::StringId::StatusDeadLinkProgress,
+                                  {std::to_wstring(static_cast<int>(wParam)),
+                                   std::to_wstring(static_cast<int>(lParam))}));
+            return 0;
+        case WM_APP_DEADLINK_DONE:
+            if (st) {
+                // lParam == rows written. Zero means the sweep was discarded as untrustworthy (or
+                // cancelled) — say so rather than claiming a clean bill of health.
+                setStatus(st, lParam ? trf(i18n::StringId::StatusDeadLinkDone,
+                                           {std::to_wstring(static_cast<int>(wParam)),
+                                            std::to_wstring(static_cast<int>(lParam))})
+                                     : tr(i18n::StringId::StatusDeadLinkInconclusive));
+                loadForFilter(st);  // dead_status changed -> the current view may filter differently
+            }
+            return 0;
         case WM_ACTIVATEAPP:
             // Drives the "PIP only floats while RabbitEars is in front" policy. WM_ACTIVATEAPP (not
             // WM_ACTIVATE) is the right signal: it fires when focus crosses an APPLICATION boundary,
@@ -1405,6 +1423,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_DESTROY:
+            // Join the dead-link worker BEFORE anything else tears down: it owns its own DB
+            // handle and posts to this window, so it must not outlive either. No-op if idle.
+            shutdownDeadLinkSweep();
             armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
             KillTimer(hwnd, kSchedulerTimer);
             // Hand the queue to Windows on the way out — this is the whole point of wake-to-record:

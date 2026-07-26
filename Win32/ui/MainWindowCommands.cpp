@@ -47,6 +47,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/Dialogs.h"
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
+#include "ui/DeadLinkSweep.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
@@ -1522,6 +1523,14 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     std::wstring catLabel = tr(StringId::MenuCategories);
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
     AppendMenuW(chan, MF_STRING | (st->categoryActive ? chk : 0u), ID_CATEGORIES, catLabel.c_str());
+    // Dead-link checker (BETA): the item only EXISTS when the beta flag is on, rather than being
+    // shown greyed. A disabled item invites "why can't I click this?"; an absent one is honest —
+    // the feature is opt-in via Settings ▸ System… ▸ Beta features.
+    if (betaEnabled(BetaFeature::DeadLinkChecker)) {
+        const bool busy = deadLinkSweepRunning();
+        AppendMenuW(chan, MF_STRING | (busy ? MF_GRAYED : 0u), ID_DEADLINK_SWEEP,
+                    tr(busy ? StringId::MenuDeadLinkChecking : StringId::MenuDeadLinkCheck).c_str());
+    }
     AppendMenuW(chan, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(chan, MF_STRING, ID_FAV_IMPORT, tr(StringId::MenuImportFavourites).c_str());
     AppendMenuW(chan, MF_STRING, ID_FAV_EXPORT, tr(StringId::MenuExportFavourites).c_str());
@@ -1768,6 +1777,10 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_PIP_ALWAYS_ON_TOP:
             onTogglePipAlwaysOnTop(st);
+            break;
+        case ID_DEADLINK_SWEEP:
+            if (startDeadLinkSweep(st))
+                setStatus(st, tr(i18n::StringId::StatusDeadLinkStarted));
             break;
         case ID_VIDEO_ONLY:
             toggleVideoOnly(st);

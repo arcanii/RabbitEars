@@ -42,6 +42,10 @@ constexpr UINT WM_APP_EPG_PROGRESS = WM_APP + 4;  // EPG worker progress text (h
 // create one via SendMessageTimeout(WM_APP_MAKE_VOUT_HOST, wParam=pane HWND, lParam=pane index);
 // the handler returns the new host HWND. Window create/size lives on the UI thread (Win32 affinity).
 constexpr UINT WM_APP_MAKE_VOUT_HOST = WM_APP + 5;
+// Dead-link sweep (beta) worker -> UI thread. +6/+7 were the next free ids (WM_APP+10 is taken by
+// ChannelGridControl). PROGRESS carries (done, total); DONE carries (deadFound, rowsWritten).
+constexpr UINT WM_APP_DEADLINK_PROGRESS = WM_APP + 6;
+constexpr UINT WM_APP_DEADLINK_DONE = WM_APP + 7;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 constexpr UINT_PTR kSupportPromptTimer = 0xA3;  // ONE-SHOT: the "support RabbitEars" tip prompt
 
@@ -109,6 +113,7 @@ constexpr int ID_LANG_ZH_HK = 2049;    // Settings → Language → 繁體中文
 // NB pick ids from a genuine gap: the COMPUTED ranges (ID_DOCK_BASE 2051..2062,
 // ID_LAYOUT_APPLY_BASE 2079..2088, ID_LAYOUT_DELETE_BASE 2089..2098, ID_THEME_SKIN_BASE 2100+)
 // have no literal "= 20xx" to grep for. 2023 is inside the free 2020..2029 block.
+constexpr int ID_DEADLINK_SWEEP = 2025;   // Settings → Channels → Check for dead links (BETA)
 constexpr int ID_SYSTEM_SETTINGS = 2023;  // Settings → System… (logging level + beta features)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow

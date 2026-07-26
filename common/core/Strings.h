@@ -592,6 +592,14 @@ enum class StringId {
     StatusAiringSkippedRule,
     // --- DialogMeters ---
     MeterLookVu,
+    // --- Menu ---
+    MenuDeadLinkCheck,
+    MenuDeadLinkChecking,
+    // --- Status ---
+    StatusDeadLinkStarted,
+    StatusDeadLinkProgress,
+    StatusDeadLinkDone,
+    StatusDeadLinkInconclusive,
     Count  // sentinel — MUST stay last
 };
 

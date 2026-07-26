@@ -550,5 +550,11 @@
   "MetersGlassOff": "Off",
   "ScheduleStatusSkipped": "Skipped",
   "StatusAiringSkippedRule": "Airing skipped — the series rule is still active and will record future episodes.",
-  "MeterLookVu": "VU needle"
+  "MeterLookVu": "VU needle",
+  "MenuDeadLinkCheck": "Check for dead links  (beta)",
+  "MenuDeadLinkChecking": "Checking for dead links…",
+  "StatusDeadLinkStarted": "Checking channels for dead links…",
+  "StatusDeadLinkProgress": "Checking links… {0} of {1}",
+  "StatusDeadLinkDone": "Link check done — {0} unavailable, {1} channel(s) updated.",
+  "StatusDeadLinkInconclusive": "Link check inconclusive — nothing changed (check your connection)."
 }

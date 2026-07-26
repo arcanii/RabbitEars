@@ -3552,5 +3552,47 @@
     "cluster": "DialogMeters",
     "placeholders": [],
     "comment": "Meter look: classic analog VU needle gauge. 'VU' is the standard audio abbreviation (volume unit) — keep it as VU."
+  },
+  {
+    "id": "MenuDeadLinkCheck",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Channels menu item: start the beta dead-link sweep."
+  },
+  {
+    "id": "MenuDeadLinkChecking",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Same item while a sweep is already running (greyed)."
+  },
+  {
+    "id": "StatusDeadLinkStarted",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": ""
+  },
+  {
+    "id": "StatusDeadLinkProgress",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "{0} = probes done, {1} = total."
+  },
+  {
+    "id": "StatusDeadLinkDone",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "{0} = channels found dead, {1} = rows updated."
+  },
+  {
+    "id": "StatusDeadLinkInconclusive",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Shown when the sweep was discarded (network problem) or cancelled."
   }
 ]
