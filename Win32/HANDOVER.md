@@ -103,33 +103,58 @@ bounds by the window (the backlog's "cheap win" is a no-op, and index variants a
 benchmarking), and the owner's library has **zero `epg_programmes`**, so the diag timer has never fired.
 See `BACKLOG.md` for how to get a real number before anyone tries again.
 
-### 🔨 0.2.15 — IN DEVELOPMENT (branch `0.2.15-dev`, marketing version bumped, NOT released)
+### 🔨 0.2.15 — IN DEVELOPMENT (on `main`, marketing version bumped, NOT released)
 
 `APP_VERSION` is **`0.2.15`** (`cmake/AppVersion.cmake:11`; the `if(APPLE)` override is separate and
 untouched). Bumping the version releases nothing — the git tag + the appcasts still gate the rollout,
-and 0.2.14 users stay on 0.2.14 until then. Landed on the branch so far:
+and 0.2.14 users stay on 0.2.14 until then. The `0.2.15-dev` branch was merged and pruned; everything
+below is on `main`.
 
-- **About-box tip section** (`e02e140`) — the Buy-Me-a-Coffee / Ko-fi buttons finally say what they
+**✅ OWNER-VERIFIED ON-DEVICE (2026-07-26, x64 build `0.2.15 (362)`)** — the whole line was checked in
+one pass: *"tank looks better … VU meters better … VU color change good … About box looks good"*.
+The one reservation: **glass bezel "needs work — but ok for this release"** (see BACKLOG). This
+matters because 0.2.15 is almost entirely VISUAL, and visual work is the one thing the dev sandbox
+cannot check at all.
+
+- **About-box tip section** (`e02e140`) ✅ — the Buy-Me-a-Coffee / Ko-fi buttons finally say what they
   are. Deliberately silent on how the two backends differ (owner's 0.2.13 call). The box grew
   dp(470)→dp(530) and is now **capped to the work area**: dp(530) is 795px at 150%, and a 1366×768
   laptop has ~708px of work area, so uncapped the entire button row sat under the taskbar.
 - **PIP right-click menu + PIP⇄main swap** (`e02e140`) — the floating PIP gets its own menu instead of
   the main window's view menu. The swap is **allowed while recording**: recording runs on a separate
-  headless player (`VlcPlayer::rec_`) and `doStop()` never touches it.
+  headless player (`VlcPlayer::rec_`) and `doStop()` never touches it. *Not exercised in the pass.*
 - **Dead-link checker graduated** (`e02e140`) — flag *and* branch deleted. Safe because a sweep is
   user-triggered and now **undoable**: Settings ▸ Channels ▸ "Clear dead-link results".
 - **Splash**: the "Arch cookies" line became `SplashWrappingTinFoil`.
-- **Glass "framed pane" (uncommitted)** — the meter glass is now three bands: the theme's own 1px
-  border left bit-identical, an opaque hard-stepped bezel in the chrome gutter, and the dial carrying
-  only the bezel's cast shadow (`add` is exactly 0 over content — the invariant that forecloses the
-  old "reads as blur" failure). Costs **zero dial pixels**; footprint went *down* 42.4%→38.2%.
-- **VU lamp lighting** — design panel run; not yet implemented. Owner's direction: the lighting is
-  "too pure", the lamp belongs at the **bottom**, the needle needs a **shadow**, and the light "could
-  also be blue". The blue option must ride an **existing** palette role (`bg`, unused by the VU look
-  and defaulting to `CLR_INVALID` = "no override") — mac's parsers are exact-arity on both
-  `MeterTuning` (5) and `MeterPalette` (7), so no new field is possible.
+- **Glass "framed pane"** (`5f447b7`) ⚠️ — three bands: the theme's own 1px border left bit-identical,
+  an opaque hard-stepped bezel in the chrome gutter, and the dial carrying only the bezel's cast
+  shadow (`add` is exactly 0 over content — the invariant that forecloses the old "reads as blur"
+  failure). Costs **zero dial pixels**; footprint went *down* 42.4%→38.2%. **Owner: needs work.**
+- **Look-aware meter knobs** (`80e3a38`, `9bb9f7a`) — the slider band is now a function of
+  (kind, LOOK), not kind alone. Two of VU's three sliders were DEAD, and `Sens` was a real bug
+  (`scalarLevel` never applied it). Completing it also removed four dead `Glow` sliders that shipped
+  in the DEFAULT configuration, since `glow` is only read by Tube and Scope.
+- **VU bottom-lamp lighting** (`b07ef8c`) ✅ — `common/ui/VuLamp.{h,cpp}`, pigment × light. The face
+  was a gradient brighter at the TOP (i.e. a lamp *above* the dial) and the needle's shadow offset
+  down-right. Now a bulb below the bottom edge and left of centre, a needle shadow that is the needle
+  ROTATED 2.6° about the pivot (a fixed offset gives constant separation, which reads as two
+  needles), and **blue via `palette.bg`** — hue only, black restores the stock bulb.
+- **Data-flow tank: top-centre pour, floor drain** (`e4d24e5`, `ad2d738`) ✅ — the drain is a dish in
+  the level controller's OWN target rather than a velocity sink, so it shares the controller's fixed
+  point instead of fighting the buffer-health readout. Unclaimed win found by review: per-column
+  waterline spread collapsed **7.66 → 1.72 rows** (the old right→left drift piled water 9 rows deep
+  on the left wall and 1.3 on the right). Resting level moved 5→6 of 10 LED rows at full health;
+  `kVisibleFill` 0.68 kept, owner-accepted.
+- **User-selectable fluid colour** (`2071aa4`) ✅ — one global swatch in the Data-flow row (that row
+  has no `MeterConfig`). Depth shading is Beer-Lambert and reproduces the old default **byte-identically
+  at every depth**.
 
-**None of 0.2.15 is runtime-verified** — this sandbox cannot launch the GUI.
+**Two review lessons worth carrying forward.** (1) A design panel's *reasoning* can be wrong even when
+its *conclusion* is right: the buffer drain's "a velocity sink is unsolvable here" was disproven by
+experiment (`ad2d738`) — a sink survives projection at 68% because `ITER = 8` is nowhere near
+converged. (2) A test can pin the flattering pixel: the VU lamp's original assertions covered only the
+hotspot, which sits in the bottom rows furthest from every marking, while the scale band the user
+actually reads had gone 16% darker. Both were caught by adversarial review, not by the build.
 
 ---
 

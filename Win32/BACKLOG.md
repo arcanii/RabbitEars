@@ -448,6 +448,24 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 
 ## Polish / cleanup
 
+- **🔍 Glass bezel — pass 4** (owner, 2026-07-26, on the shipped 0.2.15 build: *"needs work — but ok
+  for this release"*). The framed-pane model (`5f447b7`) is a keeper structurally — band 0 is the
+  theme's own border left bit-identical, band 1 an opaque hard-stepped bezel in the chrome gutter,
+  band 2 the dial with only a cast shadow and `add` exactly 0 — so **do not go back to gradients on
+  the face**; that was the blur, twice. What is not yet right is unspecified, so start by pinning it
+  down. The design panel's own "cannot verify headlessly" list is the shortlist of suspects, in order:
+  (a) **three luminance steps inside 2px** — border 48 / lip 112 / shadow 15 on consecutive rows may
+  be reading as banding rather than as a frame; (b) the **light skin**, where a near-black 1px ring
+  sits inside a 214 border around a white face — much the biggest swing of any skin; (c) the **corner
+  pip** (130 vs 112, a single pixel), the design's only decorative term and the most likely to read as
+  a stuck sub-pixel — `kLipCorner = 0.0f` deletes it and changes nothing else; (d) whether four framed
+  mini-meters beside the *unframed* buffer tank reads as half-done (see the separate "wire the buffer
+  meter" entry — that is the likeliest single answer). Knobs, in the order to reach for them:
+  `kLipTop` (0.431) carries the whole look; then `kShadowDeep` (0.30) if the *shadow* rather than the
+  lip reads heavy. Do NOT reach for `kBodyMul` — that changes what the frame *is*. All in
+  `common/ui/GlassMask.cpp`, all covered by the 27 selftest assertions, which will tell you loudly if
+  a change breaks the band-0-untouched invariant.
+
 - **Meters dialog: the "Bg" swatch means something different on a VU, and nothing says so**
   (flagged while landing the VU lamp, 0.2.15). On every cell look `palette.bg` is the panel
   background; on the **Vu** look it is the **LAMP** behind the dial (hue only — brightness is the
