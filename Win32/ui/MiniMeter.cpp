@@ -321,13 +321,16 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     const float v = std::clamp(st->vuNeedle, 0.0f, 1.0f);
     const Gdiplus::PointF tip = ptAt(v, rad - h * 0.06f);
     const Gdiplus::PointF root(cx, cy - h * 0.10f);
-    Gdiplus::Pen shadow(Gdiplus::Color(70, 0, 0, 0), std::max(1.5f, h * 0.075f));
-    g.DrawLine(&shadow, Gdiplus::PointF(root.X + 1.0f, root.Y + 1.0f),
-               Gdiplus::PointF(tip.X + 1.0f, tip.Y + 1.0f));
+    // Thin on purpose (owner call): a real VU needle is a hairline, and a fat one at this size
+    // reads as a bar rather than a pointer. The shadow is kept just wider than the needle so it
+    // still lifts it off the face without becoming a second, blurry needle.
+    Gdiplus::Pen shadow(Gdiplus::Color(60, 0, 0, 0), std::max(1.1f, h * 0.045f));
+    g.DrawLine(&shadow, Gdiplus::PointF(root.X + 0.8f, root.Y + 0.8f),
+               Gdiplus::PointF(tip.X + 0.8f, tip.Y + 0.8f));
     Gdiplus::Pen needle(Gdiplus::Color(255, GetRValue(st->palette.accent),
                                        GetGValue(st->palette.accent),
                                        GetBValue(st->palette.accent)),
-                        std::max(1.2f, h * 0.055f));
+                        std::max(0.9f, h * 0.028f));
     needle.SetStartCap(Gdiplus::LineCapRound);
     needle.SetEndCap(Gdiplus::LineCapRound);
     g.DrawLine(&needle, root, tip);

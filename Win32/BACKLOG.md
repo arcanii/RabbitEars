@@ -303,6 +303,24 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   - **Perf is a non-issue.** The whole tray is ~13,590 px @96dpi (~0.7% of a single 1080p frame); at 30 fps
     that's ~408k px/s with a precomputed LUT — tens of µs/frame. For scale, `drawTubeGlow` already does
     ~384 antialiased ellipse fills per frame on a busy spectrum meter.
+- **🔍 Glass cover — further refinement** (owner: "looks better, still needs more work", 2026-07-26).
+  Shipped in 0.2.14 as `common/ui/GlassMask.{h,cpp}` — a beveled-plate model (clear centre, all the
+  optics in a rim band: lit top/left fillet, shaded bottom/right), replacing a first attempt whose
+  full-face gradients just read as blur. Ideas for the next pass, roughly in value order:
+  (a) **a bezel/frame** around the panel — in the Phase Linear reference the glass sits inside a
+  dark surround, and that frame does a lot of the work of selling "instrument"; the meters are
+  currently flush to the strip; (b) a **thin bright top edge + dark bottom edge** on the panel
+  itself (a 1px rim), which reads as thickness far more cheaply than any gradient; (c) revisit the
+  bevel WIDTH per meter aspect — the tray meters are ~30px tall and very wide, so a rim sized off
+  the short axis is proportionally huge on the long one; consider sizing X and Y independently;
+  (d) a faint, very tight corner highlight where two bevels meet. **Do NOT reintroduce**: broad
+  soft gradients across the face (that was the blur), refraction (sub-cell at this size), or an
+  animated highlight (fights BufferMeter's own drifting specular; no shared frame clock).
+- **📻 VU needle look on macOS** — Win32 0.2.14 added `MeterStyle::Vu` (analog needle gauge with
+  true ~300ms symmetric ballistics). `mac/src/app/MeterModel.h` carries its own copy of the
+  MeterStyle enum WITHOUT `Vu`; its parser falls back on the unknown `"vu"` token, so a shared DB is
+  safe, but a mac user switching a meter Win32 set to VU silently gets LED. Mac-team change: add the
+  enumerator + a Core Graphics renderer.
 - **🐞 PIP resize letterboxes (black bars left/right)** — owner-reported 2026-07-26, on 0.2.14-dev.
   Resizing the PIP popup leaves black bars down one side: the window is free-form but the video
   inside keeps its own aspect ratio, so the leftover client area shows the `BLACK_BRUSH` letterbox.
