@@ -258,13 +258,51 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   episode on an EPG-only channel it can't record. *Rule editor:* Settings ▸ Recording Rules… ▸
   **New…/Edit…** (or double-click a row) opens a dialog for title + **Exact/Contains** + channel (or **any
   channel**) + **lead/trail padding** in minutes; backed by `Database::updateRule` + `clearPendingForRule`.
-  **Still open:** a **"skip this airing"** affordance that reads better than the manager's Cancel; and a
-  low-severity edge case — editing a rule's **lead time while one of its airings is actively Recording** can
-  leave a phantom **Missed** row (the surviving Recording row keeps its old padded start, so slot dedup
-  misses the re-slotted airing). Fix by seeding dedup from the unpadded programme window, or by not
-  re-slotting an in-progress airing on a lead/trail edit.
-- **Group-title country fallback** for Xtream feeds (whose channels lack `tvg-id` country codes, so
-  the Countries nav node stays empty for them).
+  **Still open:** a **"skip this airing"** affordance that reads better than the manager's Cancel.
+  *(The phantom-**Missed**-after-a-lead-time-edit edge case listed here is ✅ **FIXED in 0.2.12** — `975fb3b`
+  + `82fdba8` persist the **unpadded** airing start as `scheduled_recordings.prog_start_utc`, **schema v7**,
+  giving dedup a padding-proof identity. That was the "seed dedup from the unpadded programme window"
+  option suggested here.)*
+- ~~**Group-title country fallback** for Xtream feeds~~ — ✅ **SHIPPED in 0.2.12** (`641e57f`; the
+  mac team's shared-core change, plus `76617f0` moving country derivation into a SQLite scalar).
+- **🔍 "Glass cover" over the meters** (owner idea, 2026-07-25 — make the LED/tube/scope mini-meters +
+  the fluid buffer meter look like dials behind a curved glass pane). **Researched against the real
+  rendering code; feasible, ~1 day, low-medium risk.** Findings worth keeping:
+  - **⚠️ SCOPE FORK — settle this first.** *Per-meter* glass (each meter gets its own pane) is the easy
+    version below. **One continuous pane spanning all five meter child HWNDs** (including the gaps
+    between them) is a different, much harder project: the only path is a `WS_EX_LAYERED` +
+    `UpdateLayeredWindow` popup over the tray (the repo does this twice already — `Splash.cpp:173`,
+    `MainWindowDock.cpp:139-144`), which has no partial-update path and must mirror the parent's
+    move/size/z-order/show/minimize/fullscreen/DPI. Defer unless the owner specifically wants seamless.
+  - **Approach: a shared mask helper writing into each meter's back-buffer.** New graphics-free
+    **`common/ui/GlassMask.{h,cpp}`** (mirrors the `Skin.h` discipline so mac can reuse the math):
+    `buildGlassMask(W, H, params, add[], mul[])` precomputes two `uint8_t` W×H LUTs, applied as a
+    multiply-add over the finished frame. Geometry must be expressed as **fractions of W/H, never
+    `dpx()`**. Plug-in points: `MiniMeter::onPaint` (content ends `MiniMeter.cpp:373`, blit `:374`) and
+    `BufferMeter::renderLedBits` (cells end `:460`, blit `:525`).
+  - **Free prerequisite win:** `MiniMeter` creates *and destroys* a `CreateCompatibleBitmap` DDB **every
+    paint** (`MiniMeter.cpp:345-347`, `:375-377`) — **120 GDI object create/destroy pairs per second**
+    across the 4 tray meters at 30 fps. Converting it to the cached 32bpp DIB pattern `BufferMeter`
+    already uses (`BufferMeter.cpp:463-487`) is required for mask caching and is a win on its own.
+  - **❌ NOT the GPU/theme-engine path.** The SkinStrip technique works *because* every destination DC is
+    child-clipped — which is exactly what puts it **behind** the children; glass must be **in front**.
+    Also: alpha is destroyed in three places (`D2D1_ALPHA_MODE_IGNORE` `SkinStrip.cpp:155`, shaders
+    returning `1.0`, `BitBlt SRCCOPY`), there is one global strip texture that fully rebuilds on any size
+    change (five meters at five widths ⇒ ~150 `CreateTexture2D`/sec), and it must still work with
+    `RABBITEARS_THEME_ENGINE` **OFF**.
+  - **Do the 80% version:** a static **specular streak + edge darkening**, two terms, one 0..1 strength.
+    **Skip refraction entirely** — at ~26-30px tall with a 3px LED pitch the displacement is *sub-cell*
+    and reads as a rendering bug. Skip the animated highlight (it fights BufferMeter's existing drifting
+    specular, and there is no shared frame clock: 16ms parent vs 33ms meters).
+  - **Global 0..1 toggle, NOT a per-meter knob** — three hard blockers: the **buffer meter has no
+    `MeterConfig` at all** (the Data-flow row deliberately omits combo/swatches/sliders,
+    `Dialogs.cpp:1804-1834`), there is **no room for a 5th slider** (`kMtrKnobs = 4` and Spectrum uses all
+    four; the band already ends at x≈692 in a `dp(720)` dialog), and — **the important one** — a 6th
+    `MeterTuning` field **breaks the mac side**: Win32's parser falls back per field, but
+    `mac/src/app/MeterModel.cpp:94` is `if (tok.size() != 5) return fallback;`, **exact arity**.
+  - **Perf is a non-issue.** The whole tray is ~13,590 px @96dpi (~0.7% of a single 1080p frame); at 30 fps
+    that's ~408k px/s with a precomputed LUT — tens of µs/frame. For scale, `drawTubeGlow` already does
+    ~384 antialiased ellipse fills per frame on a busy spectrum meter.
 - **PIP "always on top of other apps" toggle** — the PIP popup is `WS_EX_TOPMOST` today (it must be,
   to composite over libVLC's D3D vout); a user toggle to drop it out of topmost when the main window
   isn't focused. (Its resize grip + position/size persistence shipped in 0.2.6.)
@@ -314,6 +352,20 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 
 ## Polish / cleanup
 
+- **About box: give the tip buttons their own labelled section** (owner-requested, 2026-07-25). Today
+  **Buy me a coffee** and **Ko-fi** sit in the bottom button row next to *Check for Updates* and *OK*,
+  with **no explanation** — a user has no idea what they are for, and "Ko-fi" in particular means nothing
+  to someone who hasn't met the brand. Group them into a visually distinct block (a separator/hairline
+  above, or a small framed area) with **one short line of copy** — something like *"RabbitEars is free and
+  open source. If it's useful to you, you can support development:"* — and the two buttons beneath it.
+  Notes for whoever does this: (a) the copy must be a **new i18n key**, not a literal — see
+  `common/i18n/README.md`, and remember `gen_i18n.py` must be re-run; (b) the box is `dp(620)×dp(470)` and
+  the bottom row is already **four** buttons wide (see the measured-geometry comment in `showAbout`), so
+  this most likely means **moving the two tip buttons OUT of that row** into the new section rather than
+  adding more width — which also frees the row for the planned "Licenses…" button; (c) the same wording
+  problem does *not* apply to the support prompt, which already explains itself. `Win32/ui/Dialogs.cpp`
+  `showAbout` / `AboutProc` (the artwork + text are owner-drawn in `WM_PAINT`, so a section header can be
+  drawn there rather than added as a control).
 - **Shared `runModalLoop` helper** — About / prompt / Categories / Terms / info / Meters each run a
   hand-rolled modal `GetMessage` loop. 0.1.7 fixed the **About** loop to re-post `WM_QUIT` (so a quit
   mid-dialog exits cleanly); the others still swallow it (benign — the 4s `WM_DESTROY` watchdog covers
