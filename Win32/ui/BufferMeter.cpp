@@ -562,11 +562,19 @@ void step(MeterState* st) {
     // so a deeper drain can only get darker — it can never punch an unlit hole that reads
     // as dead pixels, nor drift into the foam band and glow white. dens_step clamps d to
     // [0, 1.4] and the peak target is 1.26, so there is headroom either way.
+    // ...with ONE exception, and it is the difference between the tank emptying and not. When the
+    // waterline sits at or below the FLOOR there is no surface inside the tank at all, and the
+    // +-1.5 band must not apply: at target 0 the band straddles the floor (surf = NY + 0.5 = 28.5,
+    // so rows 27 and 28 land at dist -1.0 and 0.0), pins those two rows at d = 0.5, and the tank
+    // keeps a permanently half-lit bottom stripe. Worse, it is 96 units of residual fluid against
+    // a stop threshold of 0.4, so `target <= 0 && totalFluid < 0.4` in WM_TIMER was UNREACHABLE —
+    // the ~30fps sim ran forever after a stream stopped, on a meter showing nothing.
+    const bool hasSurface = surf < NY + 0.5f;  // false only at target 0, i.e. genuinely empty
     for (int j = 1; j <= NY; ++j) {
         const float dist = (j + 0.5f) - surf;
         float tgt, rate;
         if (dist > 1.5f) { tgt = 1.0f; rate = RELAX; }
-        else if (dist < -1.5f) { tgt = 0.0f; rate = RELAX * 1.5f; }
+        else if (dist < -1.5f || !hasSurface) { tgt = 0.0f; rate = RELAX * 1.5f; }
         else { tgt = 0.5f; rate = RELAX * 0.05f; }
         const float dvj = drainRowAmp(j, surf, drainOpen);
         if (dvj <= 0.0f) {
