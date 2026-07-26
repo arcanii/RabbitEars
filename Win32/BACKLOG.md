@@ -333,6 +333,40 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   (d) a faint, very tight corner highlight where two bevels meet. **Do NOT reintroduce**: broad
   soft gradients across the face (that was the blur), refraction (sub-cell at this size), or an
   animated highlight (fights BufferMeter's own drifting specular; no shared frame clock).
+  → ✅ **DONE in the 0.2.15 "framed pane" pass** — (a),(b),(d) shipped; (c) was discharged the OTHER
+  way, see below. The mask is now three bands measured inward from the edge: band 0 = the theme's own
+  1px `FrameRect`, left **bit-identical** at every strength on every skin (`add` is achromatic, so
+  brightening it washed a brass/blue border toward neutral — that was the "border got fatter and
+  hotter" failure); band 1 = an **opaque** hard-stepped bezel (lit top/left, near-black bottom/right,
+  one corner pip) painted by driving `mul→0.10` so `v = v*mul/255 + add` lands on an absolute tone —
+  no colour type, no renderer change, still graphics-free; band 2 = the dial carrying **only the
+  bezel's cast shadow**, with `add` exactly 0 — nothing brightens content anywhere, which is the
+  invariant that forecloses the blur failure for good. Geometry comes from a new `chromePx` the
+  renderer passes (`meterChromePx()` = the same `dpx(2)` inset `onPaint` already reserves), so the
+  frame costs **zero dial pixels at every DPI and every size**, and the dp(86) Settings preview shows
+  the byte-identical edge the dp(30) tray meter will get. Touched footprint went **down** (42.4% →
+  38.2% on a 112×30) because a 5-row additive ramp became a 1px line. **(c) was rejected on purpose:**
+  a real chamfer is constant width, and axis-derived rims are what made a 112×30 meter read as two
+  horizontal bands — the fix was removing axis-derived geometry entirely (Chebyshev ring), not
+  splitting X from Y. Trim knob if it reads heavy: `kLipTop` (0.431), then `kShadowDeep` (0.30).
+- **🔍 Glass cover — wire the buffer meter** (deferred out of the 0.2.15 framed-pane pass). `BufferMeter.cpp`
+  has no glass code and no border at all, so it is now the only meter still literally flush to the strip —
+  four framed mini-meters beside one unframed fluid tank may read as half-done. It was deferred because it
+  is the only place real dial would be spent: its LED grid is genuinely edge-to-edge (at 115×30 the layout
+  is `gap=1, pitch=3, cellPx=2, cols=38, rows=10, ox=1, oy=0`, so the top LED row starts at row 0 and a
+  frame would swallow it whole), `--selftest` cannot reach it (`renderLedBits`/`render` are static in an
+  anonymous namespace of a GUI TU), and ⚠️ **its `dpx` arguments are REVERSED** vs MiniMeter's
+  (`dpx(dpi, v)` at `BufferMeter.cpp:62` vs `dpx(v, dpi)` at `MiniMeter.cpp:41`). Recipe: cache
+  `glassAdd/glassMul/glassBuilt/glassChrome` on `MeterState`; reset on the `ensureDib` size path; build
+  with `GlassParams{miniMeterGlass(), dpx(st->dpi, 2)}` in `render()` before `renderLedBits`; apply the
+  same byte loop between `renderLedBits` and the `BitBlt` (no `GdiFlush` needed — it writes `st->bits`
+  directly). **Inset the LED grid by `glassChromePx(W, H, dpx(st->dpi, 2))` and GATE that inset on
+  `miniMeterGlass() > 0.0f`** — glass defaults to 0, and a permanent 38×10 → 37×9 grid for a feature
+  nobody enabled is a default-path regression. `drawMetrics` draws after the blit with `tr.top = dpx(1)`,
+  which would cross the frame — bump to `dpx(3)`. Also add `InvalidateRect(st->bufPreview, …)` to the
+  `ID_MTR_GLASS` handler (`Dialogs.cpp`, which only invalidates `preview[0..3]`), or the buffer preview
+  shows stale glass while the slider drags — and the buffer meter kills its timer when the tank drains,
+  so it will not self-refresh.
 - **📻 VU needle look on macOS** — Win32 0.2.14 added `MeterStyle::Vu` (analog needle gauge with
   true ~300ms symmetric ballistics). `mac/src/app/MeterModel.h` carries its own copy of the
   MeterStyle enum WITHOUT `Vu`; its parser falls back on the unknown `"vu"` token, so a shared DB is
@@ -413,6 +447,17 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
   locale-aware date formatting is wanted.
 
 ## Polish / cleanup
+
+- **About box: the arch label should read "x86-64", not "x64"** (owner, 2026-07-26). `AboutArchX64`
+  in `common/i18n/en.json` renders the running-architecture suffix in the About box's version line
+  (`runningArchLabel()`, `Win32/ui/Dialogs.cpp`). "x86-64" is the correct name for the ISA; "x64" is
+  Microsoft's shorthand. ⚠️ **Change ONLY the display string.** `x64` is also the arch *token* baked
+  into installer filenames (`RabbitEars-<ver>-setup.exe` vs `-arm64-setup.exe`), the appcast
+  enclosures, and `scripts\build.cmd` / `build-installer.cmd` — renaming any of those breaks
+  auto-update for every existing x64 install. The three sibling ids (`AboutArchArm64`,
+  `AboutArchX86`, `AboutArchUnknown`) are worth a consistency glance at the same time; note
+  `AboutArchX86` means genuine 32-bit x86, so it must NOT also become "x86-64". One-line change ×
+  4 languages (the token is identical in all of them), then `gen_i18n.py`.
 
 - **About box: give the tip buttons their own labelled section** (owner-requested, 2026-07-25). Today
   **Buy me a coffee** and **Ko-fi** sit in the bottom button row next to *Check for Updates* and *OK*,
