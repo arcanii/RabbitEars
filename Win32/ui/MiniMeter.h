@@ -108,4 +108,11 @@ MeterPalette meterPaletteFromString(const std::wstring& s, const MeterPalette& f
 std::wstring meterTuningToString(const MeterTuning& t);
 MeterTuning  meterTuningFromString(const std::wstring& s, const MeterTuning& fallback);
 
+// "Glass cover" overlay strength for EVERY meter, 0 (off, the default) .. 1. Global rather than a
+// per-meter MeterTuning field on purpose: the buffer meter has no MeterConfig, the Meters dialog's
+// knob band is full, and a 6th MeterTuning field would break mac's exact-arity parser. Setting it
+// only stores the value — the caller repaints. Persisted under glassStrengthSettingKey().
+void  miniMeterSetGlass(float strength);
+float miniMeterGlass();
+
 }  // namespace rabbitears

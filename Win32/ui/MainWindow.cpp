@@ -45,6 +45,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/Dialogs.h"
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
+#include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -583,6 +584,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto rl = st->db.getSetting(L"resume_last")) st->resumeLast = (*rl == L"1");
                 if (auto pt = st->db.getSetting(L"pip_always_on_top"))
                     st->pipAlwaysOnTop = (*pt == L"1");  // absent = true (the historical behaviour)
+                if (auto gl = st->db.getSetting(wideFromUtf8(glassStrengthSettingKey()));
+                    gl && !gl->empty())
+                    miniMeterSetGlass(static_cast<float>(_wtof(gl->c_str())));  // absent = 0 (off)
                 if (auto wr = st->db.getSetting(L"wake_to_record")) st->wakeToRecord = (*wr == L"1");
                 if (auto hd = st->db.getSetting(L"hide_dead"); hd && *hd == L"1") st->hideDead = true;
                 if (auto cf = st->db.getSetting(L"category_filter"); cf && !cf->empty()) {

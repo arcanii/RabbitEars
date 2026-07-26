@@ -47,6 +47,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/Dialogs.h"
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
+#include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -1407,6 +1408,15 @@ void onMeters(AppState* st) {
     if (!chooseMeters(st->hwnd, hInst, st->dpi, cfg, dataFlowOn)) return;  // Cancel — no change
     bufferMeterSetHidden(st->bufferMeter, !dataFlowOn);
     st->db.setSetting(L"buffer_hidden", dataFlowOn ? L"0" : L"1");
+    // The glass slider previewed live app-wide (and Cancel already put it back), so on OK we just
+    // persist whatever it currently is, then repaint the real meters at the committed value.
+    {
+        wchar_t g[16];
+        swprintf_s(g, L"%.3f", miniMeterGlass());
+        st->db.setSetting(wideFromUtf8(glassStrengthSettingKey()), g);
+    }
+    for (HWND h : {st->meterSpectrum, st->meterSignal, st->meterBitrate, st->meterFrames})
+        if (h) InvalidateRect(h, nullptr, FALSE);
 
     static const wchar_t* key[4] = {L"spectrum", L"signal", L"bitrate", L"frames"};
     st->showSpectrum = cfg[0].enabled;

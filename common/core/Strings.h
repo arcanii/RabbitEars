@@ -583,6 +583,8 @@ enum class StringId {
     LogLevelTrace,
     // --- Menu ---
     MenuPipAlwaysOnTop,
+    // --- DialogMeters ---
+    MetersGlassLabel,
     Count  // sentinel — MUST stay last
 };
 

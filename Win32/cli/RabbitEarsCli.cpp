@@ -29,6 +29,7 @@
 #include "db/Database.h"
 #include "platform/Encoding.h"
 #include "ui/DockLayout.h"
+#include "ui/GlassMask.h"
 #include "ui/Skin.h"
 #include "ui/VideoGrid.h"
 
@@ -983,6 +984,31 @@ int selftest() {
         expect(sp.size() == 2 && sp[0].w == 200 && sp[0].h == 100, "Pip: pane 0 fills the region");
         expect(sp[1].w == 30 && sp[1].h == 20 && sp[1].x == 165 && sp[1].y == 75,
                "Pip: inset sits in the bottom-right corner");
+    }
+
+    out("\n== Glass mask (meter overlay) ==\n");
+    {
+        std::vector<uint8_t> add, mul;
+        // Off must be a TRUE no-op — the renderer skips the pass entirely on these values.
+        buildGlassMask(40, 20, GlassParams{0.0f}, add, mul);
+        expect(add.size() == 800 && mul.size() == 800, "glass mask sized w*h");
+        bool neutral = true;
+        for (size_t i = 0; i < add.size(); ++i) neutral = neutral && add[i] == 0 && mul[i] == 255;
+        expect(neutral, "strength 0 -> add=0 / mul=255 everywhere (no-op)");
+        expect(glassIsNoop(GlassParams{0.0f}) && !glassIsNoop(GlassParams{0.5f}),
+               "glassIsNoop tracks strength");
+
+        buildGlassMask(40, 20, GlassParams{1.0f}, add, mul);
+        expect(mul[0] < 255, "corner is darkened at full strength");
+        expect(mul[static_cast<size_t>(10) * 40 + 20] == 255, "centre is clear of the edge ramp");
+        bool anySpec = false;
+        for (size_t i = 0; i < add.size(); ++i) anySpec = anySpec || add[i] > 0;
+        expect(anySpec, "specular streak contributes somewhere");
+
+        buildGlassMask(0, 0, GlassParams{1.0f}, add, mul);
+        expect(add.empty() && mul.empty(), "degenerate size -> empty tables");
+        buildGlassMask(8, 8, GlassParams{5.0f}, add, mul);
+        expect(add.size() == 64 && mul.size() == 64, "out-of-range strength clamped, not fatal");
     }
 
     out("\n== Skin model ==\n");

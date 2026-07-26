@@ -20,6 +20,9 @@ using std::min;
 }  // namespace Gdiplus
 #include <gdiplus.h>
 
+#include <atomic>
+
+#include "ui/GlassMask.h"  // shared "glass cover" mask math (common/)
 #include "ui/Theme.h"
 
 namespace rabbitears {
@@ -85,7 +88,29 @@ struct MiniMeterState {
     // Frames
     int   fps = 0;
     float flare = 0.0f;  // red flash on dropped frames, decays
+
+    // Cached 32bpp top-down back-buffer. Previously onPaint created AND destroyed a
+    // CreateCompatibleBitmap every paint — with 4 tray meters at ~30fps that is ~240 GDI object
+    // operations per second for a surface whose size almost never changes. Caching it is a win on
+    // its own, and it is what makes the glass mask cacheable (we need addressable pixels).
+    HDC       backDC = nullptr;
+    HBITMAP   backBmp = nullptr;
+    void*     backBits = nullptr;   // BGRA, row-major top-down (biHeight negative)
+    HGDIOBJ   backOld = nullptr;
+    int       backW = 0, backH = 0;
+    // Glass overlay LUTs, rebuilt with the back-buffer whenever the size or strength changes.
+    std::vector<uint8_t> glassAdd, glassMul;
+    float                glassBuilt = -1.0f;  // strength the LUTs were built for (-1 = never)
 };
+
+// Global "glass cover" strength for every meter (0 = off). A single app-wide value rather than a
+// per-meter MeterTuning knob, deliberately: the buffer meter has no MeterConfig at all, the Meters
+// dialog's knob band is already full at 4 sliders, and a 6th MeterTuning field would break mac's
+// exact-arity parser. Read by both MiniMeter and BufferMeter.
+std::atomic<float>& meterGlassRef() {
+    static std::atomic<float> g{0.0f};
+    return g;
+}
 
 MiniMeterState* stateOf(HWND h) {
     return reinterpret_cast<MiniMeterState*>(GetWindowLongPtrW(h, GWLP_USERDATA));
@@ -337,14 +362,68 @@ void paintFrames(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
     }
 }
 
+// Ensure the cached back-buffer matches (w,h) and the glass LUTs match the active strength.
+// Returns false if the surface couldn't be created (caller falls back to painting nothing).
+bool ensureBack(MiniMeterState* st, HDC ref, int w, int h) {
+    if (w <= 0 || h <= 0) return false;
+    if (!st->backDC) st->backDC = CreateCompatibleDC(ref);
+    if (!st->backDC) return false;
+    if (!st->backBmp || st->backW != w || st->backH != h) {
+        if (st->backBmp) {
+            SelectObject(st->backDC, st->backOld);
+            DeleteObject(st->backBmp);
+            st->backBmp = nullptr;
+            st->backBits = nullptr;
+        }
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;  // top-down, so row y is at bits + y*w
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        st->backBmp = CreateDIBSection(ref, &bi, DIB_RGB_COLORS, &st->backBits, nullptr, 0);
+        if (!st->backBmp) return false;
+        st->backOld = SelectObject(st->backDC, st->backBmp);
+        st->backW = w;
+        st->backH = h;
+        st->glassBuilt = -1.0f;  // force a LUT rebuild at the new size
+    }
+    const float want = meterGlassRef().load(std::memory_order_relaxed);
+    if (st->glassBuilt != want) {
+        buildGlassMask(w, h, GlassParams{want}, st->glassAdd, st->glassMul);
+        st->glassBuilt = want;
+    }
+    return true;
+}
+
+// Apply the cached glass LUTs over the finished frame: darken toward the edges, then add the
+// specular. Two byte ops per channel per pixel — the whole meter tray is ~0.7% of a 1080p frame.
+void applyGlass(MiniMeterState* st) {
+    if (st->glassBuilt <= 0.0f || !st->backBits) return;
+    const size_t n = static_cast<size_t>(st->backW) * static_cast<size_t>(st->backH);
+    if (st->glassAdd.size() != n || st->glassMul.size() != n) return;
+    auto* px = static_cast<uint8_t*>(st->backBits);  // BGRA
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned mul = st->glassMul[i], add = st->glassAdd[i];
+        for (int ch = 0; ch < 3; ++ch) {
+            unsigned v = px[i * 4 + ch];
+            v = (v * mul) / 255u + add;
+            px[i * 4 + ch] = static_cast<uint8_t>(v > 255u ? 255u : v);
+        }
+    }
+}
+
 void onPaint(HWND hwnd, MiniMeterState* st) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
     RECT rc;
     GetClientRect(hwnd, &rc);
-    HDC mem = CreateCompatibleDC(hdc);
-    HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
-    HGDIOBJ oldBmp = SelectObject(mem, bmp);
+    if (!ensureBack(st, hdc, rc.right, rc.bottom)) {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    HDC mem = st->backDC;
 
     const Theme& th = currentTheme();
     const COLORREF bg = (st->palette.bg == CLR_INVALID) ? th.windowBg : st->palette.bg;
@@ -371,10 +450,15 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
             if (glowPtr) drawTubeGlow(mem, glow, st->palette, st->tuning.glow);
         }
     }
+    // Glass goes on LAST, over the finished dials — including the tube halo and the scope trace,
+    // which is the point: the highlight must sit on the pane, not under the phosphor. GDI+ (used by
+    // those two) writes through the same DIB, so the pixels are all there by now. GdiFlush()
+    // guarantees that: the batched GDI calls above must land before we read the bits directly.
+    if (st->glassBuilt > 0.0f) {
+        GdiFlush();
+        applyGlass(st);
+    }
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, oldBmp);
-    DeleteObject(bmp);
-    DeleteDC(mem);
     EndPaint(hwnd, &ps);
 }
 
@@ -463,6 +547,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (st && st->timerOn) {
                 KillTimer(hwnd, kTimerId);
                 st->timerOn = false;
+            }
+            if (st && st->backDC) {  // release the cached back-buffer (see ensureBack)
+                if (st->backBmp) {
+                    SelectObject(st->backDC, st->backOld);
+                    DeleteObject(st->backBmp);
+                }
+                DeleteDC(st->backDC);
+                st->backDC = nullptr;
+                st->backBmp = nullptr;
+                st->backBits = nullptr;
+                st->backW = st->backH = 0;
             }
             return 0;
         case WM_NCDESTROY:
@@ -698,5 +793,15 @@ MeterTuning meterTuningFromString(const std::wstring& s, const MeterTuning& fall
     }
     return MeterTuning{v[0], v[1], v[2], v[3], v[4]};
 }
+
+void miniMeterSetGlass(float strength) {
+    if (strength < 0.0f) strength = 0.0f;
+    if (strength > 1.0f) strength = 1.0f;
+    meterGlassRef().store(strength, std::memory_order_relaxed);
+    // Each meter rebuilds its LUTs lazily in ensureBack() when it next paints (it compares the
+    // strength it built against this one), so there is nothing to invalidate here.
+}
+
+float miniMeterGlass() { return meterGlassRef().load(std::memory_order_relaxed); }
 
 }  // namespace rabbitears

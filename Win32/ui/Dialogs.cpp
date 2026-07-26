@@ -1650,6 +1650,7 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
 // ---- Meters… setup dialog (Settings → Meters…) -----------------------------
 namespace {
 
+constexpr int  ID_MTR_GLASS = 1597;  // the single GLOBAL "glass cover" strength slider
 constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j, slider j +10+j
 constexpr int  ID_MTR_RESET = 1596;
 constexpr UINT kMtrPreviewTimer = 7;
@@ -1694,6 +1695,8 @@ struct MetersDlgState {
     HWND  swatch[4][kMtrRoles] = {};
     HWND  slider[4][kMtrKnobs] = {};
     HWND  bufPreview = nullptr;  // the "Data flow" (buffer/fluid) meter preview — no Look/palette
+    HWND  glass = nullptr;       // global "glass cover" strength (applies to every meter)
+    float glassOnEntry = 0.0f;   // restored on Cancel — the slider previews LIVE, app-wide
     HWND  bufEnable = nullptr;
     bool  bufOn = true;          // working copy of the data-flow meter's visible state
     HFONT font = nullptr, bold = nullptr;
@@ -1838,6 +1841,15 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_HSCROLL: {  // a knob trackbar moved — update the working cfg + live preview
             if (!st) break;
             const HWND bar = reinterpret_cast<HWND>(lParam);
+            if (bar == st->glass) {
+                // Global, so it previews on the REAL meters as well as this dialog's — which is the
+                // point: you judge glass against the actual tray. Cancel restores glassOnEntry.
+                const int pos = static_cast<int>(SendMessageW(bar, TBM_GETPOS, 0, 0));
+                miniMeterSetGlass(static_cast<float>(pos) / 100.0f);
+                for (int r = 0; r < 4; ++r)
+                    if (st->preview[r]) InvalidateRect(st->preview[r], nullptr, FALSE);
+                return 0;
+            }
             for (int r = 0; r < 4; ++r)
                 for (int j = 0; j < kMtrKnobs; ++j)
                     if (bar == st->slider[r][j]) {
@@ -1884,6 +1896,9 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 st->ok = true;
                 st->done = true;
             } else if (id == IDCANCEL) {
+                // The glass slider previews live on the REAL meters (that is the point — you judge
+                // it against the actual tray), so Cancel has to put it back.
+                miniMeterSetGlass(st->glassOnEntry);
                 st->done = true;
             } else if (id == ID_MTR_RESET) {
                 meterReset(st);
@@ -1896,6 +1911,7 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_CLOSE:
             if (st) {
+                miniMeterSetGlass(st->glassOnEntry);  // X == Cancel for the live glass preview
                 st->done = true;
                 meterTeardown(hwnd, st);
             }
@@ -2078,6 +2094,23 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, dp(150, dpi), bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_RESET)), hInst,
                                  nullptr);
+    // The global "glass cover" strength, tucked into the free span between Reset and OK. ONE
+    // slider for every meter — not a per-meter knob: the Data-flow (buffer) row has no
+    // MeterConfig to hang one on, the per-row knob band is already full at kMtrKnobs=4, and a 6th
+    // MeterTuning field would break mac's exact-arity parser.
+    st.glassOnEntry = miniMeterGlass();
+    HWND glassLbl = CreateWindowExW(0, L"STATIC", tr(i18n::StringId::MetersGlassLabel).c_str(),
+                                    WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, m + dp(162, dpi), btnY,
+                                    dp(96, dpi), bh, dlg, nullptr, hInst, nullptr);
+    st.glass = CreateWindowExW(0, TRACKBAR_CLASSW, L"",
+                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
+                               m + dp(262, dpi), btnY + dp(3, dpi), dp(170, dpi), dp(24, dpi), dlg,
+                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_GLASS)), hInst,
+                               nullptr);
+    SendMessageW(st.glass, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+    SendMessageW(st.glass, TBM_SETPOS, TRUE,
+                 static_cast<LPARAM>(static_cast<int>(st.glassOnEntry * 100.0f + 0.5f)));
+    SendMessageW(glassLbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
     HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
                               WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                               cr.right - 2 * bw - dp(26, dpi), btnY, bw, bh, dlg,

@@ -545,5 +545,6 @@
   "LogLevelInfo": "Normal",
   "LogLevelDebug": "Detailed",
   "LogLevelTrace": "Everything",
-  "MenuPipAlwaysOnTop": "Keep PIP above other apps"
+  "MenuPipAlwaysOnTop": "Keep PIP above other apps",
+  "MetersGlassLabel": "Glass:"
 }

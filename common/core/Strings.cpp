@@ -582,6 +582,8 @@ constexpr std::array<const char*, N> kEn = {{
     "Everything",  // LogLevelTrace
     // --- Menu ---
     "Keep PIP above other apps",  // MenuPipAlwaysOnTop
+    // --- DialogMeters ---
+    "Glass:",  // MetersGlassLabel
 }};
 
 // 日本語
@@ -1154,6 +1156,8 @@ constexpr std::array<const char*, N> kJa = {{
     "すべて",  // LogLevelTrace
     // --- Menu ---
     "PIPを常に最前面に表示",  // MenuPipAlwaysOnTop
+    // --- DialogMeters ---
+    "ガラス:",  // MetersGlassLabel
 }};
 
 // 繁體中文
@@ -1726,6 +1730,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "全部",  // LogLevelTrace
     // --- Menu ---
     "子母畫面顯示在其他應用程式上方",  // MenuPipAlwaysOnTop
+    // --- DialogMeters ---
+    "玻璃質感：",  // MetersGlassLabel
 }};
 
 // 繁體中文（香港）
@@ -2298,6 +2304,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     "全部",  // LogLevelTrace
     // --- Menu ---
     "子母畫面顯示在其他應用程式上方",  // MenuPipAlwaysOnTop
+    // --- DialogMeters ---
+    "玻璃質感：",  // MetersGlassLabel
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

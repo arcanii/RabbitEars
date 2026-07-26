@@ -3522,5 +3522,11 @@
     "cluster": "Menu",
     "placeholders": [],
     "comment": "Checkable View-menu item: keep the PIP window above other applications."
+  },
+  {
+    "id": "MetersGlassLabel",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Label for the global 'glass cover' strength slider in the Meters dialog."
   }
 ]
