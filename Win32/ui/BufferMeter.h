@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // BufferMeter — a fun, physical buffering visualizer: a little tank of liquid
 // simulated with a 2D Navier-Stokes "stable fluids" solver and drawn as a blocky
-// LED dot-matrix. The fill level tracks the stream's health (a healthy stream
-// rests ~half-full); as the stream gets chunky/low the liquid drains. It sloshes
-// and flows while data is arriving. Can be hidden (right-click) since motion can
-// be distracting.
+// LED dot-matrix. Data pours in at the TOP CENTRE and leaves through a drain in the
+// FLOOR. The fill level tracks the stream's health (a healthy stream rests
+// ~half-full); as the stream gets chunky/low the level falls toward the drain. It
+// sloshes and circulates while data is arriving. Can be hidden (right-click) since
+// motion can be distracting.
 #pragma once
 
 #include <functional>
@@ -18,10 +19,11 @@ HWND createBufferMeter(HWND parent, HINSTANCE hInst, int id, UINT dpi);
 
 // Buffer health 0..100 -> target liquid level (a healthy stream rests ~half-full).
 void bufferMeterSetHealth(HWND meter, int percent);
-// Real-stream honesty: flowRate 0..1 = throughput (drives the right->left current
-// speed + wave energy; 0 = stalled, current freezes), trouble 0..1 = packet
-// corruption/loss pressure (drives turbulence + violent splashes). Fed from
-// libVLC media stats; both ease smoothly so the surface responds without jitter.
+// Real-stream honesty: flowRate 0..1 = throughput (drives the top-centre pour rate, the
+// tank's circulation speed, the falling shimmer and the wave energy; 0 = stalled, the
+// pour stops and the shimmer nearly freezes), trouble 0..1 = packet corruption/loss
+// pressure (drives turbulence + violent splashes). Fed from libVLC media stats; both
+// ease smoothly so the surface responds without jitter.
 void bufferMeterSetFlow(HWND meter, float flowRate, float trouble);
 // Compact throughput readout drawn in the meter's top-right (e.g. L"12.4 Mb/s").
 // Pass L"" to clear it. Cleared automatically when health drops to 0.
