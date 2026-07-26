@@ -403,6 +403,19 @@ void VlcPlayer::sampleStats() {
         std::lock_guard<std::mutex> lk(statsMtx_);
         snapshot_ = fs;
     }
+    // The 250ms flow snapshot, at TRACE — deliberately the loudest thing in the app (~4 lines/sec
+    // per playing pane), which is exactly why it is TRACE and not DEBUG. It is what turns "it
+    // stutters sometimes" into a timeline of throughput, buffering and loss.
+    if (diag::enabled(diag::Level::Trace)) {
+        wchar_t buf[224];
+        swprintf_s(buf,
+                   L"pane %d flow: demux %.2f Mb/s  read %.2f Mb/s  %.1f fps  buffered %lld B  "
+                   L"lost %d  corrupt %d  disc %d",
+                   tag_, fs.demuxBytesPerSec * 8.0 / 1e6, fs.readBytesPerSec * 8.0 / 1e6,
+                   fs.displayedPerSec, fs.bufferedBytes, fs.lostPicturesDelta, fs.corruptedDelta,
+                   fs.discontinuityDelta);
+        diag::trace(buf);
+    }
     if (evtTarget_ && evtMsg_)
         PostMessageW(evtTarget_, evtMsg_,
                      MAKEWPARAM(static_cast<WORD>(PlayerEvent::Stats), static_cast<WORD>(tag_)), 0);
@@ -435,6 +448,27 @@ void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {
         case libvlc_MediaPlayerEndReached: ev = PlayerEvent::EndReached; playing_.store(false); break;
         case libvlc_MediaPlayerEncounteredError: ev = PlayerEvent::Error; playing_.store(false); break;
         default: return;
+    }
+    // Every libVLC state transition, at DEBUG. This is the single most useful line when a tester
+    // reports "it just stops" / "it never starts": it shows the exact order and timing of
+    // Opening→Buffering→Playing→Error. Runs on a libVLC event thread, so the enabled() guard comes
+    // first (Buffering alone can fire many times a second on a sick stream) and it stays
+    // allocation-light. Log.cpp takes its own lock, so this is safe off the UI thread.
+    if (diag::enabled(diag::Level::Debug)) {
+        const wchar_t* name = L"?";
+        switch (ev) {
+            case PlayerEvent::Opening:    name = L"Opening"; break;
+            case PlayerEvent::Buffering:  name = L"Buffering"; break;
+            case PlayerEvent::Playing:    name = L"Playing"; break;
+            case PlayerEvent::Paused:     name = L"Paused"; break;
+            case PlayerEvent::Stopped:    name = L"Stopped"; break;
+            case PlayerEvent::EndReached: name = L"EndReached"; break;
+            case PlayerEvent::Error:      name = L"Error"; break;
+            default: break;
+        }
+        std::wstring m = L"pane " + std::to_wstring(tag_) + L" vlc-event: " + name;
+        if (ev == PlayerEvent::Buffering) m += L" " + std::to_wstring(lp) + L"%";
+        diag::debug(m);
     }
     if (evtTarget_ && evtMsg_)
         PostMessageW(evtTarget_, evtMsg_, MAKEWPARAM(static_cast<WORD>(ev), static_cast<WORD>(tag_)),

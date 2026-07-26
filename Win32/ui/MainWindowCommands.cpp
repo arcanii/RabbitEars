@@ -924,6 +924,15 @@ void onSchedulerTick(AppState* st) {
     // recordings in other panes run concurrently (per-pane recorders, 0.2.6).
     const bool manualRecording = st->ap().player.isRecording() && st->activeScheduleId == 0;
     const SchedulerPlan plan = planScheduler(schedules, now, manualRecording);
+    // The ~30s scheduler verdict, at DEBUG. A missed recording is the hardest thing to diagnose
+    // after the fact — the queue state is gone by the time anyone looks — so record what the
+    // planner decided each tick, but only when it decided SOMETHING (an idle tick logs nothing,
+    // otherwise this would be 2 lines/minute forever).
+    if (!plan.start.empty() || !plan.stop.empty() || !plan.miss.empty())
+        diag::debug(L"scheduler: " + std::to_wstring(schedules.size()) + L" queued, start=" +
+                    std::to_wstring(plan.start.size()) + L" stop=" + std::to_wstring(plan.stop.size()) +
+                    L" miss=" + std::to_wstring(plan.miss.size()) +
+                    (manualRecording ? L" (manual recording active)" : L""));
 
     for (long long id : plan.stop) {
         // Only the schedule that actually OWNS a recorder gets one stopped; a foreign
