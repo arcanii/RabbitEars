@@ -1770,26 +1770,70 @@ const KnobDesc kMtrKnobDesc[4][kMtrKnobs] = {
     {{L"Glow", 0}, {L"Smooth", 1}, {L"Sens", 2}, {nullptr, -1}},  // Frames
 };
 
-// The knob set a row actually exposes, keyed on (kind, LOOK) rather than kind alone. The table
-// above is per-KIND, which was fine while every look was a grid of cells — but it meant that
-// switching a row to VU left two of its three sliders DEAD: `glow` is Tube phosphor
-// (drawTubeGlow), and `peakHold`/`breathing` are a spectrum peak cap and a bitrate ceiling. A
-// needle has none of those. Offering a control that does nothing is worse than offering fewer.
+// Does MeterTuning field `f` actually change anything for this (kind, LOOK)? The table above says
+// which fields the KIND feeds; this says which the LOOK consumes. Offering a control that does
+// nothing is worse than offering fewer — every case below was traced to its use site, because the
+// obvious guesses are wrong in both directions.
+bool knobApplies(int f, int kind, MeterStyle style) {
+    switch (f) {
+        case 0:
+            // glow: the Tube halo (drawTubeGlow) and the Scope bloom (drawScope). LED and LCD never
+            // read it — and LED is defaultMeterStyle for EVERY kind, so out of the box this was
+            // four dead sliders, twice the number the VU case was about.
+            return style == MeterStyle::Tube || style == MeterStyle::Scope;
+        case 3:
+            // peakHold only moves st->peak[], and only paintSpectrum draws that. So it is dead on
+            // the Spectrum row under Scope or VU, and on every other kind (the per-kind table
+            // already withholds it there).
+            return kind == 0 && style != MeterStyle::Scope && style != MeterStyle::Vu;
+        default:
+            // smoothing  — on a cell look it is attack/decay easing; on VU it IS the ballistics
+            //              (vuCoef), and that is kind-independent.
+            // sensitivity— every painter, and scalarLevel() for the needle.
+            // breathing  — the bitrate ceiling's ebb rate. NOT VU-dead: histMax feeds scalarLevel's
+            //              Bitrate case, so it drives the needle's full-scale too.
+            return true;
+    }
+}
+
+// The knob set a row actually exposes, keyed on (kind, LOOK) rather than kind alone. The per-kind
+// table was fine while every look was a grid of cells; it is wrong the moment a look ignores a
+// field its kind feeds.
 void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
-    for (int j = 0; j < kMtrKnobs; ++j) out[j] = kMtrKnobDesc[kind][j];
-    if (style != MeterStyle::Vu) return;   // every cell look keeps exactly its old set
-    // VU responds to precisely two MeterTuning fields, so it offers precisely two — relabelled for
-    // what they mean on an analog movement. NB `smoothing` is not renamed in the model, only in the
-    // UI: MeterTuning's arity is frozen by mac's exact-arity parser (MeterModel.cpp, `!= 5`).
-    out[0] = {L"Damping", 1};   // scales the ~300ms symmetric ballistics (MiniMeter.cpp, vuCoef)
-    out[1] = {L"Sens", 2};      // input gain, applied in scalarLevel()
-    out[2] = {nullptr, -1};
-    out[3] = {nullptr, -1};
+    KnobDesc src[kMtrKnobs];
+    if (style == MeterStyle::Vu) {
+        // A needle has no cells to bloom and no peak cap, so it starts from its own pair rather
+        // than from the kind's. NB `smoothing` is renamed only in the UI — MeterTuning's arity is
+        // frozen by mac's exact-arity parser (MeterModel.cpp, `!= 5`), so no field can be added.
+        src[0] = {L"Damping", 1};
+        src[1] = {L"Sens", 2};
+        src[2] = {nullptr, -1};
+        src[3] = {nullptr, -1};
+        // ...but carry `breathing` across when the KIND feeds it (the Bitrate row). Hiding it there
+        // was a real regression: it still moved the needle via histMax, so the deflection depended
+        // on a control the VU state gave no way to reach.
+        for (int j = 0; j < kMtrKnobs; ++j)
+            if (kMtrKnobDesc[kind][j].field == 4) {
+                src[2] = kMtrKnobDesc[kind][j];
+                break;
+            }
+    } else {
+        for (int j = 0; j < kMtrKnobs; ++j) src[j] = kMtrKnobDesc[kind][j];
+    }
+    // Filter, COMPACTING as we go — a hidden slot in the middle would leave a hole in the band.
+    int n = 0;
+    for (int j = 0; j < kMtrKnobs; ++j)
+        if (src[j].field >= 0 && knobApplies(src[j].field, kind, style)) out[n++] = src[j];
+    while (n < kMtrKnobs) out[n++] = KnobDesc{nullptr, -1};
 }
 
 // A knob's display label. Style-aware because the same field means a different thing on a needle:
 // field 1 is "Smooth" on a cell look (attack/decay easing) and "Damping" on a VU (a mechanical
 // movement's lag). The English strings in KnobDesc are only a fallback for an unmapped field.
+// NB "Damping" scales vuCoef, whose ~300ms symmetric settle is the real instrument only where the
+// needle's input is UNSMOOTHED — the Bitrate and Frames rows. On Spectrum and Signal, scalarLevel
+// reads values that onTick has already eased (decay / sigEase), so the two lags compose and the
+// movement is nearer a second. That is pre-existing behaviour, not something this caption changed.
 std::wstring knobLabelFor(const KnobDesc& kd, MeterStyle style) {
     if (style == MeterStyle::Vu && kd.field == 1) return tr(i18n::StringId::MeterKnobDamping);
     switch (kd.field) {
@@ -1907,7 +1951,6 @@ void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
     }
 }
 
-// Reset the WORKING copy (looks + palettes) to defaults; enables are left alone and
 // Re-point row `r`'s slider band at the knob set its CURRENT look exposes: retitle each caption,
 // reload each slider from the live tuning, and hide the pair outright when the look has no use for
 // that slot. Called at build, on every look change, and from Reset — the controls are created once
@@ -1933,7 +1976,8 @@ void meterSyncKnobs(MetersDlgState* st, int r) {
     }
 }
 
-// nothing is committed until OK, so Cancel still fully reverts.
+// Reset the WORKING copy (looks + palettes) to defaults; enables are left alone, and nothing is
+// committed until OK, so Cancel still fully reverts.
 void meterReset(MetersDlgState* st) {
     for (int r = 0; r < 4; ++r) {
         st->cfg[r].style = defaultMeterStyle(static_cast<MeterKind>(r));
