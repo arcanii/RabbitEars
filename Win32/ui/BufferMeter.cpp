@@ -44,6 +44,17 @@ constexpr int LED_GAP   = 1;  // dark gap between cells
 // The grid shows only the bottom kVisibleFill fraction of the simulated tank, so a
 // healthy stream (rests at NORMAL_FILL) reaches near the top with a little splash
 // headroom instead of leaving dead unlit rows above. Lower = tighter crop.
+//
+// ⚠️ THIS WAS CALIBRATED AGAINST THE OLD HORIZONTAL FLOW and is now nominally one row
+// generous. The top-centre pour + roll hold the surface much closer to nominal `surf`
+// than the old right->left drift did (mean body waterline 19.37 -> 17.44 against a
+// nominal 14.50), so a 100%-healthy stream now fills 6 of 10 LED rows where it used to
+// fill 5. That is a fidelity IMPROVEMENT — the same change collapsed the per-column
+// spread of the waterline from 7.66 rows to 1.72, i.e. the old readout depended
+// enormously on which column you looked at (9 rows deep on the left wall, 1.3 on the
+// right) — but it does move the app's primary buffer readout. Left at 0.68 pending the
+// owner's eye; 0.61 would restore the old 5-row resting height if the taller fill reads
+// wrong.
 constexpr float kVisibleFill = 0.68f;
 
 // ---- tunables --------------------------------------------------------------
@@ -57,7 +68,14 @@ constexpr float BUOY      = 14.0f;   // hydrostatic restoring force -> waves
 constexpr float VORT      = 0.18f;   // vorticity confinement (swirls)
 constexpr float WAVE_AMP  = 7.0f;    // travelling-wave impulse
 constexpr float SPLASH_VY = -22.0f;  // upward droplet ejection (v<0 = up)
-constexpr float POUR_VY   = 18.0f;   // downward pour-in velocity at the top-centre mouth (v>0 = down)
+// Downward pour-in velocity at the top-centre mouth (v>0 = down). NB this SATURATES: the
+// drops pick columns from a triangular distribution, so at flow=1 (5 drops) about 2 land in
+// the same cell and their velocities sum — measured, the pour cell exceeds VMAX before
+// step (6)'s clamp in 80% of frames (worst 90.0 against a clamp of 26). Above roughly
+// flow 0.6 the pour's speed is therefore pinned at VMAX and is NOT a function of
+// throughput. Do not try to tune pour strength here or via `drops`; use POUR_MASS, which
+// saturates against the d = 1.4 density cap instead and stays responsive.
+constexpr float POUR_VY   = 18.0f;
 constexpr float POUR_MASS = 0.55f;   // density laid down per drop — THE knob for pour strength
 constexpr float POUR_HALF = 5.0f;    // half-width of the pour mouth (cells; ~4 LED columns)
 constexpr float VMAX      = 26.0f;   // velocity clamp (stability at dt=0.12)
@@ -73,12 +91,26 @@ constexpr float kCx = (NX + 1) * 0.5f;  // 48.5
 
 // ---- the fountain: pour at the top centre, drain in the floor ---------------
 // A top-centre inflow into a CLOSED box develops one roll per half: down the middle,
-// out along the floor, up both walls, back inward at the surface. That topology is not
-// a choice — project() drives divergence to zero everywhere, so the field has to close,
-// and a convergent floor current under a centre downdraft is exactly the bottom-centre
-// sink it cannot resolve. Prescribed from a streamfunction (divergence-free by
-// construction) and applied as a nudge, which doubles as the only real damping in this
+// out along the floor, up both walls, back inward at the surface. Prescribed from a
+// streamfunction and applied as a nudge, which doubles as the only real damping in this
 // sim: VISC = 8e-6 gives lin_solve a = 2.6e-3, i.e. nothing.
+//
+// WHY A STREAMFUNCTION, stated accurately — an earlier version of this comment claimed a
+// velocity sink was "unsolvable" here and that project() leaves the field
+// divergence-free. Both are wrong, and measuring beats asserting. set_bnd's mirror wall
+// conditions make the boundary flux telescope to zero, so sum(div) == 0 always and the
+// discrete Poisson problem is ALWAYS compatible; nothing is unsolvable. And at ITER = 8
+// the solve is nowhere near converged — the live field carries rms|div| ~= 0.34, and a
+// prescribed sink still delivers 68% of its inward flux after a full vel_step (it needs
+// ~1000 Gauss-Seidel sweeps to vanish, not 8).
+//
+// So a velocity drain WOULD have worked. It is rejected because it would have been
+// riding on how badly the pressure solve is converged — raise ITER for smoother pressure
+// and it would quietly weaken. The streamfunction is chosen for the opposite property:
+// measured, 99.8% of its energy survives projection (cosine similarity 0.9994) because
+// psi is genuinely divergence-free in the continuum, so it does not depend on ITER at
+// all. And the drain is a density feature because it shares the level controller's fixed
+// point instead of fighting it (step (5)), not because velocity was impossible.
 constexpr float ROLL_V     = 4.0f;   // peak centre downdraft (cells/s) — crosses the tank in ~3.5s
 constexpr float ROLL_UMAX  = 14.0f;  // cap on the much faster horizontal legs (cells/s)
 constexpr float ROLL_K     = 0.20f;  // per-frame pull toward the roll (tau = 5 frames = 0.17s,
@@ -370,9 +402,13 @@ void step(MeterState* st) {
     // develops: DOWN the middle, OUT along the floor, UP both walls, back INWARD at the
     // surface. Prescribed from a streamfunction psi = -sin(pi*sx)*sin(pi*sy) — zero on all
     // four walls and on the free surface — so u = dpsi/dj, v = -dpsi/di is divergence-free
-    // by construction and satisfies the same no-through conditions set_bnd enforces.
-    // project() therefore passes it through instead of cancelling it, which is exactly what
-    // it would do to a prescribed sink.
+    // in the continuum and satisfies the same no-through conditions set_bnd enforces.
+    // Measured, 99.8% of it survives projection, against 68% for a prescribed sink (see the
+    // note by ROLL_V). NB the APPLIED field is not exactly solenoidal: the `dist <= 1.0`
+    // skip below truncates psi at the free surface, leaving a divergence sheet there
+    // (max|div| ~= 0.9 pre-projection). Harmless — 14x cleaner than a sink, and projection
+    // absorbs it — but "divergence-free by construction" is true of psi, not of what lands
+    // in f.u/f.v.
     //
     // Applied as a NUDGE toward the target, not as an impulse. That is a strict contraction
     // (x <- (1-k)x + k*T can never exceed max(|x|,|T|)) and it is the first genuine damping
