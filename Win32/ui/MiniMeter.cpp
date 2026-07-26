@@ -23,6 +23,7 @@ using std::min;
 #include <atomic>
 
 #include "ui/GlassMask.h"  // shared "glass cover" mask math (common/)
+#include "ui/VuLamp.h"     // shared VU dial illumination math (common/)
 #include "ui/Theme.h"
 
 namespace rabbitears {
@@ -116,6 +117,11 @@ struct MiniMeterState {
     float                glassBuilt = -1.0f;  // strength the LUTs were built for (-1 = never)
     int                  glassChrome = -1;    // chrome width they were built for (DPI can change
                                               // without a resize — miniMeterSetDpi only sets dpi)
+    // Vu: the bulb's field over the dial, cached exactly like the glass LUTs above. Keyed on the
+    // FACE size only, not the client size and not the palette — the field is geometry, the lamp's
+    // colour is only the two ends of the lerp, so recolouring costs nothing.
+    std::vector<uint8_t> lampMask;
+    int                  lampW = 0, lampH = 0;  // size lampMask was built for (0 = never)
 };
 
 // Global "glass cover" strength for every meter (0 = off). A single app-wide value rather than a
@@ -276,48 +282,132 @@ float scalarLevel(const MiniMeterState* st) {
     return std::clamp(raw * gain, 0.0f, 1.0f);
 }
 
-// Classic analog VU gauge: a cream face, a swept scale with ticks, a red zone over the last
-// fifth, and a damped needle. Modelled on a Phase Linear 400 — pair it with the glass overlay
-// (Settings ▸ Meters… ▸ Glass) for the full instrument look.
+// Rounds a photometric colour to something GDI+ can paint. `faceHot` is allowed to run past 255
+// (see VuLamp.h) and this is where that stops.
+Gdiplus::Color vuArgb(const VuLampRgb& c) {
+    auto q = [](float v) {
+        if (!(v > 0.0f)) return static_cast<BYTE>(0);
+        return static_cast<BYTE>(v >= 255.0f ? 255.0f : v + 0.5f);
+    };
+    return Gdiplus::Color(255, q(c.r), q(c.g), q(c.b));
+}
+
+// Classic analog VU gauge: a lamp-lit cream face, a swept scale with ticks, a red zone over the
+// last fifth, and a damped needle that casts a real shadow onto the dial. Modelled on a Phase
+// Linear 400 — pair it with the glass overlay (Settings ▸ Meters… ▸ Glass) for the full instrument
+// look.
 //
 // Unlike the other looks this one owns its face colours: a VU that isn't cream-on-black stops
-// reading as a VU, the same way the Tube look owns its phosphor glow. The palette still drives
-// what it sensibly can — `peak` tints the red zone and `accent` the needle — so a user keeps
-// meaningful control without being able to break the idiom.
+// reading as a VU, the same way the Tube look owns its phosphor glow. The palette still drives what
+// it sensibly can — `peak` tints the red zone, `accent` the needle, and `bg` IS THE LAMP (see
+// MiniMeter.h; its CLR_INVALID default means the stock warm bulb) — so a user keeps meaningful
+// control without being able to break the idiom.
+//
+// The face is NOT painted with GDI+. It is a per-pixel lerp between two colours driven by a cached
+// byte field from common/ui/VuLamp.h — the same LUT trick, for the same reason, as the glass mask:
+// the lighting is frame-invariant, so it is built once per size and costs one lerp per pixel per
+// frame. It also puts the part of this look that is hardest to eyeball inside --selftest.
 //
 // The pivot sits BELOW the panel so the arc sweeps the full width: these meters are only ~30px
-// tall, and a needle rooted inside that would be a stub. GDI+ throughout — a jaggy needle at this
-// size looks broken.
+// tall, and a needle rooted inside that would be a stub. That geometry is also what makes the
+// needle's shadow work at this size — see the note above it. GDI+ for everything on top of the
+// face: a jaggy needle at this size looks broken.
 void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     const float L = static_cast<float>(in.left), R = static_cast<float>(in.right);
     const float T = static_cast<float>(in.top), B = static_cast<float>(in.bottom);
     const float w = R - L, h = B - T;
     if (w < 8.0f || h < 8.0f) return;
+    const int fw = in.right - in.left, fh = in.bottom - in.top;
+
+    // ---- The lamp ---------------------------------------------------------------------------
+    // CLR_INVALID is 0xFFFFFFFF, so GetRValue/GetGValue/GetBValue would unpack the "follow the
+    // theme" sentinel as pure WHITE. Test for it before touching the channels.
+    const VuLampRgb lamp = (st->palette.bg == CLR_INVALID)
+                               ? vuStockLamp()
+                               : vuLampFrom(GetRValue(st->palette.bg), GetGValue(st->palette.bg),
+                                            GetBValue(st->palette.bg));
+    const VuDial dial = vuDialColours(lamp);
+
+    // ---- The face ---------------------------------------------------------------------------
+    // The bulb's field is a pure function of the dial's SIZE, so it is cached and rebuilt only on
+    // resize — deliberately not keyed on the lamp colour, because the field is geometry and the
+    // colour is only the lerp's two endpoints. A palette change therefore costs nothing.
+    if (st->lampW != fw || st->lampH != fh) {
+        buildVuLampMask(fw, fh, st->lampMask);
+        st->lampW = fw;
+        st->lampH = fh;
+    }
+    const bool direct = st->backBits && !st->lampMask.empty() && in.left >= 0 && in.top >= 0 &&
+                        in.right <= st->backW && in.bottom <= st->backH;
+    if (direct) {
+        // onPaint's fillCell()/FrameRect() are ordinary GDI and are BATCHED. They have to land
+        // before we write these pixels ourselves, or the batch flushes afterwards and paints over
+        // the finished dial. Same hazard, opposite direction, as the GdiFlush() onPaint already
+        // does before applyGlass() reads the bits back.
+        GdiFlush();
+        // Clamp the ENDPOINTS and lerp toward the clamped value, rather than lerping in float and
+        // clamping the result: the hot end of a warm lamp overshoots 255 in red, and clamping last
+        // would put a hard contour across the dial where red pins. Clamping first turns that same
+        // overshoot into a smooth roll into the highlight.
+        int lo[3], span3[3];
+        const float dimC[3] = {dial.faceDim.b, dial.faceDim.g, dial.faceDim.r};  // DIB order: BGRA
+        const float hotC[3] = {dial.faceHot.b, dial.faceHot.g, dial.faceHot.r};
+        for (int c = 0; c < 3; ++c) {
+            lo[c] = static_cast<int>(std::clamp(dimC[c], 0.0f, 255.0f) + 0.5f);
+            span3[c] = static_cast<int>(std::clamp(hotC[c], 0.0f, 255.0f) + 0.5f) - lo[c];
+        }
+        auto* px = static_cast<uint8_t*>(st->backBits);
+        for (int y = 0; y < fh; ++y) {
+            const uint8_t* mrow = st->lampMask.data() + static_cast<size_t>(y) * fw;
+            uint8_t* prow = px + (static_cast<size_t>(in.top + y) * st->backW + in.left) * 4;
+            for (int x = 0; x < fw; ++x) {
+                const int mm = mrow[x];
+                // Alpha (byte 3) is left exactly as GDI wrote it: the DIB is BI_RGB, nothing reads
+                // that byte, and writing it risks disagreeing with what GDI+ expects underneath.
+                for (int c = 0; c < 3; ++c)
+                    prow[x * 4 + c] = static_cast<uint8_t>(lo[c] + (span3[c] * mm + 127) / 255);
+            }
+        }
+    }
 
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-
-    // Warm cream face, very slightly graded so it doesn't look like flat paper.
-    const Gdiplus::Color faceTop(255, 246, 232, 176), faceBot(255, 228, 206, 140);
-    {
-        Gdiplus::RectF face(L, T, w, h);
-        Gdiplus::LinearGradientBrush lg(face, faceTop, faceBot, Gdiplus::LinearGradientModeVertical);
-        g.FillRectangle(&lg, face);
+    if (!direct) {
+        // Belt and braces — ensureBack() guarantees backBits, so this cannot normally happen. A
+        // flat dial at the dim end is a degraded VU rather than a hole in the tray.
+        Gdiplus::SolidBrush flat(vuArgb(dial.faceDim));
+        g.FillRectangle(&flat, Gdiplus::RectF(L, T, w, h));
     }
+    // The needle is rooted 0.95h BELOW the dial, so without a clip it paints out across the bezel
+    // gutter and over the theme's own border row — which it did. Now that the dial has a lit rim of
+    // its own, a pointer running over the frame breaks the "instrument behind a bezel" read that
+    // the rim and the glass overlay are both working to build; clipped, the needle emerges from
+    // under the bezel instead, which is what the real thing does. The clip lives on this stack-local
+    // Graphics, NOT on the cached backDC — `dc` here is st->backDC, which never carries
+    // BeginPaint's update region — so it cannot leak into the next paint whatever happens.
+    g.SetClip(Gdiplus::RectF(L, T, w, h), Gdiplus::CombineModeIntersect);
 
     // Geometry: pivot below the bottom edge, radius chosen so the arc clears the top with margin.
     const float cx = L + w * 0.5f, cy = B + h * 1.05f;
     const float rad = (cy - T) - h * 0.14f;
-    const float span = 52.0f;                       // total sweep, degrees
-    const float a0 = -90.0f - span * 0.5f;          // 0 == full left
+    const float span = 52.0f;               // total sweep, degrees
+    const float a0 = -90.0f - span * 0.5f;  // 0 == full left
     auto ptAt = [&](float frac, float rr) {
         const float ang = (a0 + span * std::clamp(frac, 0.0f, 1.0f)) * 3.14159265f / 180.0f;
         return Gdiplus::PointF(cx + rr * std::cos(ang), cy + rr * std::sin(ang));
     };
 
-    // Scale arc + ticks. Seven majors; the last fifth is the red zone, as on the real thing.
-    const Gdiplus::Color ink(255, 74, 58, 34);
+    // Scale arc + ticks. Seven majors; the last fifth is the red zone, as on the real thing. The
+    // ink is no longer the hard-coded brown ARGB(74,58,34) — it is the same pigment under the same
+    // lamp as the face, which is what keeps the markings legible when the lamp is not warm: a fixed
+    // brown on a blue dial is mud, whereas this comes out dark navy. Because ink and ground share a
+    // lamp their contrast is a fixed RATIO (4.17:1, set by kInkFrac in VuLamp.cpp) rather than a
+    // fixed difference — and since the glass overlay is a pure multiply on the dial, that ratio
+    // survives the glass at any strength too.
+    const Gdiplus::Color ink = vuArgb(dial.ink);
     Gdiplus::Pen arcPen(ink, std::max(1.0f, h * 0.035f));
+    // `peak` stays raw: the red zone is a translucent filter laid over the dial, a real hardware
+    // pattern, so it reads at its own colour whatever the lamp behind it is doing.
     Gdiplus::Pen redPen(Gdiplus::Color(255, GetRValue(st->palette.peak), GetGValue(st->palette.peak),
                                        GetBValue(st->palette.peak)),
                         std::max(1.5f, h * 0.055f));
@@ -333,17 +423,66 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
         g.DrawLine(&tick, p2, p1);
     }
 
-    // The needle: a tapered blade with a soft shadow just behind it, so it sits ABOVE the face
-    // rather than being painted onto it.
+    // ---- The needle, and the shadow it throws ------------------------------------------------
     const float v = std::clamp(st->vuNeedle, 0.0f, 1.0f);
     const Gdiplus::PointF tip = ptAt(v, rad - h * 0.06f);
     const Gdiplus::PointF root(cx, cy - h * 0.10f);
+
+    // The shadow is the needle ROTATED ABOUT THE PIVOT, not displaced by a fixed (dx, dy), and that
+    // is the whole reason it reads as a shadow at 26px instead of as a second needle.
+    //
+    // A bulb at the bottom is the awkward case: it sits nearly on the needle's own axis, so a
+    // literal point-source projection throws the shadow radially — straight along the needle, where
+    // it hides — and worst of all near mid-scale, which is where the needle lives. What rescues it
+    // is how a pointer is actually built: it is cranked, standing further off the card at the tip
+    // than at the boss. With the light effectively parallel (the bulb is ~1.8h away while the
+    // pointer floats a fraction of a pixel above the card) a gap that grows along the needle makes
+    // the displacement grow along it too, and to first order that IS a small rotation about the
+    // pivot. Because the pivot sits 1.05h BELOW the panel, the visible span of the needle is all
+    // far from it, so the wedge opens where it is wanted: at h=26 the separation runs 1.2px where
+    // the needle emerges from the bezel to 2.2px at the tip. Fused at the root, plainly separate at
+    // the tip. A constant offset gives constant separation, and constant separation is exactly what
+    // looks like two needles.
+    //
+    // 2.6 degrees, CLOCKWISE — toward higher readings — because the bulb is left of centre, so the
+    // light crosses the needle from the left at every deflection and the shadow always falls to the
+    // right. That is the handedness the old fixed (+0.8,+0.8) had, so this reads as "better lit"
+    // rather than as "something moved". And being an ANGLE it is size- and DPI-invariant for free:
+    // the shadow holds the same proportion to the needle in the tray and in the settings preview,
+    // which is not true of anything measured in pixels.
+    const float shRad = 2.6f * 3.14159265f / 180.0f;
+    const float sc = std::cos(shRad), ss = std::sin(shRad);
+    auto spin = [&](const Gdiplus::PointF& p) {  // about the pivot; +y is down, so this is clockwise
+        const float dx = p.X - cx, dy = p.Y - cy;
+        return Gdiplus::PointF(cx + dx * sc - dy * ss, cy + dx * ss + dy * sc);
+    };
+    const Gdiplus::PointF sRoot = spin(root), sTip = spin(tip);
+    // Two passes, because a bulb behind a bezel lip is an AREA source and throws nothing crisp: a
+    // wide faint penumbra with a narrower, darker umbra inside it. BOTH sit on the shadow line, so
+    // the pair stays directional — a soft halo drawn on the needle itself would only fatten it,
+    // which is the opposite of the hairline that was asked for one commit ago. Compounded they take
+    // 43% out of the face, i.e. a shadow near luma 120 on the ~210 the dial carries where the
+    // needle spends its time, against the old single alpha-60 stroke that after antialiasing was a
+    // dark fringe ON the needle rather than a cast shadow at all.
+    //
+    // Pure black on purpose: alpha-blending black is a straight multiply, so the shadowed pixels
+    // keep the dial's own hue and simply have less light on them, which is what a shadow is. A
+    // tinted shadow would have to be re-derived for every lamp colour and would be wrong for all
+    // but one of them.
+    //
+    // The widths are fractions of h that meet their floors at exactly h=26 — the real tray size —
+    // so nothing thins below a pixel on the meters that actually ship.
+    Gdiplus::Pen penumbra(Gdiplus::Color(36, 0, 0, 0), std::max(2.0f, h * 0.078f));
+    penumbra.SetStartCap(Gdiplus::LineCapRound);
+    penumbra.SetEndCap(Gdiplus::LineCapRound);
+    g.DrawLine(&penumbra, sRoot, sTip);
+    Gdiplus::Pen umbra(Gdiplus::Color(86, 0, 0, 0), std::max(1.15f, h * 0.045f));
+    umbra.SetStartCap(Gdiplus::LineCapRound);
+    umbra.SetEndCap(Gdiplus::LineCapRound);
+    g.DrawLine(&umbra, sRoot, sTip);
+
     // Thin on purpose (owner call): a real VU needle is a hairline, and a fat one at this size
-    // reads as a bar rather than a pointer. The shadow is kept just wider than the needle so it
-    // still lifts it off the face without becoming a second, blurry needle.
-    Gdiplus::Pen shadow(Gdiplus::Color(60, 0, 0, 0), std::max(1.1f, h * 0.045f));
-    g.DrawLine(&shadow, Gdiplus::PointF(root.X + 0.8f, root.Y + 0.8f),
-               Gdiplus::PointF(tip.X + 0.8f, tip.Y + 0.8f));
+    // reads as a bar rather than a pointer. Unchanged — only its shadow moved.
     Gdiplus::Pen needle(Gdiplus::Color(255, GetRValue(st->palette.accent),
                                        GetGValue(st->palette.accent),
                                        GetBValue(st->palette.accent)),
@@ -351,6 +490,8 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     needle.SetStartCap(Gdiplus::LineCapRound);
     needle.SetEndCap(Gdiplus::LineCapRound);
     g.DrawLine(&needle, root, tip);
+
+    g.ResetClip();
 }
 
 void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette& pal, float glow) {
@@ -552,7 +693,13 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
     HDC mem = st->backDC;
 
     const Theme& th = currentTheme();
-    const COLORREF bg = (st->palette.bg == CLR_INVALID) ? th.windowBg : st->palette.bg;
+    // For the Vu look `bg` is the LAMP behind the dial, not the panel colour (see drawVu), so the
+    // hairline matte around the dial stays the theme's — an electric-blue lamp must not also put a
+    // bright outline round the bezel. Both reference instruments have a dark surround doing much of
+    // the work of looking like an instrument.
+    const COLORREF bg = (st->style == MeterStyle::Vu || st->palette.bg == CLR_INVALID)
+                            ? th.windowBg
+                            : st->palette.bg;
     fillCell(mem, rc, bg);
     SetDCBrushColor(mem, th.border);
     FrameRect(mem, &rc, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));

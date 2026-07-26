@@ -448,6 +448,18 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 
 ## Polish / cleanup
 
+- **Meters dialog: the "Bg" swatch means something different on a VU, and nothing says so**
+  (flagged while landing the VU lamp, 0.2.15). On every cell look `palette.bg` is the panel
+  background; on the **Vu** look it is the **LAMP** behind the dial (hue only — brightness is the
+  model's business, and `CLR_INVALID`/any too-dark colour = the stock warm bulb). That is documented
+  in `MiniMeter.h` and `drawVu`, but the dialog still just says **Bg**, so the one control that turns
+  the meter electric blue is undiscoverable. Fix = per-style swatch labels (`kRoles[]` in
+  `Dialogs.cpp` is currently a flat 7-entry array built once), which also means a new i18n key and
+  re-labelling on `CBN_SELCHANGE` — the same machinery `meterSyncKnobs` already does for the
+  sliders, so it is a natural follow-on rather than new plumbing. NB the roles that are simply
+  UNUSED by a look are a different problem: `off/low/mid/high` do nothing on a VU and could be
+  hidden the way the dead knobs now are.
+
 - **About box: the arch label should read "x86-64", not "x64"** (owner, 2026-07-26). `AboutArchX64`
   in `common/i18n/en.json` renders the running-architecture suffix in the About box's version line
   (`runningArchLabel()`, `Win32/ui/Dialogs.cpp`). "x86-64" is the correct name for the ISA; "x64" is

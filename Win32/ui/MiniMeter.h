@@ -30,7 +30,9 @@ enum class MeterStyle { Led, Tube, Lcd, Scope, Vu };
 // lit" math so every look can honour them. `bg == CLR_INVALID` means "follow the theme's
 // window background". Defaults reproduce the classic look exactly.
 struct MeterPalette {
-    COLORREF bg;      // panel background (CLR_INVALID = theme windowBg)
+    COLORREF bg;      // panel background (CLR_INVALID = theme windowBg); on the Vu look this is
+                      // instead the LAMP behind the dial — hue only, CLR_INVALID (or any colour
+                      // too dark to be a lamp, so: pick black to get back here) = the stock bulb
     COLORREF off;     // unlit / dim cell
     COLORREF low;     // low band of the lit ramp        (default green)
     COLORREF mid;     // mid band                         (default amber)

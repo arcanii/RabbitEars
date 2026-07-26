@@ -21,6 +21,7 @@ add_library(RabbitEarsCore STATIC
   ui/DockLayout.cpp   # pure layout-tree logic (no HWNDs) — unit-tested headlessly
   ui/Skin.cpp         # shared skin model + codecs (theme engine) — unit-tested headlessly
   ui/GlassMask.cpp    # pure "glass cover" mask math for the meters — unit-tested headlessly
+  ui/VuLamp.cpp       # pure VU dial illumination math — unit-tested headlessly
   ui/VideoGrid.cpp)   # pure multi-pane video layout (split/PIP) — unit-tested headlessly
 target_include_directories(RabbitEarsCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 # miniz is PRIVATE: only Gzip.cpp needs its header; consumers never see it.

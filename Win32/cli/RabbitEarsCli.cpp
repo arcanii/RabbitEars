@@ -31,6 +31,7 @@
 #include "ui/DockLayout.h"
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
+#include "ui/VuLamp.h"
 #include "ui/Skin.h"
 #include "ui/VideoGrid.h"
 
@@ -1183,6 +1184,110 @@ int selftest() {
         expect(add.empty() && mul.empty(), "degenerate size -> empty tables");
         buildGlassMask(8, 8, GlassParams{5.0f}, add, mul);
         expect(add.size() == 64 && mul.size() == 64, "out-of-range strength clamped, not fatal");
+    }
+
+    out("\n== VU lamp (dial illumination) ==\n");
+    {
+        auto luma = [](const VuLampRgb& c) { return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b; };
+        // Exactly what drawVu does: clamp the ENDPOINT, then lerp toward the clamped value.
+        auto faceAt = [&](const VuDial& d, int m) {
+            const float t = m / 255.0f;
+            auto ch = [&](float lo, float hi) { return lo + (std::min(255.0f, hi) - lo) * t; };
+            return VuLampRgb{ch(d.faceDim.r, d.faceHot.r), ch(d.faceDim.g, d.faceHot.g),
+                             ch(d.faceDim.b, d.faceHot.b)};
+        };
+        std::vector<uint8_t> m;
+
+        // ---- the field is geometry: where the bulb is, and that it is a bulb ----
+        buildVuLampMask(108, 26, m);
+        expect(m.size() == 108u * 26u, "lamp mask sized w*h");
+        buildVuLampMask(0, 26, m);
+        expect(m.empty(), "a degenerate size yields an empty mask, not a crash");
+
+        buildVuLampMask(108, 26, m);
+        auto at = [&](int x, int y) { return static_cast<int>(m[static_cast<size_t>(y) * 108 + x]); };
+        expect(at(45, 25) > at(45, 0),
+               "the dial is lit from BELOW — the old face was brighter on top, which is a lamp "
+               "ABOVE the dial and the single biggest reason it read as flat paper");
+        int hottest = 0, hx = 0, hy = 0;
+        for (int y = 0; y < 26; ++y)
+            for (int x = 0; x < 108; ++x)
+                if (at(x, y) > hottest) { hottest = at(x, y); hx = x; hy = y; }
+        expect(hy == 25, "the brightest row is the bottom one — the bulb is behind the bottom rim");
+        expect(hx > 35 && hx < 55, "...and left of centre, so the pool has a findable source");
+        expect(at(2, 25) - at(105, 25) > 20,
+               "the bottom edge varies ACROSS the dial — the term a vertical gradient cannot have, "
+               "and the one that makes this read as a lamp rather than as a ramp");
+        bool mono = true;
+        for (int y = 0; y < 25; ++y) mono = mono && at(hx, y) <= at(hx, y + 1);
+        expect(mono, "no ring or band: the lamp column rises monotonically to the bulb");
+        // Same shape at every tray width AND in the settings preview — which is what lets the
+        // preview be trusted for the LIGHTING (it still lies about pen widths, which have floors).
+        std::vector<uint8_t> mn, mp;
+        buildVuLampMask(54, 26, mn);
+        buildVuLampMask(146, 82, mp);
+        expect(std::abs(at(107, 0) - static_cast<int>(mn[53])) < 24 &&
+                   std::abs(at(107, 0) - static_cast<int>(mp[145])) < 24,
+               "the falloff is the same shape on 54px, 108px and the 146px settings preview");
+
+        // ---- the guard on the lamp colour ----
+        expect(vuLampIsUnset(22, 22, 24) && vuLampIsUnset(9, 11, 18) && vuLampIsUnset(26, 21, 16),
+               "every dark skin's window background is rejected as a lamp");
+        expect(vuLampIsUnset(0, 0, 0),
+               "black means 'stock bulb' — the only way back once a colour picker has written a "
+               "real RGB over the CLR_INVALID sentinel");
+        expect(!vuLampIsUnset(60, 150, 255) && !vuLampIsUnset(255, 255, 255),
+               "a real lamp colour is accepted");
+
+        // ---- pigment x light ----
+        const VuDial warm = vuDialColours(vuStockLamp());
+        const VuDial blue = vuDialColours(vuLampFrom(60, 150, 255));
+        const VuDial fallback = vuDialColours(vuLampFrom(22, 22, 24));
+        expect(luma(faceAt(warm, 252)) > 228.0f && luma(faceAt(warm, 252)) < 234.0f,
+               "the stock dial's hotspot still lands on the old flat face's brightest (229.8) — "
+               "this reads as 'lit', not as 'the meters got turned down'");
+        expect(luma(warm.faceHot) - luma(warm.faceDim) > 45.0f,
+               "...over about twice the old face's 25 luma of modelling");
+        expect(warm.faceDim.r > warm.faceDim.g && warm.faceDim.g > warm.faceDim.b,
+               "the stock dial is still cream: R > G > B all the way down to the far rim");
+        expect(luma(fallback.faceHot) == luma(warm.faceHot),
+               "a background colour picked by mistake falls back to the stock bulb");
+        expect(blue.faceHot.b > blue.faceHot.g && blue.faceHot.g > blue.faceHot.r,
+               "a blue lamp makes a BLUE dial, not a blue tint smeared over cream");
+        expect(blue.ink.b < 64.0f && luma(blue.ink) < luma(faceAt(blue, 77)) * 0.35f,
+               "...with dark markings on it, as on the reference meter");
+        // The property that makes the blue option legible with no second knob: ink and ground are
+        // the same pigment under the same lamp, so their ratio is fixed by kInkFrac alone. It also
+        // survives the glass overlay, which is a pure multiply on the dial.
+        auto ratio = [&](const VuDial& d) { return luma(faceAt(d, 77)) / luma(d.ink); };
+        expect(std::abs(ratio(warm) - ratio(blue)) < 0.1f &&
+                   std::abs(ratio(warm) - ratio(vuDialColours(vuLampFrom(255, 255, 255)))) < 0.1f,
+               "tick contrast is a ratio invariant — identical under warm, blue and white lamps");
+        expect(ratio(warm) > 3.8f, "...and at least as punchy as the old hard-coded brown's 3.83:1");
+        expect(std::abs(luma(vuDialColours(vuLampFrom(20, 50, 85)).faceHot) -
+                        luma(vuDialColours(vuLampFrom(60, 150, 255)).faceHot)) < 3.0f,
+               "a lamp's brightness is the model's business — only its hue comes from the swatch");
+
+        // ---- the band the user actually READS ----
+        // The hotspot assertion above is necessary but SELF-FLATTERING: mask 252 occurs only in the
+        // bottom rows near x=0.42w — simultaneously the row furthest from every marking and the one
+        // the glass bezel's shadow attacks. Pinning only that would let the dial go dull everywhere
+        // that matters while the test stayed green. The arc and all seven ticks live between 0.14h
+        // and 0.333h from the top, so this pins THAT band: the old flat gradient carried 224 there,
+        // this model 188. That 16% is the price of the modelling, paid deliberately and in the open
+        // — and it is the number to re-measure if kFaceLo is ever turned.
+        buildVuLampMask(108, 26, m);
+        double bandSum = 0.0;
+        int bandN = 0;
+        for (int y = static_cast<int>(0.14f * 26); y <= static_cast<int>(0.333f * 26); ++y)
+            for (int x = 0; x < 108; ++x) {
+                bandSum += luma(faceAt(warm, at(x, y)));
+                ++bandN;
+            }
+        const float bandLuma = static_cast<float>(bandSum / bandN);
+        expect(bandLuma > 180.0f && bandLuma < 196.0f,
+               "the scale band — where the ticks actually are — sits near luma 188; the modelling "
+               "is paid for HERE, not at the hotspot the assertions above pin");
     }
 
     out("\n== Skin model ==\n");
