@@ -303,9 +303,36 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   - **Perf is a non-issue.** The whole tray is ~13,590 px @96dpi (~0.7% of a single 1080p frame); at 30 fps
     that's ~408k px/s with a precomputed LUT — tens of µs/frame. For scale, `drawTubeGlow` already does
     ~384 antialiased ellipse fills per frame on a busy spectrum meter.
-- **PIP "always on top of other apps" toggle** — the PIP popup is `WS_EX_TOPMOST` today (it must be,
-  to composite over libVLC's D3D vout); a user toggle to drop it out of topmost when the main window
-  isn't focused. (Its resize grip + position/size persistence shipped in 0.2.6.)
+- **🐞 PIP resize letterboxes (black bars left/right)** — owner-reported 2026-07-26, on 0.2.14-dev.
+  Resizing the PIP popup leaves black bars down one side: the window is free-form but the video
+  inside keeps its own aspect ratio, so the leftover client area shows the `BLACK_BRUSH` letterbox.
+  Decide the intended behaviour first — either (a) **constrain the resize to the video's aspect**
+  (handle `WM_SIZING` on the PIP popup, snapping the dragged edge so w/h matches the stream's
+  `libvlc_video_get_size`, which is the usual PIP convention and makes bars impossible), or
+  (b) keep free-form and centre the video, accepting bars on one axis. (a) is almost certainly what
+  the owner wants. NB the PIP popup uses `kVideoClass` (`addPane`, `MainWindowCommands.cpp:652`) and
+  its size persists as `pip_size`, so a snap must apply on restore too, not just during the drag.
+- **🐞 Leaving PIP view moves the PIP stream into the main pane** — owner-reported 2026-07-26.
+  Switching PIP → Single takes whatever was playing in the PIP and plays it in the main view; it
+  should leave the main view's channel alone and simply close the PIP. Look at the `ViewMode::Pip` →
+  `ViewMode::Single` transition (`ID_VIEW_SINGLE`/`ID_VIEW_PIP` in `MainWindowCommands.cpp`) and how
+  panes are torn down — the floating pane's channel is presumably being promoted to pane 0 rather
+  than discarded.
+- **PIP: right-click context menu** (owner request, 2026-07-26) — the PIP popup has no context menu
+  today. Wants at least: close PIP, and the swap below. `kVideoClass`'s WndProc already handles
+  right-click for the main video's view menu (see `VideoProc`), so this is mostly deciding the item
+  set and reusing that path for a `floating` pane.
+- **PIP ⇄ main swap** (owner request, 2026-07-26) — a deliberate "promote the PIP to the main view
+  and demote the main view into the PIP" action, from the PIP right-click menu above. Note this is
+  the *intentional* version of the bug two entries up: the swap should be something the user asks
+  for, never a side-effect of changing view mode.
+- **PIP "always on top of other apps" toggle** — ✅ **SHIPPED in 0.2.14** (`9774418`): Settings ▸ View ▸
+  "Keep PIP above other apps", default ON. Off ⇒ PIP is topmost only while RabbitEars is the
+  foreground app (re-raised on `WM_ACTIVATEAPP`) — it can never be left plain non-topmost, because
+  an owned popup then composites UNDER the main window's libVLC D3D surface. Owner-verified.
+  *(Original entry: the PIP popup is `WS_EX_TOPMOST` today — it must be, to composite over libVLC's
+  D3D vout; a user toggle to drop it out of topmost when the main window isn't focused. Its resize
+  grip + position/size persistence shipped in 0.2.6.)*
 
 ## Localization (i18n) follow-ups
 
