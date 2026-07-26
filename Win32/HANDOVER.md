@@ -31,7 +31,38 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.12 SHIPPED (Buy Me a Coffee + CJK QA + Xtream countries + schema v7)** · v0.2.11 · macOS 0.2.15
+## Current state — **v0.2.13 SHIPPED (Ko-fi as a second tip backend)** · v0.2.12 · macOS 0.2.15
+
+**Released:** **`v0.2.13`** (2026-07-25), tag `v0.2.13` @ `93dea6f`, full version **`0.2.13.329`** (tag ==
+the version-bump commit; installers + `version.h` + both appcasts agree, cleanly `> 0.2.12.325`). Three
+installers on GitHub release `v0.2.13` — x64 `35,314,070` / arm64 `30,171,332` / universal `63,188,841`
+bytes — **two appcasts** (`0.2.13.329`) committed @ `d57997f` and LIVE (both enclosures HTTP 200).
+Owner-signed on the Mac. **A small, single-feature release** cut the same day as 0.2.12.
+- **☕ Ko-fi as a SECOND tip backend** (`86cb499`) — `https://ko-fi.com/arcanii` alongside Buy Me a Coffee
+  in **both** places the app asks for support (About box + the support prompt). Two backends on purpose:
+  BMAC takes cards, Ko-fi can take PayPal. They are **equivalent to the app** — opening either sets
+  `SupportChoice::Donate` / `tipPageOpened` and writes `support_prompt_due = "never"`. New `KoFiButton`
+  string (532 keys × 4 langs; "Ko-fi" is a brand — identical in every language, flagged do-not-translate).
+  **Owner's call: the label stays plain "Ko-fi"** — no "(PayPal)", since Ko-fi's available methods depend
+  on the creator's settings.
+- **Both button rows were already full, so this was real layout work.** About `dp(530)→dp(620)` (at
+  dp(530) OK and Ko-fi **overlapped by 42px**); the prompt `dp(500)→dp(640)` with the buttons **regrouped**
+  — tip backends left-aligned, the two dismissals right-aligned — so "give" and "go away" never sit
+  shoulder to shoulder. "Remind me later" stays the default+focused (the 0.2.12 review's fix). About also
+  gained `clampToWorkArea`, which it never had and now needs at 90px wider.
+- **⌨️ All four About buttons gained `WS_TABSTOP`** — **none** had it (the box predates having more than
+  OK), so Tab reached no button at all; once the tip buttons landed there that made them unreachable by
+  keyboard.
+
+**Review: SHIP** (3 low items, all fixed). Notably the reviewer verified the geometry **empirically** —
+real `AdjustWindowRectExForDpi`, a live window, and GDI-measured labels in all 4 languages at 96/144/192
+dpi — instead of trusting the comments, and found the **client-width model in my comments was 10px
+optimistic**: the non-client inset for these dialog styles is **16/22/26px at 96/144/192 dpi and does NOT
+scale with `dp()`**, so the client grows slightly *faster* than proportionally and **96 dpi is the worst
+case**. Real clients are About **604** / prompt **624** px @96dpi; comments now carry the measured rows.
+No collision or clipping anywhere; worst label slack 44px; tightest gap is the prompt's 24px between the
+two button groups — *widening any button there eats that gap first*. Also confirmed both Ko-fi paths route
+to the **Ko-fi** URL (a swap would have misrouted tips).
 
 **Released:** **`v0.2.12`** (2026-07-25), tag `v0.2.12` @ `76c6a46`, full version **`0.2.12.325`** (tag ==
 the version-bump commit; installers + `version.h` + both appcasts all agree on 0.2.12.325, cleanly
@@ -876,8 +907,9 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 ## Git state
 
 Active development on `main` (owner-owned repo `github.com/arcanii/RabbitEars`).
-Tags `v0.1.0`…**`v0.2.12`**; **v0.2.12 released @ `76c6a46`** (full `0.2.12.325`; both appcasts @ `e4fb965`)
-— Buy Me a Coffee + CJK QA + Xtream countries + schema v7; now on **0.2.13 dev**. The **mac line is
+Tags `v0.1.0`…**`v0.2.13`**; **v0.2.13 released @ `93dea6f`** (full `0.2.13.329`; both appcasts @ `d57997f`)
+— Ko-fi as a second tip backend; now on **0.2.14 dev**. Prior: **v0.2.12 @ `76c6a46`** (`0.2.12.325`,
+appcasts @ `e4fb965`) — Buy Me a Coffee + CJK QA + Xtream countries + schema v7. The **mac line is
 decoupled** (`if(APPLE)` in `cmake/AppVersion.cmake`, currently **0.2.15**) and the mac team pushes to
 `main` too, so **`git fetch` + rebase before every release** — the 0.2.0 cut had a push rejected mid-flight
 by a concurrent mac commit. **Release-tooling note (0.2.2):** this machine now
@@ -899,11 +931,18 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
+✅ **0.2.13 SHIPPED** (2026-07-25) — tag `v0.2.13` @ `93dea6f`, `0.2.13.329`, three signed installers on
+GitHub release `v0.2.13`, both appcasts LIVE @ `d57997f`. **Ko-fi as a second tip backend** (About box +
+support prompt), the dialog re-layouts that required, and `WS_TABSTOP` on the About buttons. Built green
+x64 BOTH theme flags + ARM64, selftest ALL PASS, adversarially reviewed SHIP. `main` is clean; now on
+**0.2.14 dev**.
+
 ✅ **0.2.12 SHIPPED** (2026-07-25) — tag `v0.2.12` @ `76c6a46`, `0.2.12.325`, three signed installers on
 GitHub release `v0.2.12`, both appcasts LIVE @ `e4fb965`. Buy Me a Coffee (About button + support prompt),
 the CJK translation-quality pass, the Xtream group-title→country fallback, and the padding-proof
 series-rule dedup (**schema v7**). Built green x64 BOTH theme flags + ARM64, selftest ALL PASS, tip feature
-adversarially reviewed (FIX-FIRST → 7 fixed). `main` is clean; now on **0.2.13 dev**.
+adversarially reviewed (FIX-FIRST → 7 fixed). **Owner-verified on-device: the 0.2.12 update applied
+cleanly, schema v7 migration included.**
 
 **Pending the owner's on-device pass:**
 - **schema v7 migration** on a real library — the one item in 0.2.12 with real blast radius (already
@@ -1318,9 +1357,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Read `Win32/HANDOVER.md` first — the top "Current state" + "Immediate next steps" (the 0.2.12 block)
 > — plus `Win32/BACKLOG.md` and the recalled memories.**
 >
-> **State: last SHIPPED = `v0.2.12`** (2026-07-25, tag @ `76c6a46`, `0.2.12.325`, both appcasts @
-> `e4fb965`). `main` is clean; now on **0.2.13 dev**. Everything shipped is LIVE and auto-updating (raw
-> feeds serve 0.2.12.325 for x64 **and** arm64, enclosures HTTP 200). 0.2.12 = **Buy Me a Coffee** (About
+> **State: last SHIPPED = `v0.2.13`** (2026-07-25, tag @ `93dea6f`, `0.2.13.329`, both appcasts @
+> `d57997f`) — **Ko-fi added as a second tip backend** beside Buy Me a Coffee, in both the About box and
+> the support prompt (either one counts as supported and stops the prompt for good); the two dialogs were
+> widened + regrouped to fit a 4th button, and the About buttons finally got `WS_TABSTOP`. `main` is
+> clean; now on **0.2.14 dev**. Everything shipped is LIVE and auto-updating (raw feeds serve 0.2.13.329
+> for x64 **and** arm64, enclosures HTTP 200). Prior — 0.2.12 = **Buy Me a Coffee** (About
 > button + a one-time support prompt, state in the `support_*` settings) + the **CJK translation-quality
 > pass** + the **Xtream group-title→country fallback** + **padding-proof series-rule dedup (schema v7,
 > migrates on first launch)**. **Windows and mac versions are DECOUPLED** — bump only `APP_VERSION` in
