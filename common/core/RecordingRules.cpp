@@ -10,12 +10,41 @@
 namespace rabbitears {
 namespace {
 
-// Programme titles are free text (any language), so fold with towlower rather than the
-// ASCII-only fold used for ids. Both sides of every comparison go through this.
+// Case-fold one character, WITHOUT depending on the C locale.
+//
+// This used to be a bare std::towlower(), with a comment claiming it handled "any language". It
+// did not: the app never calls setlocale(), so the CRT stays in the "C" locale where towlower only
+// folds A-Z. A Contains rule for "café" therefore missed "CAFÉ", and "тв" missed "ТВ" — silently,
+// which is the worst way for a recording rule to fail.
+//
+// common/ has to stay platform-neutral (no Win32 CharLowerW, no ICU), so this is an explicit table
+// for the ranges EPG titles actually use. It is SIMPLE case folding — 1:1, no expansions like
+// ß→ss — which is exactly right for matching: both sides go through it, so they agree.
+wchar_t foldChar(wchar_t c) {
+    if (c < 0x80) return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 0x20) : c;
+    // Latin-1 Supplement: À-Þ -> à-þ, skipping × (0xD7), which is maths, not a letter.
+    if (c >= 0x00C0 && c <= 0x00DE && c != 0x00D7) return static_cast<wchar_t>(c + 0x20);
+    // Latin Extended-A: even/odd upper/lower pairs, with two documented exceptions.
+    if (c >= 0x0100 && c <= 0x017F) {
+        if (c == 0x0130) return 0x0069;             // İ (dotted capital I) -> i
+        if (c == 0x0178) return 0x00FF;             // Ÿ -> ÿ (breaks the pairing)
+        if (c >= 0x0139 && c <= 0x0148) return (c % 2 == 1) ? static_cast<wchar_t>(c + 1) : c;
+        if (c >= 0x0179 && c <= 0x017E) return (c % 2 == 1) ? static_cast<wchar_t>(c + 1) : c;
+        return (c % 2 == 0) ? static_cast<wchar_t>(c + 1) : c;
+    }
+    if (c >= 0x0391 && c <= 0x03A9 && c != 0x03A2) return static_cast<wchar_t>(c + 0x20);  // Greek
+    if (c >= 0x0410 && c <= 0x042F) return static_cast<wchar_t>(c + 0x20);  // Cyrillic А-Я
+    if (c >= 0x0400 && c <= 0x040F) return static_cast<wchar_t>(c + 0x50);  // Cyrillic Ѐ-Џ
+    // Everything else (CJK, Hebrew, Arabic, Thai…) is caseless — return it unchanged.
+    return c;
+}
+
+// Programme titles are free text in any language, so both sides of every comparison go through
+// this locale-independent fold.
 std::wstring foldTitle(const std::wstring& s) {
     std::wstring out;
     out.reserve(s.size());
-    for (wchar_t c : s) out.push_back(static_cast<wchar_t>(std::towlower(c)));
+    for (wchar_t c : s) out.push_back(foldChar(c));
     return out;
 }
 
@@ -32,7 +61,7 @@ std::wstring episodeKey(const Programme& p) {
         std::wstring o;
         o.reserve(s.size());
         for (wchar_t c : s)
-            if (!std::iswspace(c)) o.push_back(static_cast<wchar_t>(std::towlower(c)));
+            if (!std::iswspace(c)) o.push_back(foldChar(c));  // same locale-independent fold
         return o;
     };
     const std::wstring n = fold(p.episodeNum), s = fold(p.subTitle);

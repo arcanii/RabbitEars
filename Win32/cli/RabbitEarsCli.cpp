@@ -563,6 +563,8 @@ int selftest() {
     out("== Recording rules (EPG expansion) ==\n");
     {
         expect(normaliseTvgId(L"CNN.us@SD") == L"cnn.us", "normaliseTvgId strips @feed + lowercases");
+
+
         expect(normaliseTvgId(L"") == L"", "normaliseTvgId tolerates empty");
 
         auto prog = [](const wchar_t* chan, const wchar_t* title, long long a, long long b) {
@@ -590,6 +592,27 @@ int selftest() {
             prog(L"BBC.uk", L"News", 2000, 3000),  // different channel
         };
         {  // exact title + channel -> both News airings on CNN only
+        // Locale-independent case folding. The app never calls setlocale(), so the old bare
+        // towlower() folded only A-Z: a Contains rule for "cafe"-with-an-accent silently missed the
+        // uppercase airing. Asserted through the public expander, since both sides of a match fold.
+        {
+            auto foldHit = [&](const wchar_t* progTitle, const wchar_t* ruleTitle) {
+                std::vector<Programme> ps{prog(L"cnn.us", progTitle, 2000, 3000)};
+                return expandRules({rule(9, L"cnn.us", ruleTitle, RuleMatch::Contains)}, ps, {},
+                                   1000, 100000)
+                    .size();
+            };
+            expect(foldHit(L"CAFÉ MUSIC", L"café") == 1, "fold: Latin-1 accents");
+            expect(foldHit(L"ТВ Новости", L"тв") == 1,
+                   "fold: Cyrillic");
+            expect(foldHit(L"ΕΡΤ ΝΕΑ", L"ερτ") == 1,
+                   "fold: Greek");
+            expect(foldHit(L"ŽIVOT", L"život") == 1, "fold: Latin Extended-A");
+            expect(foldHit(L"NEWS AT TEN", L"news") == 1, "fold: plain ASCII still works");
+            expect(foldHit(L"ニュース", L"ニュース") == 1,
+                   "fold: caseless scripts pass through");
+            expect(foldHit(L"Sport", L"news") == 0, "fold: a non-match is still a non-match");
+        }
             auto v = expandRules({rule(5, L"cnn.us", L"News", RuleMatch::Exact)}, progs, {}, 1000, 100000);
             expect(v.size() == 2, "exact rule matches both airings (got " + std::to_string(v.size()) + ")");
             expect(v.size() == 2 && v[0].ruleId == 5 && v[0].title == L"News" &&
