@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/arcanii/RabbitEars/releases/latest"><img src="https://img.shields.io/github/v/release/arcanii/RabbitEars?style=for-the-badge&color=D97757&label=Latest" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Windows-11-0078D6?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows 11">
   <img src="https://img.shields.io/badge/Arch-x64%20%2B%20ARM64-6E56CF?style=for-the-badge" alt="x64 + ARM64">
@@ -65,7 +66,7 @@ Both auto-update in place once installed.
 - **TV guide (EPG)** — load an XMLTV guide and browse now/next in a channels×time
   grid, then jump straight to a channel or schedule it.
 - **Multi-view** — watch a **2×2 split**, or pop a channel out into a floating,
-  resizable **picture-in-picture** window.
+  resizable **picture-in-picture** window that can be kept above other apps.
 - **Recording & DVR** — record a channel to a lossless file, schedule recordings
   from the guide, or set an **EPG series rule** to catch every airing of a show.
 - **Playback** — full libVLC transport with volume and fullscreen.
@@ -85,11 +86,19 @@ Both auto-update in place once installed.
 - **Native ARM64** — a first-class Windows-on-ARM build (owner-measured ~4× faster
   than emulated x64), with per-arch auto-update and a universal installer.
 - **Audio & signal meters** — a WASAPI audio-spectrum analyser plus signal /
-  bitrate / frame-rate and realtime buffering meters.
+  bitrate / frame-rate and realtime buffering meters, in **five switchable looks**
+  (LED · vacuum tube · LCD · oscilloscope · **VU needle**, with real ballistics),
+  each with a customizable colour palette and an optional **glass** overlay.
+- **Dead-link checker** *(beta)* — a background probe that quietly marks channels
+  your provider no longer serves, so you can hide them. Opt in under
+  **Settings ▸ System… ▸ Beta features**.
+- **System settings** — a runtime log level (Error → Trace) for diagnosing a
+  problem without a special build, plus the beta-feature switchboard.
 
 Planned: an in-progress native-speaker review of the Japanese & Chinese
-translations, more languages, transcoding on record, a background dead-link
-checker, and closing the macOS feature gap. See [Win32/BACKLOG.md](Win32/BACKLOG.md).
+translations, more languages, transcoding on record, graduating the dead-link
+checker out of beta, and closing the macOS feature gap.
+See [Win32/BACKLOG.md](Win32/BACKLOG.md).
 
 ## Build
 
@@ -122,6 +131,18 @@ build\Win32\RabbitEarsCli.exe --epg <url|file> # test the XMLTV guide pipeline
 
 See [Win32/HANDOVER.md](Win32/HANDOVER.md) / [mac/README.md](mac/README.md) and
 [docs/architecture.md](docs/architecture.md) for the design and current status.
+
+## Support
+
+RabbitEars is free and open source, built by one developer in his spare time.
+No feature is locked behind a tip — but if the app is useful to you:
+
+<p align="center">
+  <a href="https://buymeacoffee.com/bryanmarkh"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
+  <a href="https://ko-fi.com/arcanii"><img src="https://img.shields.io/badge/Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi"></a>
+</p>
+
+Both links are also in the app's About box.
 
 ## License
 
