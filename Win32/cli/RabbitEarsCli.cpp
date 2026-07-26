@@ -1026,11 +1026,24 @@ int selftest() {
                "glassIsNoop tracks strength");
 
         buildGlassMask(40, 20, GlassParams{1.0f}, add, mul);
-        expect(mul[0] < 255, "corner is darkened at full strength");
-        expect(mul[static_cast<size_t>(10) * 40 + 20] == 255, "centre is clear of the edge ramp");
-        bool anySpec = false;
-        for (size_t i = 0; i < add.size(); ++i) anySpec = anySpec || add[i] > 0;
-        expect(anySpec, "specular streak contributes somewhere");
+        // The beveled-plate model: lit along the TOP/LEFT lip, shaded along the BOTTOM/RIGHT,
+        // and — the point of the whole thing — perfectly clear across the middle.
+        expect(add[0] > 0, "top-left lip is lit");
+        expect(mul[static_cast<size_t>(19) * 40 + 39] < 255, "bottom-right lip is shaded");
+        const size_t mid = static_cast<size_t>(10) * 40 + 20;
+        expect(add[mid] == 0 && mul[mid] == 255,
+               "the centre of the pane is untouched (you read the dial through it)");
+        // Crispness, stated as the property that actually matters: a clear central band survives.
+        // (Counting "touched pixels" is the wrong test — on a 30px-tall meter a rim taken from both
+        // edges legitimately covers much of the height; what must NOT happen is the two sides
+        // meeting in the middle.)
+        bool centreClear = true;
+        for (int yy = 8; yy <= 11; ++yy)
+            for (int xx = 8; xx <= 31; ++xx) {
+                const size_t i = static_cast<size_t>(yy) * 40 + xx;
+                centreClear = centreClear && add[i] == 0 && mul[i] == 255;
+            }
+        expect(centreClear, "a clear central band survives — the rim never meets in the middle");
 
         buildGlassMask(0, 0, GlassParams{1.0f}, add, mul);
         expect(add.empty() && mul.empty(), "degenerate size -> empty tables");

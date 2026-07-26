@@ -35,67 +35,41 @@ void buildGlassMask(int w, int h, const GlassParams& p, std::vector<uint8_t>& ad
     if (s > 1.0f) s = 1.0f;
 
     const float fw = static_cast<float>(w), fh = static_cast<float>(h);
-    // Edge ramp as a fraction of the SHORT axis, so a wide-but-short meter doesn't get a vignette
-    // that swallows it. Clamped to a sane band: below ~2px it stops reading, past ~18% it starts
-    // looking like a bad drop shadow.
+    // The bevel: the width of the CURVED band around the rim. Everything inside it is left
+    // perfectly clear — that is the whole idea (see the header). Sized off the short axis so a
+    // wide, short meter doesn't get a bevel that swallows it, and floored so it survives at 96dpi.
+    // 0.20, not more: these panels are only ~30px tall, so a bevel taken from BOTH edges eats the
+    // face fast — at 0.28 it met in the middle and the result read as blur again. A fifth of the
+    // short axis leaves a clear central band you can still read the dial through.
     const float shortAxis = fw < fh ? fw : fh;
-    float ramp = shortAxis * 0.18f;
-    if (ramp < 2.0f) ramp = 2.0f;
+    float bevel = shortAxis * 0.20f;
+    if (bevel < 3.0f) bevel = 3.0f;
 
     for (int y = 0; y < h; ++y) {
-        const float fy = (static_cast<float>(y) + 0.5f) / fh;  // 0..1 top->bottom
         for (int x = 0; x < w; ++x) {
-            const float fx = (static_cast<float>(x) + 0.5f) / fw;
+            // Distance to each edge, normalised across the bevel. 1 == at/outside the rim,
+            // 0 == the inner boundary where the glass goes flat and clear.
+            const float dT = 1.0f - smoothstep(0.0f, bevel, static_cast<float>(y));
+            const float dL = 1.0f - smoothstep(0.0f, bevel, static_cast<float>(x));
+            const float dB = 1.0f - smoothstep(0.0f, bevel, static_cast<float>(h - 1 - y));
+            const float dR = 1.0f - smoothstep(0.0f, bevel, static_cast<float>(w - 1 - x));
 
-            // --- specular streak: a soft diagonal band across the upper-left, the classic
-            // "light source off to one side" cue. Weighted 0.7/0.3 so it leans horizontal, which
-            // suits these wide, short panels better than a 45° streak.
-            const float t = 0.7f * fx + 0.3f * fy;
-            const float band = smoothstep(0.02f, 0.16f, t) - smoothstep(0.22f, 0.42f, t);
+            // Squaring concentrates every term hard against the rim. This is what stops the effect
+            // reading as blur: the transition is quick and the middle of the pane is untouched.
+            const float lit = dT * dT + 0.62f * dL * dL;   // light from above-left catches these
+            const float shade = dB * dB + 0.62f * dR * dR;  // the far side of the curve falls away
 
-            // --- a gentle dome: brightest across the upper third, feathering downward, so the
-            // pane reads as curved rather than flat.
-            const float domeY = 0.30f + 0.18f * std::sin(3.14159265f * fx);
-            const float dome = 1.0f - smoothstep(0.0f, 0.55f, std::fabs(fy - domeY));
+            // A thin bright fillet right at the very top/left edge — the hard glint along the lip
+            // of a thick plate. Narrow (the outer ~18% of the bevel) so it reads as a line.
+            const float fillet = smoothstep(0.82f, 1.0f, dT) + 0.7f * smoothstep(0.82f, 1.0f, dL);
 
-            float spec = band * (0.55f + 0.45f * dome);
-            if (spec < 0.0f) spec = 0.0f;
+            float bright = lit * 0.34f + fillet * 0.30f;
+            if (bright > 1.0f) bright = 1.0f;
+            add[static_cast<size_t>(y) * w + x] = toByte(bright * s);
 
-            // --- ENVIRONMENT REFLECTION: what actually makes glass read as glass. A real pane
-            // mirrors the room, so bake in a stylised one. It costs nothing extra — like everything
-            // here it is a pure function of position, so it folds into the same LUT.
-            //
-            // Three elements, in the order a viewer reads them:
-            //   1. the overhead light — a broad soft bar across the top third, the dominant
-            //      reflection in any lit room, bowed slightly to suggest a curved pane;
-            //   2. a window — a soft-edged bright rectangle off to one side. This is the cue that
-            //      says "reflection" rather than "gradient", because it has EDGES;
-            //   3. the room falloff — everything below the horizon reflects darker floor, so the
-            //      lower half stays clean and the dials underneath remain readable.
-            const float ceilY = 0.16f + 0.05f * std::sin(3.14159265f * fx);
-            const float ceiling = 1.0f - smoothstep(0.0f, 0.22f, std::fabs(fy - ceilY));
-
-            // Window pane, right-of-centre, with a soft mullion splitting it — the giveaway detail.
-            const float wx = 1.0f - smoothstep(0.0f, 0.10f, std::fabs(fx - 0.72f) - 0.10f);
-            const float wy = 1.0f - smoothstep(0.0f, 0.10f, std::fabs(fy - 0.30f) - 0.12f);
-            float window = wx * wy;
-            const float mullion = 1.0f - smoothstep(0.0f, 0.018f, std::fabs(fx - 0.72f));
-            window *= (1.0f - 0.55f * mullion);
-
-            // Below the horizon the room is darker, so reflections fade out fast.
-            const float horizon = 1.0f - smoothstep(0.34f, 0.62f, fy);
-
-            const float reflection = (ceiling * 0.55f + window * 0.75f) * horizon;
-
-            add[static_cast<size_t>(y) * w + x] = toByte((spec * 0.42f + reflection * 0.30f) * s);
-
-            // --- edge darkening: an inward ramp from all four edges. This is the element that
-            // actually sells "recessed behind something" — more so than the highlight.
-            const float dx = static_cast<float>(x < w - 1 - x ? x : w - 1 - x);
-            const float dy = static_cast<float>(y < h - 1 - y ? y : h - 1 - y);
-            const float d = dx < dy ? dx : dy;
-            const float dark = 1.0f - smoothstep(0.0f, ramp, d);  // 1 at the very edge -> 0 inside
-            mul[static_cast<size_t>(y) * w + x] = toByte(1.0f - dark * 0.38f * s);
+            float dark = shade * 0.42f;
+            if (dark > 1.0f) dark = 1.0f;
+            mul[static_cast<size_t>(y) * w + x] = toByte(1.0f - dark * s);
         }
     }
 }

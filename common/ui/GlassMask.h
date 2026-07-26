@@ -10,8 +10,17 @@
 // repaint ~30×/s, so recomputing sin/pow per pixel per frame would be silly; build once per size
 // and the per-frame cost collapses to two byte ops per channel.
 //
-// WHAT IT IS, deliberately: a static specular streak (add) + edge darkening (mul). That is the
-// 80% of "glass" that reads at this size. Explicitly NOT here:
+// THE MODEL: a thick glass plate with a CURVED (beveled) rim, as on a vintage VU meter — the
+// reference being a Phase Linear 400. The important observation from that hardware is that the
+// glass is INVISIBLE across the middle: you read the dial through it perfectly. All the optical
+// business happens in a narrow band at the rim, where the curve bends light — a bright fillet
+// and highlight along the top/left lip, falling to shadow at the bottom/right.
+//
+// So: the centre is left exactly untouched (add=0, mul=255) and every term is squared to pack it
+// hard against the edge. An earlier version spread soft gradients over the whole face and simply
+// read as BLUR — the giveaway that it was a filter rather than a pane.
+//
+// Explicitly NOT here:
 //   • refraction — at ~26-30px tall with a 3px LED pitch the displacement is SUB-CELL, so it
 //     reads as a rendering bug rather than as glass, and it would need a second scratch buffer;
 //   • an animated highlight — it fights BufferMeter's own drifting specular, and there is no
@@ -33,7 +42,8 @@ struct GlassParams {
     float strength = 0.0f;
 };
 
-// Fills `add` (specular, added toward white) and `mul` (edge darkening, 255 == unchanged), each
+// Fills `add` (the lit top/left bevel, added toward white) and `mul` (the shaded bottom/right
+// bevel, 255 == unchanged), each
 // w*h bytes, row-major top-down. Both are cleared to neutral and return immediately when
 // strength <= 0 or the size is degenerate, so callers can treat "off" as a cheap no-op.
 void buildGlassMask(int w, int h, const GlassParams& p, std::vector<uint8_t>& add,
