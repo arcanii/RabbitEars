@@ -352,6 +352,7 @@ constexpr std::array<const char*, N> kEn = {{
     "About RabbitEars",  // AboutWindowTitle
     "Check for Updates…",  // AboutCheckForUpdatesButton
     "Buy me a coffee",  // BuyMeACoffeeButton
+    "Ko-fi",  // KoFiButton
     // --- DialogSupport ---
     "Support RabbitEars",  // SupportWindowTitle
     "Enjoying RabbitEars?",  // SupportHeading
@@ -905,6 +906,7 @@ constexpr std::array<const char*, N> kJa = {{
     "RabbitEars について",  // AboutWindowTitle
     "更新を確認…",  // AboutCheckForUpdatesButton
     "コーヒーを一杯おごる",  // BuyMeACoffeeButton
+    "Ko-fi",  // KoFiButton
     // --- DialogSupport ---
     "RabbitEars を支援する",  // SupportWindowTitle
     "RabbitEars はお役に立っていますか？",  // SupportHeading
@@ -1458,6 +1460,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "關於 RabbitEars",  // AboutWindowTitle
     "檢查更新…",  // AboutCheckForUpdatesButton
     "請我喝杯咖啡",  // BuyMeACoffeeButton
+    "Ko-fi",  // KoFiButton
     // --- DialogSupport ---
     "支持 RabbitEars",  // SupportWindowTitle
     "喜歡 RabbitEars 嗎？",  // SupportHeading
@@ -2011,6 +2014,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "關於 RabbitEars",  // AboutWindowTitle
     "檢查更新…",  // AboutCheckForUpdatesButton
     "請我飲杯咖啡",  // BuyMeACoffeeButton
+    "Ko-fi",  // KoFiButton
     // --- DialogSupport ---
     "支持 RabbitEars",  // SupportWindowTitle
     "喜歡 RabbitEars 嗎？",  // SupportHeading

@@ -2101,6 +2101,12 @@
     "comment": "Button opening the author's Buy Me a Coffee tip page. Used in the About box and the support prompt."
   },
   {
+    "id": "KoFiButton",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": "Button opening the author's Ko-fi tip page (a second tip backend, so a user who can't or won't use Buy Me a Coffee's card checkout has a PayPal-capable alternative). 'Ko-fi' is a BRAND NAME — do not translate it; translate only any surrounding words."
+  },
+  {
     "id": "SupportWindowTitle",
     "cluster": "DialogSupport",
     "placeholders": [],

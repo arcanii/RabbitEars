@@ -353,6 +353,7 @@ enum class StringId {
     AboutWindowTitle,
     AboutCheckForUpdatesButton,
     BuyMeACoffeeButton,
+    KoFiButton,
     // --- DialogSupport ---
     SupportWindowTitle,
     SupportHeading,

@@ -53,13 +53,17 @@ void clampToWorkArea(HWND parent, int W, int H, int& x, int& y) {
 
 constexpr int ID_CHECK_UPDATES = 1201;
 constexpr int ID_BUY_COFFEE = 1202;
+constexpr int ID_KOFI = 1203;
 
 // The project's GitHub — shown as a clickable link in the About box.
 constexpr wchar_t kGithubUrl[] = L"https://github.com/arcanii/RabbitEars";
 
-// The author's tip page — opened from the About box's "Buy me a coffee" button and from the
-// periodic support prompt (showSupportPrompt).
+// The author's tip pages — opened from the About box and from the periodic support prompt
+// (showSupportPrompt). TWO backends on purpose: Buy Me a Coffee takes card payments, Ko-fi can take
+// PayPal, so a user who can't or won't use one still has a route. They are equivalent as far as this
+// app is concerned — opening EITHER counts as "supported" and permanently stops the prompt.
 constexpr wchar_t kCoffeeUrl[] = L"https://buymeacoffee.com/bryanmarkh";
+constexpr wchar_t kKofiUrl[] = L"https://ko-fi.com/arcanii";
 
 // The architecture this build actually runs as, for the About box — distinguishes the native
 // ARM64 build from the x64 build, and flags an x64 build running under emulation on an ARM64
@@ -248,8 +252,10 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_COMMAND:
             if (LOWORD(wParam) == ID_CHECK_UPDATES) {
                 checkForUpdates();
-            } else if (LOWORD(wParam) == ID_BUY_COFFEE) {
-                ShellExecuteW(hwnd, L"open", kCoffeeUrl, nullptr, nullptr, SW_SHOWNORMAL);
+            } else if (LOWORD(wParam) == ID_BUY_COFFEE || LOWORD(wParam) == ID_KOFI) {
+                ShellExecuteW(hwnd, L"open",
+                              LOWORD(wParam) == ID_KOFI ? kKofiUrl : kCoffeeUrl, nullptr, nullptr,
+                              SW_SHOWNORMAL);
                 if (st) st->tipPageOpened = true;  // caller stops scheduling the support prompt
             } else if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
                 if (st) st->done = true;
@@ -571,11 +577,19 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
     // Wide enough that the right-column text clears the +25% artwork without wrapping: the
     // longest line ("© VideoLAN and the VLC contributors.") is ~239px, and tx≈230 + m=22, so
     // the client must reach ~500px — dp(530) leaves a comfortable margin.
-    const int W = dp(530, dpi), H = dp(470, dpi);
+    // Widened dp(530)->dp(620) for the FOURTH button (the tip row is now Check-for-Updates ·
+    // Buy me a coffee · Ko-fi · OK). At dp(530) OK and Ko-fi overlapped by 42px. Extra width only
+    // relaxes the right-hand text column + rewraps the full-width disclaimer.
+    // NB when doing this arithmetic: W is the OUTER size, and the non-client inset for these styles
+    // (WS_POPUP|WS_CAPTION|WS_SYSMENU + WS_EX_DLGMODALFRAME) is 16/22/26px at 96/144/192 dpi — it
+    // does NOT scale with dp(), so the client grows slightly faster than proportionally and 96dpi
+    // is the worst case. Client here is 604/908/1214px.
+    const int W = dp(620, dpi), H = dp(470, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
-    const int x = pr.left + ((pr.right - pr.left) - W) / 2;
-    const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    int x = pr.left + ((pr.right - pr.left) - W) / 2;
+    int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
+    clampToWorkArea(parent, W, H, x, y);  // now dp(620) wide — centring alone can push it off-screen
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"RabbitEarsAbout",
                                tr(i18n::StringId::AboutWindowTitle).c_str(),
                                WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, W, H, parent, nullptr, hInst,
@@ -585,29 +599,41 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
         const int bw = dp(90, dpi), bh = dp(30, dpi);
         RECT cr;
         GetClientRect(dlg, &cr);
+        // All four buttons carry WS_TABSTOP: without it Tab reached NONE of them (the box predates
+        // having more than OK), which since the tip buttons landed here means a keyboard user could
+        // not reach them at all. IsDialogMessageW in the modal loop does the rest.
         HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
-                                  WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                                   cr.right - bw - dp(20, dpi), cr.bottom - bh - dp(14, dpi), bw, bh,
                                   dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
         const int uw = dp(140, dpi);
         HWND upd = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::AboutCheckForUpdatesButton).c_str(),
-                                   WS_CHILD | WS_VISIBLE,
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                                    dp(20, dpi), cr.bottom - bh - dp(14, dpi), uw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CHECK_UPDATES)),
                                    hInst, nullptr);
-        // "Buy me a coffee" — the author's tip page, opened in the browser. Sits between
-        // Check-for-Updates and OK. dp(160) matches the support prompt's button and leaves room
-        // for the longest localized label (ja "コーヒーを一杯おごる" ≈ 140px at this 14px face).
-        const int cw = dp(160, dpi);
+        // The two tip backends, opened in the browser, between Check-for-Updates and OK.
+        // dp(160) fits the longest localized Buy-Me-a-Coffee label (ja "コーヒーを一杯おごる" ≈ 140px at
+        // this 14px face); "Ko-fi" is a short brand name in every language, so dp(110) is ample.
+        // Measured row @96dpi in the real 604px client: upd 20–160 · coffee 168–328 · ko-fi 336–446
+        // · OK 494–584 (right margin exactly 20). Tightest gap is ko-fi→OK: 48/74/102px @96/144/192.
+        const int cw = dp(160, dpi), kw = dp(110, dpi), gap = dp(8, dpi);
+        const int coffeeX = dp(20, dpi) + uw + gap;
         HWND coffee = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
-                                      WS_CHILD | WS_VISIBLE,
-                                      dp(20, dpi) + uw + dp(8, dpi), cr.bottom - bh - dp(14, dpi), cw,
+                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                      coffeeX, cr.bottom - bh - dp(14, dpi), cw,
                                       bh, dlg,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUY_COFFEE)),
                                       hInst, nullptr);
+        HWND kofi = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::KoFiButton).c_str(),
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                    coffeeX + cw + gap, cr.bottom - bh - dp(14, dpi), kw, bh, dlg,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_KOFI)), hInst,
+                                    nullptr);
         SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
         SendMessageW(upd, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
         SendMessageW(coffee, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
+        SendMessageW(kofi, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
         applyDialogDarkMode(dlg);
         EnableWindow(parent, FALSE);
         ShowWindow(dlg, SW_SHOW);
@@ -643,7 +669,8 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
 
 // ---- "Support RabbitEars" prompt (shown once the app has been in use a while) ----
 namespace {
-constexpr int ID_SUPPORT_BUY = 1211, ID_SUPPORT_LATER = 1212, ID_SUPPORT_NEVER = 1213;
+constexpr int ID_SUPPORT_BUY = 1211, ID_SUPPORT_LATER = 1212, ID_SUPPORT_NEVER = 1213,
+              ID_SUPPORT_KOFI = 1214;
 
 struct SupportDlgState {
     SupportChoice choice = SupportChoice::Later;  // X / Esc == Later (never a permanent refusal)
@@ -666,9 +693,13 @@ LRESULT CALLBACK SupportDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             if (!st) return 0;
             switch (LOWORD(w)) {
                 case ID_SUPPORT_BUY:
-                    // Open the tip page, then close: the prompt has done its job either way, and
-                    // the caller records Donate so a supporter is never asked again.
-                    ShellExecuteW(hwnd, L"open", kCoffeeUrl, nullptr, nullptr, SW_SHOWNORMAL);
+                case ID_SUPPORT_KOFI:
+                    // Open the chosen tip page, then close: the prompt has done its job either way,
+                    // and the caller records Donate so a supporter is never asked again. The two
+                    // backends are equivalent here — only the URL differs.
+                    ShellExecuteW(hwnd, L"open",
+                                  LOWORD(w) == ID_SUPPORT_KOFI ? kKofiUrl : kCoffeeUrl, nullptr,
+                                  nullptr, SW_SHOWNORMAL);
                     st->choice = SupportChoice::Donate;
                     st->done = true;
                     DestroyWindow(hwnd);
@@ -712,10 +743,12 @@ SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi) {
     HFONT headFont = themeFont(FontRole::Title, dpi, 17, FW_SEMIBOLD);
     HFONT bodyFont = themeFont(FontRole::Body, dpi, 13, FW_NORMAL);
 
+    // Widened dp(500)->dp(640) for the fourth button (two tip backends + the two dismissals).
     // H is generous on purpose: the body is a non-scrolling STATIC, and the ja / zh copy runs
     // ~6 lines — at dp(250) the last line (the "you won't be asked again" reassurance, i.e. the
     // sentence that makes this prompt trustworthy) clipped silently on a taller CJK fallback face.
-    const int W = dp(500, dpi), H = dp(290, dpi);
+    // The extra width also buys the body a shorter wrap, so it is doubly safe now.
+    const int W = dp(640, dpi), H = dp(290, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
@@ -743,27 +776,38 @@ SupportChoice showSupportPrompt(HWND parent, HINSTANCE hInst, UINT dpi) {
                                 WS_CHILD | WS_VISIBLE, m, dp(54, dpi), cr.right - 2 * m,
                                 btnY - dp(66, dpi), dlg, nullptr, hInst, nullptr);
 
-    const int cw = dp(160, dpi), lw = dp(140, dpi), nw = dp(130, dpi), gap = dp(8, dpi);
-    // NB: "Remind me later" — not "Buy me a coffee" — is the default + focused button. This dialog
-    // appears UNSOLICITED and takes activation, so an Enter/Space already in flight (the user was
-    // typing in the search box) would otherwise fire the default. Buy is the one irreversible
-    // choice here (it opens a browser AND permanently stops the prompt), so it must be deliberate.
+    // Two groups, so "give" and "go away" never sit shoulder to shoulder: the tip backends are
+    // left-aligned, the two dismissals right-aligned. Measured @96dpi in the real 624px client:
+    // buy 22–182 · ko-fi 190–300 ... later 324–464 · never 472–602 (right margin exactly 22).
+    // The gap between the two GROUPS is the tight one — 24/38/54px at 96/144/192 dpi — so widening
+    // any button here eats that gap first. (See the note on the non-client inset in showAbout.)
+    const int cw = dp(160, dpi), kw = dp(110, dpi), lw = dp(140, dpi), nw = dp(130, dpi),
+              gap = dp(8, dpi);
+    // NB: "Remind me later" — not a tip button — is the default + focused. This dialog appears
+    // UNSOLICITED and takes activation, so an Enter/Space already in flight (the user was typing in
+    // the search box) would otherwise fire the default. The tip buttons are the irreversible choice
+    // here (they open a browser AND permanently stop the prompt), so they must be deliberate.
     HWND buy = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, m, btnY, cw, bh,
                                dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_BUY)),
                                hInst, nullptr);
+    HWND kofi = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::KoFiButton).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + cw + gap, btnY, kw, bh, dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_KOFI)),
+                                hInst, nullptr);
+    const int neverX = cr.right - m - nw, laterX = neverX - gap - lw;
     HWND later = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SupportRemindLaterButton).c_str(),
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                                 m + cw + gap, btnY, lw, bh, dlg,
+                                 laterX, btnY, lw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_LATER)),
                                  hInst, nullptr);
     HWND never = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::SupportNotInterestedButton).c_str(),
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, m + cw + gap + lw + gap, btnY, nw,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP, neverX, btnY, nw,
                                  bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SUPPORT_NEVER)),
                                  hInst, nullptr);
     SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
-    for (HWND h : {body, buy, later, never})
+    for (HWND h : {body, buy, kofi, later, never})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
     applyDialogDarkMode(dlg);
 
