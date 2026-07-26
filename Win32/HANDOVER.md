@@ -31,7 +31,77 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.14 SHIPPED (System settings · beta flags · dead-link checker · VU + glass meters)** · v0.2.13 · macOS 0.2.15
+## Current state — **v0.2.15 SHIPPED (the instruments release: VU relit + blue · framed glass · tank reoriented)** · v0.2.14 · macOS 0.2.15
+
+### ✅ 0.2.15 — SHIPPED (2026-07-26)
+
+**Released:** tag **`v0.2.15`** @ `1324f5f`, full version **`0.2.15.365`**; three installers on GitHub
+release `v0.2.15` — x64 `35,350,517` / arm64 `30,194,643` / universal `63,242,002` bytes — **two
+appcasts** (`0.2.15.365`) committed @ `77035ed` and LIVE (both feeds HTTP 200 **and both enclosure URLs
+verified HTTP 200**, which is the check that actually catches a bad `-Tag`). Owner-signed on the Mac;
+every signature byte-length-verified against its file, the two appcasts cross-checked against each
+other, and all three installer hashes confirmed unchanged across the round trip to the Mac.
+
+⚠️ **The pre-release verification returned NO-GO first, on a real blocker** — worth reading before the
+next release, because the failure was invisible and permanent. The last commit (`1324f5f`, docs only)
+was **unpushed**, so `origin/main` was at commit count 364 while the binaries were already stamped
+`0.2.15.365`. `gh release create` tags the REMOTE head, so the tag would have pointed at source that
+did not contain what shipped, and anyone rebuilding from the tag would get `0.2.15.364` — a *lower*
+WinSparkle version than the release. **Push before tagging, and verify `git ls-remote origin
+refs/heads/main` matches HEAD.** (Also: push promptly — the mac team pushes to `main` too, and a
+commit landing between the build and the tag moves the count and permanently mismatches the
+already-built installers.)
+
+`APP_VERSION` is **`0.2.15`** (`cmake/AppVersion.cmake:11`; the `if(APPLE)` override is separate and
+untouched). The `0.2.15-dev` branch was merged and pruned; everything is on `main`.
+
+**✅ OWNER-VERIFIED ON-DEVICE (2026-07-26, x64 build `0.2.15 (362)`)** — the whole line was checked in
+one pass: *"tank looks better … VU meters better … VU color change good … About box looks good"*.
+The one reservation: **glass bezel "needs work — but ok for this release"** (see BACKLOG). This
+matters because 0.2.15 is almost entirely VISUAL, and visual work is the one thing the dev sandbox
+cannot check at all.
+
+- **About-box tip section** (`e02e140`) ✅ — the Buy-Me-a-Coffee / Ko-fi buttons finally say what they
+  are. Deliberately silent on how the two backends differ (owner's 0.2.13 call). The box grew
+  dp(470)→dp(530) and is now **capped to the work area**: dp(530) is 795px at 150%, and a 1366×768
+  laptop has ~708px of work area, so uncapped the entire button row sat under the taskbar.
+- **PIP right-click menu + PIP⇄main swap** (`e02e140`) — the floating PIP gets its own menu instead of
+  the main window's view menu. The swap is **allowed while recording**: recording runs on a separate
+  headless player (`VlcPlayer::rec_`) and `doStop()` never touches it. *Not exercised in the pass.*
+- **Dead-link checker graduated** (`e02e140`) — flag *and* branch deleted. Safe because a sweep is
+  user-triggered and now **undoable**: Settings ▸ Channels ▸ "Clear dead-link results".
+- **Splash**: the "Arch cookies" line became `SplashWrappingTinFoil`.
+- **Glass "framed pane"** (`5f447b7`) ⚠️ — three bands: the theme's own 1px border left bit-identical,
+  an opaque hard-stepped bezel in the chrome gutter, and the dial carrying only the bezel's cast
+  shadow (`add` is exactly 0 over content — the invariant that forecloses the old "reads as blur"
+  failure). Costs **zero dial pixels**; footprint went *down* 42.4%→38.2%. **Owner: needs work.**
+- **Look-aware meter knobs** (`80e3a38`, `9bb9f7a`) — the slider band is now a function of
+  (kind, LOOK), not kind alone. Two of VU's three sliders were DEAD, and `Sens` was a real bug
+  (`scalarLevel` never applied it). Completing it also removed four dead `Glow` sliders that shipped
+  in the DEFAULT configuration, since `glow` is only read by Tube and Scope.
+- **VU bottom-lamp lighting** (`b07ef8c`) ✅ — `common/ui/VuLamp.{h,cpp}`, pigment × light. The face
+  was a gradient brighter at the TOP (i.e. a lamp *above* the dial) and the needle's shadow offset
+  down-right. Now a bulb below the bottom edge and left of centre, a needle shadow that is the needle
+  ROTATED 2.6° about the pivot (a fixed offset gives constant separation, which reads as two
+  needles), and **blue via `palette.bg`** — hue only, black restores the stock bulb.
+- **Data-flow tank: top-centre pour, floor drain** (`e4d24e5`, `ad2d738`) ✅ — the drain is a dish in
+  the level controller's OWN target rather than a velocity sink, so it shares the controller's fixed
+  point instead of fighting the buffer-health readout. Unclaimed win found by review: per-column
+  waterline spread collapsed **7.66 → 1.72 rows** (the old right→left drift piled water 9 rows deep
+  on the left wall and 1.3 on the right). Resting level moved 5→6 of 10 LED rows at full health;
+  `kVisibleFill` 0.68 kept, owner-accepted.
+- **User-selectable fluid colour** (`2071aa4`) ✅ — one global swatch in the Data-flow row (that row
+  has no `MeterConfig`). Depth shading is Beer-Lambert and reproduces the old default **byte-identically
+  at every depth**.
+
+**Two review lessons worth carrying forward.** (1) A design panel's *reasoning* can be wrong even when
+its *conclusion* is right: the buffer drain's "a velocity sink is unsolvable here" was disproven by
+experiment (`ad2d738`) — a sink survives projection at 68% because `ITER = 8` is nowhere near
+converged. (2) A test can pin the flattering pixel: the VU lamp's original assertions covered only the
+hotspot, which sits in the bottom rows furthest from every marking, while the scale band the user
+actually reads had gone 16% darker. Both were caught by adversarial review, not by the build.
+
+### v0.2.14 — previous release
 
 **Released:** **`v0.2.14`** (2026-07-26), tag `v0.2.14` @ `aa8580f`, full version **`0.2.14.349`**; three
 installers on GitHub release `v0.2.14` — x64 `35,334,214` / arm64 `30,189,007` / universal `63,226,356`
@@ -102,59 +172,6 @@ dead-link sweep** (31 alive / 22 dead / 53 written on a 442-channel library) bef
 bounds by the window (the backlog's "cheap win" is a no-op, and index variants all regressed in
 benchmarking), and the owner's library has **zero `epg_programmes`**, so the diag timer has never fired.
 See `BACKLOG.md` for how to get a real number before anyone tries again.
-
-### 🔨 0.2.15 — IN DEVELOPMENT (on `main`, marketing version bumped, NOT released)
-
-`APP_VERSION` is **`0.2.15`** (`cmake/AppVersion.cmake:11`; the `if(APPLE)` override is separate and
-untouched). Bumping the version releases nothing — the git tag + the appcasts still gate the rollout,
-and 0.2.14 users stay on 0.2.14 until then. The `0.2.15-dev` branch was merged and pruned; everything
-below is on `main`.
-
-**✅ OWNER-VERIFIED ON-DEVICE (2026-07-26, x64 build `0.2.15 (362)`)** — the whole line was checked in
-one pass: *"tank looks better … VU meters better … VU color change good … About box looks good"*.
-The one reservation: **glass bezel "needs work — but ok for this release"** (see BACKLOG). This
-matters because 0.2.15 is almost entirely VISUAL, and visual work is the one thing the dev sandbox
-cannot check at all.
-
-- **About-box tip section** (`e02e140`) ✅ — the Buy-Me-a-Coffee / Ko-fi buttons finally say what they
-  are. Deliberately silent on how the two backends differ (owner's 0.2.13 call). The box grew
-  dp(470)→dp(530) and is now **capped to the work area**: dp(530) is 795px at 150%, and a 1366×768
-  laptop has ~708px of work area, so uncapped the entire button row sat under the taskbar.
-- **PIP right-click menu + PIP⇄main swap** (`e02e140`) — the floating PIP gets its own menu instead of
-  the main window's view menu. The swap is **allowed while recording**: recording runs on a separate
-  headless player (`VlcPlayer::rec_`) and `doStop()` never touches it. *Not exercised in the pass.*
-- **Dead-link checker graduated** (`e02e140`) — flag *and* branch deleted. Safe because a sweep is
-  user-triggered and now **undoable**: Settings ▸ Channels ▸ "Clear dead-link results".
-- **Splash**: the "Arch cookies" line became `SplashWrappingTinFoil`.
-- **Glass "framed pane"** (`5f447b7`) ⚠️ — three bands: the theme's own 1px border left bit-identical,
-  an opaque hard-stepped bezel in the chrome gutter, and the dial carrying only the bezel's cast
-  shadow (`add` is exactly 0 over content — the invariant that forecloses the old "reads as blur"
-  failure). Costs **zero dial pixels**; footprint went *down* 42.4%→38.2%. **Owner: needs work.**
-- **Look-aware meter knobs** (`80e3a38`, `9bb9f7a`) — the slider band is now a function of
-  (kind, LOOK), not kind alone. Two of VU's three sliders were DEAD, and `Sens` was a real bug
-  (`scalarLevel` never applied it). Completing it also removed four dead `Glow` sliders that shipped
-  in the DEFAULT configuration, since `glow` is only read by Tube and Scope.
-- **VU bottom-lamp lighting** (`b07ef8c`) ✅ — `common/ui/VuLamp.{h,cpp}`, pigment × light. The face
-  was a gradient brighter at the TOP (i.e. a lamp *above* the dial) and the needle's shadow offset
-  down-right. Now a bulb below the bottom edge and left of centre, a needle shadow that is the needle
-  ROTATED 2.6° about the pivot (a fixed offset gives constant separation, which reads as two
-  needles), and **blue via `palette.bg`** — hue only, black restores the stock bulb.
-- **Data-flow tank: top-centre pour, floor drain** (`e4d24e5`, `ad2d738`) ✅ — the drain is a dish in
-  the level controller's OWN target rather than a velocity sink, so it shares the controller's fixed
-  point instead of fighting the buffer-health readout. Unclaimed win found by review: per-column
-  waterline spread collapsed **7.66 → 1.72 rows** (the old right→left drift piled water 9 rows deep
-  on the left wall and 1.3 on the right). Resting level moved 5→6 of 10 LED rows at full health;
-  `kVisibleFill` 0.68 kept, owner-accepted.
-- **User-selectable fluid colour** (`2071aa4`) ✅ — one global swatch in the Data-flow row (that row
-  has no `MeterConfig`). Depth shading is Beer-Lambert and reproduces the old default **byte-identically
-  at every depth**.
-
-**Two review lessons worth carrying forward.** (1) A design panel's *reasoning* can be wrong even when
-its *conclusion* is right: the buffer drain's "a velocity sink is unsolvable here" was disproven by
-experiment (`ad2d738`) — a sink survives projection at 68% because `ITER = 8` is nowhere near
-converged. (2) A test can pin the flattering pixel: the VU lamp's original assertions covered only the
-hotspot, which sits in the bottom rows furthest from every marking, while the scale band the user
-actually reads had gone 16% darker. Both were caught by adversarial review, not by the build.
 
 ---
 
@@ -306,11 +323,16 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 
 ## Git state
 
-Owner-owned repo `github.com/arcanii/RabbitEars`. **0.2.15 development is on the branch
-`0.2.15-dev`**, not on `main` — `main` is at `ea1bc32` (the 0.2.14 docs commit) and fast-forwards
-cleanly (`git switch main && git merge --ff-only 0.2.15-dev`).
-Tags `v0.1.0`…**`v0.2.14`**; **v0.2.14 released @ `aa8580f`** (full `0.2.14.349`; both appcasts @ `d594fd0`)
-— System settings, beta flags, the beta dead-link checker, VU + glass meters, two PIP fixes. Prior: **v0.2.13 @ `93dea6f`** (`0.2.13.329`, appcasts @ `d57997f`) — Ko-fi; **v0.2.12 @
+Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** — `0.2.15-dev` was
+merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
+only branch local and remote. (All five were verified fully merged with zero unmerged commits and no
+open PRs before deletion; four of them belonged to already-merged macOS PRs #33/#34/#35/#42.)
+Tags `v0.1.0`…**`v0.2.15`**; **v0.2.15 released @ `1324f5f`** (full `0.2.15.365`; both appcasts @
+`77035ed`) — the instruments release: VU relit from a bottom bulb + optional blue lamp, framed glass,
+the data-flow tank reoriented to pour in at the top and drain at the floor, user-selectable fluid
+colour, look-aware meter knobs, About tip section, PIP menu + swap, dead-link checker out of beta.
+Prior: **v0.2.14 @ `aa8580f`** (`0.2.14.349`, appcasts @ `d594fd0`) — System settings, beta flags, the
+beta dead-link checker, VU + glass meters, two PIP fixes. Prior: **v0.2.13 @ `93dea6f`** (`0.2.13.329`, appcasts @ `d57997f`) — Ko-fi; **v0.2.12 @
 `76c6a46`** (`0.2.12.325`) — Buy Me a Coffee + CJK QA + Xtream countries + schema v7. The **mac line is
 decoupled** (`if(APPLE)` in `cmake/AppVersion.cmake`, currently **0.2.15**) and the mac team pushes to
 `main` too, so **`git fetch` + rebase before every release** — the 0.2.0 cut had a push rejected mid-flight
@@ -332,6 +354,33 @@ owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — nev
 commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
+
+✅ **0.2.15 SHIPPED** (2026-07-26) — tag `v0.2.15` @ `1324f5f`, `0.2.15.365`, three signed installers on
+GitHub release `v0.2.15`, both appcasts LIVE @ `77035ed` (feeds AND enclosure URLs verified HTTP 200).
+See the "Current state" block for the full feature list, the NO-GO blocker the pre-release check caught,
+and the two review lessons worth carrying forward.
+
+**Owner-verified on-device before the cut** — unusually thorough for this line, and it mattered because
+0.2.15 is almost entirely visual: tank, VU meters, VU colour change, About box, PIP swap all confirmed
+on the real x64 build. That leaves **only two things unseen** in the shipped release:
+- **the empty-tank fix** (`200e5bc`) — landed after the pass. Play a channel, stop it, and the tank
+  should drain COMPLETELY rather than leaving a dim bottom stripe; the sim should also go idle a
+  couple of seconds later, where before it ran forever.
+- **the glass bezel**, which the owner explicitly accepted as-is: *"needs work — but ok for this
+  release"*. Deferred to **pass 4** in `BACKLOG.md`, written as an investigation with a shortlist of
+  suspects rather than a fix, because "needs work" does not say which way it is wrong.
+
+**Candidates for 0.2.16:** glass bezel pass 4 (top of the list — it is the one owner-flagged
+reservation in a shipped release); **wire the glass into the buffer meter**, which is the likeliest
+single explanation for the bezel reading half-done — four framed mini-meters currently sit beside one
+unframed fluid tank; the **buffer-depth tester task** (does `bufferedBytes` report at all on IPTV? — a
+10-minute capture that decides whether the tank can track live buffer depth); the About box's **"Bg"
+swatch not saying it is the VU lamp**; the **x86-64 arch label**; and Authenticode signing (still
+owner-gated, also unblocks the Microsoft Store track).
+
+**Still open from 0.2.14:** the 22 dead-link verdicts from that release's one real sweep have never
+been confirmed as true positives — much less pressing now that "Clear dead-link results" makes a wrong
+verdict one click to undo, which is precisely what made graduating the checker safe.
 
 ✅ **0.2.14 SHIPPED** (2026-07-26) — tag `v0.2.14` @ `aa8580f`, `0.2.14.349`, three signed installers on
 GitHub release `v0.2.14`, both appcasts LIVE @ `d594fd0`. Six features + a background worker — see the
@@ -369,9 +418,10 @@ Paste this verbatim to start a fresh session with working context restored:
 > `Win32/HANDOVER-ARCHIVE.md`; you rarely need it, but check it before re-trying an idea, because
 > several have already been tried and reverted.
 >
-> **State:** last SHIPPED = `v0.2.14` (2026-07-26, `0.2.14.349`). Development is on branch
-> **`0.2.15-dev`** with `APP_VERSION` already bumped to `0.2.15` — **bumped ≠ released**; the tag and
-> the two appcasts gate the rollout.
+> **State:** last SHIPPED = **`v0.2.15`** (2026-07-26, `0.2.15.365`, tag @ `1324f5f`, both appcasts
+> LIVE @ `77035ed`) — the instruments release. `main` is the ONLY branch, local and remote, and it is
+> clean. `APP_VERSION` is `0.2.15`; the next release bumps it. **Bumping ≠ releasing** — the tag and
+> the two appcasts are what gate the rollout.
 >
 > **Traps that have already cost real time, in order of cost:**
 > * **`common/` is shared with mac, and mac keeps its own copies of some of it.** `Log.h` is
@@ -387,7 +437,10 @@ Paste this verbatim to start a fresh session with working context restored:
 > * **Release:** bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` (everything derives), leaving the
 >   `if(APPLE)` mac override alone. Three installers, two appcasts; always pass `-Tag v<ver>` to
 >   `make-appcast.ps1` — it defaults to `v<full.version>`, which 404s. Only EdDSA signing happens on
->   the owner's Mac.
+>   the owner's Mac. **PUSH BEFORE TAGGING and verify `git ls-remote origin refs/heads/main` equals
+>   HEAD** — `gh release create` tags the REMOTE head, so an unpushed commit tags source that does not
+>   contain what you built, and the build number (= commit count) is baked into the binaries. This
+>   returned NO-GO on the 0.2.15 cut. Verify the enclosure URLs resolve HTTP 200, not just the feeds.
 > * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the default is ON but build dirs cache
 >   it, and a stale OFF cache once shipped a Theme-menu-less exe. Verify BOTH flags before committing.
 >   Occasional `LNK1104`/`LNK1168` on `G:\` is the exe being locked (the owner runs it) or SMB
