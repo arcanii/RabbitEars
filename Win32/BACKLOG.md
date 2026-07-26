@@ -446,6 +446,33 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 - **Date/time format strings** in the schedule dialog/columns are left numeric (yyyy-MM-dd) — revisit if
   locale-aware date formatting is wanted.
 
+## Tester tasks (need a real stream — the dev sandbox cannot do these)
+
+- **📊 Does `bufferedBytes` actually report on IPTV? — 10 minutes, decides a feature**
+  (owner idea, 2026-07-26). The data-flow tank's level is currently a STATE indicator, not a buffer
+  gauge: it starts empty, fills through `Opening`(15) → `Buffering`(real %) → `Playing`(100), then
+  **pins at 100 and is never updated again** for the rest of the stream. Only `flow` and `trouble`
+  are fed periodically (`MainWindow.cpp`, the `PlayerEvent::Stats` case). Making the level *breathe*
+  with how much data is actually buffered ahead would be a strictly better meter, and the signal is
+  already sampled — `FlowStats::bufferedBytes` ("read minus demux"), delivered on that same event
+  and currently unused.
+  **The doubt, and why this is a test rather than a task:** the comment at `MainWindow.cpp` (the
+  Stats case) warns that libVLC's input-byte counter **stays 0 for HLS/adaptive**, which is most
+  IPTV. `bufferedBytes` derives from `readBytesPerSec`, so it may be flat zero on exactly the
+  streams RabbitEars plays — in which case feeding it to the level would leave the tank sitting
+  empty while a channel plays perfectly, which is far worse than today.
+  **How to run it — no code change needed, this is already logged:** Settings ▸ System… → log level
+  **Trace** → OK (takes effect immediately). Play a channel ~60s; if possible interrupt the network
+  briefly so the trace contains a stall. Settings ▸ System… → **Open log folder**. The 250ms flow
+  snapshot (`VlcPlayer.cpp`, gated on `diag::enabled(Trace)`) prints
+  `pane N flow: demux … read … fps … buffered … B  lost … corrupt … disc …`.
+  **What decides it:** `read` non-zero and `buffered` *moving* ⇒ the signal is real, build it.
+  `read 0.00 Mb/s` + `buffered 0 B` ⇒ dead end, close this item. Set the level back to **Info**
+  afterwards — Trace is deliberately the loudest thing in the app (~4 lines/sec per playing pane).
+  **If it lives**, note `buffered` is a CUMULATIVE difference, not an instantaneous fullness, so
+  turning it into a level needs a reference for "full" — the configured network-caching depth
+  (already a user setting, on the transport slider) is the obvious candidate.
+
 ## Polish / cleanup
 
 - **🔍 Glass bezel — pass 4** (owner, 2026-07-26, on the shipped 0.2.15 build: *"needs work — but ok
