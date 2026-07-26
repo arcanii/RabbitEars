@@ -293,6 +293,13 @@ bool Database::open(const std::wstring& path, std::wstring* error) {
     exec("PRAGMA journal_mode=WAL;");
     exec("PRAGMA synchronous=NORMAL;");
     exec("PRAGMA foreign_keys=ON;");
+    // Wait for a contended write lock instead of failing instantly with SQLITE_BUSY. This matters
+    // because most writers here DISCARD the step result (setSetting/setDeadStatus/setFavourite/…
+    // all just call stepDone()), so a BUSY is not an error the user ever sees — it is a SILENTLY
+    // LOST WRITE. WAL keeps readers off the writer's back, but writers still serialise, and the
+    // app already writes from the scheduler tick, the UI, and playlist/EPG import. It is also the
+    // prerequisite for any second connection (a future off-thread guide build or link checker).
+    exec("PRAGMA busy_timeout=5000;");
     // The country-derivation rule as a SQL scalar (see effectiveCountrySqlFn) — lets the
     // Countries queries filter server-side instead of materializing every channel row.
     sqlite3_create_function(db_, "effective_country", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
