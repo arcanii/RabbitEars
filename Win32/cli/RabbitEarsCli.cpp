@@ -1061,10 +1061,29 @@ int selftest() {
                "glassIsNoop tracks strength");
 
         buildGlassMask(40, 20, GlassParams{1.0f}, add, mul);
-        // The beveled-plate model: lit along the TOP/LEFT lip, shaded along the BOTTOM/RIGHT,
-        // and — the point of the whole thing — perfectly clear across the middle.
-        expect(add[0] > 0, "top-left lip is lit");
-        expect(mul[static_cast<size_t>(19) * 40 + 39] < 255, "bottom-right lip is shaded");
+        // The framed-pane model: band 0 is the theme's border (untouched), band 1 is an opaque
+        // bezel (lit top/left, dark bottom/right, one corner pip), band 2 is the dial with only
+        // the bezel's cast shadow on it — and NO additive term anywhere.
+        //
+        // This REPLACES `expect(add[0] > 0, "top-left lip is lit")`: the outermost pixel is the
+        // theme's FrameRect and the glass no longer touches it. That is the point — `add` is
+        // achromatic, so brightening it would wash a brass or blue themed border toward neutral
+        // and the meter would read as "the border got fatter and hotter".
+        expect(add[0] == 0 && mul[0] == 255,
+               "band 0 — the theme's own border pixel — is left bit-identical");
+        bool band0Clean = true;
+        for (int yy = 0; yy < 20; ++yy)
+            for (int xx = 0; xx < 40; ++xx) {
+                const int ring = std::min(std::min(yy, 19 - yy), std::min(xx, 39 - xx));
+                if (ring != 0) continue;
+                const size_t i = static_cast<size_t>(yy) * 40 + xx;
+                band0Clean = band0Clean && add[i] == 0 && mul[i] == 255;
+            }
+        expect(band0Clean, "the whole outer ring is the theme's, all the way round");
+        // ...and this REPLACES the old bottom-right lip check — the shading moved one ring inward.
+        expect(mul[static_cast<size_t>(18) * 40 + 38] <= 30 &&
+                   add[static_cast<size_t>(18) * 40 + 38] < 10,
+               "bottom-right of the bezel is opaque and dark");
         const size_t mid = static_cast<size_t>(10) * 40 + 20;
         expect(add[mid] == 0 && mul[mid] == 255,
                "the centre of the pane is untouched (you read the dial through it)");
@@ -1079,6 +1098,86 @@ int selftest() {
                 centreClear = centreClear && add[i] == 0 && mul[i] == 255;
             }
         expect(centreClear, "a clear central band survives — the rim never meets in the middle");
+
+        // The invariant that forecloses the "bright smear" failure mode for good.
+        bool noAddOnDial = true;
+        for (int yy = 0; yy < 20; ++yy)
+            for (int xx = 0; xx < 40; ++xx) {
+                const int ring = std::min(std::min(yy, 19 - yy), std::min(xx, 39 - xx));
+                if (ring < 2) continue;                       // band 0 + band 1
+                noAddOnDial = noAddOnDial && add[static_cast<size_t>(yy) * 40 + xx] == 0;
+            }
+        expect(noAddOnDial, "nothing brightens the dial — every additive term lives in the bezel");
+
+        // The bezel is an OPAQUE, CLOSED ring exactly one band wide.
+        bool ringClosed = true;
+        for (int yy = 0; yy < 20; ++yy)
+            for (int xx = 0; xx < 40; ++xx) {
+                const int ring = std::min(std::min(yy, 19 - yy), std::min(xx, 39 - xx));
+                if (ring != 1) continue;
+                ringClosed = ringClosed && mul[static_cast<size_t>(yy) * 40 + xx] <= 30;
+            }
+        expect(ringClosed, "the bezel occludes — a frame in front, not a wash — on all four sides");
+
+        // A thin BRIGHT top edge over a DARK bottom edge, one pixel each.
+        expect(add[1 * 40 + 20] > 90 && add[18 * 40 + 20] < 10, "bright top lip, dark bottom lip");
+        expect(add[10 * 40 + 1] > 40 && add[10 * 40 + 1] < add[1 * 40 + 20],
+               "the left lip is lit but subordinate to the top — one light, from above-left");
+        // One tight corner pip, and exactly ONE lit corner.
+        expect(add[1 * 40 + 1] > add[1 * 40 + 20] + 10, "a pip where the two chamfers meet");
+        expect(add[1 * 40 + 38] < 10 && add[18 * 40 + 1] < 10,
+               "the other three corners are 1px mitres — the light has one direction");
+        // The cast shadow, and only on the dial.
+        expect(mul[2 * 40 + 20] < 200 && mul[2 * 40 + 20] > mul[1 * 40 + 20],
+               "the bezel casts a shadow onto the dial, lighter than the bezel itself");
+        expect(mul[2 * 40 + 20] < mul[17 * 40 + 20], "the shadow is deepest under the top rail");
+        // No pixel is blown to white (the previous model's top-left computed 1.06 and clipped).
+        uint8_t hiAdd = 0;
+        for (uint8_t v : add) hiAdd = v > hiAdd ? v : hiAdd;
+        expect(hiAdd < 200, "nothing clips to pure white — the corner blow-out is gone");
+
+        // The frame is a machined part of ONE thickness, not a fraction of each axis. This is the
+        // assertion that would have caught the aspect bug in the previous mask.
+        buildGlassMask(200, 20, GlassParams{1.0f, 2}, add, mul);
+        expect(mul[1 * 200 + 100] <= 30 && mul[2 * 200 + 100] > 150,
+               "wide panel: a 1px bezel band on the SHORT axis");
+        expect(mul[10 * 200 + 1] <= 30 && mul[10 * 200 + 2] > 150,
+               "wide panel: the SAME 1px band on the LONG axis");
+        buildGlassMask(20, 200, GlassParams{1.0f, 2}, add, mul);
+        expect(mul[1 * 20 + 10] <= 30 && mul[10 * 20 + 1] <= 30,
+               "tall panel: identical — no geometry is derived from an axis");
+
+        // chromePx is honoured, so the frame lands on reserved chrome at every DPI.
+        expect(glassChromePx(112, 30, 2) == 2 && glassChromePx(224, 60, 4) == 4 &&
+                   glassChromePx(150, 86, 2) == 2,
+               "the frame is exactly the chrome the renderer reserved — tray AND dialog preview");
+        expect(glassChromePx(40, 20, 0) == 2 && glassChromePx(8, 8, 0) == 2,
+               "with nothing reserved, the fallback still leaves room for a border + a bezel");
+        expect(glassChromePx(3, 3, 2) == 0 && glassChromePx(4, 4, 2) == 1,
+               "a pane too small for a frame drops the frame rather than eating itself");
+        buildGlassMask(3, 3, GlassParams{1.0f, 2}, add, mul);
+        bool tinyNeutral = true;
+        for (size_t i = 0; i < add.size(); ++i)
+            tinyNeutral = tinyNeutral && add[i] == 0 && mul[i] == 255;
+        expect(add.size() == 9 && tinyNeutral, "3x3 -> no frame, no crash, no dial eaten");
+
+        // The settings preview must show what the tray will ship.
+        std::vector<uint8_t> addP, mulP;
+        buildGlassMask(112, 30, GlassParams{1.0f, 2}, add, mul);
+        buildGlassMask(150, 86, GlassParams{1.0f, 2}, addP, mulP);
+        bool previewMatches = true;
+        for (int yy = 0; yy < 6; ++yy)
+            previewMatches =
+                previewMatches &&
+                add[static_cast<size_t>(yy) * 112 + 56] == addP[static_cast<size_t>(yy) * 150 + 75] &&
+                mul[static_cast<size_t>(yy) * 112 + 56] == mulP[static_cast<size_t>(yy) * 150 + 75];
+        expect(previewMatches,
+               "the dp(86) Settings preview gets the same edge as the dp(30) tray meter");
+
+        // The ring rides the one global knob, and 0 is still bit-exact off.
+        buildGlassMask(112, 30, GlassParams{0.5f, 2}, add, mul);
+        expect(add[1 * 112 + 56] > 0 && add[1 * 112 + 56] < 90 && mul[0] == 255,
+               "half strength = a half-drawn frame, and band 0 is STILL the theme's");
 
         buildGlassMask(0, 0, GlassParams{1.0f}, add, mul);
         expect(add.empty() && mul.empty(), "degenerate size -> empty tables");

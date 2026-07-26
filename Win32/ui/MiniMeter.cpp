@@ -40,6 +40,12 @@ constexpr UINT kTimerMs = 33;  // ~30fps animation
 // the per-cell ramp pushes this many distinct colours through it.
 int dpx(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
+// The chrome band a meter reserves around its dial: a 1px themed FrameRect plus the rest of the
+// pad. Used for BOTH the content inset AND the glass mask's frame width, so the two can never
+// disagree — the bezel is painted exactly here, which is why it costs zero dial pixels at any DPI
+// and at any meter size (the tray meters are dp(30) tall; the Settings previews are dp(86)).
+int meterChromePx(UINT dpi) { return dpx(2, dpi); }
+
 COLORREF lerpCol(COLORREF a, COLORREF b, float t) {
     t = std::clamp(t, 0.0f, 1.0f);
     auto mix = [t](int x, int y) { return x + static_cast<int>((y - x) * t); };
@@ -108,12 +114,14 @@ struct MiniMeterState {
     // Glass overlay LUTs, rebuilt with the back-buffer whenever the size or strength changes.
     std::vector<uint8_t> glassAdd, glassMul;
     float                glassBuilt = -1.0f;  // strength the LUTs were built for (-1 = never)
+    int                  glassChrome = -1;    // chrome width they were built for (DPI can change
+                                              // without a resize — miniMeterSetDpi only sets dpi)
 };
 
 // Global "glass cover" strength for every meter (0 = off). A single app-wide value rather than a
 // per-meter MeterTuning knob, deliberately: the buffer meter has no MeterConfig at all, the Meters
 // dialog's knob band is already full at 4 sliders, and a 6th MeterTuning field would break mac's
-// exact-arity parser. Read by both MiniMeter and BufferMeter.
+// exact-arity parser. Read by MiniMeter; BufferMeter does not consume it yet (see BACKLOG).
 std::atomic<float>& meterGlassRef() {
     static std::atomic<float> g{0.0f};
     return g;
@@ -497,9 +505,11 @@ bool ensureBack(MiniMeterState* st, HDC ref, int w, int h) {
         st->glassBuilt = -1.0f;  // force a LUT rebuild at the new size
     }
     const float want = meterGlassRef().load(std::memory_order_relaxed);
-    if (st->glassBuilt != want) {
-        buildGlassMask(w, h, GlassParams{want}, st->glassAdd, st->glassMul);
+    const int chrome = meterChromePx(st->dpi);
+    if (st->glassBuilt != want || st->glassChrome != chrome) {
+        buildGlassMask(w, h, GlassParams{want, chrome}, st->glassAdd, st->glassMul);
         st->glassBuilt = want;
+        st->glassChrome = chrome;
     }
     return true;
 }
@@ -538,7 +548,7 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
     SetDCBrushColor(mem, th.border);
     FrameRect(mem, &rc, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
 
-    const int inset = dpx(2, st->dpi);
+    const int inset = meterChromePx(st->dpi);
     RECT in{rc.left + inset, rc.top + inset, rc.right - inset, rc.bottom - inset};
     if (in.right > in.left && in.bottom > in.top) {
         if (st->style == MeterStyle::Vu) {
