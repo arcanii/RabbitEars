@@ -291,6 +291,7 @@
   "RecordSeriesEveryAiringBody": "{0}\r\n{1}\r\n\r\n番組表から今後の放送を{2}件予約しました。\r\n番組表の更新に合わせて、新しい放送が自動的に取り込まれます。\r\n\r\nルールの管理は設定 ▸ 録画ルール… で行えます。",
   "MeterKnobGlow": "グロー",
   "MeterKnobSmooth": "スムーズ",
+  "MeterKnobDamping": "制動",
   "MeterKnobSens": "感度",
   "MeterPeak": "ピーク",
   "MeterKnobBreathe": "呼吸",

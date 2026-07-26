@@ -315,6 +315,7 @@ constexpr std::array<const char*, N> kEn = {{
     // --- DialogMeters ---
     "Glow",  // MeterKnobGlow
     "Smooth",  // MeterKnobSmooth
+    "Damping",  // MeterKnobDamping
     "Sens",  // MeterKnobSens
     "Peak",  // MeterPeak
     "Breathe",  // MeterKnobBreathe
@@ -918,6 +919,7 @@ constexpr std::array<const char*, N> kJa = {{
     // --- DialogMeters ---
     "グロー",  // MeterKnobGlow
     "スムーズ",  // MeterKnobSmooth
+    "制動",  // MeterKnobDamping
     "感度",  // MeterKnobSens
     "ピーク",  // MeterPeak
     "呼吸",  // MeterKnobBreathe
@@ -1521,6 +1523,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     // --- DialogMeters ---
     "光暈",  // MeterKnobGlow
     "平滑",  // MeterKnobSmooth
+    "阻尼",  // MeterKnobDamping
     "靈敏度",  // MeterKnobSens
     "峰值",  // MeterPeak
     "呼吸",  // MeterKnobBreathe
@@ -2124,6 +2127,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     // --- DialogMeters ---
     "光暈",  // MeterKnobGlow
     "平滑",  // MeterKnobSmooth
+    "阻尼",  // MeterKnobDamping
     "靈敏度",  // MeterKnobSens
     "峰值",  // MeterPeak
     "呼吸",  // MeterKnobBreathe

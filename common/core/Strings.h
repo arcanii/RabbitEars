@@ -316,6 +316,7 @@ enum class StringId {
     // --- DialogMeters ---
     MeterKnobGlow,
     MeterKnobSmooth,
+    MeterKnobDamping,
     MeterKnobSens,
     MeterPeak,
     MeterKnobBreathe,

@@ -1882,6 +1882,12 @@
     "comment": ""
   },
   {
+    "id": "MeterKnobDamping",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Meters dialog slider caption, shown INSTEAD of 'Smooth' when the row's look is VU. Same MeterTuning field (smoothing); on an analog needle it is mechanical damping, not attack/decay easing. Keep it short - the caption sits over a narrow slider."
+  },
+  {
     "id": "MeterKnobSens",
     "cluster": "DialogMeters",
     "placeholders": [],

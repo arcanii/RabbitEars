@@ -1769,6 +1769,38 @@ const KnobDesc kMtrKnobDesc[4][kMtrKnobs] = {
     {{L"Glow", 0}, {L"Sens", 2}, {L"Breathe", 4}, {nullptr, -1}}, // Bitrate
     {{L"Glow", 0}, {L"Smooth", 1}, {L"Sens", 2}, {nullptr, -1}},  // Frames
 };
+
+// The knob set a row actually exposes, keyed on (kind, LOOK) rather than kind alone. The table
+// above is per-KIND, which was fine while every look was a grid of cells — but it meant that
+// switching a row to VU left two of its three sliders DEAD: `glow` is Tube phosphor
+// (drawTubeGlow), and `peakHold`/`breathing` are a spectrum peak cap and a bitrate ceiling. A
+// needle has none of those. Offering a control that does nothing is worse than offering fewer.
+void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
+    for (int j = 0; j < kMtrKnobs; ++j) out[j] = kMtrKnobDesc[kind][j];
+    if (style != MeterStyle::Vu) return;   // every cell look keeps exactly its old set
+    // VU responds to precisely two MeterTuning fields, so it offers precisely two — relabelled for
+    // what they mean on an analog movement. NB `smoothing` is not renamed in the model, only in the
+    // UI: MeterTuning's arity is frozen by mac's exact-arity parser (MeterModel.cpp, `!= 5`).
+    out[0] = {L"Damping", 1};   // scales the ~300ms symmetric ballistics (MiniMeter.cpp, vuCoef)
+    out[1] = {L"Sens", 2};      // input gain, applied in scalarLevel()
+    out[2] = {nullptr, -1};
+    out[3] = {nullptr, -1};
+}
+
+// A knob's display label. Style-aware because the same field means a different thing on a needle:
+// field 1 is "Smooth" on a cell look (attack/decay easing) and "Damping" on a VU (a mechanical
+// movement's lag). The English strings in KnobDesc are only a fallback for an unmapped field.
+std::wstring knobLabelFor(const KnobDesc& kd, MeterStyle style) {
+    if (style == MeterStyle::Vu && kd.field == 1) return tr(i18n::StringId::MeterKnobDamping);
+    switch (kd.field) {
+        case 0: return tr(i18n::StringId::MeterKnobGlow);
+        case 1: return tr(i18n::StringId::MeterKnobSmooth);
+        case 2: return tr(i18n::StringId::MeterKnobSens);
+        case 3: return tr(i18n::StringId::MeterPeak);
+        case 4: return tr(i18n::StringId::MeterKnobBreathe);
+    }
+    return kd.label ? std::wstring(kd.label) : std::wstring();
+}
 float knobGet(const MeterTuning& t, int f) {
     switch (f) {
         case 0: return t.glow;
@@ -1796,6 +1828,7 @@ struct MetersDlgState {
     HWND  combo[4] = {};
     HWND  swatch[4][kMtrRoles] = {};
     HWND  slider[4][kMtrKnobs] = {};
+    HWND  knobLbl[4][kMtrKnobs] = {};  // the caption above each slider — retitled on a look change
     HWND  bufPreview = nullptr;  // the "Data flow" (buffer/fluid) meter preview — no Look/palette
     HWND  glass = nullptr;       // global "glass cover" strength (applies to every meter)
     HWND  glassPct = nullptr;    // live "45%" / "Off" read-out beside it
@@ -1873,6 +1906,31 @@ void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
 }
 
 // Reset the WORKING copy (looks + palettes) to defaults; enables are left alone and
+// Re-point row `r`'s slider band at the knob set its CURRENT look exposes: retitle each caption,
+// reload each slider from the live tuning, and hide the pair outright when the look has no use for
+// that slot. Called at build, on every look change, and from Reset — the controls are created once
+// and re-labelled, rather than destroyed and rebuilt, so focus and tab order survive a look change.
+void meterSyncKnobs(MetersDlgState* st, int r) {
+    KnobDesc kd[kMtrKnobs];
+    knobsForRow(r, st->cfg[r].style, kd);
+    for (int j = 0; j < kMtrKnobs; ++j) {
+        const bool on = kd[j].field >= 0;
+        if (st->knobLbl[r][j]) {
+            if (on) SetWindowTextW(st->knobLbl[r][j], knobLabelFor(kd[j], st->cfg[r].style).c_str());
+            ShowWindow(st->knobLbl[r][j], on ? SW_SHOW : SW_HIDE);
+        }
+        if (st->slider[r][j]) {
+            if (on)
+                SendMessageW(
+                    st->slider[r][j], TBM_SETPOS, TRUE,
+                    static_cast<LPARAM>(std::lround(knobGet(st->cfg[r].tuning, kd[j].field) * 100.0f)));
+            // A hidden slider must also be untabbable, or Tab still lands on an invisible control.
+            EnableWindow(st->slider[r][j], on ? TRUE : FALSE);
+            ShowWindow(st->slider[r][j], on ? SW_SHOW : SW_HIDE);
+        }
+    }
+}
+
 // nothing is committed until OK, so Cancel still fully reverts.
 void meterReset(MetersDlgState* st) {
     for (int r = 0; r < 4; ++r) {
@@ -1884,12 +1942,9 @@ void meterReset(MetersDlgState* st) {
         miniMeterSetPalette(st->preview[r], st->cfg[r].palette);
         miniMeterSetTuning(st->preview[r], st->cfg[r].tuning);
         for (int j = 0; j < kMtrRoles; ++j) InvalidateRect(st->swatch[r][j], nullptr, FALSE);
-        for (int j = 0; j < kMtrKnobs; ++j) {
-            const int f = kMtrKnobDesc[r][j].field;
-            if (f >= 0 && st->slider[r][j])
-                SendMessageW(st->slider[r][j], TBM_SETPOS, TRUE,
-                             static_cast<LPARAM>(std::lround(knobGet(st->cfg[r].tuning, f) * 100.0f)));
-        }
+        // Reset also restores the default LOOK, which can change which knobs apply — so re-sync
+        // the whole band rather than just reloading slider positions.
+        meterSyncKnobs(st, r);
     }
 }
 
@@ -1961,7 +2016,12 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             for (int r = 0; r < 4; ++r)
                 for (int j = 0; j < kMtrKnobs; ++j)
                     if (bar == st->slider[r][j]) {
-                        const int f = kMtrKnobDesc[r][j].field;
+                        // Resolve the field through the LOOK-aware set, not the per-kind table:
+                        // slot 0 is `glow` on a cell look but `smoothing` on a VU, so reading the
+                        // raw table here would have written the Damping slider into glow.
+                        KnobDesc kd[kMtrKnobs];
+                        knobsForRow(r, st->cfg[r].style, kd);
+                        const int f = kd[j].field;
                         if (f >= 0) {
                             const int pos = static_cast<int>(SendMessageW(bar, TBM_GETPOS, 0, 0));
                             knobSet(st->cfg[r].tuning, f, static_cast<float>(pos) / 100.0f);
@@ -1981,6 +2041,9 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     if (sel >= 0) {
                         st->cfg[r].style = static_cast<MeterStyle>(sel);
                         miniMeterSetStyle(st->preview[r], st->cfg[r].style);
+                        // Different look, different knobs — a VU exposes Damping/Sens where a cell
+                        // look exposes Glow/Smooth/Sens/Peak.
+                        meterSyncKnobs(st, r);
                     }
                     return 0;
                 }
@@ -2140,32 +2203,23 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
 
         // Inline "feel" sliders for this meter's relevant knobs (below the swatches).
         const int kx0 = m + dp(162, dpi), ky = y0 + dp(86, dpi), kw = dp(120, dpi);
+        // Create ALL kMtrKnobs slots, including ones this row's current look doesn't use: the look
+        // is switchable at runtime, so the band has to be able to grow back. meterSyncKnobs() below
+        // titles them, loads them, and hides the ones that don't apply — created hidden so an unused
+        // slot never flashes on screen before that runs.
         for (int j = 0; j < kMtrKnobs; ++j) {
-            const KnobDesc& kd = kMtrKnobDesc[r][j];
-            if (kd.field < 0) continue;
             const int kx = kx0 + j * (kw + dp(8, dpi));
-            // Each knob's label comes from the catalog, keyed off its tuning field (the English
-            // strings in kMtrKnobDesc are now only a fallback for an unmapped field).
-            const std::wstring klabel =
-                (kd.field == 0)   ? tr(i18n::StringId::MeterKnobGlow)
-                : (kd.field == 1) ? tr(i18n::StringId::MeterKnobSmooth)
-                : (kd.field == 2) ? tr(i18n::StringId::MeterKnobSens)
-                : (kd.field == 3) ? tr(i18n::StringId::MeterPeak)
-                : (kd.field == 4) ? tr(i18n::StringId::MeterKnobBreathe)
-                                  : std::wstring(kd.label);
-            HWND klbl = CreateWindowExW(0, L"STATIC", klabel.c_str(), WS_CHILD | WS_VISIBLE | SS_CENTER, kx,
-                                        ky, kw, dp(14, dpi), dlg, nullptr, hInst, nullptr);
-            SendMessageW(klbl, WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
+            st.knobLbl[r][j] = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_CENTER, kx, ky, kw,
+                                               dp(14, dpi), dlg, nullptr, hInst, nullptr);
+            SendMessageW(st.knobLbl[r][j], WM_SETFONT, reinterpret_cast<WPARAM>(st.font), TRUE);
             st.slider[r][j] = CreateWindowExW(
-                0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
+                0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
                 kx, ky + dp(15, dpi), kw, dp(26, dpi), dlg,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_MTR_ROW + r * 16 + 10 + j)), hInst,
                 nullptr);
             SendMessageW(st.slider[r][j], TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-            SendMessageW(
-                st.slider[r][j], TBM_SETPOS, TRUE,
-                static_cast<LPARAM>(std::lround(knobGet(st.cfg[r].tuning, kd.field) * 100.0f)));
         }
+        meterSyncKnobs(&st, r);
     }
 
     // Fifth row — the "Data flow" (buffer/fluid) meter: enable + live preview only. It is the

@@ -248,23 +248,32 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
 // spectrum/history as many values; a needle can only point at one, so each kind collapses to its
 // headline figure. Shared by the VU needle (and anything else single-valued later).
 float scalarLevel(const MiniMeterState* st) {
+    float raw = 0.0f;
     switch (st->kind) {
         case MeterKind::Spectrum: {  // loudness ≈ the mean of the bands
             const int n = std::clamp(st->bands, 1, kMaxBands);
             float sum = 0.0f;
             for (int i = 0; i < n; ++i) sum += std::clamp(st->level[i], 0.0f, 1.0f);
-            return sum / static_cast<float>(n);
+            raw = sum / static_cast<float>(n);
+            break;
         }
         case MeterKind::Bitrate: {
             const float denom = std::max(st->histMax, 1.0f);
-            if (st->histCount <= 0) return 0.0f;
+            if (st->histCount <= 0) break;
             const int idx = (st->histHead - 1 + kHist) % kHist;  // newest sample
-            return std::clamp(st->hist[idx] / denom, 0.0f, 1.0f);
+            raw = st->hist[idx] / denom;
+            break;
         }
-        case MeterKind::Signal: return std::clamp(st->sigLevel, 0.0f, 1.0f);
-        case MeterKind::Frames: return std::clamp(st->fps / 60.0f, 0.0f, 1.0f);
+        case MeterKind::Signal: raw = st->sigLevel; break;
+        case MeterKind::Frames: raw = st->fps / 60.0f; break;
     }
-    return 0.0f;
+    // Sensitivity applies HERE, not only in the cell painters. Every cell look scales by this in
+    // its own paint function (paintSpectrum/paintSignal/paintBitrate/paintFrames), so a needle that
+    // skipped it made the Sens slider silently STOP WORKING the moment a row was switched to VU —
+    // it worked on LED/Tube/LCD/Scope and did nothing on the same row's VU. 0.5 is unity, so this
+    // is a bit-exact no-op at the default tuning and only bites for a user who moved the slider.
+    const float gain = st->tuning.sensitivity * 2.0f;
+    return std::clamp(raw * gain, 0.0f, 1.0f);
 }
 
 // Classic analog VU gauge: a cream face, a swept scale with ticks, a red zone over the last

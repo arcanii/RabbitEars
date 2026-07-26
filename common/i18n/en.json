@@ -291,6 +291,7 @@
   "RecordSeriesEveryAiringBody": "{0}\r\n{1}\r\n\r\n{2} upcoming airing(s) queued from the guide.\r\nNew airings are picked up automatically as the guide refreshes.\r\n\r\nManage rules in Settings ▸ Recording Rules….",
   "MeterKnobGlow": "Glow",
   "MeterKnobSmooth": "Smooth",
+  "MeterKnobDamping": "Damping",
   "MeterKnobSens": "Sens",
   "MeterPeak": "Peak",
   "MeterKnobBreathe": "Breathe",

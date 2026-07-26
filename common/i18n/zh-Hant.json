@@ -291,6 +291,7 @@
   "RecordSeriesEveryAiringBody": "{0}\r\n{1}\r\n\r\n已從節目表排入 {2} 個即將播出的項目。\r\n節目表更新時會自動納入新的播出。\r\n\r\n請在 設定 ▸ 錄影規則… 中管理規則。",
   "MeterKnobGlow": "光暈",
   "MeterKnobSmooth": "平滑",
+  "MeterKnobDamping": "阻尼",
   "MeterKnobSens": "靈敏度",
   "MeterPeak": "峰值",
   "MeterKnobBreathe": "呼吸",
