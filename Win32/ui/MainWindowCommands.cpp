@@ -1372,6 +1372,65 @@ void onTogglePipAlwaysOnTop(AppState* st) {
     applyPipTopmost(st, fg == st->hwnd || (fg && GetAncestor(fg, GA_ROOTOWNER) == st->hwnd));
 }
 
+// PIP ⇄ main swap (PIP right-click menu): promote the PIP's channel into the main view and demote
+// the main view's channel into the PIP. This is the DELIBERATE version of what used to happen by
+// accident when leaving PIP view (fixed in 0.2.14) — the user asks for it, it is never a side
+// effect of a mode change.
+//
+// Implemented as two re-opens rather than by swapping the panes themselves: pane 0 is a WS_CHILD
+// tile and the PIP is a floating owned popup, so their window TYPES differ and neither the HWNDs
+// nor the players can trade places. Both streams therefore re-buffer — the honest cost of a swap.
+//
+// DELIBERATELY ALLOWED WHILE RECORDING. An earlier version of this function refused, on the theory
+// that re-opening the stream would kill the recording; that is simply not how recording works here.
+// A recording runs on a SEPARATE headless player (VlcPlayer::rec_) opened on its own captured URL,
+// and doStop() — the only thing a re-open triggers — touches mp_/media_/currentHost_ and never rec_.
+// Recording independently of what you are watching is the documented product behaviour, so refusing
+// would have forced a false choice between a 2-hour scheduled recording and a UI convenience.
+// st->schedulePane survives too: it selects which PLAYER to stop, and the swap moves no players.
+void swapPipWithMain(AppState* st) {
+    if (!st || st->viewMode != ViewMode::Pip || st->panes.size() < 2) return;
+    const Channel mainCh = st->panes[0]->nowPlaying;  // deep copies — Channel is plain value data,
+    const Channel pipCh = st->panes[1]->nowPlaying;   // so the re-opens below can't invalidate them
+    if (mainCh.id == 0 && pipCh.id == 0) return;      // both empty — nothing to swap
+
+    // Make the main view active BEFORE the re-opens, not after. playChannelInPane persists
+    // `last_channel_id` only for the pane that is active at the time — with the PIP active (it
+    // becomes active when clicked), doing this afterwards recorded the channel being DEMOTED into
+    // the PIP, so "Resume last channel" came back to the wrong one. Audio follows the main view
+    // regardless: "promote the PIP" means the thing you now watch big is the thing you hear.
+    setActivePane(st, 0);
+
+    // An empty side must STOP its target rather than be "played": playChannelInPane on a default
+    // Channel would hand libVLC an empty URL. Clear the pane's now-playing bookkeeping too, or the
+    // grid highlight and a later swap would still believe a channel lives there.
+    auto clearPane = [](VideoPane& p) {
+        p.player.stop();
+        p.nowPlayingId = 0;
+        p.nowPlayingName.clear();
+        p.nowPlaying = Channel{};
+        // Hide the vout hosts by hand. They are opaque WS_CHILD windows (BLACK_BRUSH class brush)
+        // filling the pane, and they are only ever shown/hidden on PlayerEvent::Playing — a stop
+        // posts no such event, so without this the emptied pane keeps showing a black rectangle (or
+        // the last decoded frame) and the pane's own WM_ERASEBKGND — which paints the accent frame
+        // and the "right-click a channel ▸ Play in PIP" hint — stays clipped out by WS_CLIPCHILDREN.
+        for (HWND h : p.voutHosts)
+            if (IsWindow(h)) ShowWindow(h, SW_HIDE);
+    };
+    if (pipCh.id != 0) playChannelInPane(st, pipCh, 0);
+    else clearPane(*st->panes[0]);
+    if (mainCh.id != 0) playChannelInPane(st, mainCh, 1);
+    else clearPane(*st->panes[1]);
+
+    // Repaint whichever side just went empty so its hint actually appears.
+    for (int i = 0; i < 2; ++i)
+        if (st->panes[i]->nowPlayingId == 0 && st->panes[i]->hwnd)
+            InvalidateRect(st->panes[i]->hwnd, nullptr, TRUE);
+    setStatus(st, tr(i18n::StringId::StatusPipSwapped));
+    diag::info(L"PIP swap: main #" + std::to_wstring(mainCh.id) + L" <-> pip #" +
+               std::to_wstring(pipCh.id));
+}
+
 // Settings ▸ System… — the app-wide plumbing dialog. Applies + persists on OK; the dialog itself
 // is pure UI. Both settings take effect immediately (no restart): the log level is a plain atomic,
 // and every beta flag is read live at its use site.
@@ -1523,13 +1582,15 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     std::wstring catLabel = tr(StringId::MenuCategories);
     if (st->categoryActive) catLabel += L"  (" + std::to_wstring(st->categories.size()) + L")";
     AppendMenuW(chan, MF_STRING | (st->categoryActive ? chk : 0u), ID_CATEGORIES, catLabel.c_str());
-    // Dead-link checker (BETA): the item only EXISTS when the beta flag is on, rather than being
-    // shown greyed. A disabled item invites "why can't I click this?"; an absent one is honest —
-    // the feature is opt-in via Settings ▸ System… ▸ Beta features.
-    if (betaEnabled(BetaFeature::DeadLinkChecker)) {
+    // Dead-link checker — no longer beta-gated (0.2.15). "Clear results" sits directly under the
+    // sweep because it is its undo: an unreviewed Dead verdict plus "Hide unavailable" makes a
+    // channel vanish, and the user needs the way back in the same place they found the way in.
+    {
         const bool busy = deadLinkSweepRunning();
         AppendMenuW(chan, MF_STRING | (busy ? MF_GRAYED : 0u), ID_DEADLINK_SWEEP,
                     tr(busy ? StringId::MenuDeadLinkChecking : StringId::MenuDeadLinkCheck).c_str());
+        AppendMenuW(chan, MF_STRING | (busy ? MF_GRAYED : 0u), ID_DEADLINK_CLEAR,
+                    tr(StringId::MenuDeadLinkClear).c_str());
     }
     AppendMenuW(chan, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(chan, MF_STRING, ID_FAV_IMPORT, tr(StringId::MenuImportFavourites).c_str());
@@ -1781,6 +1842,27 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_DEADLINK_SWEEP:
             if (startDeadLinkSweep(st))
                 setStatus(st, tr(i18n::StringId::StatusDeadLinkStarted));
+            break;
+        case ID_DEADLINK_CLEAR:
+            // Confirmed, because it throws away the result of a sweep that can take many minutes —
+            // and unlike the sweep itself there is no undo for the undo.
+            if (st->db.isOpen() &&
+                MessageBoxW(st->hwnd, tr(i18n::StringId::DialogDeadLinkClearBody).c_str(),
+                            tr(i18n::StringId::AppName).c_str(),
+                            MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) == IDYES) {
+                const int n = st->db.clearDeadStatuses();
+                if (n < 0) {  // the write failed — never claim success, the channels are still hidden
+                    diag::error(L"dead-link clear FAILED (db write)");
+                    setStatus(st, tr(i18n::StringId::StatusDeadLinkClearFailed));
+                    break;
+                }
+                diag::info(L"dead-link results cleared: " + std::to_wstring(n) + L" channel(s)");
+                // The grid is filtered on dead_status when "Hide unavailable" is on, so rows that
+                // were hidden must come back NOW, not on the next navigation. Same call the sweep's
+                // completion handler makes (WM_APP_DEADLINK_DONE).
+                loadForFilter(st);
+                setStatus(st, trf(i18n::StringId::StatusDeadLinkCleared, {std::to_wstring(n)}));
+            }
             break;
         case ID_VIDEO_ONLY:
             toggleVideoOnly(st);

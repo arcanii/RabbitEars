@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "core/DeadLinkCheck.h"
-#include "core/FeatureFlags.h"
 #include "core/Http.h"
 #include "db/Database.h"
 #include "models/Channel.h"
@@ -117,8 +116,7 @@ void sweepThread(HWND hwnd, std::wstring dbPath) {
 
 bool startDeadLinkSweep(AppState* st) {
     if (!st || !st->db.isOpen()) return false;
-    if (!betaEnabled(BetaFeature::DeadLinkChecker)) return false;  // inert unless opted in
-    if (g_running.exchange(true)) return false;                    // one at a time
+    if (g_running.exchange(true)) return false;  // one at a time
     g_cancel = false;
     if (g_worker.joinable()) g_worker.join();  // reap the previous, finished, worker
     g_worker = std::thread(sweepThread, st->hwnd, Database::defaultDbPath());

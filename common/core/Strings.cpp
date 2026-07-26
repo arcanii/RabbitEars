@@ -353,6 +353,21 @@ constexpr std::array<const char*, N> kEn = {{
     "Check for Updates…",  // AboutCheckForUpdatesButton
     "Buy me a coffee",  // BuyMeACoffeeButton
     "Ko-fi",  // KoFiButton
+    // --- Menu ---
+    "Clear dead-link results",  // MenuDeadLinkClear
+    // --- Dialog ---
+    "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Run “Check for dead links…” again to re-test them.",  // DialogDeadLinkClearBody
+    // --- Status ---
+    "Dead-link results cleared ({0} channel(s) reset).",  // StatusDeadLinkCleared
+    "Couldn't clear the dead-link results — the database is busy. Try again.",  // StatusDeadLinkClearFailed
+    // --- Menu ---
+    "Swap with main view",  // MenuPipSwapWithMain
+    "Close picture-in-picture",  // MenuPipClose
+    // --- Status ---
+    "Swapped the picture-in-picture with the main view.",  // StatusPipSwapped
+    // --- DialogAbout ---
+    "Support development",  // AboutTipHeading
+    "RabbitEars is free and open source. The buttons below open a tip page in your browser — use whichever you prefer. No feature is ever locked behind a tip.",  // AboutTipBody
     // --- DialogSupport ---
     "Support RabbitEars",  // SupportWindowTitle
     "Enjoying RabbitEars?",  // SupportHeading
@@ -376,7 +391,7 @@ constexpr std::array<const char*, N> kEn = {{
     "Untangling the coaxial cable…",  // SplashUntanglingCoax
     "Polishing the rabbit ears…",  // SplashPolishingRabbitEars
     "Shooing off the static gremlins…",  // SplashShooingStaticGremlins
-    "Finding where Arch keeps his cookies…",  // SplashFindingArchCookies
+    "Wrapping the ear tips in tin foil…",  // SplashWrappingTinFoil
     "Locking onto the nearest tower…",  // SplashLockingOntoTower
     "Tuning the horizontal hold…",  // SplashTuningHorizontalHold
     "Nudging the aerial a smidge…",  // SplashNudgingAerial
@@ -574,7 +589,6 @@ constexpr std::array<const char*, N> kEn = {{
     "Open log folder",  // SystemOpenLogFolder
     "Beta features",  // SystemBetaSection
     "Unfinished features, off by default. Turn one on to help test it — expect rough edges.",  // SystemBetaHint
-    "Dead-link checker (marks unreachable channels)",  // SystemBetaDeadLinkChecker
     "Errors only",  // LogLevelError
     "Warnings",  // LogLevelWarn
     "Normal",  // LogLevelInfo
@@ -942,6 +956,21 @@ constexpr std::array<const char*, N> kJa = {{
     "更新を確認…",  // AboutCheckForUpdatesButton
     "コーヒーを一杯おごる",  // BuyMeACoffeeButton
     "Ko-fi",  // KoFiButton
+    // --- Menu ---
+    "リンク切れの判定結果を消去",  // MenuDeadLinkClear
+    // --- Dialog ---
+    "すべてのチャンネルを「未確認」に戻しますか？\r\n\r\n「利用できないチャンネルを非表示」で隠れていたチャンネルが再び表示されます。もう一度判定するには「リンク切れをチェック…」を実行してください。",  // DialogDeadLinkClearBody
+    // --- Status ---
+    "リンク切れの判定結果を消去しました（{0} 件のチャンネルをリセット）。",  // StatusDeadLinkCleared
+    "リンク切れの判定結果を消去できませんでした（データベースが使用中）。もう一度お試しください。",  // StatusDeadLinkClearFailed
+    // --- Menu ---
+    "メインビューと入れ替える",  // MenuPipSwapWithMain
+    "ピクチャー・イン・ピクチャーを閉じる",  // MenuPipClose
+    // --- Status ---
+    "PIPとメインビューを入れ替えました。",  // StatusPipSwapped
+    // --- DialogAbout ---
+    "開発を支援する",  // AboutTipHeading
+    "RabbitEars は無料のオープンソースソフトウェアです。下のボタンを押すと、ブラウザーで支援ページが開きます。どちらでも構いません。支援しなくても、機能が制限されることはありません。",  // AboutTipBody
     // --- DialogSupport ---
     "RabbitEars を支援する",  // SupportWindowTitle
     "RabbitEars はお役に立っていますか？",  // SupportHeading
@@ -965,7 +994,7 @@ constexpr std::array<const char*, N> kJa = {{
     "同軸ケーブルをほどいています…",  // SplashUntanglingCoax
     "ウサギの耳を磨いています…",  // SplashPolishingRabbitEars
     "砂嵐グレムリンを追い払っています…",  // SplashShooingStaticGremlins
-    "アーチのクッキーの隠し場所を探しています…",  // SplashFindingArchCookies
+    "耳の先にアルミホイルを巻いています…",  // SplashWrappingTinFoil
     "最寄りの電波塔に照準を合わせています…",  // SplashLockingOntoTower
     "水平同期を調整しています…",  // SplashTuningHorizontalHold
     "アンテナをちょっとだけ動かしています…",  // SplashNudgingAerial
@@ -1163,7 +1192,6 @@ constexpr std::array<const char*, N> kJa = {{
     "ログフォルダーを開く",  // SystemOpenLogFolder
     "ベータ機能",  // SystemBetaSection
     "未完成の機能です。既定ではオフになっています。テストに協力する場合のみオンにしてください。",  // SystemBetaHint
-    "リンク切れチェッカー（到達できないチャンネルを記録）",  // SystemBetaDeadLinkChecker
     "エラーのみ",  // LogLevelError
     "警告",  // LogLevelWarn
     "標準",  // LogLevelInfo
@@ -1531,6 +1559,21 @@ constexpr std::array<const char*, N> kZhHant = {{
     "檢查更新…",  // AboutCheckForUpdatesButton
     "請我喝杯咖啡",  // BuyMeACoffeeButton
     "Ko-fi",  // KoFiButton
+    // --- Menu ---
+    "清除失效連結檢查結果",  // MenuDeadLinkClear
+    // --- Dialog ---
+    "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。若要重新檢查，請再次執行「檢查失效連結…」。",  // DialogDeadLinkClearBody
+    // --- Status ---
+    "已清除失效連結檢查結果（已重設 {0} 個頻道）。",  // StatusDeadLinkCleared
+    "無法清除失效連結檢查結果（資料庫忙碌中），請再試一次。",  // StatusDeadLinkClearFailed
+    // --- Menu ---
+    "與主畫面互換",  // MenuPipSwapWithMain
+    "關閉子母畫面",  // MenuPipClose
+    // --- Status ---
+    "已將子母畫面與主畫面互換。",  // StatusPipSwapped
+    // --- DialogAbout ---
+    "支持開發",  // AboutTipHeading
+    "RabbitEars 是免費的開源軟體。按下方任一個按鈕，都會在瀏覽器開啟贊助頁面。不贊助也不會鎖住任何功能。",  // AboutTipBody
     // --- DialogSupport ---
     "支持 RabbitEars",  // SupportWindowTitle
     "喜歡 RabbitEars 嗎？",  // SupportHeading
@@ -1554,7 +1597,7 @@ constexpr std::array<const char*, N> kZhHant = {{
     "正在解開同軸電纜…",  // SplashUntanglingCoax
     "正在擦亮兔耳天線…",  // SplashPolishingRabbitEars
     "正在趕走雜訊小精靈…",  // SplashShooingStaticGremlins
-    "正在找出 Arch 把餅乾藏在哪…",  // SplashFindingArchCookies
+    "正在把錫箔紙纏到兔耳天線的頂端…",  // SplashWrappingTinFoil
     "正在鎖定最近的訊號塔…",  // SplashLockingOntoTower
     "正在調整水平同步…",  // SplashTuningHorizontalHold
     "正在把天線輕輕挪一下…",  // SplashNudgingAerial
@@ -1752,7 +1795,6 @@ constexpr std::array<const char*, N> kZhHant = {{
     "開啟記錄資料夾",  // SystemOpenLogFolder
     "測試中的功能",  // SystemBetaSection
     "尚未完成的功能，預設為關閉。若要協助測試再開啟，可能會有問題。",  // SystemBetaHint
-    "失效連結檢查（標記無法連線的頻道）",  // SystemBetaDeadLinkChecker
     "僅錯誤",  // LogLevelError
     "警告",  // LogLevelWarn
     "標準",  // LogLevelInfo
@@ -2120,6 +2162,21 @@ constexpr std::array<const char*, N> kZhHK = {{
     "檢查更新…",  // AboutCheckForUpdatesButton
     "請我飲杯咖啡",  // BuyMeACoffeeButton
     "Ko-fi",  // KoFiButton
+    // --- Menu ---
+    "清除失效連結檢查結果",  // MenuDeadLinkClear
+    // --- Dialog ---
+    "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。若要重新檢查，請再次執行「檢查失效連結…」。",  // DialogDeadLinkClearBody
+    // --- Status ---
+    "已清除失效連結檢查結果（已重設 {0} 個頻道）。",  // StatusDeadLinkCleared
+    "無法清除失效連結檢查結果（資料庫忙碌中），請再試一次。",  // StatusDeadLinkClearFailed
+    // --- Menu ---
+    "與主畫面互換",  // MenuPipSwapWithMain
+    "關閉子母畫面",  // MenuPipClose
+    // --- Status ---
+    "已將子母畫面與主畫面互換。",  // StatusPipSwapped
+    // --- DialogAbout ---
+    "支持開發",  // AboutTipHeading
+    "RabbitEars 是免費的開源軟體。按下方任一個按鈕，都會在瀏覽器開啟贊助頁面。不贊助也不會鎖住任何功能。",  // AboutTipBody
     // --- DialogSupport ---
     "支持 RabbitEars",  // SupportWindowTitle
     "喜歡 RabbitEars 嗎？",  // SupportHeading
@@ -2143,7 +2200,7 @@ constexpr std::array<const char*, N> kZhHK = {{
     "正在解開同軸電纜…",  // SplashUntanglingCoax
     "正在擦亮兔耳天線…",  // SplashPolishingRabbitEars
     "正在趕走雜訊小精靈…",  // SplashShooingStaticGremlins
-    "正在找出 Arch 把餅乾藏在哪…",  // SplashFindingArchCookies
+    "正在把錫箔紙纏到兔耳天線的頂端…",  // SplashWrappingTinFoil
     "正在鎖定最近的訊號塔…",  // SplashLockingOntoTower
     "正在調整水平同步…",  // SplashTuningHorizontalHold
     "正在把天線輕輕挪一下…",  // SplashNudgingAerial
@@ -2341,7 +2398,6 @@ constexpr std::array<const char*, N> kZhHK = {{
     "開啟記錄資料夾",  // SystemOpenLogFolder
     "測試中的功能",  // SystemBetaSection
     "尚未完成的功能，預設為關閉。若要協助測試再開啟，可能會有問題。",  // SystemBetaHint
-    "失效連結檢查（標記無法連線的頻道）",  // SystemBetaDeadLinkChecker
     "僅錯誤",  // LogLevelError
     "警告",  // LogLevelWarn
     "標準",  // LogLevelInfo

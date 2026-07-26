@@ -36,7 +36,7 @@ constexpr i18n::StringId kMessages[] = {
     i18n::StringId::SplashUntanglingCoax,
     i18n::StringId::SplashPolishingRabbitEars,
     i18n::StringId::SplashShooingStaticGremlins,
-    i18n::StringId::SplashFindingArchCookies,
+    i18n::StringId::SplashWrappingTinFoil,
     i18n::StringId::SplashLockingOntoTower,
     i18n::StringId::SplashTuningHorizontalHold,
     i18n::StringId::SplashNudgingAerial,

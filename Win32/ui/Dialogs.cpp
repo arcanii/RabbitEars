@@ -38,13 +38,19 @@ int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 // Keep a centred W×H dialog fully on-screen: clamp its top-left to the work area of the
 // monitor the parent is on. Dialogs centre on the parent window, which pushes a tall
 // dialog off the top edge when the main window sits near the top of the screen.
-void clampToWorkArea(HWND parent, int W, int H, int& x, int& y) {
-    RECT wa;
+// The work area of the monitor `parent` is on (falling back to the primary's).
+RECT workAreaFor(HWND parent) {
+    RECT wa{};
     MONITORINFO mi{sizeof(mi)};
     if (GetMonitorInfoW(MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST), &mi))
         wa = mi.rcWork;
     else
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    return wa;
+}
+
+void clampToWorkArea(HWND parent, int W, int H, int& x, int& y) {
+    const RECT wa = workAreaFor(parent);
     if (x + W > wa.right) x = static_cast<int>(wa.right) - W;
     if (y + H > wa.bottom) y = static_cast<int>(wa.bottom) - H;
     if (x < wa.left) x = static_cast<int>(wa.left);  // left/top win if the dialog is
@@ -96,6 +102,15 @@ std::wstring runningArchLabel() {
 
 // ---- About box (renders the embedded RabbitEars.png via GDI+) --------------
 
+// About-box button-row geometry, shared by showAbout (which CREATES the row) and AboutProc's
+// WM_PAINT (which lays the tip section out directly above it). One definition so the two cannot
+// drift: the paint code has to know where the row starts in order to guarantee it never draws
+// underneath it.
+constexpr int kAboutBtnH = 30, kAboutBtnBottomMargin = 14;
+inline int aboutButtonTop(int clientBottom, UINT dpi) {
+    return clientBottom - dp(kAboutBtnH, dpi) - dp(kAboutBtnBottomMargin, dpi);
+}
+
 struct AboutState {
     Gdiplus::Image* img = nullptr;
     IStream*        stream = nullptr;  // must outlive img (GDI+ reads it lazily)
@@ -106,6 +121,7 @@ struct AboutState {
     RECT            linkRect = {};        // the GitHub link's drawn rect (click hit-test + hand cursor)
     HFONT           titleFont = nullptr;
     HFONT           bodyFont = nullptr;
+    HFONT           sectionFont = nullptr;  // tip-section heading (body size, semibold)
     UINT            dpi = 96;
     bool            done = false;
     bool            tipPageOpened = false;  // "Buy me a coffee" was clicked (reported to the caller)
@@ -202,14 +218,67 @@ LRESULT CALLBACK AboutProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DrawTextW(mem, githubLabel.c_str(), -1, &st->linkRect, DT_LEFT | DT_TOP | DT_SINGLELINE);
             RECT ul{tx, ly + lsz.cy, tx + lsz.cx, ly + lsz.cy + dp(1, st->dpi)};
             FillRect(mem, &ul, themeBrush(th.accent));
-            // Full-width legal disclaimer below the artwork, above the buttons.
+            // Full-width legal disclaimer below the artwork, above the tip section.
             const int discTop = m + dp(250, st->dpi);
-            RECT sep{m, discTop - dp(12, st->dpi), rc.right - m, discTop - dp(11, st->dpi)};
+            const int textW = rc.right - 2 * m;
+            // Both hairlines in this box scale through ONE expression. They used to differ: the
+            // disclaimer's was the height of `dp(12)-dp(11)` and the tip section's a `dp(1)`, which
+            // agree everywhere except 144 dpi (1px vs 2px) — so at exactly 150% scaling the two
+            // rules a few lines apart rendered different weights.
+            const int hairH = dp(1, st->dpi);
+            RECT sep{m, discTop - dp(12, st->dpi), rc.right - m, discTop - dp(12, st->dpi) + hairH};
             FillRect(mem, &sep, themeBrush(th.border));
-            RECT dr{m, discTop, rc.right - m, discTop + dp(96, st->dpi)};
+            const std::wstring disclaimer =
+                rabbitears::tr(i18n::StringId::AboutEducationalDisclaimer);
+            // MEASURED, not the old fixed dp(96) box: the tip section below is placed from this
+            // block's real bottom, and the fixed height would also have clipped a longer CJK wrap.
+            RECT dcalc{0, 0, textW, 0};
+            DrawTextW(mem, disclaimer.c_str(), -1, &dcalc,
+                      DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT);
+            RECT dr{m, discTop, rc.right - m, discTop + dcalc.bottom};
             SetTextColor(mem, th.textSecondary);
-            DrawTextW(mem, rabbitears::tr(i18n::StringId::AboutEducationalDisclaimer).c_str(),
-                      -1, &dr, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            DrawTextW(mem, disclaimer.c_str(), -1, &dr, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+            // ---- tip section ------------------------------------------------------------
+            // The two tip buttons in the row below were otherwise unexplained (owner request):
+            // a bare "Buy me a coffee" sitting next to "Check for Updates" reads like a purchase
+            // rather than a donation. Deliberately says nothing about how the two backends differ
+            // — which methods each accepts depends on the creator's settings (the same reason the
+            // Ko-fi button is labelled plainly, 0.2.13).
+            const std::wstring tipHead = rabbitears::tr(i18n::StringId::AboutTipHeading);
+            const std::wstring tipBody = rabbitears::tr(i18n::StringId::AboutTipBody);
+            SelectObject(mem, st->sectionFont);
+            RECT hcalc{0, 0, textW, 0};
+            DrawTextW(mem, tipHead.c_str(), -1, &hcalc,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE | DT_CALCRECT);
+            SelectObject(mem, st->bodyFont);
+            RECT bcalc{0, 0, textW, 0};
+            DrawTextW(mem, tipBody.c_str(), -1, &bcalc,
+                      DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT);
+            const int headGap = dp(10, st->dpi);  // hairline -> heading
+            const int bodyGap = dp(4, st->dpi);   // heading  -> body
+            const int blockH = headGap + hcalc.bottom + bodyGap + bcalc.bottom;
+            // Normally sits just under the disclaimer. The min() is the invariant that matters —
+            // the block can never reach the button row, so copy that wraps longer than expected
+            // crowds the disclaimer (a fixed legal blurb) instead of sliding under the buttons.
+            // The max() bounds that crowding: it may eat into the disclaimer's text, but it can
+            // never climb past the disclaimer's own top and start drawing over the artwork. With
+            // the shipped strings the min() picks `natural` at every dpi in every language — both
+            // guards are for a long translation or a work-area-capped client, not for today.
+            const int tipSepY = std::max(
+                discTop, std::min(discTop + static_cast<int>(dcalc.bottom) + dp(16, st->dpi),
+                                  aboutButtonTop(static_cast<int>(rc.bottom), st->dpi) -
+                                      dp(12, st->dpi) - blockH));
+            RECT tsep{m, tipSepY, rc.right - m, tipSepY + hairH};
+            FillRect(mem, &tsep, themeBrush(th.border));
+            SelectObject(mem, st->sectionFont);
+            SetTextColor(mem, th.textPrimary);
+            RECT hr{m, tipSepY + headGap, rc.right - m, tipSepY + headGap + hcalc.bottom};
+            DrawTextW(mem, tipHead.c_str(), -1, &hr, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            SelectObject(mem, st->bodyFont);
+            SetTextColor(mem, th.textMuted);
+            RECT tbr{m, hr.bottom + bodyGap, rc.right - m, hr.bottom + bodyGap + bcalc.bottom};
+            DrawTextW(mem, tipBody.c_str(), -1, &tbr, DT_LEFT | DT_TOP | DT_WORDBREAK);
             SelectObject(mem, oldFont);
             BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
             SelectObject(mem, oldBmp);
@@ -573,6 +642,7 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
     st.img = loadPngResource(hInst, IDR_ABOUT_PNG, &st.stream);
     st.titleFont = themeFont(FontRole::Title, dpi, 22, FW_SEMIBOLD);
     st.bodyFont = themeFont(FontRole::Body, dpi, 14, FW_NORMAL);
+    st.sectionFont = themeFont(FontRole::Body, dpi, 14, FW_SEMIBOLD);
 
     // Wide enough that the right-column text clears the +25% artwork without wrapping: the
     // longest line ("© VideoLAN and the VLC contributors.") is ~239px, and tx≈230 + m=22, so
@@ -584,7 +654,22 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
     // (WS_POPUP|WS_CAPTION|WS_SYSMENU + WS_EX_DLGMODALFRAME) is 16/22/26px at 96/144/192 dpi — it
     // does NOT scale with dp(), so the client grows slightly faster than proportionally and 96dpi
     // is the worst case. Client here is 604/908/1214px.
-    const int W = dp(620, dpi), H = dp(470, dpi);
+    // H grew dp(470)->dp(530) for the tip section (hairline + heading + copy) between the
+    // disclaimer and the button row. Generous for the reason showSupportPrompt learned the hard
+    // way: the ja/zh copy wraps to more lines on a taller CJK fallback face, and the tip block's
+    // clamp spends that headroom before it crowds the disclaimer. In English @96dpi it leaves
+    // ~30px of air above the buttons — the knob to trim if the box reads too tall.
+    const int W = dp(620, dpi);
+    int H = dp(530, dpi);
+    // …but CAP it to the work area, because dp() scaling does not care how tall the screen is.
+    // dp(530) is 795px at 150% and 1060px at 200%; a 1366x768 laptop at 150% has ~708px of work
+    // area, so the UNCAPPED window put its whole button row — Check for Updates, both tip buttons,
+    // OK — below the taskbar and out of reach of the mouse. (dp(470) already sat 3px inside that
+    // limit, so this box has always been one growth spurt away from the problem.) Everything in
+    // the layout is anchored to the client bottom or clamped against it, so a shorter client just
+    // spends the air above the buttons and then crowds the disclaimer — nothing lands off-window.
+    const RECT wa = workAreaFor(parent);
+    if (const int avail = static_cast<int>(wa.bottom - wa.top); avail > 0 && H > avail) H = avail;
     RECT pr;
     GetWindowRect(parent, &pr);
     int x = pr.left + ((pr.right - pr.left) - W) / 2;
@@ -596,20 +681,23 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
                                nullptr);
     if (dlg) {
         SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
-        const int bw = dp(90, dpi), bh = dp(30, dpi);
+        const int bw = dp(90, dpi), bh = dp(kAboutBtnH, dpi);
         RECT cr;
         GetClientRect(dlg, &cr);
+        // Single source for the row's Y — WM_PAINT computes the same value to keep the tip
+        // section clear of it (see aboutButtonTop).
+        const int btnY = aboutButtonTop(cr.bottom, dpi);
         // All four buttons carry WS_TABSTOP: without it Tab reached NONE of them (the box predates
         // having more than OK), which since the tip buttons landed here means a keyboard user could
         // not reach them at all. IsDialogMessageW in the modal loop does the rest.
         HWND ok = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonOk).c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                                  cr.right - bw - dp(20, dpi), cr.bottom - bh - dp(14, dpi), bw, bh,
+                                  cr.right - bw - dp(20, dpi), btnY, bw, bh,
                                   dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), hInst, nullptr);
         const int uw = dp(140, dpi);
         HWND upd = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::AboutCheckForUpdatesButton).c_str(),
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                   dp(20, dpi), cr.bottom - bh - dp(14, dpi), uw, bh, dlg,
+                                   dp(20, dpi), btnY, uw, bh, dlg,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CHECK_UPDATES)),
                                    hInst, nullptr);
         // The two tip backends, opened in the browser, between Check-for-Updates and OK.
@@ -621,13 +709,13 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
         const int coffeeX = dp(20, dpi) + uw + gap;
         HWND coffee = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::BuyMeACoffeeButton).c_str(),
                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                      coffeeX, cr.bottom - bh - dp(14, dpi), cw,
+                                      coffeeX, btnY, cw,
                                       bh, dlg,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUY_COFFEE)),
                                       hInst, nullptr);
         HWND kofi = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::KoFiButton).c_str(),
                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                    coffeeX + cw + gap, cr.bottom - bh - dp(14, dpi), kw, bh, dlg,
+                                    coffeeX + cw + gap, btnY, kw, bh, dlg,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_KOFI)), hInst,
                                     nullptr);
         SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(st.bodyFont), TRUE);
@@ -665,6 +753,7 @@ void showAbout(HWND parent, HINSTANCE hInst, UINT dpi, bool* tipPageOpened) {
     if (st.altStream) st.altStream->Release();
     if (st.titleFont) DeleteObject(st.titleFont);
     if (st.bodyFont) DeleteObject(st.bodyFont);
+    if (st.sectionFont) DeleteObject(st.sectionFont);
 }
 
 // ---- Settings ▸ System… (logging level + beta features) --------------------------------
@@ -779,8 +868,13 @@ bool systemSettingsDialog(HWND parent, HINSTANCE hInst, UINT dpi, SystemSettings
     HFONT headFont = themeFont(FontRole::Body, dpi, 14, FW_SEMIBOLD);
     HFONT bodyFont = themeFont(FontRole::Body, dpi, 12, FW_NORMAL);
 
-    // Generous height: the two hint lines wrap to 2-3 lines in ja/zh on a taller CJK face.
-    const int W = dp(560, dpi), H = dp(430, dpi);
+    // Height follows the section count — the buttons are anchored to the client bottom, so a
+    // hidden Beta section would otherwise leave ~175px of dead air above them. dp(430) is the
+    // two-section size; dp(300) ends just below "Open log folder". Both are generous on purpose:
+    // the hint lines wrap to 2-3 lines in ja/zh on a taller CJK face.
+    int nBeta = 0;
+    const BetaFeature* allBeta = allBetaFeatures(nBeta);
+    const int W = dp(560, dpi), H = dp(nBeta > 0 ? 430 : 300, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
@@ -839,19 +933,26 @@ bool systemSettingsDialog(HWND parent, HINSTANCE hInst, UINT dpi, SystemSettings
     bodyCtls.push_back(openLog);
 
     // ---- Beta features ----
-    yy += dp(48, dpi);
-    mkStatic(i18n::StringId::SystemBetaSection, yy, dp(22, dpi), /*head=*/true);
-    st.sepY[1] = yy + dp(24, dpi);
-    yy += dp(38, dpi);
-    bodyCtls.push_back(mkStatic(i18n::StringId::SystemBetaHint, yy, dp(38, dpi), false));
-    yy += dp(44, dpi);
-    // One checkbox per registered flag. The label ids are parallel to allBetaFeatures()'s order —
-    // add both together when a new flag lands.
-    static const i18n::StringId kBetaLabels[] = {i18n::StringId::SystemBetaDeadLinkChecker};
-    int nBeta = 0;
-    const BetaFeature* allBeta = allBetaFeatures(nBeta);
+    // The WHOLE section — header, hairline, hint — is omitted when no flags are registered, which
+    // is the state after the dead-link checker graduated in 0.2.15. A "Beta features" heading over
+    // an empty box reads as a bug (or as a feature that failed to load); nothing is the honest
+    // rendering of nothing. sepY[1] stays 0, which WM_PAINT already skips.
+    // One checkbox per registered flag, index-parallel to allBetaFeatures(). BOTH lists are empty
+    // right now (the dead-link checker graduated in 0.2.15, and its label string went with it) —
+    // expressed as a null+count pair for the same reason allBetaFeatures is: a zero-length array is
+    // ill-formed. Leaving the graduated label behind would have been worse than dead code: the next
+    // flag added at index 0 would inherit "Dead-link checker" as its caption.
+    static const i18n::StringId* kBetaLabels = nullptr;
+    const int labelCount = 0;
     const int maxBeta = static_cast<int>(sizeof(st.beta) / sizeof(st.beta[0]));
-    const int labelCount = static_cast<int>(sizeof(kBetaLabels) / sizeof(kBetaLabels[0]));
+    if (nBeta > 0) {
+        yy += dp(48, dpi);
+        mkStatic(i18n::StringId::SystemBetaSection, yy, dp(22, dpi), /*head=*/true);
+        st.sepY[1] = yy + dp(24, dpi);
+        yy += dp(38, dpi);
+        bodyCtls.push_back(mkStatic(i18n::StringId::SystemBetaHint, yy, dp(38, dpi), false));
+        yy += dp(44, dpi);
+    }
     for (int i = 0; i < nBeta && i < maxBeta && i < labelCount; ++i) {
         st.beta[i] = CreateWindowExW(0, L"BUTTON", tr(kBetaLabels[i]).c_str(),
                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, m, yy,

@@ -354,6 +354,21 @@ enum class StringId {
     AboutCheckForUpdatesButton,
     BuyMeACoffeeButton,
     KoFiButton,
+    // --- Menu ---
+    MenuDeadLinkClear,
+    // --- Dialog ---
+    DialogDeadLinkClearBody,
+    // --- Status ---
+    StatusDeadLinkCleared,
+    StatusDeadLinkClearFailed,
+    // --- Menu ---
+    MenuPipSwapWithMain,
+    MenuPipClose,
+    // --- Status ---
+    StatusPipSwapped,
+    // --- DialogAbout ---
+    AboutTipHeading,
+    AboutTipBody,
     // --- DialogSupport ---
     SupportWindowTitle,
     SupportHeading,
@@ -377,7 +392,7 @@ enum class StringId {
     SplashUntanglingCoax,
     SplashPolishingRabbitEars,
     SplashShooingStaticGremlins,
-    SplashFindingArchCookies,
+    SplashWrappingTinFoil,
     SplashLockingOntoTower,
     SplashTuningHorizontalHold,
     SplashNudgingAerial,
@@ -575,7 +590,6 @@ enum class StringId {
     SystemOpenLogFolder,
     SystemBetaSection,
     SystemBetaHint,
-    SystemBetaDeadLinkChecker,
     LogLevelError,
     LogLevelWarn,
     LogLevelInfo,

@@ -113,7 +113,8 @@ constexpr int ID_LANG_ZH_HK = 2049;    // Settings → Language → 繁體中文
 // NB pick ids from a genuine gap: the COMPUTED ranges (ID_DOCK_BASE 2051..2062,
 // ID_LAYOUT_APPLY_BASE 2079..2088, ID_LAYOUT_DELETE_BASE 2089..2098, ID_THEME_SKIN_BASE 2100+)
 // have no literal "= 20xx" to grep for. 2023 is inside the free 2020..2029 block.
-constexpr int ID_DEADLINK_SWEEP = 2025;   // Settings → Channels → Check for dead links (BETA)
+constexpr int ID_DEADLINK_SWEEP = 2025;   // Settings → Channels → Check for dead links
+constexpr int ID_DEADLINK_CLEAR = 2026;   // Settings → Channels → Clear dead-link results (its undo)
 constexpr int ID_SYSTEM_SETTINGS = 2023;  // Settings → System… (logging level + beta features)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
@@ -403,6 +404,9 @@ void onSystemSettings(AppState* st);  // Settings ▸ System… (log level + bet
 // with pipAlwaysOnTop off, PIP is topmost only then. No-op when there is no floating pane.
 void applyPipTopmost(AppState* st, bool appActive);
 void onTogglePipAlwaysOnTop(AppState* st);
+// PIP ⇄ main: exchange the two panes' channels (PIP right-click menu). No-op outside PIP view;
+// refused while either pane is recording.
+void swapPipWithMain(AppState* st);
 void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor);
 // Recreate the three chrome fonts (uiFont/titleFont/glyphFont) for the active skin AND active UI
 // language, re-applying them to the controls that carry them. Not theme-gated: themeFont() resolves

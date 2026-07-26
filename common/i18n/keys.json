@@ -2107,6 +2107,62 @@
     "comment": "Button opening the author's Ko-fi tip page (a second tip backend, so a user who can't or won't use Buy Me a Coffee's card checkout has a PayPal-capable alternative). 'Ko-fi' is a BRAND NAME — do not translate it; translate only any surrounding words."
   },
   {
+    "id": "MenuDeadLinkClear",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Settings ▸ Channels: reset every channel's dead-link result back to 'not checked'. The undo for a dead-link sweep."
+  },
+  {
+    "id": "DialogDeadLinkClearBody",
+    "cluster": "Dialog",
+    "placeholders": [],
+    "comment": "Confirmation before clearing dead-link results. Must make clear that a fresh sweep is needed to get them back."
+  },
+  {
+    "id": "StatusDeadLinkCleared",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Confirms cleared dead-link results. {0} = number of channels reset."
+  },
+  {
+    "id": "StatusDeadLinkClearFailed",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Shown when clearing dead-link results failed to write (e.g. the DB was locked). Must NOT read as success - the channels are still marked."
+  },
+  {
+    "id": "MenuPipSwapWithMain",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "PIP right-click menu: promote the picture-in-picture's channel to the main view and demote the main view's channel into the PIP."
+  },
+  {
+    "id": "MenuPipClose",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "PIP right-click menu: close the picture-in-picture (returns to single view). Says 'close', not 'single view', because that is what the user is doing from inside the PIP."
+  },
+  {
+    "id": "StatusPipSwapped",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Confirms a completed PIP<->main swap."
+  },
+  {
+    "id": "AboutTipHeading",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": "Heading of the About box's tip section, above the two tip buttons. Short — it is a section label, not a sentence."
+  },
+  {
+    "id": "AboutTipBody",
+    "cluster": "DialogAbout",
+    "placeholders": [],
+    "comment": "Explains what the two tip buttons do, so they don't read as a purchase. Must NOT describe how the two backends differ (which payment methods each accepts depends on the creator's settings and would go stale). KEEP IT TO 2 LINES at the About box's width — a third line eats the headroom above the button row and starts crowding the disclaimer above."
+  },
+  {
     "id": "SupportWindowTitle",
     "cluster": "DialogSupport",
     "placeholders": [],
@@ -2227,10 +2283,10 @@
     "comment": ""
   },
   {
-    "id": "SplashFindingArchCookies",
+    "id": "SplashWrappingTinFoil",
     "cluster": "Splash",
     "placeholders": [],
-    "comment": ""
+    "comment": "Splash tagline. Tin foil on the aerial tips is the classic rabbit-ears reception remedy — translate the gag, not the words."
   },
   {
     "id": "SplashLockingOntoTower",
@@ -3480,12 +3536,6 @@
     "cluster": "DialogSystem",
     "placeholders": [],
     "comment": "Warns that beta features are unfinished and off by default."
-  },
-  {
-    "id": "SystemBetaDeadLinkChecker",
-    "cluster": "DialogSystem",
-    "placeholders": [],
-    "comment": "Checkbox label for the dead-link checker beta feature."
   },
   {
     "id": "LogLevelError",

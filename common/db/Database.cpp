@@ -758,6 +758,26 @@ void Database::setDeadStatus(long long channelId, DeadStatus status, long long n
     q.stepDone();
 }
 
+// Reset EVERY channel back to "not checked" — the undo for a dead-link sweep. Also clears
+// last_checked_at, so the next sweep re-probes from scratch instead of skipping rows it considers
+// freshly checked (the TTL is what makes a sweep resumable, and it would otherwise defeat the
+// re-check the user is asking for by clearing).
+//
+// Returns rows affected, or -1 on failure. The -1 is the point, and the reason this deviates from
+// the `return 0` convention elsewhere in this file: sqlite3_changes() reports the last SUCCESSFUL
+// change count on the connection, so swallowing a failed step would return some earlier
+// setSetting's count and let the caller announce "cleared N channels" having cleared nothing —
+// while the grid keeps hiding them. 0 is a legitimate result (nothing was ever marked), so it
+// cannot double as the error code.
+int Database::clearDeadStatuses() {
+    if (!db_) return -1;
+    Stmt q(db_, "UPDATE channels SET dead_status=0, last_checked_at=0 WHERE dead_status!=0 OR "
+                "last_checked_at!=0");
+    if (!q) return -1;
+    if (q.stepDone() != SQLITE_DONE) return -1;  // e.g. SQLITE_BUSY past the busy_timeout
+    return sqlite3_changes(db_);
+}
+
 // ---- EPG (programmes) ------------------------------------------------------
 
 int Database::bulkInsertProgrammes(long long playlistId, const std::vector<Programme>& programmes,

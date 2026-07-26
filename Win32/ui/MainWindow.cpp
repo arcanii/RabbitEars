@@ -1676,6 +1676,36 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // resize or Alt-Tab, but a right-click menu always works.
             AppState* st = stateOf(GetParent(hwnd));
             if (!st) break;
+            // The floating PIP gets its OWN menu. The view menu below is about the main window's
+            // layout — "Video only" and "Fullscreen" do nothing you can see from inside a PIP, and
+            // the three view modes are the wrong vocabulary here (from the PIP, leaving PIP view is
+            // "close this", not "switch to single view"). GWLP_USERDATA carries the pane index.
+            {
+                const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                if (idx >= 0 && idx < static_cast<int>(st->panes.size()) &&
+                    st->panes[idx]->floating) {
+                    HMENU pip = CreatePopupMenu();
+                    AppendMenuW(pip, MF_STRING, 1, tr(i18n::StringId::MenuPipSwapWithMain).c_str());
+                    AppendMenuW(pip, MF_SEPARATOR, 0, nullptr);
+                    AppendMenuW(pip, MF_STRING | (st->pipAlwaysOnTop ? MF_CHECKED : 0u), 2,
+                                tr(i18n::StringId::MenuPipAlwaysOnTop).c_str());
+                    AppendMenuW(pip, MF_SEPARATOR, 0, nullptr);
+                    AppendMenuW(pip, MF_STRING, 3, tr(i18n::StringId::MenuPipClose).c_str());
+                    POINT pp;
+                    GetCursorPos(&pp);
+                    // Owner = the MAIN window, not the PIP: the PIP popup is WS_EX_NOACTIVATE, and
+                    // TrackPopupMenu on a window that never activates leaves the menu unable to
+                    // dismiss itself on an outside click. (Same reason the view menu below passes
+                    // GetParent(hwnd).) TPM_RETURNCMD keeps the ids local to this menu.
+                    const int cmd = TrackPopupMenu(pip, TPM_RETURNCMD | TPM_RIGHTBUTTON, pp.x, pp.y,
+                                                   0, GetParent(hwnd), nullptr);
+                    DestroyMenu(pip);
+                    if (cmd == 1) swapPipWithMain(st);
+                    else if (cmd == 2) onTogglePipAlwaysOnTop(st);
+                    else if (cmd == 3) applyViewMode(st, ViewMode::Single);
+                    return 0;
+                }
+            }
             HMENU pm = CreatePopupMenu();
             AppendMenuW(pm, MF_STRING | (st->videoOnly ? MF_CHECKED : 0u), 1,
                         tr(i18n::StringId::MenuVideoOnlyPlain).c_str());

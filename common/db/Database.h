@@ -88,6 +88,9 @@ public:
     void toggleFavourite(long long channelId);
     void setChannelNumber(long long channelId, std::optional<int> lcn);
     void setDeadStatus(long long channelId, DeadStatus status, long long nowEpoch);
+    // Undo for a dead-link sweep: reset every channel to Unknown + clear last_checked_at.
+    // Returns rows affected, or -1 if the write failed (0 means "nothing needed clearing").
+    int clearDeadStatuses();
 
     // ---- EPG (programmes) --------------------------------------------------
     // Replace this playlist's stored guide with a freshly-parsed batch, in one

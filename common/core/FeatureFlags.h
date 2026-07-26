@@ -24,27 +24,29 @@
 
 namespace rabbitears {
 
-enum class BetaFeature : uint32_t {
-    DeadLinkChecker = 1u << 0,  // background probe that marks unreachable channels dead_status
-    // next: 1u << 1, …
-};
+// NO FLAGS ARE REGISTERED RIGHT NOW — and that is the healthy steady state, not a sign this
+// header is dead. `DeadLinkChecker = 1u << 0` graduated in 0.2.15 (flag AND branch deleted, per
+// the rules above); its stale "beta_dead_link_checker" row is simply never read again. Bit 0 is
+// deliberately NOT reused: a returning user's old row must not silently switch on a new feature.
+// Next flag: start at 1u << 1, and add its label to kBetaLabels in Win32/ui/Dialogs.cpp — the two
+// lists are index-parallel.
+enum class BetaFeature : uint32_t {};
 
 // Stable settings-key suffix — persisted as "beta_<id>" = "1"/"0".
 inline const char* betaFeatureId(BetaFeature f) {
-    switch (f) {
-        case BetaFeature::DeadLinkChecker: return "dead_link_checker";
-    }
+    (void)f;  // no enumerators to switch on yet — add a `case` here alongside the enumerator
     return "";
 }
 inline std::string betaFeatureSettingKey(BetaFeature f) {
     return std::string("beta_") + betaFeatureId(f);
 }
 
-// Every flag, in the order the System… dialog lists them.
+// Every flag, in the order the System… dialog lists them. Returns null with count 0 while none are
+// registered — a zero-length array is ill-formed, so callers must (and all do) bound on `count`
+// before dereferencing.
 inline const BetaFeature* allBetaFeatures(int& count) {
-    static const BetaFeature kAll[] = {BetaFeature::DeadLinkChecker};
-    count = static_cast<int>(sizeof(kAll) / sizeof(kAll[0]));
-    return kAll;
+    count = 0;
+    return nullptr;
 }
 
 inline std::atomic<uint32_t>& betaMaskRef() {
