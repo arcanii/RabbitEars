@@ -74,7 +74,10 @@ struct Tx {
 // SELECT column order shared by every channel query below.
 constexpr const char* kChannelCols =
     "id,playlist_id,name,stream_url,logo_url,group_title,tvg_id,tvg_name,lcn,"
-    "is_favourite,dead_status,last_checked_at,sort_order,user_agent,referrer";
+    "is_favourite,dead_status,last_checked_at,sort_order,user_agent,referrer,"
+    // v8 (VOD). APPENDED, never inserted: readChannel() reads by ordinal, so inserting a
+    // column here would silently shift every field after it.
+    "kind,duration_sec,resume_sec,watched,added_at";
 
 // Predicate restricting a channel query to enabled playlists. Disabled playlists
 // keep their rows but vanish from every cross-playlist view; channelsByPlaylist()
@@ -99,6 +102,13 @@ Channel readChannel(Stmt& q) {
     c.sortOrder = static_cast<int>(q.intCol(12));
     c.userAgent = q.textCol(13);
     c.referrer = q.textCol(14);
+    // v8. All five carry NOT NULL DEFAULTs, so a row written before v8 reads as a live
+    // channel with no duration and no resume point — identical to pre-v8 behaviour.
+    c.kind = static_cast<Channel::Kind>(q.intCol(15));
+    c.durationSec = static_cast<int>(q.intCol(16));
+    c.resumeSec = static_cast<int>(q.intCol(17));
+    c.watched = q.intCol(18) != 0;
+    c.addedAt = q.intCol(19);
     return c;
 }
 
@@ -367,6 +377,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v6: scheduled_recordings.episode_key — per-episode identity for series-rule episode dedup.
 //   v7: scheduled_recordings.prog_start_utc — the unpadded programme start; the padding-proof
 //       airing identity for series-rule slot dedup (start_utc moves when a rule's lead is edited).
+//   v8: channels.kind/duration_sec/resume_sec/watched/added_at — VOD. A movie is a channel row
+//       with kind=1, so it inherits the grid, search, favourites and playback path; every column
+//       defaults to the live-TV answer, so pre-v8 rows and older builds are unaffected.
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -375,7 +388,7 @@ void Database::migrate() {
         Stmt q(db_, "PRAGMA user_version");
         if (q && q.step()) v = q.intCol(0);
     }
-    if (v >= 7) return;  // newest schema; bump in lockstep with the highest step below
+    if (v >= 8) return;  // newest schema; bump in lockstep with the highest step below
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -462,6 +475,25 @@ void Database::migrate() {
     if (!hasColumn("scheduled_recordings", "prog_start_utc"))
         exec("ALTER TABLE scheduled_recordings ADD COLUMN prog_start_utc INTEGER NOT NULL DEFAULT 0");
 
+    // v8: VOD on channels — kind (0 live / 1 movie / 2 episode), plus duration, resume
+    // position, watched and the provider's "added" timestamp. A movie is a channel row, not a
+    // second table, so it inherits the grid, search, favourites and playback path unchanged.
+    //
+    // Every column is NOT NULL with a default that IS the live-TV answer, which is what makes
+    // this safe in both directions: an existing row becomes a live channel with no VOD data,
+    // and an OLDER build (including the macOS app, which shares this file) opening a v8 DB
+    // takes the `v >= 7` early return, ignores the extra columns, and is unharmed.
+    if (!hasColumn("channels", "kind")) {
+        exec("ALTER TABLE channels ADD COLUMN kind INTEGER NOT NULL DEFAULT 0");
+        exec("ALTER TABLE channels ADD COLUMN duration_sec INTEGER NOT NULL DEFAULT 0");
+        exec("ALTER TABLE channels ADD COLUMN resume_sec INTEGER NOT NULL DEFAULT 0");
+        exec("ALTER TABLE channels ADD COLUMN watched INTEGER NOT NULL DEFAULT 0");
+        exec("ALTER TABLE channels ADD COLUMN added_at INTEGER NOT NULL DEFAULT 0");
+    }
+    // Partial index: VOD is a minority of a mixed library, and the live-only case (every
+    // existing user) pays nothing for it.
+    exec("CREATE INDEX IF NOT EXISTS idx_channels_kind ON channels(kind) WHERE kind<>0;");
+
     // Advance user_version to reflect exactly what actually landed, so a partial
     // failure retries the missing step next open instead of skipping it. (hasColumn on a
     // column of a table doubles as a table-exists check — table_info is empty if absent.)
@@ -472,7 +504,9 @@ void Database::migrate() {
         haveV4 && hasColumn("recording_rules", "id") && hasColumn("scheduled_recordings", "rule_id");
     const bool haveV6 = haveV5 && hasColumn("scheduled_recordings", "episode_key");
     const bool haveV7 = haveV6 && hasColumn("scheduled_recordings", "prog_start_utc");
-    if (haveV7) exec("PRAGMA user_version=7");
+    const bool haveV8 = haveV7 && hasColumn("channels", "kind");
+    if (haveV8) exec("PRAGMA user_version=8");
+    else if (haveV7) exec("PRAGMA user_version=7");
     else if (haveV6) exec("PRAGMA user_version=6");
     else if (haveV5) exec("PRAGMA user_version=5");
     else if (haveV4) exec("PRAGMA user_version=4");

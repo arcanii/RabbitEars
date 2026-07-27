@@ -168,6 +168,30 @@ void VlcPlayer::workerLoop() {
             case Cmd::Volume:
                 if (mp_) libvlc_audio_set_volume(mp_, c.ivalue);
                 break;
+            case Cmd::Seek:
+                // Re-check seekability HERE, on the worker, against the live player: the UI's
+                // copy is up to 250 ms stale. And drop the seek outright if the stream has
+                // been REPLACED since the UI issued it — a Seek queued behind a Play would
+                // otherwise land the previous film's position on the new one. streamSeq_ is
+                // bumped by every doPlay, so a stale stamp is unambiguous.
+                if (c.i64seq != streamSeq_.load(std::memory_order_relaxed)) break;
+                if (mp_ && libvlc_media_player_is_seekable(mp_)) {
+                    long long target = c.i64value;
+                    const libvlc_time_t len = libvlc_media_player_get_length(mp_);
+                    if (target < 0) target = 0;
+                    // Land just inside the end: seeking exactly to length ends the stream,
+                    // which turns a drag to the far right into an unexpected stop.
+                    if (len > 0 && target > static_cast<long long>(len) - 1000)
+                        target = static_cast<long long>(len) - 1000;
+                    if (target < 0) target = 0;  // a clip shorter than the 1 s guard
+                    libvlc_media_player_set_time(mp_, static_cast<libvlc_time_t>(target));
+                    // Deliberately NOT re-sampling here. libVLC often reports the new time
+                    // before the demuxer has actually repositioned, so publishing now would
+                    // let the UI's latch clear early — and the player would then report the
+                    // PRE-seek time for a beat, reproducing exactly the snap-back the latch
+                    // exists to hide. The next 250 ms tick publishes the settled value.
+                }
+                break;
             case Cmd::Mute:
                 applyAudioState();
                 break;
@@ -290,6 +314,12 @@ void VlcPlayer::doStop(bool async) {
         media_ = nullptr;
     }
     playing_.store(false);
+    // Drop the position too, or a stopped pane leaves the scrub bar sitting at the old
+    // stream's elapsed time — and worse, seekable_ stays true, so the bar stays on
+    // screen and a drag would enqueue a seek against a player that no longer exists.
+    timeMs_.store(0, std::memory_order_relaxed);
+    lengthMs_.store(0, std::memory_order_relaxed);
+    seekable_.store(false, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lk(statsMtx_);
         snapshot_ = FlowStats{};
@@ -319,6 +349,8 @@ void VlcPlayer::doPlay(const Cmd& c) {
         return;
     }
     media_ = m;  // retain the media ref so sampleStats() can read its counters
+    // New stream: any seek still in flight was aimed at the previous one.
+    streamSeq_.fetch_add(1, std::memory_order_relaxed);
 
     // Reset per-stream stats accumulators for a clean first delta.
     firstSample_ = true;
@@ -360,8 +392,27 @@ void VlcPlayer::doPlay(const Cmd& c) {
 // Worker-thread only. Reads libVLC's cumulative media stats, turns them into
 // real per-second rates (byte-counter deltas over wall-clock) plus per-sample
 // event deltas, publishes the snapshot, and nudges the UI to repaint the meter.
+// Worker-thread only. Playback position, length and seekability, published as atomics
+// for a lock-free UI read (same contract as videoSize()). Kept separate from the stats
+// read because it is the scrub bar's only source of truth and must not share the
+// stats call's failure path.
+void VlcPlayer::samplePosition() {
+    if (!mp_) return;
+    // libVLC returns -1 for both when there is no input yet; a live stream reports
+    // length 0 forever, which is exactly what keeps the scrub bar hidden.
+    const libvlc_time_t t = libvlc_media_player_get_time(mp_);
+    const libvlc_time_t len = libvlc_media_player_get_length(mp_);
+    timeMs_.store(t > 0 ? static_cast<long long>(t) : 0, std::memory_order_relaxed);
+    lengthMs_.store(len > 0 ? static_cast<long long>(len) : 0, std::memory_order_relaxed);
+    // Ask libVLC rather than inferring from length: a stream can report a length while
+    // still refusing to seek, and that combination would otherwise draw a scrub bar
+    // that does nothing when dragged.
+    seekable_.store(libvlc_media_player_is_seekable(mp_) != 0, std::memory_order_relaxed);
+}
+
 void VlcPlayer::sampleStats() {
     if (!mp_ || !media_) return;
+    samplePosition();
     libvlc_media_stats_t s{};
     if (!libvlc_media_get_stats(media_, &s)) return;
 
@@ -497,6 +548,13 @@ bool VlcPlayer::play(const std::wstring& url, const std::wstring& userAgent,
 
 void VlcPlayer::togglePause() { enqueue({Cmd::Pause}); }
 void VlcPlayer::stop() { enqueue({Cmd::Stop}); }
+
+void VlcPlayer::seekTo(long long ms) {
+    Cmd c{Cmd::Seek};
+    c.i64value = ms < 0 ? 0 : ms;
+    c.i64seq = streamSeq_.load(std::memory_order_relaxed);  // the stream the user was scrubbing
+    enqueue(std::move(c));
+}
 
 void VlcPlayer::registerVoutHost(HWND host) {
     if (!host) return;

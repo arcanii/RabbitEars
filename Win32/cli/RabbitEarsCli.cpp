@@ -4,6 +4,7 @@
 // the sibling apps' GvasCli). Usage:
 //   RabbitEarsCli --selftest              run parser + DB round-trip assertions
 //   RabbitEarsCli <file.m3u> [--limit N]  parse a playlist file, store it, dump it
+//   RabbitEarsCli --xtream [url] [--raw]  probe a real Xtream provider's player_api.php
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -19,6 +20,7 @@
 
 #include "core/Gzip.h"
 #include "core/Http.h"
+#include "core/Json.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
 #include "core/PowerPolicy.h"
@@ -34,6 +36,12 @@
 #include "ui/VuLamp.h"
 #include "ui/Skin.h"
 #include "ui/VideoGrid.h"
+
+#include "XtreamRecon.h"
+// Relative, deliberately: this is a Win32/ GUI header and Win32/ is NOT on the CLI's include
+// path. Only the header-inline bufferGrid() is used — the rest of the declarations here are
+// never called, so nothing from the GUI TU has to link.
+#include "../ui/BufferMeter.h"
 
 using namespace rabbitears;
 
@@ -1398,6 +1406,29 @@ int selftest() {
         expect(mdb.open(mpath, &merr),
                "v2 DB opens + migrates" + (merr.empty() ? "" : " (" + utf8FromWide(merr) + ")"));
         expect(mdb.channelsByPlaylist(7).size() == 1, "existing channel survives the v2->v3 upgrade");
+        {   // v8 (VOD): the columns must land, and — the part that matters for 442 existing
+            // users — a row written long before v8 must come back as an ordinary LIVE channel.
+            // If kind ever defaulted to anything else, every channel in the library would
+            // become a movie the moment the app was updated.
+            const auto legacy = mdb.channelsByPlaylist(7);
+            expect(!legacy.empty() && legacy[0].kind == Channel::Kind::Live,
+                   "v8: a pre-v8 channel row migrates to kind=Live, not VOD");
+            expect(!legacy.empty() && legacy[0].durationSec == 0 && legacy[0].resumeSec == 0 &&
+                       !legacy[0].watched && legacy[0].addedAt == 0,
+                   "v8: pre-v8 rows carry neutral VOD defaults");
+            expect(!legacy.empty() && !legacy[0].isVod(), "v8: isVod() is false for a live row");
+            sqlite3* rawv = nullptr;
+            long long ver = 0;
+            if (sqlite3_open16(mpath.c_str(), &rawv) == SQLITE_OK) {
+                sqlite3_stmt* q = nullptr;
+                if (sqlite3_prepare_v2(rawv, "PRAGMA user_version", -1, &q, nullptr) == SQLITE_OK &&
+                    sqlite3_step(q) == SQLITE_ROW)
+                    ver = sqlite3_column_int64(q, 0);
+                if (q) sqlite3_finalize(q);
+                sqlite3_close(rawv);
+            }
+            expect(ver == 8, "v8: user_version advances to 8 after the v2 DB is migrated");
+        }
         const long long np = mdb.addPlaylist(L"New", L"http://n", true, 2000, L"http://n/epg");
         std::wstring got;
         for (const auto& pl : mdb.listPlaylists())
@@ -1566,6 +1597,155 @@ int selftest() {
                "active-language lookup returns a real string");
         setActiveLang(Lang::En);  // leave the process back on English for any later test
     }
+
+    out("\n== JSON reader (Xtream player_api) ==\n");
+    {
+        // The tolerance below is not "being nice to bad input" — it is the documented shape
+        // of real Xtream panels, which quote numbers inconsistently, omit fields, and answer
+        // with a season-keyed MAP where an array would be natural. A strict reader would
+        // hard-fail on providers we cannot test against.
+        JsonValue v;
+        std::string jerr;
+
+        {   // numbers-as-strings, the flagged provider risk, read transparently either way
+            const std::string j =
+                "{\"a\":1234,\"b\":\"1234\",\"c\":\"7.8\",\"d\":7.8,\"e\":\"\",\"f\":null,"
+                "\"g\":\"abc\",\"h\":\"8.8 / 10\"}";
+            expect(parseJson(j, v, &jerr), "json: mixed-typing fixture parses (" + jerr + ")");
+            expect(v["a"].asInt64() == 1234 && v["b"].asInt64() == 1234,
+                   "json: an int reads the same quoted or bare");
+            expect(v["c"].asDouble() > 7.79 && v["c"].asDouble() < 7.81,
+                   "json: a quoted float reads as a number");
+            expect(v["c"].asInt64() == 7, "json: a quoted float truncates to int like a bare one");
+            expect(v["b"].isNumericString() && !v["a"].isNumericString(),
+                   "json: isNumericString distinguishes the two spellings");
+            expect(v["g"].asInt64(-1) == -1 && v["h"].asInt64(-1) == -1,
+                   "json: a non-numeric string does NOT masquerade as a number");
+            expect(v["e"].asString().empty() && v["f"].isNull(),
+                   "json: empty string and null are distinct and both readable");
+            expect(v["nope"].isNull() && v["nope"]["deeper"].isNull(),
+                   "json: a missing key chains safely instead of faulting");
+            expect(v["a"].asString() == "1234",
+                   "json: a number renders from its ORIGINAL token, not a reformatted double");
+        }
+        {   // 64-bit ids must survive exactly — a double would round them
+            const std::string j = "{\"id\":9007199254740993,\"s\":\"9007199254740993\"}";
+            expect(parseJson(j, v, &jerr), "json: 64-bit id fixture parses");
+            expect(v["id"].asInt64() == 9007199254740993LL,
+                   "json: a >2^53 integer survives exactly (a double would round it)");
+            expect(v["s"].asInt64() == 9007199254740993LL, "json: ...quoted too");
+        }
+        {   // the season-keyed episodes map: the keys carry data, so order/keys must survive
+            const std::string j =
+                "{\"episodes\":{\"1\":[{\"id\":\"11\"}],\"2\":[{\"id\":\"21\"},{\"id\":\"22\"}]}}";
+            expect(parseJson(j, v, &jerr), "json: season-keyed episodes map parses");
+            const JsonValue& eps = v["episodes"];
+            expect(eps.isObject() && eps.size() == 2, "json: episodes is a 2-member object");
+            expect(eps.members()[0].first == "1" && eps.members()[1].first == "2",
+                   "json: season keys are preserved in document order (they ARE the season number)");
+            expect(eps["2"].size() == 2 && eps["2"][1]["id"].asInt64() == 22,
+                   "json: episodes nest and index correctly");
+        }
+        {   // structure is strict — a truncated download must NOT look like a short library
+            expect(!parseJson("[{\"a\":1},", v, &jerr), "json: a truncated body fails");
+            expect(jerr.find("byte") != std::string::npos,
+                   "json: the error names a byte offset (" + jerr + ")");
+            expect(!parseJson("<html>error</html>", v, &jerr), "json: an HTML error page fails");
+            expect(!parseJson("[1,2]<br />Fatal error", v, &jerr),
+                   "json: trailing junk after the root FAILS (a PHP notice is a server fault)");
+            expect(!parseJson("", v, &jerr), "json: an empty body fails");
+            expect(!parseJson("[-]", v, &jerr), "json: '-' with no digits is not a number");
+            expect(parseJson("[]", v, &jerr) && v.isArray() && v.size() == 0,
+                   "json: an empty array is valid and distinguishable from a failure");
+            std::string deep(200, '[');
+            expect(!parseJson(deep, v, &jerr), "json: a nesting bomb is refused, not a stack overflow");
+        }
+        {   // encodings a panel really emits
+            expect(parseJson("\xEF\xBB\xBF{\"a\":1}", v, &jerr) && v["a"].asInt64() == 1,
+                   "json: a UTF-8 BOM is accepted (a BOM'd PHP file is misconfigured, not broken)");
+            expect(parseJson("[\"Ar\\u00e8s\"]", v, &jerr) &&
+                       v[0].asString().find("\xC3\xA8") != std::string::npos,
+                   "json: \\u escapes decode to UTF-8");
+            expect(parseJson("[\"\\ud83c\\udfac\"]", v, &jerr) && v[0].asString().size() == 4,
+                   "json: a surrogate PAIR becomes one 4-byte UTF-8 sequence");
+            expect(parseJson("[\"\\ud800x\"]", v, &jerr) &&
+                       v[0].asString().find("\xEF\xBF\xBD") != std::string::npos,
+                   "json: a LONE surrogate becomes U+FFFD, not invalid UTF-8 (SQLite would reject it)");
+            expect(parseJson("{\"a\":1,\"a\":2}", v, &jerr) && v["a"].asInt64() == 2,
+                   "json: a duplicate key resolves last-wins, as mainstream parsers do");
+        }
+        {   // flags: panels spell booleans four ways
+            const std::string j = "{\"p\":1,\"q\":\"1\",\"r\":0,\"s\":\"0\",\"t\":true,\"u\":\"\"}";
+            expect(parseJson(j, v, &jerr), "json: flag fixture parses");
+            expect(v["p"].asBool() && v["q"].asBool() && v["t"].asBool(),
+                   "json: 1, \"1\" and true all read true");
+            expect(!v["r"].asBool() && !v["s"].asBool() && !v["u"].asBool(),
+                   "json: 0, \"0\" and \"\" all read false (this is user_info.auth)");
+        }
+    }
+
+    out("\n== Buffer-meter LED grid (glass inset) ==\n");
+    {
+        // The tank's grid runs edge-to-edge, so wiring the glass bezel in costs real dial.
+        // That is only acceptable because it is GATED on the glass strength, and THAT is
+        // what these assertions pin: with glass off the grid must be bit-identical to the
+        // pre-glass renderer. The renderer itself is unreachable from here (anonymous
+        // namespace in a GUI TU), which is exactly why the geometry was lifted into the
+        // header — see BufferMeter.h.
+
+        // The real tray size at 96 dpi, with the layout recorded in BACKLOG.md.
+        const BufferGrid off = bufferGrid(115, 30, 1, 3, 0);
+        expect(off.cols == 38 && off.rows == 10 && off.ox == 1 && off.oy == 0,
+               "buffer grid: glass OFF reproduces the pre-glass 38x10 @ (1,0) exactly");
+
+        // Glass on: one row and one column of dial is spent on the frame, as designed.
+        const int chrome = glassChromePx(115, 30, 2);
+        expect(chrome == 2, "buffer grid: glassChromePx(115,30,2) == 2 (the bezel fits)");
+        const BufferGrid on = bufferGrid(115, 30, 1, 3, chrome);
+        expect(on.cols == 37 && on.rows == 9 && on.ox == 2 && on.oy == 2,
+               "buffer grid: glass ON costs exactly one row + one column (37x9 @ (2,2))");
+
+        // The grid must never intrude on the band the bezel is painted into — if it did,
+        // the frame would be drawn OVER live LEDs and read as a rendering fault.
+        bool contained = true, sane = true;
+        for (int w = 8; w <= 400; w += 7) {
+            for (int h = 8; h <= 120; h += 5) {
+                for (int dpi96 = 96; dpi96 <= 192; dpi96 += 48) {
+                    const int gap = std::max(1, MulDiv(1, dpi96, 96));
+                    const int pitch = std::max(gap + 2, MulDiv(3, dpi96, 96));
+                    const int ins = glassChromePx(w, h, MulDiv(2, dpi96, 96));
+                    const BufferGrid g = bufferGrid(w, h, gap, pitch, ins);
+                    if (g.cols < 1 || g.rows < 1 || g.ox < 0 || g.oy < 0) sane = false;
+                    // A panel too small to carry BOTH a frame and a cell legitimately
+                    // overflows; the renderer clips per-pixel. Only check where it fits.
+                    if (w - 2 * ins >= pitch && h - 2 * ins >= pitch) {
+                        if (g.ox < ins || g.oy < ins) contained = false;
+                        if (g.ox + g.cols * pitch - gap > w - ins) contained = false;
+                        if (g.oy + g.rows * pitch - gap > h - ins) contained = false;
+                    }
+                }
+            }
+        }
+        expect(sane, "buffer grid: never degenerate (cols/rows >= 1, offsets >= 0) at any size/DPI");
+        expect(contained, "buffer grid: LEDs stay inside the bezel band at every size/DPI");
+
+        // And the gate itself: inset 0 must equal the old layout at EVERY size, not just 115x30.
+        bool gated = true;
+        for (int w = 8; w <= 400; w += 7)
+            for (int h = 8; h <= 120; h += 5) {
+                const BufferGrid g = bufferGrid(w, h, 1, 3, 0);
+                const int cols = std::max(1, (w + 1) / 3), rows = std::max(1, (h + 1) / 3);
+                if (g.cols != cols || g.rows != rows) gated = false;
+                if (g.ox != (w - (cols * 3 - 1)) / 2 || g.oy != (h - (rows * 3 - 1)) / 2) gated = false;
+            }
+        expect(gated, "buffer grid: inset 0 == the original expressions at every size (no default regression)");
+    }
+
+    // The --xtream recon probe's census scanner + redactor. Covered here because a
+    // scanner bug does not crash — it silently mis-reports the provider's shape, and the
+    // VOD design doc gets written off that report.
+    out("\n== Xtream recon (census scanner + redaction) ==\n");
+    xtreamReconSelftest(&expect);
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");
     return g_fail == 0 ? 0 : 1;
@@ -1798,6 +1978,18 @@ int wmain(int argc, wchar_t** argv) {
     if (argc >= 3 && std::wstring(argv[1]) == L"--epg") return epgTool(argv[2]);
     if (argc >= 2 && std::wstring(argv[1]) == L"--tvgids")
         return tvgIds(argc >= 3 ? std::wstring(argv[2]) : std::wstring());
+    if (argc >= 2 && std::wstring(argv[1]) == L"--xtream") {
+        // Both extra args are optional and order-independent: the URL (omit it to auto-pick
+        // an Xtream playlist out of the app's own DB) and --raw (disable redaction).
+        std::wstring url;
+        bool raw = false;
+        for (int i = 2; i < argc; ++i) {
+            const std::wstring a = argv[i];
+            if (a == L"--raw") raw = true;
+            else if (url.empty()) url = a;
+        }
+        return xtreamRecon(url, raw);
+    }
     if (argc >= 2) {
         int limit = 20;
         for (int i = 2; i < argc - 1; ++i)
@@ -1808,6 +2000,11 @@ int wmain(int argc, wchar_t** argv) {
         "  RabbitEarsCli --selftest\n"
         "  RabbitEarsCli --fetch <url>\n"
         "  RabbitEarsCli --import <url|file>   (into the app's real DB)\n"
+        "  RabbitEarsCli --epg <url|file>\n"
+        "  RabbitEarsCli --tvgids [epg url|file]\n"
+        "  RabbitEarsCli --xtream [url] [--raw]  (probe an Xtream provider; url defaults\n"
+        "                                         to an Xtream playlist in the app's DB.\n"
+        "                                         Output is credential-redacted unless --raw.)\n"
         "  RabbitEarsCli <file.m3u> [--limit N]\n");
     return 0;
 }

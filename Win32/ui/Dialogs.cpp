@@ -2072,6 +2072,10 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 for (int r = 0; r < 4; ++r)
                     if (st->preview[r]) InvalidateRect(st->preview[r], nullptr, FALSE);
+                // The Data-flow preview takes glass too, and it will NOT self-refresh: the
+                // buffer meter kills its own timer once the tank drains, so without this the
+                // dialog shows stale glass for the whole drag.
+                if (st->bufPreview) InvalidateRect(st->bufPreview, nullptr, FALSE);
                 return 0;
             }
             for (int r = 0; r < 4; ++r)

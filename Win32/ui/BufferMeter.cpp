@@ -21,6 +21,8 @@
 
 #include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM
 
+#include "ui/GlassMask.h"  // shared "glass cover" mask math (common/)
+#include "ui/MiniMeter.h"  // miniMeterGlass() — the ONE global strength, shared with the tray
 #include "ui/Theme.h"
 #include "ui/Tr.h"
 
@@ -296,6 +298,12 @@ struct MeterState {
     int     dibW = 0, dibH = 0;  // current DIB size (client px); recreated on resize
     wchar_t metrics[40] = L"";   // compact throughput/delay readout drawn over the grid
     HFONT   metricsFont = nullptr;
+    // Glass overlay LUTs, cached exactly as MiniMeter caches its own: the mask is
+    // frame-INVARIANT, so it is rebuilt only when the size, the DPI-derived chrome width,
+    // or the global strength changes — never per frame.
+    std::vector<uint8_t> glassAdd, glassMul;
+    float   glassBuilt = -1.0f;  // strength the LUTs were built for (-1 = never)
+    int     glassChrome = -1;    // chrome width they were built for (DPI can change under us)
     std::function<void(bool)> onHidden;
 };
 MeterState* stateOf(HWND h) { return reinterpret_cast<MeterState*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
@@ -623,7 +631,12 @@ float sampleField(const float* x, float fi, float fj) {
 // coloured by the density (depth-shaded body, whitish foam at the surface, a
 // specular shimmer that falls with the flow). Dry cells show a faint "off" dot so
 // the matrix reads even above the waterline; gaps stay the panel background.
-void renderLedBits(MeterState* st, const Theme& th, int W, int H) {
+// `inset` is the chrome band reserved for the glass bezel, in device pixels — 0 when glass
+// is off, which is the default and which reproduces the pre-glass grid EXACTLY. Unlike the
+// mini-meters, this meter's LED grid is genuinely edge-to-edge (at 115x30 the top row
+// starts at y=0), so a frame here really does cost dial: the grid drops 38x10 -> 37x9. That
+// is why the inset is gated rather than permanent.
+void renderLedBits(MeterState* st, const Theme& th, int W, int H, int inset) {
     const Fluid& f = st->fluid;
     const int bgR = GetRValue(th.windowBg), bgG = GetGValue(th.windowBg), bgB = GetBValue(th.windowBg);
     const float coR = GetRValue(th.accent), coG = GetGValue(th.accent);
@@ -642,10 +655,9 @@ void renderLedBits(MeterState* st, const Theme& th, int W, int H) {
     const int gap = std::max(1, dpx(st->dpi, LED_GAP));
     const int pitch = std::max(gap + 2, dpx(st->dpi, LED_PITCH));
     const int cellPx = pitch - gap;
-    const int cols = std::max(1, (W + gap) / pitch);
-    const int rows = std::max(1, (H + gap) / pitch);
-    const int ox = (W - (cols * pitch - gap)) / 2;
-    const int oy = (H - (rows * pitch - gap)) / 2;
+    // Grid geometry lives in the header so --selftest can pin it (see BufferMeter.h).
+    const BufferGrid grid = bufferGrid(W, H, gap, pitch, inset);
+    const int cols = grid.cols, rows = grid.rows, ox = grid.ox, oy = grid.oy;
 
     const float SURF = 0.5f;
     // Map rows onto the bottom kVisibleFill of the tank, dropping the never-lit
@@ -751,16 +763,58 @@ void ensureDib(HWND hwnd, MeterState* st, int W, int H) {
     st->dib = CreateDIBSection(st->dibDC, &bmi, DIB_RGB_COLORS,
                                reinterpret_cast<void**>(&st->bits), nullptr, 0);
     if (st->dib) SelectObject(st->dibDC, st->dib);
+    st->glassBuilt = -1.0f;  // the LUTs are sized to the DIB — force a rebuild
+}
+
+// The chrome band this meter reserves for the bezel. Mirrors MiniMeter's meterChromePx()
+// so both meters get an identically-proportioned frame. NOTE the argument order: this
+// file's dpx() is dpx(dpi, v), the REVERSE of MiniMeter.cpp's dpx(v, dpi).
+int bufferChromePx(UINT dpi) { return dpx(dpi, 2); }
+
+// Rebuild the glass LUTs if the strength or chrome width changed, and return the number of
+// pixels the LED grid must be inset by (0 when glass is off).
+int ensureGlass(MeterState* st, int W, int H) {
+    const float want = miniMeterGlass();  // ONE global strength shared with the mini-meters
+    const int chrome = bufferChromePx(st->dpi);
+    if (st->glassBuilt != want || st->glassChrome != chrome) {
+        buildGlassMask(W, H, GlassParams{want, chrome}, st->glassAdd, st->glassMul);
+        st->glassBuilt = want;
+        st->glassChrome = chrome;
+    }
+    // Ask the shared mask what width it will ACTUALLY use, rather than assuming `chrome` —
+    // it clamps on a panel too small to carry a frame, and the inset must agree with the
+    // bezel exactly or the frame lands on dial pixels.
+    return want > 0.0f ? glassChromePx(W, H, chrome) : 0;
+}
+
+// Apply the cached LUTs over the finished frame. Writes st->bits directly, so unlike a
+// GDI-drawn overlay it needs no GdiFlush — nothing has been drawn through the DC yet.
+void applyGlass(MeterState* st, int W, int H) {
+    if (st->glassBuilt <= 0.0f || !st->bits) return;
+    const size_t n = static_cast<size_t>(W) * static_cast<size_t>(H);
+    if (st->glassAdd.size() != n || st->glassMul.size() != n) return;
+    auto* px = reinterpret_cast<uint8_t*>(st->bits);  // BGRX, same layout MiniMeter walks
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned mul = st->glassMul[i], add = st->glassAdd[i];
+        for (int ch = 0; ch < 3; ++ch) {
+            unsigned v = px[i * 4 + ch];
+            v = (v * mul) / 255u + add;
+            px[i * 4 + ch] = static_cast<uint8_t>(v > 255u ? 255u : v);
+        }
+    }
 }
 
 // Overlay a small throughput readout (e.g. "12.4 Mb/s") in the top-right, with a
 // 1px shadow so it stays legible over lit LEDs. Font is cached (DPI-scaled).
-void drawMetrics(HDC hdc, MeterState* st, const Theme& th, int W, int H) {
+void drawMetrics(HDC hdc, MeterState* st, const Theme& th, int W, int H, int inset) {
     if (!st->metricsFont)
         st->metricsFont = themeFont(FontRole::Body, st->dpi, 11, FW_SEMIBOLD);
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, st->metricsFont));
     const int oldMode = SetBkMode(hdc, TRANSPARENT);
-    RECT tr{0, dpx(st->dpi, 1), W - dpx(st->dpi, 4), H};
+    // The readout is drawn AFTER the blit, so it sits on top of the bezel. At the original
+    // top = dpx(1) it crossed the frame; clear the band when there is one. Right edge too —
+    // dpx(4) of margin is less than the bezel is wide at high DPI.
+    RECT tr{0, dpx(st->dpi, 1) + inset, W - std::max(dpx(st->dpi, 4), inset + dpx(st->dpi, 2)), H};
     RECT sh = tr;
     OffsetRect(&sh, dpx(st->dpi, 1), dpx(st->dpi, 1));
     SetTextColor(hdc, RGB(0, 0, 0));
@@ -788,9 +842,11 @@ void render(HWND hwnd, MeterState* st) {
     if (W > 0 && H > 0) {
         ensureDib(hwnd, st, W, H);
         if (st->bits) {
-            renderLedBits(st, th, W, H);
+            const int inset = ensureGlass(st, W, H);
+            renderLedBits(st, th, W, H, inset);
+            applyGlass(st, W, H);  // last, over the finished dial — same order as MiniMeter
             BitBlt(hdc, 0, 0, W, H, st->dibDC, 0, 0, SRCCOPY);
-            if (st->metrics[0]) drawMetrics(hdc, st, th, W, H);
+            if (st->metrics[0]) drawMetrics(hdc, st, th, W, H, inset);
         }
     }
     EndPaint(hwnd, &ps);

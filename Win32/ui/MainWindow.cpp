@@ -139,7 +139,8 @@ void remakeUiFonts(AppState* st) {
     st->uiFont = themeFont(FontRole::Body, st->dpi);
     st->titleFont = themeFont(FontRole::Title, st->dpi);
     st->glyphFont = themeFont(FontRole::Glyph, st->dpi);
-    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav})
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav,
+                   st->seekBar, st->timeLabel})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
     SendMessageW(st->volIcon, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
     for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
@@ -161,7 +162,7 @@ void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
     const Theme& th = currentTheme();
     const wchar_t* sub = th.dark ? L"DarkMode_Explorer" : L"Explorer";
     for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav,
-                   st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+                   st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->seekBar, st->timeLabel})
         SetWindowTheme(h, sub, nullptr);
     TreeView_SetBkColor(st->nav, th.panelBg);
     TreeView_SetTextColor(st->nav, th.textPrimary);
@@ -338,6 +339,13 @@ void createChildren(HWND hwnd, AppState* st) {
     st->bufBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_NOTICKS, 0,
                                  0, 10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BUF)),
                                  hInst, nullptr);
+    // VOD scrub bar + elapsed/total readout. Created WITHOUT WS_VISIBLE: they appear only
+    // when the active pane's media is actually seekable, which no live channel is.
+    st->seekBar = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | TBS_HORZ | TBS_NOTICKS, 0, 0,
+                                  10, 10, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SEEK)),
+                                  hInst, nullptr);
+    st->timeLabel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_LEFTNOWORDWRAP, 0, 0, 10, 10,
+                                    hwnd, nullptr, hInst, nullptr);
     st->btnFull = CreateWindowExW(0, L"BUTTON", kGlyphFull, kTransportBtnStyle, 0, 0, 10, 10,
                                   hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_FULL)), hInst, nullptr);
     st->status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP, 0, 0, 10,
@@ -365,6 +373,10 @@ void createChildren(HWND hwnd, AppState* st) {
                  MAKELPARAM(kBufMinMs / kBufStepMs, kBufMaxMs / kBufStepMs));
     SendMessageW(st->bufBar, TBM_SETPOS, TRUE, st->ap().player.networkCaching() / kBufStepMs);
     SetWindowTextW(st->bufLabel, bufLabelText(st->ap().player.networkCaching()).c_str());
+    // Fixed 0..1000 scrub range mapped onto the media length, rather than a range set per
+    // stream: the length of a network VOD arrives late and can be revised mid-stream, and
+    // re-ranging a trackbar under the user's thumb makes the drag jump.
+    SendMessageW(st->seekBar, TBM_SETRANGE, TRUE, MAKELPARAM(0, kSeekTicks));
 
     // Speaker glyph + a hover tooltip ("Volume: N%") so the slider self-explains.
     SetWindowTextW(st->volIcon, L"");
@@ -387,7 +399,8 @@ void createChildren(HWND hwnd, AppState* st) {
         SendMessageW(st->tip, TTM_SETMAXTIPWIDTH, 0, dp(280, st->dpi));  // enable multiline (meter stats)
     }
 
-    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav}) {
+    for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav,
+                   st->seekBar, st->timeLabel}) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
@@ -1024,6 +1037,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     channelGridSetNowPlaying(st->grid, 0);
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
+                    // Explicitly, not via updateSeekUi: stop() is ASYNCHRONOUS, so the
+                    // player's atomics may still say "seekable" for another beat — and no
+                    // event ever follows a stop (doStop detaches the callbacks first), so
+                    // this is the only chance to retire the bar.
+                    if (resetSeekUi(st)) layout(hwnd, st);
                     setStatus(st, tr(i18n::StringId::StatusStopped));
                     return 0;
                 case ID_BTN_REC: onToggleRecord(st); return 0;
@@ -1278,6 +1296,27 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     SetWindowTextW(st->bufLabel, bufLabelText(ms).c_str());  // live while dragging
                 else
                     setBufferMs(st, ms, /*replay=*/true);  // apply + re-buffer on release/click/key
+            } else if (ctl == st->seekBar) {
+                // Commit ONLY on TB_ENDTRACK. It terminates every gesture — drag, page-click,
+                // arrow key, Home/End — so one seek is issued per interaction rather than one
+                // per drag tick, which on a network stream would re-buffer continuously.
+                // Everything else just moves the thumb and previews.
+                if (LOWORD(wParam) == TB_ENDTRACK) {
+                    st->seekDragging = false;
+                    const long long len = st->ap().player.lengthMs();
+                    if (len > 0) {
+                        const long long tick = SendMessageW(st->seekBar, TBM_GETPOS, 0, 0);
+                        const long long target = len * tick / kSeekTicks;
+                        st->ap().player.seekTo(target);
+                        // Hold the display at the target until the player catches up; see
+                        // updateSeekUi(). 3 s is generous for a network demuxer to re-seek.
+                        st->seekLatchMs = target;
+                        st->seekLatchUntil = GetTickCount64() + 3000;
+                    }
+                } else {
+                    st->seekDragging = true;
+                }
+                if (updateSeekUi(st)) layout(hwnd, st);  // e.g. the media went unseekable mid-drag
             }
             return 0;
         }
@@ -1395,6 +1434,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     break;
             }
+            // One place for the scrub bar, driven by every event rather than just Stats:
+            // Stats carries the ~4 Hz position, but Stopped/Error/EndReached are what
+            // retire the bar, and no Stats event follows a stop (the worker stops sampling
+            // once the player is gone), so hiding it has to happen here.
+            if (updateSeekUi(st)) layout(hwnd, st);  // visibility changed -> the strip re-flows
             return 0;
         }
         case WM_APP_MAKE_VOUT_HOST: {

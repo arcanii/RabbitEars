@@ -34,6 +34,31 @@ void bufferMeterSetHidden(HWND meter, bool hidden);
 void bufferMeterSetOnHiddenChanged(HWND meter, std::function<void(bool)> cb);
 void bufferMeterSetDpi(HWND meter, UINT dpi);
 
+// ---- LED grid geometry -----------------------------------------------------
+// Factored out of the renderer, and header-inline, for ONE reason: the renderer lives in an
+// anonymous namespace inside a GUI translation unit that --selftest cannot link, and the
+// property that matters here is not visual — it is that turning the glass overlay OFF costs
+// the tank exactly ZERO dial pixels.
+//
+// This meter's grid is genuinely edge-to-edge (at 115x30 the top LED row starts at y=0), so
+// unlike the mini-meters a bezel here really does eat a row and a column. That is acceptable
+// only because it is GATED: `inset` is 0 whenever glass strength is 0, which is the default,
+// and at inset == 0 every value below is bit-identical to the pre-glass renderer. A test can
+// pin that; an eyeball on a 115x30 panel cannot.
+struct BufferGrid {
+    int cols = 1, rows = 1, ox = 0, oy = 0;
+};
+inline BufferGrid bufferGrid(int W, int H, int gap, int pitch, int inset) {
+    BufferGrid g;
+    const int gridW = (W - 2 * inset) > 1 ? (W - 2 * inset) : 1;
+    const int gridH = (H - 2 * inset) > 1 ? (H - 2 * inset) : 1;
+    g.cols = (gridW + gap) / pitch; if (g.cols < 1) g.cols = 1;
+    g.rows = (gridH + gap) / pitch; if (g.rows < 1) g.rows = 1;
+    g.ox = inset + (gridW - (g.cols * pitch - gap)) / 2;
+    g.oy = inset + (gridH - (g.rows * pitch - gap)) / 2;
+    return g;
+}
+
 // ---- fluid colour ----------------------------------------------------------
 // The liquid's body colour, as seen at the SURFACE; depth shades it darker (see the note in
 // renderLedBits on why the three channels darken at different rates). Foam and the specular

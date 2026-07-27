@@ -16,8 +16,10 @@ target_link_libraries(RabbitEarsPlatformWin PUBLIC RabbitEarsCore shell32 ole32 
 
 # ---------------------------------------------------------------------------
 # RabbitEarsCli — headless test/inspection tool for the core (--selftest).
+# XtreamRecon.cpp is a deliberately self-contained, deletable probe (--xtream) for
+# gate 1 of the VOD epic — it is NOT the production JSON path. See its header.
 # ---------------------------------------------------------------------------
-add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp)
+add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp)
 target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsPlatformWin)
 add_test(NAME selftest COMMAND RabbitEarsCli --selftest)  # peer of mac/'s selftest
 

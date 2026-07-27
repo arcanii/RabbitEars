@@ -247,7 +247,7 @@ void layout(HWND hwnd, AppState* st) {
     //    covers the pixels they vacate.)
     constexpr UINT kSwp = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS;
     constexpr UINT kSwpMove = SWP_NOZORDER | SWP_NOACTIVATE;
-    HDWP dwp = BeginDeferWindowPos(24);
+    HDWP dwp = BeginDeferWindowPos(26);  // +2 for the VOD scrub bar and its time readout
     auto place = [&](HWND h, int px, int py, int pw, int ph) {
         if (h && dwp)
             dwp = DeferWindowPos(dwp, h, nullptr, px, py, std::max(0, pw), std::max(0, ph), kSwp);
@@ -267,7 +267,8 @@ void layout(HWND hwnd, AppState* st) {
         for (HWND h : {st->nav, st->grid, st->search, st->btnPlay, st->btnStop, st->btnRec,
                        st->volIcon, st->volBar, st->bufLabel, st->bufBar, st->btnFull, st->status,
                        st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
-                       st->meterFrames, st->gripNav, st->gripVideo, st->gripGrid})
+                       st->meterFrames, st->gripNav, st->gripVideo, st->gripGrid,
+                       st->seekBar, st->timeLabel})
             ShowWindow(h, SW_HIDE);
         // Tile the panes per the CURRENT view mode across the whole client (no chrome/strip), so
         // Split stays a 2x2 grid and Single/PIP fill it with the main pane — rather than collapsing
@@ -386,10 +387,34 @@ void layout(HWND hwnd, AppState* st) {
     const int bufLabelW = dp(84, st->dpi), bufBarW = dp(110, st->dpi);
     placeMove(st->bufLabel, x, by, bufLabelW, btnH); x += bufLabelW + dp(2, st->dpi);
     placeMove(st->bufBar, x, by, bufBarW, btnH); x += bufBarW + pad * 2;
-    // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
-    // meters are hidden (also via the deferred pass, so show/move stay atomic).
     const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
     const int bufMeterW = dp(115, st->dpi);  // the fluid tank: half its old width, to match the tray
+    // VOD scrub bar + "12:34 / 1:45:07". st->seekShown is set by updateSeekUi() from the
+    // ACTIVE pane's seekability, so this is dead layout on every live channel — the strip
+    // is byte-identical to 0.2.15 unless a seekable stream is playing. It claims width
+    // ahead of the meter tray (which already degrades gracefully), but never at the cost
+    // of overlapping the fluid tank, which is placed unconditionally at the far right.
+    // timeW fits "1:45:07 / 1:45:07" — 17 glyphs. Measured rather than guessed, because the
+    // CJK UI fonts (Yu Gothic UI / JhengHei UI) have wider digits than Segoe UI and the label
+    // is SS_LEFTNOWORDWRAP, which clips with no ellipsis rather than shrinking.
+    const int seekW = dp(180, st->dpi), seekGap = dp(6, st->dpi);
+    const int timeW = std::max(dp(104, st->dpi),
+                               measureText(hwnd, st->uiFont, L"1:45:07 / 1:45:07") + dp(8, st->dpi));
+    const int trayLimit = vidR.right - pad - bufMeterW - pad;
+    const bool showSeek = st->seekShown && (x + seekW + seekGap + timeW <= trayLimit);
+    // Show/hide through the SAME deferred pass as the meters, so a strip that grows or
+    // shrinks never paints a control at its old position for one frame.
+    if (st->seekBar && dwp)
+        dwp = DeferWindowPos(dwp, st->seekBar, nullptr, x, by, seekW, btnH,
+                             showSeek ? (kSwpMove | SWP_SHOWWINDOW)
+                                      : (kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW));
+    if (st->timeLabel && dwp)
+        dwp = DeferWindowPos(dwp, st->timeLabel, nullptr, x + seekW + seekGap, by, timeW, btnH,
+                             showSeek ? (kSwpMove | SWP_SHOWWINDOW)
+                                      : (kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW));
+    if (showSeek) x += seekW + seekGap + timeW + pad;
+    // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
+    // meters are hidden (also via the deferred pass, so show/move stay atomic).
     int rightX = vidR.right - pad;
     placeMove(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
     rightX -= bufMeterW + pad;

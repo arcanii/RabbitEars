@@ -65,6 +65,9 @@ constexpr int ID_BTN_FULL = 2013;
 constexpr int ID_BUFFER = 2014;
 constexpr int ID_BUF = 2015;  // buffer-size slider
 constexpr int ID_BTN_REC = 2016;
+// 2017 is a genuine gap in the transport block (2010..2016 used, 2020 starts the next
+// block) — NOT inside any of the computed ranges noted at the bottom of this id list.
+constexpr int ID_SEEK = 2017;  // VOD scrub bar (hidden unless the media is seekable)
 constexpr int ID_SEARCH = 2020;
 constexpr int ID_GRID = 2021;
 constexpr int ID_NAV = 2022;
@@ -133,6 +136,12 @@ constexpr wchar_t kGlyphFull[] = L"";
 // Buffer (network-caching) slider bounds in ms, snapped to kBufStepMs. This is the
 // receive->show latency the user trades for smoothness on flaky streams.
 constexpr int kBufMinMs = 500, kBufMaxMs = 8000, kBufStepMs = 250;
+
+// Scrub-bar resolution. The trackbar is a fixed 0..kSeekTicks and the media length is
+// mapped onto it, so a length that arrives late (or is revised mid-stream, which adaptive
+// streams do) never re-ranges the control under the user's thumb. 1000 ticks is ~7 s of
+// granularity on a 2-hour film — finer than the thumb can be placed at any sane width.
+constexpr int kSeekTicks = 1000;
 
 enum class ViewKind { All, Favourites, Group, Country, Playlist, Guide };
 struct ViewFilter {
@@ -233,6 +242,20 @@ struct AppState {
     HWND       volBar = nullptr;
     HWND       bufLabel = nullptr;  // "Buffer 1.5 s"
     HWND       bufBar = nullptr;    // network-caching slider (receive->show delay)
+    // Scrub bar + "12:34 / 1:45:07" readout. BOTH stay hidden unless the ACTIVE pane's
+    // media reports seekable with a real length — i.e. never on a live channel, so the
+    // strip is unchanged for every existing user. See VlcPlayer::isSeekable().
+    HWND       seekBar = nullptr;
+    HWND       timeLabel = nullptr;
+    bool       seekShown = false;      // last computed visibility (layout() reads it)
+    bool       seekDragging = false;   // thumb held: the USER owns the position, not libVLC
+    // After a seek is issued, libVLC keeps reporting the OLD time for a beat. Without
+    // this latch the thumb snaps back to where it was and then jumps forward again.
+    // Display the target until the player agrees (or the deadline passes).
+    long long  seekLatchMs = -1;       // -1 = not latched
+    unsigned long long seekLatchUntil = 0;  // GetTickCount64() deadline
+    long long  seekTick = -1;          // last tick pushed to the control (-1 = none); skips
+                                       // ~96% of the 4 Hz updates, which never move the thumb
     HWND       tip = nullptr;       // shared tooltip (volume slider, buffer slider, meter)
     HWND       status = nullptr;
     HWND       bufferMeter = nullptr;
@@ -360,6 +383,21 @@ void playChannelInPane(AppState* st, const Channel& c, int idx);
 void playChannel(AppState* st, const Channel& c);
 std::wstring bufLabelText(int ms);
 void setBufferMs(AppState* st, int ms, bool replay);
+// "1:45:07" over an hour, "12:34" under. Purely numeric, so it needs no i18n key.
+std::wstring formatHms(long long ms);
+// Pull the active pane's position into the scrub bar + readout, and show/hide the pair
+// when seekability changes. Cheap and idempotent — called ~4 Hz off PlayerEvent::Stats
+// and on every transport state change. Returns true if visibility CHANGED, which is the
+// caller's cue to re-run layout().
+bool updateSeekUi(AppState* st);
+// Force the scrub bar off and clear its state. Needed on the paths where NO player event
+// will ever arrive to do it — an explicit Stop detaches the libVLC callbacks first. Returns
+// true when the strip must re-flow.
+bool resetSeekUi(AppState* st);
+// Drop a half-finished drag/seek without touching visibility. Call on every stream or
+// active-pane change: a pane switch between two seekable streams does not flip visibility,
+// so the visibility path cannot be relied on to clear it.
+void clearSeekGesture(AppState* st);
 std::wstring nameFromSource(const std::wstring& src, bool isUrl);
 void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl, const std::wstring& name);
 void onAddUrl(AppState* st);

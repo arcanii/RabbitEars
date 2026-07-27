@@ -217,6 +217,10 @@ void playChannelInPane(AppState* st, const Channel& c, int idx) {
         bufferMeterSetHealth(st->bufferMeter, 15);
         resetStatMeters(st);  // clear signal/bitrate/frames so switching to a dead/stalled stream
                               // can't leave the previous channel's readings frozen on the meters
+        // A new stream in the active pane invalidates any pending seek: the old target means
+        // nothing here, and relying on the visibility transition to clear it is a race — the
+        // worker republishes a length every 250 ms, so VOD->VOD may never flip visibility.
+        clearSeekGesture(st);
         setStatus(st, trf(i18n::StringId::StatusOpening, { c.name }));
     } else {
         setStatus(st, trf(i18n::StringId::StatusPipChannel, { c.name }));
@@ -240,6 +244,112 @@ void setBufferMs(AppState* st, int ms, bool replay) {
     if (st->bufBar) SendMessageW(st->bufBar, TBM_SETPOS, TRUE, ms / kBufStepMs);
     if (st->bufLabel) SetWindowTextW(st->bufLabel, bufLabelText(ms).c_str());
     if (replay && st->ap().player.isPlaying() && st->ap().nowPlaying.id != 0) playChannel(st, st->ap().nowPlaying);
+}
+
+std::wstring formatHms(long long ms) {
+    if (ms < 0) ms = 0;
+    const long long total = ms / 1000;
+    const long long h = total / 3600, m = (total / 60) % 60, s = total % 60;
+    wchar_t b[24];
+    if (h > 0) swprintf_s(b, L"%lld:%02lld:%02lld", h, m, s);
+    else       swprintf_s(b, L"%lld:%02lld", m, s);
+    return b;
+}
+
+// Drive the scrub bar + "12:34 / 1:45:07" readout from the ACTIVE pane. Returns true when
+// visibility changed, so the caller can re-run layout() — the pair takes strip width away
+// from the meter tray, and only the layout pass knows whether there is room.
+//
+// Three sources compete for the displayed position, in priority order:
+//   1. the user's thumb, while dragging — the drag must never fight the player;
+//   2. the post-seek latch — libVLC reports the PRE-seek time for a beat after a seek,
+//      which without this reads as the thumb snapping back and then jumping forward;
+//   3. the player's published time, the normal case.
+// Clear a half-finished gesture. Must run on EVERY stream change, not just when the bar's
+// visibility flips: switching between two seekable panes leaves `want` unchanged, so the
+// visibility-transition path never fires and pane A's seek target would be applied to
+// pane B — sending its thumb to the end of a different film for up to 3 seconds.
+void clearSeekGesture(AppState* st) {
+    st->seekDragging = false;
+    st->seekLatchMs = -1;
+    st->seekTick = -1;
+}
+
+// Force the pair off and clear everything. This exists because of an asymmetry that is easy
+// to miss: VlcPlayer::doStop() DETACHES its libVLC callbacks before tearing the player down,
+// deliberately, so a dying stream cannot post stale events — which means an explicit Stop
+// posts NO event at all, and sampleStats() has already stopped running. Nothing arrives to
+// retire the bar, so the caller has to. Returns true if the strip needs to re-flow.
+bool resetSeekUi(AppState* st) {
+    clearSeekGesture(st);
+    if (!st->seekShown) return false;
+    st->seekShown = false;
+    if (st->seekBar) ShowWindow(st->seekBar, SW_HIDE);
+    if (st->timeLabel) ShowWindow(st->timeLabel, SW_HIDE);
+    return true;
+}
+
+bool updateSeekUi(AppState* st) {
+    if (!st->seekBar || !st->timeLabel) return false;
+    VlcPlayer& p = st->ap().player;
+    // Recover a stuck drag. seekDragging is set by every non-ENDTRACK notification and
+    // cleared only by ENDTRACK; if a gesture is cancelled without one (capture stolen by a
+    // system modal, the control hidden mid-drag) the bar would ignore the player forever,
+    // because a "dragging" bar reads its position from the control instead of writing it.
+    if (st->seekDragging && GetCapture() != st->seekBar && GetFocus() != st->seekBar)
+        st->seekDragging = false;
+    const long long len = p.lengthMs();
+    // Both conditions matter: a live stream is not seekable, and a seekable stream with no
+    // length yet (the first moments of a VOD open) has nothing to map the thumb onto.
+    const bool want = p.isSeekable() && len > 0;
+
+    const bool changed = (want != st->seekShown);
+    if (changed) {
+        st->seekShown = want;
+        if (!want) {
+            // Leaving VOD: drop the drag/latch state too, or a later stream inherits a
+            // stale target and jumps on its first update.
+            clearSeekGesture(st);
+            ShowWindow(st->seekBar, SW_HIDE);
+            ShowWindow(st->timeLabel, SW_HIDE);
+        }
+        // Showing is left to layout(): it decides whether the strip has room at all.
+    }
+    if (!want) return changed;
+
+    long long shown = p.timeMs();
+    if (st->seekDragging) {
+        // The thumb is the truth while held; read the position back off the control.
+        const long long tick = SendMessageW(st->seekBar, TBM_GETPOS, 0, 0);
+        shown = len * tick / kSeekTicks;
+    } else if (st->seekLatchMs >= 0) {
+        long long drift = p.timeMs() - st->seekLatchMs;
+        if (drift < 0) drift = -drift;
+        // Clear the latch once the player agrees (within a tolerance wider than one
+        // 250 ms sample) or the deadline passes, so a seek the demuxer silently refused
+        // cannot freeze the readout forever.
+        if (drift < 1500 || GetTickCount64() > st->seekLatchUntil)
+            st->seekLatchMs = -1;
+        else
+            shown = st->seekLatchMs;
+    }
+    if (shown > len) shown = len;
+
+    if (!st->seekDragging) {
+        const long long tick = len > 0 ? shown * kSeekTicks / len : 0;
+        // Only when it actually moved. On a 2-hour film a tick is ~7 s, so ~96% of these
+        // 4 Hz updates would otherwise be a redundant repaint of a control sitting on the
+        // transport strip — the same reason the label below is diffed before it is set.
+        if (tick != st->seekTick) {
+            st->seekTick = tick;
+            SendMessageW(st->seekBar, TBM_SETPOS, TRUE, static_cast<LPARAM>(tick));
+        }
+    }
+    const std::wstring text = formatHms(shown) + L" / " + formatHms(len);
+    wchar_t cur[48] = L"";
+    GetWindowTextW(st->timeLabel, cur, ARRAYSIZE(cur));
+    if (text != cur) SetWindowTextW(st->timeLabel, text.c_str());  // avoid a repaint each tick
+    return changed;
 }
 
 std::wstring nameFromSource(const std::wstring& src, bool isUrl) {

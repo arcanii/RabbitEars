@@ -116,6 +116,32 @@ public:
         h = packed & 0xFFFFu;
     }
 
+    // ---- Playback position / seek (VOD) --------------------------------------
+    // Sampled on the worker beside videoSize() — every libVLC call stays off the UI
+    // thread — and published as plain atomics the UI reads lock-free at ~4 Hz off the
+    // Stats event.
+    //
+    // The scrub bar exists only when libVLC says the media can actually be scrubbed. Do not
+    // infer seekability from anything else (a URL suffix, a group title) — catch-up and
+    // timeshift feeds are live URLs that ARE seekable, and VOD behind a dead link is not.
+    //
+    // ⚠ A plain live stream reports seekable=false and length=0, so it gets exactly the
+    // transport it has today — but that is libVLC's judgement, not a guarantee we enforce:
+    // an HLS feed carrying a DVR/sliding window can legitimately report seekable with a
+    // length, and a fair number of IPTV channels are exactly that. Showing a scrub bar there
+    // is arguably CORRECT (those streams really are scrubbable), but it means "the strip is
+    // unchanged for existing users" is an empirical claim about one provider, not an
+    // invariant. Worth an eye on a real channel list before this ships.
+    long long timeMs() const { return timeMs_.load(std::memory_order_relaxed); }
+    long long lengthMs() const { return lengthMs_.load(std::memory_order_relaxed); }
+    bool isSeekable() const { return seekable_.load(std::memory_order_relaxed); }
+
+    // Jump to `ms`. Returns immediately; the worker clamps to the media's length and
+    // ignores it if libVLC says the stream is not seekable (so a stale UI cannot ask a
+    // live stream to seek). Seeking a network stream is expensive — call it on drag
+    // RELEASE, not per drag tick.
+    void seekTo(long long ms);
+
     // Recording — a headless second player records `url` to `filePath` (a .ts
     // stream copy, no re-encode) on the shared instance, independent of playback,
     // so you can keep watching (even another channel). Returns immediately.
@@ -132,9 +158,11 @@ public:
 private:
     struct Cmd {
         enum Type { Play, Stop, Pause, Volume, Aspect, Mute, Quit, RecordStart, RecordStop,
-                    AddHost } type;
+                    AddHost, Seek } type;
         std::wstring url, userAgent, referrer, recPath;
         int          ivalue = 0;
+        long long    i64value = 0;      // Seek: target position in ms
+        unsigned long long i64seq = 0;  // Seek: the stream generation it was issued against
         std::string  svalue;
         void*        pvalue = nullptr;  // AddHost: the HWND of a newly-created vout host
     };
@@ -148,6 +176,7 @@ private:
     void doRecordStart(const Cmd& c);      // worker-thread only
     void doRecordStop(bool async = false); // async=true offloads the recorder stop to a reaper
     void sampleStats();         // worker-thread only: read libVLC stats -> snapshot_
+    void samplePosition();      // worker-thread only: time/length/seekable -> the atomics below
     bool hasNewerPlayOrStop();  // for coalescing rapid channel switches
 
     libvlc_instance_t*     inst_ = nullptr;
@@ -196,6 +225,17 @@ private:
     FlowStats           snapshot_;
     // Native video size packed as (w<<16)|h — 0 until libVLC reports one. Worker writes, UI reads.
     std::atomic<uint32_t> videoWH_{0};
+    // Playback position — worker writes, UI reads. Independent atomics rather than one
+    // packed word: they are read for DISPLAY, never compared against each other for a
+    // decision, so a torn pair between two 250 ms samples costs nothing. All three reset
+    // in doStop() so a stopped pane cannot leave a stale scrub bar on screen.
+    std::atomic<long long> timeMs_{0};
+    std::atomic<long long> lengthMs_{0};
+    std::atomic<bool>      seekable_{false};
+    // Bumped by every doPlay. A Seek carries the value the UI saw when the user let go of
+    // the thumb, so a seek that was overtaken by a channel change is dropped rather than
+    // applied to whatever is playing now.
+    std::atomic<unsigned long long> streamSeq_{0};
 
     std::thread              worker_;
     std::mutex               mtx_;

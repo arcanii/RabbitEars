@@ -698,6 +698,14 @@ void setActivePane(AppState* st, int idx) {
     // reflects and controls the ACTIVE pane, so its glyph must follow the pane switch.
     SetWindowTextW(st->btnRec, st->ap().player.isRecording() ? kGlyphStop : kGlyphRecord);
     resetStatMeters(st);  // the previous pane's readings don't apply to the newly-active stream
+    // The scrub bar belongs to the ACTIVE pane, so switching from a VOD pane to a live one
+    // (or the reverse) has to retire or raise it here — the strip re-flows either way.
+    // clearSeekGesture is UNCONDITIONAL and must stay that way: switching between two
+    // SEEKABLE panes leaves visibility unchanged, so the transition path inside updateSeekUi
+    // never runs, and pane A's pending seek target would drive pane B's thumb to the end of a
+    // different film for up to three seconds.
+    clearSeekGesture(st);
+    if (updateSeekUi(st)) layout(st->hwnd, st);
     setStatus(st, st->ap().nowPlayingName.empty()
                       ? trf(i18n::StringId::StatusActivePane, { std::to_wstring(idx + 1) })
                       : trf(i18n::StringId::StatusActiveChannel, { st->ap().nowPlayingName }));
