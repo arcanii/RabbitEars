@@ -46,6 +46,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
 #include "ui/DeadLinkSweep.h"
+#include "ui/VodSync.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
@@ -800,6 +801,76 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 loadForFilter(st);  // dead_status changed -> the current view may filter differently
             }
             return 0;
+        case WM_APP_VOD_PROGRESS:
+            if (st) {
+                switch (wParam) {
+                    case kVodPhaseContacting:
+                        setStatus(st, tr(i18n::StringId::StatusVodSyncContacting));
+                        break;
+                    case kVodPhaseFetching:
+                        setStatus(st, tr(i18n::StringId::StatusVodSyncFetching));
+                        break;
+                    case kVodPhaseSaving:
+                        setStatus(st, trf(i18n::StringId::StatusVodSyncSaving,
+                                          {std::to_wstring(static_cast<int>(lParam))}));
+                        break;
+                }
+            }
+            return 0;
+        case WM_APP_VOD_DONE:
+            if (st) {
+                const VodSyncReport r = vodSyncReport();
+                // COMMITTED work, not the exit code, decides whether the UI has to catch up. A
+                // two-provider sync that wrote 12,000 films and then timed out on the second line
+                // has changed the library; keying the refresh off `result == Ok` left those films
+                // invisible until the next launch.
+                const bool changed = r.inserted > 0 || r.retired > 0;
+                if (changed) {
+                    // The tree gains (or loses) the 🎬 Movies root and its categories — this is the
+                    // one moment VOD appears for a user who has never had it. refreshNav also
+                    // invalidates every navFilters index the current selection was built on, so the
+                    // selection has to be re-established rather than left dangling.
+                    refreshNav(st);
+                    if (st->navMovies) {
+                        // Land on Movies, NOT on All Channels. All Channels is not kind-scoped, so
+                        // selecting it here would materialize all ~44k rows (0.65 -> 76.99 ms
+                        // measured by --benchdb) on the very click that just finished arguing 44k
+                        // rows are not browsable. Selecting the node drives the normal
+                        // TVN_SELCHANGEDW path: grid cleared, categories expanded, zero queries.
+                        TreeView_SelectItem(st->nav, st->navMovies);
+                    } else {
+                        st->filter = {ViewKind::All};
+                        loadForFilter(st);
+                    }
+                }
+                if (r.result == VodSyncResult::Ok) {
+                    // retireRefused is accumulated over every playlist, so it does NOT mean
+                    // "nothing was removed" — with two providers one line can refuse while the
+                    // other retires. The message therefore reports the removals too; claiming a
+                    // flat zero would be a falsehood about work that was committed.
+                    setStatus(st, r.retireRefused
+                                      ? trf(i18n::StringId::StatusVodSyncDoneNoRetire,
+                                            {std::to_wstring(r.inserted), std::to_wstring(r.retired),
+                                             std::to_wstring(r.unusable)})
+                                      : trf(i18n::StringId::StatusVodSyncDone,
+                                            {std::to_wstring(r.inserted), std::to_wstring(r.retired)}));
+                } else if (changed) {
+                    // Stopped part-way with work already committed. "Nothing was changed" would be
+                    // a lie here, and so would "done".
+                    setStatus(st, trf(i18n::StringId::StatusVodSyncPartial,
+                                      {std::to_wstring(r.inserted), r.detail}));
+                } else if (r.result == VodSyncResult::EmptyCatalogue) {
+                    setStatus(st, tr(i18n::StringId::StatusVodSyncEmpty));
+                } else if (r.result == VodSyncResult::Cancelled) {
+                    setStatus(st, tr(i18n::StringId::StatusVodSyncCancelled));
+                } else {
+                    // AuthFailed / NetworkError / ParseError / DatabaseError all carry a short
+                    // technical detail. It is deliberately NOT localized: it comes from WinHTTP or
+                    // the JSON reader, and a translated approximation of it helps nobody debug.
+                    setStatus(st, trf(i18n::StringId::StatusVodSyncFailed, {r.detail}));
+                }
+            }
+            return 0;
         case WM_ACTIVATEAPP:
             // Drives the "PIP only floats while RabbitEars is in front" policy. WM_ACTIVATEAPP (not
             // WM_ACTIVATE) is the right signal: it fires when focus crosses an APPLICATION boundary,
@@ -1175,10 +1246,15 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         AppendMenuW(menu, MF_STRING, 3, tr(i18n::StringId::MenuSetGuideUrl).c_str());
                         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                         AppendMenuW(menu, MF_STRING, 1, tr(i18n::StringId::DeletePlaylistTitle).c_str());
+                        // ⚠ Read the id BEFORE the menu, not after. TrackPopupMenu runs a modal
+                        // loop that PUMPS POSTED MESSAGES, and WM_APP_VOD_DONE calls refreshNav()
+                        // — which clears and rebuilds navFilters. Re-indexing `fi` after the menu
+                        // returned could therefore name a different playlist than the one the user
+                        // right-clicked, and the commands below rename and DELETE.
+                        const long long pid = st->navFilters[fi].playlistId;
                         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, scr.x,
                                                        scr.y, 0, hwnd, nullptr);
                         DestroyMenu(menu);
-                        const long long pid = st->navFilters[fi].playlistId;
                         if (cmd == 2) {  // Rename… — changes the friendly display name only
                             std::wstring name = label;  // seed the box with the current name
                             if (promptText(hwnd,
@@ -1281,6 +1357,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     } else {
                         st->filter = st->navFilters[idx];
                         loadForFilter(st);
+                        // The Movies root's content IS its category list, so selecting it must
+                        // reveal that list — a collapsed node whose grid is deliberately empty
+                        // would just look broken. (Groups/Countries aren't selectable at all,
+                        // so this is not a divergence from them.)
+                        if (st->filter.kind == ViewKind::Movies)
+                            TreeView_Expand(st->nav, tv->itemNew.hItem, TVE_EXPAND);
                     }
                 }
             }
@@ -1477,16 +1559,25 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         case WM_DESTROY:
-            // Join the dead-link worker BEFORE anything else tears down: it owns its own DB
-            // handle and posts to this window, so it must not outlive either. No-op if idle.
-            shutdownDeadLinkSweep();
-            armExitWatchdog(4000);   // bound teardown so a stuck libVLC release can't wedge exit
             KillTimer(hwnd, kSchedulerTimer);
             // Hand the queue to Windows on the way out — this is the whole point of wake-to-record:
             // the wake task must be registered for whatever is still pending BEFORE we stop running.
             // Also drop the sleep block; the process is going away and the state is per-thread.
+            //
+            // ⚠ This runs BEFORE the worker joins and the watchdog, and the order is load-bearing.
+            // Neither join is bounded by the watchdog's 4 s: httpGet/httpProbe have no cancellation
+            // handle, so a sweep finishes its 8 s probe plus up to 250 writes and a VOD sync
+            // finishes a ~13.5 MB body. If the watchdog's ExitProcess wins that race, everything
+            // after it is simply never reached — and silently losing the wake-task registration
+            // means the machine does not wake and the recording is gone. Registering first costs
+            // nothing and cannot be skipped.
             if (st->db.isOpen()) syncWakeFromSchedules(st);
             setRecordingKeepAwake(false);
+            // Tell both provider-facing workers to stand down NOW, so they have the whole libVLC
+            // teardown (which takes real time) to reach a checkpoint before anyone waits on them.
+            cancelDeadLinkSweep();
+            cancelVodSync();
+            armExitWatchdog(4000);  // bound teardown so a stuck libVLC release can't wedge exit
 #ifdef RABBITEARS_THEME_ENGINE
             KillTimer(hwnd, kSkinAnimTimer);
             skin::shutdownSkinStrip();
@@ -1498,6 +1589,18 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             for (auto& p : st->panes)
                 p->player.shutdown();  // join every pane's worker + reaper threads
             st->engine.shutdown();     // then release the shared libVLC instance (all players are down)
+            // ⚠ The two network workers are joined LAST, AFTER the players, and that order is the
+            // whole point. `player.shutdown()` is the only thing that finalizes an in-progress
+            // recording (Cmd::Quit -> doRecordStop -> the synchronous libvlc stop that writes an
+            // mp4's moov atom), and neither worker join is bounded by the watchdog's 4 s: httpGet
+            // and httpProbe have no cancellation handle, so a sweep finishes an 8 s probe and a
+            // sync finishes a ~13.5 MB body. Join them ahead of the players and the watchdog fires
+            // mid-join, ExitProcess skips the finalize, and the user's recording is an unplayable
+            // file — which is precisely the "hard crash mid-record" the recording code says is the
+            // only way to lose one. Joining them here risks nothing: they own a private sqlite
+            // handle (atomic across process death) and post to a window that is already gone.
+            shutdownDeadLinkSweep();
+            shutdownVodSync();
             if (st->uiFont) DeleteObject(st->uiFont);
             if (st->titleFont) DeleteObject(st->titleFont);
             if (st->glyphFont) DeleteObject(st->glyphFont);

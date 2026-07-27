@@ -566,5 +566,20 @@
   "StatusDeadLinkStarted": "正在檢查頻道的失效連結…",
   "StatusDeadLinkProgress": "檢查中… 第 {0} 個，共 {1} 個",
   "StatusDeadLinkDone": "檢查完成 — {0} 個無法使用，已更新 {1} 個頻道。",
-  "StatusDeadLinkInconclusive": "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。"
+  "StatusDeadLinkInconclusive": "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。",
+  "NavMovies": "🎬 電影",
+  "StatusMoviesPickCategory": "請在下方選擇分類以瀏覽電影。",
+  "MenuVodSync": "從供應商同步電影",
+  "MenuVodSyncing": "正在同步電影…",
+  "StatusVodSyncContacting": "正在連線至供應商…",
+  "StatusVodSyncFetching": "正在下載電影目錄…",
+  "StatusVodSyncSaving": "正在儲存 {0} 部電影…",
+  "StatusVodSyncDone": "電影同步完成 — 新增或更新 {0} 部，移除 {1} 部。",
+  "StatusVodSyncDoneNoRetire": "電影同步完成 — 新增或更新 {0} 部，移除 {1} 部。供應商回傳的 {2} 個項目無法使用，因此看似消失的片目已保留而未移除。",
+  "StatusVodSyncEmpty": "供應商未回傳可用的電影 — 未變更任何項目。",
+  "StatusVodSyncPlaying": "請先停止播放與錄影 — 你的供應商同一時間只允許一個連線。",
+  "StatusVodSyncNoProvider": "找不到 Xtream 供應商 — 電影同步需要含有使用者名稱與密碼的播放清單網址。",
+  "StatusVodSyncCancelled": "已取消電影同步 — 未變更任何項目。",
+  "StatusVodSyncFailed": "電影同步失敗 — {0}",
+  "StatusVodSyncPartial": "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。"
 }

@@ -48,6 +48,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
 #include "ui/DeadLinkSweep.h"
+#include "ui/VodSync.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
@@ -866,6 +867,10 @@ void onToggleRecord(AppState* st) {
         setStatus(st, tr(i18n::StringId::StatusPlayChannelFirst));
         return;
     }
+    // 🔴 max_connections:1 — the recorder is a SECOND libVLC player with its own socket, so a
+    // recording starting under a running sync is the same collision as playback starting under
+    // one. startVodSync refuses while recording; this is the other direction.
+    cancelVodSync();
     std::wstring ext;
     std::string mux;
     formatToExtMux(st->recFormat, ext, mux);
@@ -968,6 +973,10 @@ void onSchedulerTick(AppState* st) {
         std::string mux;
         formatToExtMux(s->mux, ext, mux);
         const std::wstring path = recordingPath(s->channelName, ext);
+        // 🔴 max_connections:1 — a SCHEDULED recording is the case the sync's recording gate was
+        // added for, and it is the one the user is least able to intervene in: it fires on a timer
+        // (or a wake task) with nothing playing. The sync stands down for it.
+        cancelVodSync();
         if (st->ap().player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
             st->activeScheduleId = id;
             st->schedulePane = st->active;  // pin the schedule to the pane it records on
@@ -1603,11 +1612,23 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     // sweep because it is its undo: an unreviewed Dead verdict plus "Hide unavailable" makes a
     // channel vanish, and the user needs the way back in the same place they found the way in.
     {
-        const bool busy = deadLinkSweepRunning();
+        // 🔴 Both of these open a connection to the user's provider, and on a max_connections:1
+        // line they must not overlap — so EACH is greyed while EITHER is running, not just while
+        // its own worker is. (Both start functions also refuse outright; this is what stops the
+        // user reaching a refusal in the first place.)
+        const bool sweeping = deadLinkSweepRunning();
+        const bool syncing = vodSyncRunning();
+        const bool busy = sweeping || syncing;
         AppendMenuW(chan, MF_STRING | (busy ? MF_GRAYED : 0u), ID_DEADLINK_SWEEP,
-                    tr(busy ? StringId::MenuDeadLinkChecking : StringId::MenuDeadLinkCheck).c_str());
+                    tr(sweeping ? StringId::MenuDeadLinkChecking : StringId::MenuDeadLinkCheck).c_str());
         AppendMenuW(chan, MF_STRING | (busy ? MF_GRAYED : 0u), ID_DEADLINK_CLEAR,
                     tr(StringId::MenuDeadLinkClear).c_str());
+        // 🎬 Sync movies — present ONLY when a playlist actually carries Xtream credentials. A
+        // plain .m3u has no player_api.php behind it, so for those users this item could never do
+        // anything but fail, and an action that only ever fails is worse than an absent one.
+        if (vodSyncAvailable(st))
+            AppendMenuW(chan, MF_STRING | (busy ? MF_GRAYED : 0u), ID_VOD_SYNC,
+                        tr(syncing ? StringId::MenuVodSyncing : StringId::MenuVodSync).c_str());
     }
     AppendMenuW(chan, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(chan, MF_STRING, ID_FAV_IMPORT, tr(StringId::MenuImportFavourites).c_str());
@@ -1859,6 +1880,35 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         case ID_DEADLINK_SWEEP:
             if (startDeadLinkSweep(st))
                 setStatus(st, tr(i18n::StringId::StatusDeadLinkStarted));
+            break;
+        case ID_VOD_SYNC:
+            // Every refusal is reported in the status bar rather than swallowed — "nothing
+            // happened when I clicked it" is the failure mode of a gated action, and the
+            // playback gate in particular is something the user can act on immediately.
+            switch (startVodSync(st)) {
+                case VodSyncStart::Started:
+                    setStatus(st, tr(i18n::StringId::StatusVodSyncContacting));
+                    break;
+                case VodSyncStart::PlaybackActive:
+                case VodSyncStart::SweepActive:
+                    // One message for both, and it names playback AND recording because the gate
+                    // covers both — a scheduled recording with nothing playing is exactly the
+                    // state the recording half of the gate exists for, and "Stop playback first"
+                    // would be false and unactionable there.
+                    setStatus(st, tr(i18n::StringId::StatusVodSyncPlaying));
+                    break;
+                case VodSyncStart::NoXtreamPlaylist:
+                    setStatus(st, tr(i18n::StringId::StatusVodSyncNoProvider));
+                    break;
+                case VodSyncStart::ThreadFailed:
+                    // NOT silent: g_running was cleared, so the menu item is not greyed and a
+                    // click that produced nothing would look like a dead button.
+                    setStatus(st, trf(i18n::StringId::StatusVodSyncFailed, {L"could not start"}));
+                    break;
+                case VodSyncStart::AlreadyRunning:
+                case VodSyncStart::DatabaseClosed:
+                    break;  // the menu item is already greyed for these
+            }
             break;
         case ID_DEADLINK_CLEAR:
             // Confirmed, because it throws away the result of a sweep that can take many minutes —

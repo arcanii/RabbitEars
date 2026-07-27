@@ -615,6 +615,25 @@ constexpr std::array<const char*, N> kEn = {{
     "Checking links… {0} of {1}",  // StatusDeadLinkProgress
     "Link check done — {0} unavailable, {1} channel(s) updated.",  // StatusDeadLinkDone
     "Link check inconclusive — nothing changed (check your connection).",  // StatusDeadLinkInconclusive
+    // --- Nav ---
+    "🎬 Movies",  // NavMovies
+    // --- Status ---
+    "Pick a category below to browse movies.",  // StatusMoviesPickCategory
+    // --- Menu ---
+    "Sync movies from provider",  // MenuVodSync
+    "Syncing movies…",  // MenuVodSyncing
+    // --- Status ---
+    "Contacting your provider…",  // StatusVodSyncContacting
+    "Downloading the movie catalogue…",  // StatusVodSyncFetching
+    "Saving {0} movies…",  // StatusVodSyncSaving
+    "Movie sync done — {0} added or updated, {1} removed.",  // StatusVodSyncDone
+    "Movie sync done — {0} added or updated, {1} removed. {2} item(s) from your provider were unusable, so titles that looked missing were kept rather than removed.",  // StatusVodSyncDoneNoRetire
+    "Your provider returned no usable movies — nothing was changed.",  // StatusVodSyncEmpty
+    "Stop playback and recording first — your provider allows only one connection at a time.",  // StatusVodSyncPlaying
+    "No Xtream provider found — movie sync needs a playlist URL with a username and password.",  // StatusVodSyncNoProvider
+    "Movie sync cancelled — nothing was changed.",  // StatusVodSyncCancelled
+    "Movie sync failed — {0}",  // StatusVodSyncFailed
+    "Movie sync incomplete — {0} added or updated before it stopped ({1}).",  // StatusVodSyncPartial
 }};
 
 // 日本語
@@ -1220,6 +1239,25 @@ constexpr std::array<const char*, N> kJa = {{
     "確認中… {1} 件中 {0} 件",  // StatusDeadLinkProgress
     "確認が完了しました — 視聴不可 {0} 件、{1} 件のチャンネルを更新しました。",  // StatusDeadLinkDone
     "確認できませんでした — 変更はありません（接続を確認してください）。",  // StatusDeadLinkInconclusive
+    // --- Nav ---
+    "🎬 映画",  // NavMovies
+    // --- Status ---
+    "下のカテゴリを選ぶと映画を表示します。",  // StatusMoviesPickCategory
+    // --- Menu ---
+    "プロバイダーから映画を同期",  // MenuVodSync
+    "映画を同期しています…",  // MenuVodSyncing
+    // --- Status ---
+    "プロバイダーに接続しています…",  // StatusVodSyncContacting
+    "映画カタログをダウンロードしています…",  // StatusVodSyncFetching
+    "{0} 件の映画を保存しています…",  // StatusVodSyncSaving
+    "映画の同期が完了しました — {0} 件を追加・更新、{1} 件を削除しました。",  // StatusVodSyncDone
+    "映画の同期が完了しました — {0} 件を追加・更新、{1} 件を削除しました。プロバイダーからの {2} 件は使用できなかったため、見つからないように見えた作品は削除せずに残しました。",  // StatusVodSyncDoneNoRetire
+    "プロバイダーから使用できる映画が返されませんでした — 変更はありません。",  // StatusVodSyncEmpty
+    "先に再生と録画を停止してください — プロバイダーの同時接続数は 1 件までです。",  // StatusVodSyncPlaying
+    "Xtream プロバイダーが見つかりません — 映画の同期にはユーザー名とパスワードを含むプレイリスト URL が必要です。",  // StatusVodSyncNoProvider
+    "映画の同期を中止しました — 変更はありません。",  // StatusVodSyncCancelled
+    "映画の同期に失敗しました — {0}",  // StatusVodSyncFailed
+    "映画の同期は完了しませんでした — 停止するまでに {0} 件を追加・更新しました（{1}）。",  // StatusVodSyncPartial
 }};
 
 // 繁體中文
@@ -1825,6 +1863,25 @@ constexpr std::array<const char*, N> kZhHant = {{
     "檢查中… 第 {0} 個，共 {1} 個",  // StatusDeadLinkProgress
     "檢查完成 — {0} 個無法使用，已更新 {1} 個頻道。",  // StatusDeadLinkDone
     "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。",  // StatusDeadLinkInconclusive
+    // --- Nav ---
+    "🎬 電影",  // NavMovies
+    // --- Status ---
+    "請在下方選擇分類以瀏覽電影。",  // StatusMoviesPickCategory
+    // --- Menu ---
+    "從供應商同步電影",  // MenuVodSync
+    "正在同步電影…",  // MenuVodSyncing
+    // --- Status ---
+    "正在連線至供應商…",  // StatusVodSyncContacting
+    "正在下載電影目錄…",  // StatusVodSyncFetching
+    "正在儲存 {0} 部電影…",  // StatusVodSyncSaving
+    "電影同步完成 — 新增或更新 {0} 部，移除 {1} 部。",  // StatusVodSyncDone
+    "電影同步完成 — 新增或更新 {0} 部，移除 {1} 部。供應商回傳的 {2} 個項目無法使用，因此看似消失的片目已保留而未移除。",  // StatusVodSyncDoneNoRetire
+    "供應商未回傳可用的電影 — 未變更任何項目。",  // StatusVodSyncEmpty
+    "請先停止播放與錄影 — 你的供應商同一時間只允許一個連線。",  // StatusVodSyncPlaying
+    "找不到 Xtream 供應商 — 電影同步需要含有使用者名稱與密碼的播放清單網址。",  // StatusVodSyncNoProvider
+    "已取消電影同步 — 未變更任何項目。",  // StatusVodSyncCancelled
+    "電影同步失敗 — {0}",  // StatusVodSyncFailed
+    "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",  // StatusVodSyncPartial
 }};
 
 // 繁體中文（香港）
@@ -2430,6 +2487,25 @@ constexpr std::array<const char*, N> kZhHK = {{
     "檢查中… 第 {0} 個，共 {1} 個",  // StatusDeadLinkProgress
     "檢查完成 — {0} 個無法使用，已更新 {1} 個頻道。",  // StatusDeadLinkDone
     "檢查結果不明確 — 未變更任何項目（請檢查你的網路連線）。",  // StatusDeadLinkInconclusive
+    // --- Nav ---
+    "🎬 電影",  // NavMovies
+    // --- Status ---
+    "請在下方選擇分類以瀏覽電影。",  // StatusMoviesPickCategory
+    // --- Menu ---
+    "從供應商同步電影",  // MenuVodSync
+    "正在同步電影…",  // MenuVodSyncing
+    // --- Status ---
+    "正在連線至供應商…",  // StatusVodSyncContacting
+    "正在下載電影目錄…",  // StatusVodSyncFetching
+    "正在儲存 {0} 部電影…",  // StatusVodSyncSaving
+    "電影同步完成 — 新增或更新 {0} 部，移除 {1} 部。",  // StatusVodSyncDone
+    "電影同步完成 — 新增或更新 {0} 部，移除 {1} 部。供應商回傳的 {2} 個項目無法使用，因此看似消失的片目已保留而未移除。",  // StatusVodSyncDoneNoRetire
+    "供應商未回傳可用的電影 — 未變更任何項目。",  // StatusVodSyncEmpty
+    "請先停止播放與錄影 — 你的供應商同一時間只允許一個連線。",  // StatusVodSyncPlaying
+    "找不到 Xtream 供應商 — 電影同步需要含有使用者名稱與密碼的播放清單網址。",  // StatusVodSyncNoProvider
+    "已取消電影同步 — 未變更任何項目。",  // StatusVodSyncCancelled
+    "電影同步失敗 — {0}",  // StatusVodSyncFailed
+    "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",  // StatusVodSyncPartial
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

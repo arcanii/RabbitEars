@@ -70,6 +70,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/BufferMeter.cpp
     ui/MiniMeter.cpp
     ui/DeadLinkSweep.cpp
+    ui/VodSync.cpp
     ui/Dialogs.cpp
     ui/Splash.cpp
     ui/VlcEngine.cpp

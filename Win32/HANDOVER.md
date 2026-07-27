@@ -455,38 +455,84 @@ Seek queued behind a Play landed the old film's position on the new stream (now 
 generation). The pattern in all three: **state cleared only on a visibility TRANSITION is not cleared
 at all when the transition doesn't happen.**
 
-### ▶️ PICK UP HERE — finish 0.2.17
+### ✅ 0.2.17's UI is DONE (uncommitted) — ▶️ PICK UP AT "What still needs the owner"
 
-Everything below the UI line is done and tested. What remains is Win32 UI work:
+All three remaining items landed. Both theme flags build clean at /W4 and `--selftest` is ALL PASS.
+**None of it has been seen running** — see "What still needs the owner".
 
-1. **Wire the Movies nav root.** `ViewKind` gains `Movies` + `MovieGroup`; `refreshNav` builds the
-   root from `listVodGroups()`; `loadForFilter` routes them to `allMovies()` / `moviesByGroup()`.
-   ⚠️ **Settle this first, before wiring:** does clicking "Movies" load all 43,599 films (77 ms and a
-   grid nobody can browse) or show the category list only and make the user pick? **Recommend
-   categories-only** — it dodges the cost entirely and 44k rows is not a browsable view. `ViewKind::Guide`
-   is the existing precedent for a nav node that loads no grid channels.
-2. **The sync worker** — `Win32/ui/VodSync.{h,cpp}`, modelled on `DeadLinkSweep`. Its own sqlite
-   connection, joined in `WM_DESTROY`. Fetch `get_vod_categories` + `get_vod_streams` (two requests,
-   ~27 MB, ~10 s), parse with `XtreamClient`, then `bulkInsertChannels` + `retireMissingChannels`.
-3. **A Settings action** + ~8 i18n keys × 4 languages (`common/i18n/*.json` →
-   `tools/i18n/gen_i18n.py`; never hand-edit `Strings.cpp`).
+1. **Movies nav root — settled as CATEGORIES-ONLY.** `ViewKind` gained `Movies` + `MovieGroup`.
+   `refreshNav` builds the root from `listVodGroups()` and **omits it entirely when there are no
+   movies**, so the sidebar is byte-identical for every existing live-TV-only user. Unlike
+   Groups/Countries the root IS selectable (`ViewKind::Guide`'s precedent): selecting it clears the
+   grid, expands its category list and says so, rather than leaving the previous view's rows sitting
+   under a heading that says Movies. `MovieGroup` → `moviesByGroup()` (2.4 ms). **`allMovies()` is
+   never called from the UI** — 43,599 rows is not a browsable view.
+2. **`Win32/ui/VodSync.{h,cpp}`** — own sqlite connection, joined in `WM_DESTROY`; three requests per
+   playlist (auth probe + categories + streams, ~13.5 MB); `bulkInsertChannels` then
+   `retireMissingChannels` behind a trust guard that INSERTS but refuses to RETIRE below 50% usable
+   items. Syncs every enabled Xtream playlist in one run.
+3. **Settings ▸ Channels ▸ "Sync movies from provider"** — `ID_VOD_SYNC = 2027`, `WM_APP+8/+9`,
+   15 i18n keys × en/ja/zh-Hant (zh-HK inherits).
 
-**Three things the worker must respect — do not rediscover these:**
+**The three constraints, and how they are actually met** (all three needed more than the obvious):
 
-- 🔴 **`max_connections: 1`.** One connection is the entire budget. **Gate the sync on
-  `isPlaying()` across ALL panes** and make it user-triggered, not a background timer. The dead-link
-  checker learned this the expensive way: a connection cap kicks the user's actual playback.
-- 🔴 **`retireMissingChannels()` is NOT reentrant** and must not run on the shared `AppState::db`
-  handle concurrently — it stages its keep-set in a per-connection temp table inside a transaction.
-  Give the worker its own connection. Documented on the declaration; easy to miss.
-- 🔴 **Never pass a keep-set you do not trust.** An empty set deletes nothing by design, and a
-  partial one aborts — but a *successfully parsed yet suspiciously small* response is the caller's
-  judgement to make. `XtreamVodResult` reports `total` / `skippedNoId` / `skippedNoExt` so the worker
-  can refuse a sync that lost most of the library, exactly as the dead-link sweep discards a run that
-  reached too few servers.
+- 🔴 **`max_connections: 1`.** The gate refuses on `isPlaying()` **OR `isRecording()` OR
+  `nowPlayingId != 0`**, across `panes` *and* `dyingPanes`. All three terms are load-bearing:
+  `rec_` is a **second libVLC player with its own socket** that `doStop()` never touches, so a
+  scheduled recording runs with nothing "playing"; and `playing_` is set from the
+  `libvlc_MediaPlayerPlaying` **event**, so it is false for the whole open/buffer window while the
+  socket is already claimed. The gate is also **not start-only** — `playChannelInPane`,
+  `onToggleRecord` and `onSchedulerTick` all call `cancelVodSync()`, because the user's stream
+  always wins. Finally the sync and the **dead-link sweep now exclude each other** (both refuse, and
+  the menu greys both while either runs): they are the two provider-facing workers, and a sweep
+  whose probes get refused for capacity can persist `dead_status=Dead` on live TV.
+- 🔴 **`retireMissingChannels()` reentrancy** — worker has its own connection; joined at
+  `WM_DESTROY` **after** the players, see the shutdown-order note below.
+- 🔴 **Trust** — the guard reads `XtreamVodResult`'s counts in 64-bit arithmetic (`total` is
+  provider-controlled, and the multiplication is the one place a broken panel could overflow into
+  *deleting* the library). A run that refuses retirement says so in its own status message.
 
-Also still open from the design doc: where duration comes from (the API has none for movies — cache
-`VlcPlayer::lengthMs()` at play time), the `watched` threshold, and resume-prompt vs silent-resume.
+**Three defects three review rounds caught that are worth carrying forward as patterns:**
+
+1. **A fix can be a regression.** Moving `armExitWatchdog` ahead of the worker joins (to stop them
+   skipping the wake-task registration) put two *unbounded* joins inside a 4 s budget sized for
+   libVLC teardown — so `ExitProcess` would fire mid-join and skip `player.shutdown()`, **the only
+   thing that finalizes an in-progress recording** (an mp4 with no moov atom is unplayable). The
+   order is now: wake-task registration → cancel both workers → arm watchdog → libVLC teardown →
+   *then* join the network workers. **Recordings finalize before anything unbounded is waited on.**
+2. **"Survive the error" can be worse than failing.** An unparseable `get_vod_categories` was
+   originally survived by falling back to one group — but `bulkInsertChannels` writes
+   `group_title=excluded.group_title` **unconditionally**, so that would have rewritten all 43,599
+   stored movies to "Movies" in one committed transaction and flattened the whole tree, on a
+   transient hiccup, with no undo. It now aborts the sync.
+3. **A modal loop pumps posted messages.** The playlist context menu bounds-checked its `navFilters`
+   index before `TrackPopupMenu` and re-read it after. `WM_APP_VOD_DONE` is the app's first posted
+   message that calls `refreshNav()` — so the menu's Rename/**Delete** could name a different
+   playlist than the one right-clicked. The id is now read before the menu.
+
+Also still open from the design doc, and **deliberately not decided here** — they are owner calls,
+and the doc's "0.2.17 success = … resume works" line depends on all three: where duration comes from
+(the API has none for movies — cache `VlcPlayer::lengthMs()` at play time), the `watched` threshold,
+and resume-prompt vs silent-resume. **As it stands 0.2.17 is browse-and-play, not resume.**
+
+#### ⚠️ One measured regression this release ships with — an owner decision
+
+**The search box is now 0.63 → 80.00 ms on the FIRST KEYSTROKE** (126×, `--benchdb`). `EN_CHANGE`
+runs `searchChannels()` synchronously on the UI thread with no debounce, no minimum length and no
+`LIMIT`, and the query carries no `kind` predicate — so one letter matches and materializes most of
+a 43,599-film library. The 7.9 ms figure previously signed off here was measured with the term
+`"Channel 1"`, which matches **zero** movies, so it timed the scan and none of the materialization;
+`--benchdb` now reports both. Movies staying searchable is a deliberate design-doc position, and how
+to degrade it (LIMIT / debounce / minimum length) changes what the user gets — so it is left for the
+owner rather than settled here. See BACKLOG.
+
+`allChannels()` (0.73 → **80.4 ms**) and `channelsByPlaylist()` (0.59 → **80.0 ms**) also grow with
+VOD size. That one is a deliberate position — "the All view legitimately grows with the row count" —
+and the post-sync UI is careful never to land on it. What was NOT deliberate and is now fixed: those
+two views ORDER BY `kind` first, because an Xtream playlist and its VOD sync write to the **same
+playlist row** and `bulkInsertChannels` restarts `sort_order` at 0 per batch, so 43,599 movies
+numbered 0..43598 interleaved straight through 442 live channels numbered 0..441. For a live-only
+library every row is `kind=0`, so the ordering is byte-identical — macOS included.
 
 ### 🎬 Xtream VOD — both gates CLOSED, and what reconnaissance found
 
@@ -508,7 +554,14 @@ rows. **Re-measure every cross-channel query at that size before 0.2.17 ships.**
 
 ### What still needs the owner
 
-**Nothing in these four commits has been seen running.** In priority order:
+**Nothing in these four commits — nor the uncommitted 0.2.17 UI — has been seen running.** In
+priority order:
+
+0. 🔴 **A real VOD sync, and it needs a renewed line.** Settings ▸ Channels ▸ "Sync movies from
+   provider", with **playback stopped** (the gate refuses otherwise, by design). Expect ~10 s and
+   ~13.5 MB. Watch for: the 🎬 Movies root appearing with its categories, a category listing films,
+   one film playing, and the status line's added/removed counts. The recon account **expired
+   ~2026-07-28**, so this is blocked until the line is renewed.
 
 1. 🔴 **The live-HLS-DVR question — ten seconds, and it decides the release's risk profile.** Play an
    ordinary live channel and see whether a scrub bar appears. "Invisible on live IPTV" is libVLC's

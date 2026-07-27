@@ -62,9 +62,21 @@ struct Tx {
     sqlite3* db;
     bool done = false;
     explicit Tx(sqlite3* d) : db(d) { sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr); }
-    void commit() {
-        sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr);
-        done = true;
+    // Returns false when the COMMIT itself failed. Most callers ignore it — a lost settings write
+    // is survivable — but retireMissingChannels does NOT: it is the one operation here that
+    // DELETES in bulk, and reporting a plausible "n removed" for a transaction that never landed
+    // is the "looks like it worked" failure its own documentation warns about.
+    //
+    // ⚠ `done` is set to the RESULT, not unconditionally to true. A COMMIT that fails with
+    // SQLITE_BUSY leaves the transaction OPEN — SQLite's contract is that the application must
+    // then retry or roll back — so swallowing the failure here would skip the destructor's
+    // ROLLBACK and strand a write transaction on the connection. Leaving `done` false makes the
+    // destructor clean up. In the other failure modes the statement has already released the
+    // transaction and the compensating ROLLBACK is a harmless "no transaction is active".
+    bool commit() {
+        const bool ok = sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr) == SQLITE_OK;
+        done = ok;
+        return ok;
     }
     ~Tx() {
         if (!done) sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
@@ -99,8 +111,14 @@ constexpr const char* kEnabledOnly =
 //     per-nav-click / per-keystroke paths, and channelsByCountry is the one that already
 //     had to become a SQL scalar to survive 14k channels.
 //
-// Deliberately NOT applied to searchChannels() or listGroups(): a user browsing or
-// searching for a FILM must be able to find it, so those keep the VOD rows and pay for them.
+// Deliberately NOT applied to searchChannels(): a user searching for a FILM must be able to
+// find it, so search keeps the VOD rows and pays for them. ⚠ That price is bigger than it
+// looks — see BACKLOG: one keystroke is 0.63 -> 80.00 ms, and the 7.9 ms once recorded for
+// this path was measured with a term matching zero movies. It remains an open owner decision.
+//
+// listGroups() is NOT in that category any more: it went kind-scoped in its own right (via
+// listGroupsOfKind(0)) when movies got their own "Movies" nav root, so VOD categories are a
+// separate namespace rather than 67 extra siblings in the live tree.
 constexpr const char* kLiveOnly = "kind=0";
 
 Channel readChannel(Stmt& q) {
@@ -706,13 +724,14 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
 // literal would be megabytes of SQL and would hit SQLITE_MAX_SQL_LENGTH.
 int Database::retireMissingChannels(long long playlistId, int kind,
                                     const std::vector<std::wstring>& keepUrls) {
-    if (!db_ || keepUrls.empty()) return 0;
+    if (!db_) return -1;
+    if (keepUrls.empty()) return 0;  // nothing to compare against: a no-op, not a failure
     Tx tx(db_);
     exec("CREATE TEMP TABLE IF NOT EXISTS _keep_urls(url TEXT PRIMARY KEY)");
     exec("DELETE FROM _keep_urls");
     {
         Stmt ins(db_, "INSERT OR IGNORE INTO _keep_urls(url) VALUES(?)");
-        if (!ins) return 0;
+        if (!ins) return -1;
         for (const std::wstring& u : keepUrls) {
             ins.reset();
             ins.bindText(1, u);
@@ -722,7 +741,7 @@ int Database::retireMissingChannels(long long playlistId, int kind,
             // through 43,599 inserts would wipe the library from that point on — the exact
             // disaster the empty-set guard above is written to prevent, but harder to spot
             // because it looks like it worked. Bail and let ~Tx roll back.
-            if (ins.stepDone() != SQLITE_DONE) return 0;
+            if (ins.stepDone() != SQLITE_DONE) return -1;
         }
     }
     int removed = 0;
@@ -730,13 +749,13 @@ int Database::retireMissingChannels(long long playlistId, int kind,
         Stmt del(db_,
                  "DELETE FROM channels WHERE playlist_id=?1 AND kind=?2 "
                  "AND stream_url NOT IN (SELECT url FROM _keep_urls)");
-        if (!del) return 0;
+        if (!del) return -1;
         del.bindInt(1, playlistId);
         del.bindInt(2, kind);
         // Read changes() ONLY after a confirmed DELETE: on failure it still holds the count
         // from the last successful statement (the final INSERT), so an unchecked read would
         // report "1 retired" when nothing was deleted.
-        if (del.stepDone() != SQLITE_DONE) return 0;
+        if (del.stepDone() != SQLITE_DONE) return -1;
         removed = sqlite3_changes(db_);
     }
     // Keep playlists.channel_count honest — bulkInsertChannels recomputes it, and a sync
@@ -752,21 +771,33 @@ int Database::retireMissingChannels(long long playlistId, int kind,
         }
     }
     exec("DELETE FROM _keep_urls");
-    tx.commit();
+    // A failed COMMIT means the deletion did not land. Returning `removed` here would hand the
+    // caller a believable positive for rows that are still in the table — the one lie this
+    // function must never tell.
+    if (!tx.commit()) return -1;
     return removed;
 }
 
+// The two views that are NOT kind-scoped, and so are the only two where live channels and movies
+// share an ordering. `kind` leads the sort for exactly that reason: an Xtream m3u_plus playlist
+// and its VOD sync write to the SAME playlist row, and bulkInsertChannels restarts sort_order at 0
+// for each batch — so 43,599 movies numbered 0..43598 would interleave straight through 442 live
+// channels numbered 0..441, shuffling films into the middle of the user's TV list. Live first
+// keeps these views usable without hiding anything.
+//
+// For a live-only library every row is kind=0, so this term is constant and the ordering is
+// byte-identical to before — including on macOS, which calls allChannels() in four places.
 std::vector<Channel> Database::allChannels() {
     return runChannelQuery(
         db_, std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + kEnabledOnly +
-                 " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
+                 " ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
 }
 
 std::vector<Channel> Database::channelsByPlaylist(long long playlistId) {
     return runChannelQuery(db_,
                            std::string("SELECT ") + kChannelCols +
                                " FROM channels WHERE playlist_id=? "
-                               "ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
+                               "ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
                            nullptr, playlistId);
 }
 

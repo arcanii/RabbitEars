@@ -545,8 +545,13 @@ The sandbox cannot see the GUI, so long feedback loops are unusually expensive h
   shape questions answered first, and the parser is the cheapest thing to test headlessly), schema
   v8, plus the buffer-meter glass. *Pending the owner's on-device pass.*
 - **0.2.17** — the **Xtream client**, movies only, existing grid, no posters. `common/core/XtreamClient`
-  + the sync worker + a "Sync VOD" action. Success = 43,599 movies in the grid, one plays, resume
-  works. (JSON parser and schema v8 moved down to 0.2.16, so this release is now just the client.)
+  + the sync worker + a "Sync VOD" action. **Code complete (uncommitted), unseen on a device.**
+  ⚠️ Success was written as "43,599 movies in the grid, one plays, **resume works**" — the first two
+  are built, the third is NOT: resume depends on the three §6 open questions (where `durationSec` is
+  cached from `lengthMs()`, the `watched` threshold, prompt-vs-silent resume) and all three are
+  owner calls that are still open. **0.2.17 as built is browse-and-play.** Either settle them and
+  finish resume, or ship it as browse-and-play and move resume to 0.3.0 — where it is listed anyway
+  ("resume everywhere").
 - **0.3.0** — series → seasons → episodes, **posters for SERIES** (not movies — see the finding
   above), resume everywhere. The minor bump marks the capability's ARRIVAL, not the start of the work.
 
@@ -565,8 +570,47 @@ films under the Netherlands. The owner's real categories dodge it only because `
 
 Remaining VOD-side costs are inherent and on non-interactive paths: `moviesByGroup()` 2.38 ms,
 `listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows — which is
-why the Movies root should probably show categories only), `searchChannels()` 7.9 ms (movies stay
-searchable on purpose), bulk insert ~260 ms.
+why the Movies root shows categories only, as shipped in 0.2.17), bulk insert ~260 ms.
+
+### 🔴 The search box is the one per-keystroke path VOD still breaks — OWNER DECISION
+
+**Measured 0.63 → 80.00 ms on the first keystroke** (126×), added to `--benchdb` as
+`searchChannels() 1ch` in the 0.2.17 UI work. **The 7.9 ms previously recorded above was wrong** —
+not mismeasured, but measured with the term `"Channel 1"`, which matches **zero** of the benchmark's
+movies (they are named `Film Title Number N`) and no VOD category. It timed the table scan and none
+of the materialization. A real user's first keystroke is one letter, which matches most of the
+library. `--benchdb` now prints both figures so the distinction cannot be lost again.
+
+The mechanics: the search box's `EN_CHANGE` calls `Database::searchChannels()` **synchronously on
+the UI thread**, with no debounce, no minimum length and no `LIMIT`, and the query has no `kind`
+predicate. So every keystroke scans 44k rows and materializes ~40k `Channel` structs.
+
+This is left undecided on purpose. "Movies stay searchable" is an explicit design-doc position, and
+every way of fixing it changes what the user gets:
+
+- **`LIMIT` (say 500)** — kills the materialization outright, which is where the 80 ms is. But a
+  silently truncated result set is its own lie: "I searched and it wasn't there." Needs the count
+  line to say it truncated.
+- **Debounce (~200 ms)** — no semantic change at all, purely fewer queries. But each search still
+  costs 80 ms, so it reduces the frequency of the stall, not the stall.
+- **Minimum length before movies join the search** — cheap, and matches how people actually search a
+  40k catalogue, but it is a second, invisible rule about what "search" means.
+
+`LIMIT` + an honest count line is the likeliest right answer; it is a product call, not a perf one.
+
+### Recorded, not fixed — measured while finishing 0.2.17
+
+- **`allChannels()` 0.73 → 80.4 ms and `channelsByPlaylist()` 0.59 → 80.0 ms.** Deliberate, per
+  `--benchdb`'s own note: "allChannels() legitimately grows with the row count — it is the 'All'
+  view." Both are per-nav-click, not per-keystroke, and the post-sync UI is careful never to land on
+  All Channels. Worth revisiting only if the owner finds the All view unusable with VOD loaded.
+- **UI-thread DB writes contend with the sync's two big transactions.** The sync holds
+  `BEGIN IMMEDIATE` for ~43.6k inserts (~265 ms) and then again for the temp-table stage + the
+  anti-join delete. WAL keeps readers clear, but a UI-thread write landing in those windows blocks —
+  and past `busy_timeout=5000` it returns `SQLITE_BUSY`, which every writer here discards, i.e. a
+  **silently lost write**. Measured hold times are far under 5 s so this is a freeze, not a loss, at
+  the current library size. Chunking the insert would cap it. The dead-link sweep never exposed this
+  because its writes are single-row.
 
 ## Tester tasks (need a real stream — the dev sandbox cannot do these)
 

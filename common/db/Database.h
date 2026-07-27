@@ -71,7 +71,14 @@ public:
     // An EMPTY keepUrls deletes nothing (a failed/partial fetch must not wipe a library);
     // the caller is responsible for only passing a set it actually trusts. Any failure to
     // stage the keep-set aborts and rolls back rather than deleting a partial difference.
-    // Returns the number of rows removed, and recomputes playlists.channel_count.
+    //
+    // Returns the number of rows removed, or **-1 if the operation FAILED** and rolled back —
+    // following clearDeadStatuses(). The distinction matters more here than anywhere else in this
+    // class: without it a rolled-back retirement is indistinguishable from "the provider dropped
+    // nothing", so the caller reports a clean sync and the library silently never converges. That
+    // is exactly the "harder to spot because it looks like it worked" failure the warning below is
+    // about. An empty keepUrls still returns 0 — a no-op is not a failure.
+    // Recomputes playlists.channel_count.
     //
     // ⚠ NOT REENTRANT, and NOT safe to run concurrently on ONE Database handle. It stages
     // the keep-set in a per-CONNECTION temp table inside a transaction, so two overlapping

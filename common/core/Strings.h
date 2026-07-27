@@ -616,6 +616,25 @@ enum class StringId {
     StatusDeadLinkProgress,
     StatusDeadLinkDone,
     StatusDeadLinkInconclusive,
+    // --- Nav ---
+    NavMovies,
+    // --- Status ---
+    StatusMoviesPickCategory,
+    // --- Menu ---
+    MenuVodSync,
+    MenuVodSyncing,
+    // --- Status ---
+    StatusVodSyncContacting,
+    StatusVodSyncFetching,
+    StatusVodSyncSaving,
+    StatusVodSyncDone,
+    StatusVodSyncDoneNoRetire,
+    StatusVodSyncEmpty,
+    StatusVodSyncPlaying,
+    StatusVodSyncNoProvider,
+    StatusVodSyncCancelled,
+    StatusVodSyncFailed,
+    StatusVodSyncPartial,
     Count  // sentinel — MUST stay last
 };
 

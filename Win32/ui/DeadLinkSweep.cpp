@@ -12,6 +12,7 @@
 #include "models/Channel.h"
 #include "platform/Log.h"
 #include "ui/MainWindowInternal.h"
+#include "ui/VodSync.h"  // vodSyncRunning() — the other provider-facing worker
 
 namespace rabbitears {
 namespace mw {
@@ -46,6 +47,13 @@ void sweepThread(HWND hwnd, std::wstring dbPath) {
     std::vector<Channel> todo;
     for (const Channel& c : db.allChannels()) {
         if (c.streamUrl.empty()) continue;
+        // LIVE channels only. Once a VOD sync lands, `channels` holds ~4x more movies than live
+        // channels (43,599 vs 442 on the owner's real library), all interleaved by the same
+        // ordering — so without this the 250-probe budget gets spent on films and the feature the
+        // user actually asked for silently stops covering their TV list. It is also the right
+        // answer on its own terms: a vanished film is retired by the catalogue sync, which costs
+        // two requests instead of tens of thousands against a one-connection line.
+        if (c.isVod()) continue;
         if (!needsProbe(c.lastCheckedAt, now)) continue;  // still fresh — this is what resumes
         todo.push_back(c);
         if (static_cast<int>(todo.size()) >= kMaxPerSweep) break;
@@ -116,6 +124,11 @@ void sweepThread(HWND hwnd, std::wstring dbPath) {
 
 bool startDeadLinkSweep(AppState* st) {
     if (!st || !st->db.isOpen()) return false;
+    // The VOD sync is the OTHER worker that opens a connection to the same provider, and on a
+    // max_connections:1 line the two contending is worse than either waiting: a probe refused for
+    // capacity is classified and can persist dead_status=Dead on a perfectly good live channel.
+    // The menu greys both items against both workers, so this is the belt to that's braces.
+    if (vodSyncRunning()) return false;
     if (g_running.exchange(true)) return false;  // one at a time
     g_cancel = false;
     if (g_worker.joinable()) g_worker.join();  // reap the previous, finished, worker

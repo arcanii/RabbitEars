@@ -46,6 +46,12 @@ constexpr UINT WM_APP_MAKE_VOUT_HOST = WM_APP + 5;
 // ChannelGridControl). PROGRESS carries (done, total); DONE carries (deadFound, rowsWritten).
 constexpr UINT WM_APP_DEADLINK_PROGRESS = WM_APP + 6;
 constexpr UINT WM_APP_DEADLINK_DONE = WM_APP + 7;
+// Xtream VOD sync worker -> UI thread. +8/+9 were the next free ids (WM_APP+10 is ChannelGrid-
+// Control's logo-decode notification). PROGRESS carries (kVodPhase*, count); DONE carries nothing
+// — the counts are read back with vodSyncReport(), so no allocation can be stranded by a message
+// posted to a window that is already tearing down.
+constexpr UINT WM_APP_VOD_PROGRESS = WM_APP + 8;
+constexpr UINT WM_APP_VOD_DONE = WM_APP + 9;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 constexpr UINT_PTR kSupportPromptTimer = 0xA3;  // ONE-SHOT: the "support RabbitEars" tip prompt
 
@@ -119,6 +125,9 @@ constexpr int ID_LANG_ZH_HK = 2049;    // Settings → Language → 繁體中文
 constexpr int ID_DEADLINK_SWEEP = 2025;   // Settings → Channels → Check for dead links
 constexpr int ID_DEADLINK_CLEAR = 2026;   // Settings → Channels → Clear dead-link results (its undo)
 constexpr int ID_SYSTEM_SETTINGS = 2023;  // Settings → System… (logging level + beta features)
+// 2027 is a genuine gap: the 2020..2029 block runs 2020,2021,2022,2023,2024,2025,2026 and stops,
+// and it is nowhere near ID_DOCK_BASE (2051..2062) or either ID_LAYOUT_*_BASE range.
+constexpr int ID_VOD_SYNC = 2027;  // Settings → Channels → Sync movies from provider (Xtream VOD)
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
@@ -143,10 +152,18 @@ constexpr int kBufMinMs = 500, kBufMaxMs = 8000, kBufStepMs = 250;
 // granularity on a 2-hour film — finer than the thumb can be placed at any sane width.
 constexpr int kSeekTicks = 1000;
 
-enum class ViewKind { All, Favourites, Group, Country, Playlist, Guide };
+// Movies / MovieGroup are the VOD half of the tree, deliberately a SEPARATE namespace from
+// Group: `Database::listGroups()` is live-only and `moviesByGroup()` is kind-scoped, so a VOD
+// category that happens to share a live group's name cannot pull 43,599 films into a live view.
+//
+// `Movies` is the root itself and — like `Guide` — loads NO grid channels. That is a decision,
+// not an omission: `allMovies()` on the owner's real library is 43,599 rows (77 ms measured,
+// Win32/docs/XTREAM_VOD.md), and a 44k-row grid is not something anyone browses. The root's
+// content IS its category list; picking one lands on `MovieGroup`, which is 2.4 ms.
+enum class ViewKind { All, Favourites, Group, Country, Playlist, Guide, Movies, MovieGroup };
 struct ViewFilter {
     ViewKind     kind = ViewKind::All;
-    std::wstring group;
+    std::wstring group;    // group_title when kind == Group; VOD category when kind == MovieGroup
     long long    playlistId = 0;
     std::wstring country;  // ISO code when kind == Country
 };
@@ -321,6 +338,11 @@ struct AppState {
     bool       showFrames = false;
     ViewFilter filter;
     std::vector<ViewFilter> navFilters;  // indexed by tree item lParam
+    // The 🎬 Movies root, or null when the library has no movies. Kept so a finished VOD sync can
+    // select it — landing the user on the thing that just arrived — instead of falling back to All
+    // Channels, which materializes every row (measured 0.65 -> 76.99 ms once VOD is loaded).
+    // Rebuilt by refreshNav on every call, so it never outlives its HTREEITEM.
+    HTREEITEM navMovies = nullptr;
     SpectrumTap spectrumTap;             // read-only WASAPI process-loopback → spectrum meter
     DockLayout  dock;                    // user-arrangeable region layout (persisted)
     std::vector<DockLayout::Gutter> gutters;  // splitter gutters from the last layout()

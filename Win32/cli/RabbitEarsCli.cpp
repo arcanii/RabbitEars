@@ -1475,6 +1475,16 @@ int selftest() {
             // server) after a bad verdict could make a library vanish. ***
             expect(mdb.retireMissingChannels(7, static_cast<int>(Channel::Kind::Movie), {}) == 0,
                    "vod sync: an EMPTY keep-set retires nothing (a failed fetch cannot wipe a library)");
+            // 0 and -1 mean DIFFERENT things, and the difference is the whole safety story: 0 is
+            // "the provider dropped nothing", -1 is "the retirement failed and rolled back". A
+            // caller that cannot tell them apart reports a clean sync over a library that will
+            // never converge — the "looks like it worked" failure Database.h warns about.
+            {
+                Database closed;  // never opened
+                expect(closed.retireMissingChannels(7, static_cast<int>(Channel::Kind::Movie),
+                                                    {L"http://o/movie/1.mp4"}) == -1,
+                       "vod sync: a FAILED retirement returns -1, not a plausible 0");
+            }
             after = mdb.channelsByPlaylist(7);
             int stillMovies = 0;
             for (const auto& ch : after)
@@ -2399,6 +2409,12 @@ int benchDb(int movies, int live) {
         put("channelsByGroup()",    timeIt([&] { (void)db.channelsByGroup(aGroup); }));
         put("favourites()",         timeIt([&] { (void)db.favourites(); }));
         put("searchChannels()",     timeIt([&] { (void)db.searchChannels(L"Channel 1"); }));
+        // The FIRST KEYSTROKE, which is the honest worst case and the one the line above misses:
+        // "Channel 1" matches no movie by name or category, so it measures the scan and none of
+        // the materialization. A single letter matches most of the library, and the search box
+        // runs this synchronously on the UI thread on every EN_CHANGE with no debounce and no
+        // LIMIT — so this figure, not the one above, is what the user feels while typing.
+        put("searchChannels() 1ch",  timeIt([&] { (void)db.searchChannels(L"e"); }));
         put("channelsByPlaylist()", timeIt([&] { (void)db.channelsByPlaylist(pid); }));
     };
 

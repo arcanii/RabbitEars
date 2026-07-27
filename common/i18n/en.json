@@ -566,5 +566,20 @@
   "StatusDeadLinkStarted": "Checking channels for dead links…",
   "StatusDeadLinkProgress": "Checking links… {0} of {1}",
   "StatusDeadLinkDone": "Link check done — {0} unavailable, {1} channel(s) updated.",
-  "StatusDeadLinkInconclusive": "Link check inconclusive — nothing changed (check your connection)."
+  "StatusDeadLinkInconclusive": "Link check inconclusive — nothing changed (check your connection).",
+  "NavMovies": "🎬 Movies",
+  "StatusMoviesPickCategory": "Pick a category below to browse movies.",
+  "MenuVodSync": "Sync movies from provider",
+  "MenuVodSyncing": "Syncing movies…",
+  "StatusVodSyncContacting": "Contacting your provider…",
+  "StatusVodSyncFetching": "Downloading the movie catalogue…",
+  "StatusVodSyncSaving": "Saving {0} movies…",
+  "StatusVodSyncDone": "Movie sync done — {0} added or updated, {1} removed.",
+  "StatusVodSyncDoneNoRetire": "Movie sync done — {0} added or updated, {1} removed. {2} item(s) from your provider were unusable, so titles that looked missing were kept rather than removed.",
+  "StatusVodSyncEmpty": "Your provider returned no usable movies — nothing was changed.",
+  "StatusVodSyncPlaying": "Stop playback and recording first — your provider allows only one connection at a time.",
+  "StatusVodSyncNoProvider": "No Xtream provider found — movie sync needs a playlist URL with a username and password.",
+  "StatusVodSyncCancelled": "Movie sync cancelled — nothing was changed.",
+  "StatusVodSyncFailed": "Movie sync failed — {0}",
+  "StatusVodSyncPartial": "Movie sync incomplete — {0} added or updated before it stopped ({1})."
 }

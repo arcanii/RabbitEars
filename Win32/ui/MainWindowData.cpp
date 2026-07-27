@@ -49,6 +49,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/VideoGrid.h"
 #include "ui/VlcEngine.h"
 #include "ui/VlcPlayer.h"
+#include "ui/VodSync.h"
 
 #include "audio/SpectrumTap.h"
 
@@ -87,8 +88,13 @@ void applyChannelFilters(AppState* st, std::vector<Channel>& ch) {
         ch.erase(std::remove_if(ch.begin(), ch.end(),
                                 [st](const Channel& c) {
                                     // Uncategorized channels (blank group) can't be picked in
-                                    // the Categories dialog, so never hide them behind it.
-                                    return !c.groupTitle.empty() &&
+                                    // the Categories dialog, so never hide them behind it. Movies
+                                    // can't either — the dialog is built from `listGroups()`,
+                                    // which is LIVE-only, so a VOD category is not merely
+                                    // unchecked, it is unofferable. Without this exemption a user
+                                    // with any category filter set opens a movie category and
+                                    // gets an empty grid with nothing to explain it.
+                                    return !c.isVod() && !c.groupTitle.empty() &&
                                            st->categories.find(c.groupTitle) == st->categories.end();
                                 }),
                  ch.end());
@@ -103,11 +109,20 @@ void loadForFilter(AppState* st) {
         case ViewKind::Country: ch = st->db.channelsByCountry(st->filter.country); break;
         case ViewKind::Playlist: ch = st->db.channelsByPlaylist(st->filter.playlistId); break;
         case ViewKind::Guide: break;  // action node (opens the TV Guide window); loads no grid channels
+        // The Movies ROOT loads nothing on purpose — see the ViewKind comment. It still falls
+        // through to the clear-the-grid path below so the view has a defined state rather than
+        // the previous nav node's rows left sitting there.
+        case ViewKind::Movies: break;
+        case ViewKind::MovieGroup: ch = st->db.moviesByGroup(st->filter.group); break;
     }
     applyChannelFilters(st, ch);
     channelGridSetChannels(st->grid, std::move(ch));
     channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
     updateCounts(st);
+    // ...and say WHY it is empty. updateCounts would otherwise report "0 channels", which reads
+    // as "your movies are gone" on the one node whose whole job is to point at its children.
+    if (st->filter.kind == ViewKind::Movies)
+        setStatus(st, tr(i18n::StringId::StatusMoviesPickCategory));
 }
 
 HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM param, bool bold) {
@@ -157,6 +172,7 @@ std::wstring countryLabel(const std::wstring& code) {
 
 void refreshNav(AppState* st) {
     st->navFilters.clear();
+    st->navMovies = nullptr;  // cleared BEFORE the delete: the old HTREEITEM dies with it
     TreeView_DeleteAllItems(st->nav);
 
     st->navFilters.push_back({ViewKind::All});
@@ -165,6 +181,25 @@ void refreshNav(AppState* st) {
     navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavFavourites), 1, false);
     st->navFilters.push_back({ViewKind::Guide});
     navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavTvGuide), 2, false);  // selecting it opens the guide window
+
+    // 🎬 Movies — the VOD root, and the ONLY entry point to the movie library (`listGroups()`
+    // is live-only, so VOD categories are not siblings in the Groups tree). Omitted entirely
+    // when there are no movies, which is what keeps the sidebar byte-identical for every
+    // existing live-TV-only user; one extra ~0.07 ms query is the whole cost of asking.
+    //
+    // Unlike Groups/Countries/Playlists this root IS selectable (lParam is a real filter index,
+    // not -1) so that clicking it clears the grid and explains itself, instead of leaving the
+    // previous view's rows on screen under a heading that says "Movies".
+    if (const std::vector<std::wstring> vodGroups = st->db.listVodGroups(); !vodGroups.empty()) {
+        st->navFilters.push_back({ViewKind::Movies});
+        HTREEITEM movies = navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavMovies),
+                                     static_cast<LPARAM>(st->navFilters.size() - 1), true);
+        st->navMovies = movies;
+        for (const std::wstring& g : vodGroups) {
+            st->navFilters.push_back({ViewKind::MovieGroup, g, 0});
+            navInsert(st->nav, movies, g, static_cast<LPARAM>(st->navFilters.size() - 1), false);
+        }
+    }
 
     HTREEITEM groups = navInsert(st->nav, TVI_ROOT, tr(i18n::StringId::NavGroups), -1, true);
     for (const std::wstring& g : st->db.listGroups()) {
@@ -198,6 +233,13 @@ void resetStatMeters(AppState* st);  // defined below — clear the stat meters 
 // and plays — muted, since only the active pane is audible (click it to hear it).
 void playChannelInPane(AppState* st, const Channel& c, int idx) {
     if (idx < 0 || idx >= static_cast<int>(st->panes.size())) return;
+    // 🔴 max_connections:1 — the sync gate cannot be start-only. startVodSync() refuses while
+    // anything is playing or recording, but nothing stopped the user pressing play two seconds
+    // into a ~10 s catalogue download, and on a one-connection line that is the sync kicking the
+    // stream the user just asked for. The user's playback always wins, so the sync stands down.
+    // It is a soft stop: httpGet has no cancellation handle, so an in-flight body still finishes
+    // — but no further request is issued and nothing is written.
+    cancelVodSync();
     VideoPane& p = *st->panes[idx];
     diag::info(L"play pane " + std::to_wstring(idx) + L" #" + std::to_wstring(c.id) + L" \"" + c.name +
                L"\" ua=[" + c.userAgent + L"] ref=[" + c.referrer + L"]");

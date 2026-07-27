@@ -3656,5 +3656,109 @@
     "cluster": "Status",
     "placeholders": [],
     "comment": "Shown when the sweep was discarded (network problem) or cancelled."
+  },
+  {
+    "id": "NavMovies",
+    "cluster": "Nav",
+    "placeholders": [],
+    "comment": "The VOD root in the sidebar. Present only when the library contains movies."
+  },
+  {
+    "id": "StatusMoviesPickCategory",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Selecting the Movies root shows no grid — a VOD library is tens of thousands of items."
+  },
+  {
+    "id": "MenuVodSync",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Settings > Channels. Only appears when an Xtream provider playlist exists."
+  },
+  {
+    "id": "MenuVodSyncing",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Same menu item while a sync is running (greyed)."
+  },
+  {
+    "id": "StatusVodSyncContacting",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "First phase: the account/auth probe."
+  },
+  {
+    "id": "StatusVodSyncFetching",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Second phase: downloading the categories + the movie list (tens of MB)."
+  },
+  {
+    "id": "StatusVodSyncSaving",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "{0} = number of movies being written to the database."
+  },
+  {
+    "id": "StatusVodSyncDone",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "{0} = rows added or updated, {1} = rows removed because the provider dropped them."
+  },
+  {
+    "id": "StatusVodSyncDoneNoRetire",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": "{0} = rows added or updated, {1} = rows removed, {2} = unusable items. Shown when the trust guard refused the deletion pass on at least one playlist."
+  },
+  {
+    "id": "StatusVodSyncEmpty",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "The provider answered, but with no usable movies. Nothing is written."
+  },
+  {
+    "id": "StatusVodSyncPlaying",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Refusal: Xtream lines commonly allow only one connection, so a sync during playback kicks the stream."
+  },
+  {
+    "id": "StatusVodSyncNoProvider",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Refusal: no playlist URL carries Xtream credentials."
+  },
+  {
+    "id": "StatusVodSyncCancelled",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "The sync was stopped (app closing) before anything was written."
+  },
+  {
+    "id": "StatusVodSyncFailed",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "{0} = a short technical reason (HTTP/JSON), not localized."
+  },
+  {
+    "id": "StatusVodSyncPartial",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "A run that committed work and then stopped. {0} = rows added or updated, {1} = the technical reason it stopped."
   }
 ]
