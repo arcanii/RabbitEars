@@ -446,6 +446,64 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 - **Date/time format strings** in the schedule dialog/columns are left numeric (yyyy-MM-dd) — revisit if
   locale-aware date formatting is wanted.
 
+## 🎬 Xtream VOD + Series — the 0.3.0 epic (scoped 2026-07-26, NOT started)
+
+**Answering "does RabbitEars support VOD?" — no, not at all, and the gap is bigger than it looks.**
+Every "Movies" string in the tree is group-title *test data*. Investigated and confirmed:
+
+- **No seek anywhere.** `VlcPlayer` exposes zero position/duration/seek API — no `set_position`,
+  `get_length`, `get_time`. The transport is Play · Stop · Fullscreen · Record with no scrub bar,
+  because a live stream has nothing to scrub. **This is the single biggest prerequisite.**
+- **No content model.** `Channel` has no duration, watched flag, resume position, or live-vs-VOD
+  discriminator. An Xtream movie today imports as just another channel in a group called "Movies".
+- **No Xtream API client.** What exists is narrow and unrelated: a VLC-style User-Agent so panels
+  don't reject the fetch (`Win32/platform/Http.cpp`), credentials tolerated in the query string, and
+  the country-from-group-title fallback. All of it treats an Xtream playlist as a **flat M3U of live
+  channels**.
+- **⚠️ NO JSON PARSER IN THE REPO.** `player_api.php` is JSON-only. House style is hand-rolled
+  parsers (M3U, XMLTV) with vendoring reserved for hard things (SQLite, miniz) — so this is probably
+  ~300 lines of subset parser plus `--selftest` coverage, not a dependency decision. Decide in the
+  design doc.
+- **Already reusable, and the biggest head start:** the channel-logo loader (off-thread,
+  disk-cached, bomb-safe) is exactly the poster-art problem again. Schema migrations are incremental
+  and idempotent on `PRAGMA user_version` (at **v7**), so VOD's v8 is routine.
+
+**Estimate: ~15–22 focused days (3–5 weeks)** plus this project's usual ~25–30% for adversarial
+review + both-flag verification. Breakdown: JSON subset parser 1–1.5 · Xtream client 2–3 · schema v8
++ DAO + migration tests 2–3 · player seek/position (the worker-thread atomic pattern `videoSize()`
+already uses) 1 · scrub bar + time readout 1–2 · resume/watched 1 · poster grid (a Direct2D sibling
+to the 862-line `ChannelGridControl`) 3–5 · series→seasons→episodes browser 2–3 · nav + i18n (~50
+strings × 4 langs) 1.5.
+
+**Biggest risk, and it is un-simulatable here:** Xtream panels are wildly non-standard — differing
+shapes, missing fields, numbers-as-strings, and some disable `player_api.php` outright. Second risk:
+VOD libraries run 10k–50k items, so the poster grid inherits the perf discipline the country filter
+already needed (a C++-side filter benchmarked at ~30 ms/call and was pushed into a SQLite scalar).
+
+### Do these two things FIRST, in this order
+
+1. **A 30-minute reconnaissance against the owner's real provider** (a tester task, like the
+   `bufferedBytes` one below): does `player_api.php` respond at all, and what does
+   `get_vod_streams` / `get_series_info` actually return? If it is disabled or the shape is odd, the
+   estimate changes completely. **Nothing should be designed before this is answered.**
+2. **A design doc — `Win32/docs/XTREAM_VOD.md` — written BEFORE any code**, exactly as
+   `Win32/docs/THEME_ENGINE.md` was for the theme engine (the one prior epic of this size). Same two
+   rules apply: doc first, **and flag the shared-core boundary to the macOS team before anything
+   lands**, because the client, JSON parser, schema and models all belong in `common/` — mac gets
+   the core free but owns a whole second UI, and every one of those files is subject to the
+   shared-core traps (exact-arity parsers, mac's duplicate copies).
+
+### Ship it in three, landing at 0.3.0 — not as one branch
+
+A 3–5 week monolith contradicts how this project ships well: small, owner-verified, corrected fast.
+The sandbox cannot see the GUI, so long feedback loops are unusually expensive here.
+
+- **0.2.16** — player seek + scrub bar + time readout. Independently useful, prerequisite for all of it.
+- **0.2.17** — JSON parser + Xtream client + schema v8. Movies only, in the existing grid, no posters.
+  Proves the API against a real provider at minimum cost.
+- **0.3.0** — posters, series/seasons/episodes, resume. The minor bump marks the capability's
+  ARRIVAL, not the start of the work.
+
 ## Tester tasks (need a real stream — the dev sandbox cannot do these)
 
 - **📊 Does `bufferedBytes` actually report on IPTV? — 10 minutes, decides a feature**

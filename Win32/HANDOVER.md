@@ -370,6 +370,18 @@ on the real x64 build. That leaves **only two things unseen** in the shipped rel
   release"*. Deferred to **pass 4** in `BACKLOG.md`, written as an investigation with a shortlist of
   suspects rather than a fix, because "needs work" does not say which way it is wrong.
 
+**🎬 The next EPIC, if it is wanted: Xtream VOD + Series (`BACKLOG.md`, scoped 2026-07-26).**
+RabbitEars has **no VOD support at all** today — no seek API in the player, no scrub bar, no
+duration/resume/watched in the `Channel` model, and no Xtream `player_api.php` client (the Xtream
+handling that exists treats those playlists as flat lists of live channels). Also: **there is no JSON
+parser in the repo**, and `player_api.php` is JSON-only. Estimated ~15–22 focused days; BACKLOG holds
+the full breakdown, the risks, and a three-release plan that lands at **0.3.0** rather than starting
+there. **Two things must happen first, in order:** a 30-minute reconnaissance of the owner's real
+provider (panels are wildly non-standard and some disable the API), then a design doc
+`Win32/docs/XTREAM_VOD.md` written BEFORE any code — exactly as `THEME_ENGINE.md` was for the one
+prior epic of this size, and with the same obligation to flag the shared-core boundary to the macOS
+team, since the client, parser, schema and models all land in `common/`.
+
 **Candidates for 0.2.16:** glass bezel pass 4 (top of the list — it is the one owner-flagged
 reservation in a shipped release); **wire the glass into the buffer meter**, which is the likeliest
 single explanation for the bezel reading half-done — four framed mini-meters currently sit beside one
