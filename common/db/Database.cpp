@@ -519,7 +519,12 @@ void Database::migrate() {
     //             The partial index holds ONLY the live rowids, so the scan is 442 entries.
     // A live-only library (every existing user) pays for neither: both are partial, and the
     // kind<>0 index is empty until a VOD sync runs.
-    exec("CREATE INDEX IF NOT EXISTS idx_channels_kind ON channels(kind) WHERE kind<>0;");
+    // The VOD side indexes (kind, group_title) rather than kind alone: the Movies root's two
+    // hot queries are "DISTINCT group_title WHERE kind=1" (the category list) and "WHERE
+    // kind=1 AND group_title=?" (one category), and a composite serves both — the first as an
+    // index-only scan. On kind alone the category list cost 8.81 ms at 43,599 movies.
+    exec("DROP INDEX IF EXISTS idx_channels_kind;");  // superseded by the composite below
+    exec("CREATE INDEX IF NOT EXISTS idx_channels_vod ON channels(kind, group_title) WHERE kind<>0;");
     exec("CREATE INDEX IF NOT EXISTS idx_channels_live ON channels(kind) WHERE kind=0;");
 
     // Advance user_version to reflect exactly what actually landed, so a partial
@@ -765,12 +770,34 @@ std::vector<Channel> Database::channelsByPlaylist(long long playlistId) {
                            nullptr, playlistId);
 }
 
+// Kind-scoped, so a VOD category that happens to share a name with a live group cannot pull
+// 43,599 films into a live group view (or the reverse). The live tree and the Movies tree
+// are separate namespaces.
 std::vector<Channel> Database::channelsByGroup(const std::wstring& group) {
-    return runChannelQuery(db_,
-                           std::string("SELECT ") + kChannelCols +
-                               " FROM channels WHERE group_title=? AND " + kEnabledOnly +
-                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
-                           &group);
+    return channelsByGroupOfKind(group, 0);
+}
+
+std::vector<Channel> Database::moviesByGroup(const std::wstring& group) {
+    return channelsByGroupOfKind(group, static_cast<int>(Channel::Kind::Movie));
+}
+
+std::vector<Channel> Database::channelsByGroupOfKind(const std::wstring& group, int kind) {
+    // kind first: the partial indexes make it the cheap discriminator.
+    std::string sql = std::string("SELECT ") + kChannelCols +
+                      " FROM channels WHERE kind=" + std::to_string(kind) +
+                      " AND group_title=? AND " + kEnabledOnly +
+                      " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE";
+    return runChannelQuery(db_, sql, &group);
+}
+
+// Every movie, for the "Movies" root itself. Sorted newest-first on the provider's `added`
+// stamp — with 43,599 items an alphabetical wall is useless, and "what's new" is the one
+// ordering a VOD library is actually browsed by. Ties fall back to name so the order is
+// stable (added_at is 0 for anything imported before v8 or from a panel that omits it).
+std::vector<Channel> Database::allMovies() {
+    return runChannelQuery(db_, std::string("SELECT ") + kChannelCols +
+                                    " FROM channels WHERE kind=1 AND " + kEnabledOnly +
+                                    " ORDER BY added_at DESC, name COLLATE NOCASE");
 }
 
 std::vector<Channel> Database::favourites() {
@@ -821,11 +848,31 @@ std::optional<Channel> Database::channelById(long long id) {
     return rows.front();
 }
 
-std::vector<std::wstring> Database::listGroups() {
+// LIVE groups only. VOD categories are browsed under their own "Movies" nav root rather
+// than as ~67 extra siblings in the live tree — a decision that is as much about the tree
+// staying recognisable as about cost, though it fixes both (measured with --benchdb: this
+// query went 0.09 -> 8.21 ms once 43,599 movies shared the table). Movies are still findable
+// by search, which deliberately keeps them.
+//
+// No behaviour change for a live-only library, mac included: every pre-v8 row is kind=0.
+std::vector<std::wstring> Database::listGroups() { return listGroupsOfKind(0); }
+
+// The VOD categories, for the Movies root.
+std::vector<std::wstring> Database::listVodGroups() {
+    return listGroupsOfKind(static_cast<int>(Channel::Kind::Movie));
+}
+
+std::vector<std::wstring> Database::listGroupsOfKind(int kind) {
     std::vector<std::wstring> out;
-    Stmt q(db_, (std::string("SELECT DISTINCT group_title FROM channels WHERE group_title IS NOT NULL "
-                             "AND group_title<>'' AND ") +
-                 kEnabledOnly + " ORDER BY group_title COLLATE NOCASE")
+    // `kind` is inlined as a LITERAL, not bound. A partial index is only usable when SQLite
+    // can prove at PREPARE time that the query's WHERE implies the index's condition, and it
+    // cannot prove `?1 <> 0` about a parameter it has not seen — so binding here silently
+    // cost a full 43,599-row scan (8.9 ms) while the composite VOD index sat unused. `kind`
+    // is an int from a fixed enum, so the concatenation is injection-safe.
+    Stmt q(db_, (std::string("SELECT DISTINCT group_title FROM channels WHERE kind=") +
+                 std::to_string(kind) +
+                 " AND group_title IS NOT NULL AND group_title<>'' AND " + kEnabledOnly +
+                 " ORDER BY group_title COLLATE NOCASE")
                     .c_str());
     if (!q) return out;
     while (q.step()) out.push_back(q.textCol(0));

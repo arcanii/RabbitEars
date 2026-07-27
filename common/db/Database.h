@@ -82,9 +82,23 @@ public:
     int retireMissingChannels(long long playlistId, int kind,
                               const std::vector<std::wstring>& keepUrls);
 
+private:
+    std::vector<std::wstring> listGroupsOfKind(int kind);
+    std::vector<Channel> channelsByGroupOfKind(const std::wstring& group, int kind);
+
+public:
+
     std::vector<Channel> allChannels();
     std::vector<Channel> channelsByPlaylist(long long playlistId);
+    // LIVE channels in `group`. Kind-scoped: the live tree and the Movies tree are separate
+    // namespaces, so a VOD category sharing a live group's name cannot cross-contaminate.
     std::vector<Channel> channelsByGroup(const std::wstring& group);
+    // ---- VOD (schema v8) ----------------------------------------------------
+    // Movies live under their own "Movies" nav root rather than as ~67 extra siblings in the
+    // live group tree — see listGroups().
+    std::vector<Channel> moviesByGroup(const std::wstring& group);
+    std::vector<Channel> allMovies();          // newest-first (provider `added`)
+    std::vector<std::wstring> listVodGroups();  // the VOD categories
     std::vector<Channel> favourites();
     std::vector<Channel> searchChannels(const std::wstring& term);
     std::optional<Channel> channelByLcn(int lcn);

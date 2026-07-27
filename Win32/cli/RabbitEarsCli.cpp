@@ -1539,6 +1539,33 @@ int selftest() {
             expect(trapLiveInCountry,
                    "vod sync: ...while a LIVE channel with the same prefix still does");
 
+            // *** The "Movies root" contract: the live tree must not gain VOD categories,
+            // and the Movies tree must not gain live groups. Two separate namespaces. ***
+            {
+                const auto liveGroups = mdb.listGroups();
+                const auto vodGroups = mdb.listVodGroups();
+                auto has = [](const std::vector<std::wstring>& v, const std::wstring& s) {
+                    return std::find(v.begin(), v.end(), s) != v.end();
+                };
+                expect(!has(liveGroups, L"NL - FILMS"),
+                       "movies root: a VOD category does NOT appear in the LIVE group tree");
+                expect(has(vodGroups, L"NL - FILMS"),
+                       "movies root: ...it appears under Movies instead");
+                expect(has(liveGroups, L"NL - NIEUWS") && !has(vodGroups, L"NL - NIEUWS"),
+                       "movies root: a LIVE group stays live-only");
+                // Same NAME on both sides must not cross-contaminate the row lists.
+                expect(mdb.channelsByGroup(L"NL - FILMS").empty(),
+                       "movies root: channelsByGroup finds no live rows in a VOD-only category");
+                expect(!mdb.moviesByGroup(L"NL - FILMS").empty(),
+                       "movies root: moviesByGroup does find them");
+                expect(mdb.moviesByGroup(L"NL - NIEUWS").empty(),
+                       "movies root: moviesByGroup finds no movies in a live-only group");
+                bool allAreMovies = !mdb.allMovies().empty();
+                for (const auto& ch : mdb.allMovies())
+                    if (ch.kind != Channel::Kind::Movie) allAreMovies = false;
+                expect(allAreMovies, "movies root: allMovies() returns only kind=Movie rows");
+            }
+
             ParsedChannel refetch;  // exactly what parseM3u would produce for the same URL
             refetch.name = L"Film A";
             refetch.streamUrl = m1.streamUrl;
@@ -2364,6 +2391,9 @@ int benchDb(int movies, int live) {
         };
         put("allChannels()",        timeIt([&] { (void)db.allChannels(); }));
         put("listGroups()",         timeIt([&] { (void)db.listGroups(); }));
+        put("listVodGroups()",      timeIt([&] { (void)db.listVodGroups(); }));
+        put("allMovies()",          timeIt([&] { (void)db.allMovies(); }));
+        put("moviesByGroup()",      timeIt([&] { (void)db.moviesByGroup(L"VOD - CATEGORY 3 [NL]"); }));
         put("listCountries()",      timeIt([&] { (void)db.listCountries(); }));
         put("channelsByCountry()",  timeIt([&] { (void)db.channelsByCountry(L"nl"); }));
         put("channelsByGroup()",    timeIt([&] { (void)db.channelsByGroup(aGroup); }));
@@ -2420,10 +2450,12 @@ int benchDb(int movies, int live) {
     // and every group the user already had are swamped by 43,599 films.
     const size_t nlAfter = db.channelsByCountry(L"nl").size();
     const size_t groupsAfter = db.listGroups().size();
+    const size_t vodGroupsAfter = db.listVodGroups().size();
     line(L"  countries: channelsByCountry(nl) returned " + std::to_wstring(nlAfter) +
          L" rows (movies carry no tvg-id and no country prefix, so they must NOT be here)");
-    line(L"  groups:    listGroups() now returns " + std::to_wstring(groupsAfter) +
-         L" (live groups + one per VOD category — the nav tree grows, by design)");
+    line(L"  groups:    listGroups() returns " + std::to_wstring(groupsAfter) +
+         L" LIVE groups (unchanged by the import — VOD has its own root), and " +
+         std::to_wstring(vodGroupsAfter) + L" VOD categories under Movies");
     line(L"");
     line(L"Interpretation: anything over ~2x on a per-keystroke path (channelsByCountry,");
     line(L"channelsByGroup, searchChannels) is a regression the user will feel. allChannels()");
