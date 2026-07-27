@@ -192,6 +192,27 @@ void syncBody(HWND hwnd, const std::wstring& dbPath, const std::vector<SyncTarge
                    std::to_wstring(res.skippedNoId) + L", no extension: " +
                    std::to_wstring(res.skippedNoExt) + L"), " + std::to_wstring(cats.size()) +
                    L" categories");
+        // The other half of the category guard, and it can only be checked HERE because it needs
+        // both responses. parseXtreamCategories returns TRUE with an empty vector for a body that
+        // is a valid empty array, or whose entries all lack an id — so the abort above (which only
+        // catches a parse FAILURE) leaves the identical disaster reachable: cats empty, every film
+        // renamed to the "Movies" fallback, the whole tree flattened in one committed transaction.
+        //
+        // The precise test is not "cats is empty" but "the movies reference categories we do not
+        // have": a provider that genuinely files nothing into categories sends no category_id
+        // either, and for them one "Movies" group is the correct answer, not a failure.
+        if (cats.empty()) {
+            bool wantsCategories = false;
+            for (const XtreamMovie& m : res.movies)
+                if (!m.categoryId.empty()) { wantsCategories = true; break; }
+            if (wantsCategories) {
+                diag::error(L"VOD sync: movies reference categories but get_vod_categories returned "
+                            L"none — refusing rather than flattening the Movies tree");
+                rep.result = VodSyncResult::ParseError;
+                rep.detail = L"no categories returned";
+                break;
+            }
+        }
         if (g_cancel.load()) { rep.result = VodSyncResult::Cancelled; break; }
 
         // ---- 3. Write ------------------------------------------------------
@@ -329,14 +350,17 @@ VodSyncStart startVodSync(AppState* st) {
     // is an ordinary documented state, and it is the state a SCHEDULED recording runs in. Without
     // this the 20:00 wake-to-record job is exactly what a sync would kick, and the scheduler would
     // then mark the truncated file Done.
-    // nowPlayingId is checked as well as isPlaying(), and it is the one that closes the real hole:
-    // `playing_` is set from the libvlc_MediaPlayerPlaying EVENT, so it is false for the whole
-    // open+buffer window — seconds, on an IPTV line, which is why StatusOpening exists — while the
-    // socket is already claimed. nowPlayingId is set synchronously when a channel is loaded into a
-    // pane and cleared on Stop, so it covers exactly that gap. dyingPanes have no id but do have a
-    // player that may still be draining.
+    // isEngaged() is what closes the real hole, and it belongs to the PLAYER rather than to the
+    // pane. `playing_` is set from the libvlc_MediaPlayerPlaying EVENT, so it is false for the
+    // whole open+buffer window — seconds, on an IPTV line, which is why StatusOpening exists —
+    // while the socket is already claimed. isEngaged() spans play() to the terminal event.
+    //
+    // Deliberately NOT the pane's nowPlayingId, which was the first attempt: it is set on play but
+    // cleared only by the transport Stop button (active pane only) and by the PIP swap, so a
+    // channel that errored or a film that reached its end would latch the gate true forever and
+    // refuse every sync with "stop playback first" while nothing was playing at all.
     auto busy = [](const std::unique_ptr<VideoPane>& p) {
-        return p && (p->player.isPlaying() || p->player.isRecording() || p->nowPlayingId != 0);
+        return p && (p->player.isEngaged() || p->player.isRecording());
     };
     for (const std::unique_ptr<VideoPane>& p : st->panes)
         if (busy(p)) return VodSyncStart::PlaybackActive;

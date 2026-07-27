@@ -31,7 +31,17 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **0.2.16 + the 0.2.17 core on `main`: UNRELEASED, and NOTHING has been seen on a device** · v0.2.15 SHIPPED · macOS 0.2.15
+## Current state — **0.2.16 is CODE COMPLETE on `main`, UNRELEASED, and NOTHING has been seen on a device** · v0.2.15 SHIPPED · macOS 0.2.15
+
+> ### ⚠️ Version note — the 0.2.16 / 0.2.17 split collapsed (owner's call, 2026-07-28)
+>
+> The plan was 0.2.16 = groundwork, 0.2.17 = the Xtream client. **0.2.16 was version-bumped but never
+> tagged and never given an appcast, so no user ever had it** — which means both land as a single
+> **0.2.16** and the number **0.2.17 is skipped entirely**. WinSparkle only compares against the
+> INSTALLED version, and 0.2.16 > 0.2.15 for everyone. Practical consequences: `APP_VERSION` is
+> already `0.2.16`, so **no bump is needed**; and text below that predates this call may still say
+> "0.2.17" where it means "the Xtream VOD work" — commit messages (`538f0b2`, `e4e01a7`) say it too
+> and cannot be rewritten. Read those as *the VOD half of 0.2.16*.
 
 > **Read "Immediate next steps" first.** `main` carries **four unreleased commits** (`ffb69dc` …
 > `7751cdc`) spanning two version's worth of work.
@@ -371,19 +381,20 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-### 🚧 The four unreleased commits (2026-07-27 → 28)
+### 🚧 The six unreleased commits (2026-07-27 → 28) — ALL of 0.2.16
 
-`APP_VERSION` = **`0.2.16`**. Both theme flags build clean at /W4 and `--selftest` is ALL PASS after
-every one of them.
+`APP_VERSION` = **`0.2.16`** and **needs no bump** (see the version note at the top: 0.2.17 is
+skipped). Both theme flags build clean at /W4 and `--selftest` is ALL PASS after every one of them.
 
 | commit | what |
 |---|---|
-| `ffb69dc` | 0.2.16 groundwork: player seek + scrub bar, `common/core/Json`, schema v8, buffer-meter glass, the `--xtream` recon probe |
+| `ffb69dc` | groundwork: player seek + scrub bar, `common/core/Json`, schema v8, buffer-meter glass, the `--xtream` recon probe |
 | `1a486be` | gate 2 — [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md), written off the real provider run |
-| `538f0b2` | 0.2.17 core: `common/core/XtreamClient`, DAO plumbing, **APP_VERSION → 0.2.16** |
-| `1d59783` + `7751cdc` | the perf work: country views made immune to VOD size, then the **Movies nav root** |
+| `538f0b2` | the Xtream client core: `common/core/XtreamClient`, DAO plumbing, **APP_VERSION → 0.2.16** (its message says "0.2.17 core" — that was the pre-collapse plan) |
+| `1d59783` + `7751cdc` | the perf work: country views made immune to VOD size, then the **Movies nav root** data model |
+| `e4e01a7` | **the VOD UI**: Movies nav root wired, `Win32/ui/VodSync.{h,cpp}`, Settings action, 15 i18n keys (message says "0.2.17" — same reason) |
 
-#### 0.2.17 — the Xtream client core (`538f0b2`)
+#### The Xtream client core (`538f0b2`)
 
 `common/core/XtreamClient.{h,cpp}` — **pure, no network by design.** The caller fetches and hands
 bytes in, because with `max_connections: 1` whether a sync may run at all depends on whether a pane
@@ -455,10 +466,11 @@ Seek queued behind a Play landed the old film's position on the new stream (now 
 generation). The pattern in all three: **state cleared only on a visibility TRANSITION is not cleared
 at all when the transition doesn't happen.**
 
-### ✅ 0.2.17's UI is DONE (uncommitted) — ▶️ PICK UP AT "What still needs the owner"
+### ✅ The VOD UI is DONE and COMMITTED (`e4e01a7`, pushed) — ▶️ PICK UP AT "What still needs the owner"
 
 All three remaining items landed. Both theme flags build clean at /W4 and `--selftest` is ALL PASS.
-**None of it has been seen running** — see "What still needs the owner".
+**None of it has been seen running** — see "What still needs the owner". This completes 0.2.16;
+nothing is left to build before the release except the owner's on-device pass.
 
 1. **Movies nav root — settled as CATEGORIES-ONLY.** `ViewKind` gained `Movies` + `MovieGroup`.
    `refreshNav` builds the root from `listVodGroups()` and **omits it entirely when there are no
@@ -511,9 +523,11 @@ All three remaining items landed. Both theme flags build clean at /W4 and `--sel
    playlist than the one right-clicked. The id is now read before the menu.
 
 Also still open from the design doc, and **deliberately not decided here** — they are owner calls,
-and the doc's "0.2.17 success = … resume works" line depends on all three: where duration comes from
+and the design doc's "success = … resume works" line depends on all three: where duration comes from
 (the API has none for movies — cache `VlcPlayer::lengthMs()` at play time), the `watched` threshold,
-and resume-prompt vs silent-resume. **As it stands 0.2.17 is browse-and-play, not resume.**
+and resume-prompt vs silent-resume. **As it stands the VOD feature is browse-and-play, not resume**,
+and resume is listed under 0.3.0 anyway ("resume everywhere"). Decide whether 0.2.16 ships without
+it — the recommendation is yes, since resume cannot be designed against a library nobody has used.
 
 #### ⚠️ One measured regression this release ships with — an owner decision
 
@@ -550,12 +564,14 @@ grid and posters become a SERIES feature**.
 
 ⚠️ **The biggest risk is not VOD** — 43,599 rows is ~4× the current library, in the same `channels`
 table that already needed a SQLite scalar to keep the country filter under ~30 ms/keystroke at 14k
-rows. **Re-measure every cross-channel query at that size before 0.2.17 ships.**
+rows. ✅ **Done — every cross-channel query was re-measured with `--benchdb` before shipping.** The
+country/group paths came out immune; **the search box did not** (0.63 → 80.00 ms per keystroke), and
+that is the one live-TV path this epic degrades. See BACKLOG — it is an open owner decision.
 
 ### What still needs the owner
 
-**Nothing in these four commits — nor the uncommitted 0.2.17 UI — has been seen running.** In
-priority order:
+**Nothing in these six commits has been seen running, and that is the ONLY thing between here and
+the 0.2.16 release.** In priority order:
 
 0. 🔴 **A real VOD sync, and it needs a renewed line.** Settings ▸ Channels ▸ "Sync movies from
    provider", with **playback stopped** (the gate refuses otherwise, by design). Expect ~10 s and

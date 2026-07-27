@@ -427,6 +427,15 @@ void createChildren(HWND hwnd, AppState* st) {
     };
     cb.onSetNumber = [st](const Channel& c) { st->db.setChannelNumber(c.id, c.lcn); };
     cb.onContextMenu = [st](const Channel& c, POINT pt) {
+        // ⚠ SNAPSHOT BY VALUE, before the menu. `c` is a reference straight into the grid's own
+        // channel vector (ChannelGridControl hands out &st->channels[...]), and TrackPopupMenu
+        // runs a modal loop that PUMPS POSTED MESSAGES. Any of those can reload the grid —
+        // WM_APP_VOD_DONE now does exactly that, since a finished sync refreshes the nav and
+        // `channelGridSetChannels` move-assigns the vector out from under this reference. Every
+        // use below the menu would then be a use-after-free: a garbage URL handed to libVLC, or a
+        // crash. EpgGuideControl already snapshots for this reason; so does the nav's playlist
+        // menu one screen down.
+        const Channel ch = c;
         HMENU m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, 1, tr(i18n::StringId::LabelPlay).c_str());
         AppendMenuW(m, MF_STRING, 2, tr(i18n::StringId::MenuChannelPlayInPip).c_str());
@@ -435,19 +444,19 @@ void createChildren(HWND hwnd, AppState* st) {
             TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, st->hwnd, nullptr);
         DestroyMenu(m);
         if (cmd == 1) {
-            playChannel(st, c);
+            playChannel(st, ch);
         } else if (cmd == 2) {
             if (st->viewMode != ViewMode::Pip) applyViewMode(st, ViewMode::Pip);  // ensure a PIP exists
-            playChannelInPane(st, c, 1);  // pane 1 is the PIP — plays muted; click the PIP to hear it
+            playChannelInPane(st, ch, 1);  // pane 1 is the PIP — plays muted; click the PIP to hear it
         } else if (cmd == 3) {
             // Jump to this channel's row in the guide. Build the guide first if needed —
             // onEpgGuide is synchronous but may early-return without creating the window
             // (no EPG data), in which case the scroll below reports false and we explain.
             if (!epgGuideOpen()) onEpgGuide(st);
-            if (!epgGuideShowChannel(c.tvgId, static_cast<long long>(time(nullptr))))
-                setStatus(st, c.tvgId.empty()
+            if (!epgGuideShowChannel(ch.tvgId, static_cast<long long>(time(nullptr))))
+                setStatus(st, ch.tvgId.empty()
                                   ? tr(i18n::StringId::StatusChannelNoTvgId)
-                                  : trf(i18n::StringId::StatusNoGuideRowForChannel, {c.name}));
+                                  : trf(i18n::StringId::StatusNoGuideRowForChannel, {ch.name}));
         }
     };
     channelGridSetCallbacks(st->grid, cb);

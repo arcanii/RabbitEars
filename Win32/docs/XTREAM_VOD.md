@@ -193,14 +193,21 @@ and it lands on features that are already shipped and working.
 
 ## 5. Release plan
 
-Unchanged from `BACKLOG.md` in shape, with 0.3.0's contents corrected by F3.
+⚠️ **The 0.2.16 / 0.2.17 split COLLAPSED into one release (owner's call, 2026-07-28).** 0.2.16 was
+built and version-bumped but never tagged and never given an appcast, so no user ever had it — which
+means the two planned releases can ship as a single **0.2.16**, and the version number 0.2.17 is
+simply skipped. WinSparkle only cares that the offered version is higher than the installed one, and
+0.2.16 > 0.2.15 for every existing user. Below, the two bullets are kept as the *plan of record* with
+their actual shipping vehicle noted; the shape of the work is unchanged.
 
-- **0.2.16 — ✅ groundwork landed** (`ffb69dc`). Player seek + scrub bar + time readout; JSON reader;
-  schema v8; buffer-meter glass. Independently useful, all of it a prerequisite. *Pending the owner's
-  on-device pass.*
-- **0.2.17 — Xtream client, movies only, existing grid, no posters.** `common/core/XtreamClient`,
-  the sync worker, a "Sync VOD" action. Proves the API against a real provider at minimum cost.
-  Success = 43,599 movies in the grid, one plays, resume works.
+- **~~0.2.16~~ → ships as 0.2.16 — ✅ groundwork landed** (`ffb69dc`). Player seek + scrub bar + time
+  readout; JSON reader; schema v8; buffer-meter glass. Independently useful, all of it a prerequisite.
+- **~~0.2.17~~ → ships as 0.2.16 — Xtream client, movies only, existing grid, no posters.**
+  `common/core/XtreamClient` (`538f0b2`), the sync worker + Movies nav root + Settings action
+  (`e4e01a7`). Proves the API against a real provider at minimum cost.
+  Success was written as "43,599 movies in the grid, one plays, **resume works**" — the first two are
+  built; resume is NOT, because it depends on three of §6's open questions that remain owner calls.
+  **As built this is browse-and-play**; resume is listed under 0.3.0 anyway ("resume everywhere").
 - **0.3.0 — series → seasons → episodes, posters *for series*, resume everywhere.** The minor bump
   marks the capability's arrival, not the start of the work.
 
@@ -208,10 +215,17 @@ Unchanged from `BACKLOG.md` in shape, with 0.3.0's contents corrected by F3.
 
 ## 6. Open questions
 
-1. **Does a 43,599-row VOD import degrade the existing live-TV UI?** (§4). Must be measured before
-   0.2.17 ships, not after.
-2. **Where does VOD live in the nav tree?** A sibling root ("Movies") beside Countries/Groups, or a
-   filter? Affects `ViewKind`. Owner call.
+1. ✅ **ANSWERED — and it did.** Measured before shipping, with `RabbitEarsCli --benchdb`. Every
+   country/group path was made immune (see BACKLOG), but **the search box was not**: one keystroke
+   is **0.63 → 80.00 ms**, because `EN_CHANGE` runs `searchChannels()` on the UI thread with no
+   debounce, no minimum length and no `LIMIT`, and the query has no `kind` predicate. That is the
+   one live-TV path this epic degrades, and how to fix it (LIMIT / debounce / minimum length) is an
+   open owner call — see BACKLOG. `allChannels()` / `channelsByPlaylist()` also grow to ~80 ms, but
+   that is deliberate: the All view legitimately grows with the row count.
+2. ✅ **ANSWERED — a sibling root, "Movies", showing CATEGORIES ONLY.** `ViewKind` gained `Movies` +
+   `MovieGroup`. The root is omitted entirely when the library has no movies, so the sidebar is
+   byte-identical for live-TV-only users, and selecting it loads no grid rows (`allMovies()` is
+   43,599 rows / 77 ms and is never called from the UI) — it expands its category list instead.
 3. **`watched` threshold** — 95% of duration, or "reached the end"? Duration is only known once played
    (F2), so this interacts with when `durationSec` gets cached.
 4. **Resume prompt or silent resume?** Silent is friendlier; a prompt is safer when `resumeSec` is

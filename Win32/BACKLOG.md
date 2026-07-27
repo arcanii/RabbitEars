@@ -456,14 +456,20 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 
 ## 🎬 Xtream VOD + Series — the 0.3.0 epic (scoped 2026-07-26 · **both gates CLOSED 2026-07-27**)
 
-> **STATUS: both gates DONE. 0.2.16 groundwork + the 0.2.17 CLIENT CORE have LANDED** (`ffb69dc`,
-> `1a486be`, `538f0b2`, `1d59783`, `7751cdc` — all unreleased). The design doc is
+> **STATUS: both gates DONE, and MOVIES ARE CODE COMPLETE** (`ffb69dc`, `1a486be`, `538f0b2`,
+> `1d59783`, `7751cdc`, `e4e01a7` — all unreleased). The design doc is
 > [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md), written off MEASURED numbers from the owner's real
 > provider — read it before touching this epic.
 >
-> **What is left of 0.2.17 is UI only**: wire the Movies nav root, build the sync worker, add the
-> Settings action + i18n. See HANDOVER "▶️ PICK UP HERE". The parser, client, schema, DAO and the
-> Movies-root data model are done and selftested.
+> ⚠️ **The 0.2.16 / 0.2.17 split COLLAPSED into one release (owner's call, 2026-07-28).** 0.2.16 was
+> never tagged and never given an appcast, so no user ever had it — both halves ship as a single
+> **0.2.16** and the number 0.2.17 is skipped. `APP_VERSION` is already `0.2.16`, so no bump is
+> needed. Text below (and the commit messages) that says "0.2.17" predates that call and means *the
+> Xtream VOD work*.
+>
+> **Nothing is left to BUILD for movies** — the parser, client, schema, DAO, the Movies nav root, the
+> sync worker, the Settings action and the i18n are all done, selftested and committed. What is left
+> is the **owner's on-device pass**, which nothing in the dev sandbox can substitute for.
 >
 > **Resolved since scoping:** the perf risk called out below was measured with the new
 > `RabbitEarsCli --benchdb` and FIXED — every live-TV path is now immune to VOD library size. Open
@@ -540,18 +546,22 @@ strict mode.**
 A 3–5 week monolith contradicts how this project ships well: small, owner-verified, corrected fast.
 The sandbox cannot see the GUI, so long feedback loops are unusually expensive here.
 
+⚠️ The first two bullets **collapsed into one 0.2.16 release** (see the status block above); they are
+kept as the plan of record because the shape of the work is unchanged.
+
 - **0.2.16 — ✅ GROUNDWORK LANDED** (`ffb69dc`): player seek + scrub bar + time readout,
   `common/core/Json.{h,cpp}` (the JSON reader moved EARLIER than planned — the recon tool needed the
   shape questions answered first, and the parser is the cheapest thing to test headlessly), schema
   v8, plus the buffer-meter glass. *Pending the owner's on-device pass.*
-- **0.2.17** — the **Xtream client**, movies only, existing grid, no posters. `common/core/XtreamClient`
-  + the sync worker + a "Sync VOD" action. **Code complete (uncommitted), unseen on a device.**
+- **~~0.2.17~~ → also ships as 0.2.16** — the **Xtream client**, movies only, existing grid, no
+  posters. `common/core/XtreamClient` (`538f0b2`) + the sync worker, Movies nav root and Settings
+  action (`e4e01a7`). **Code complete and pushed; unseen on a device.**
   ⚠️ Success was written as "43,599 movies in the grid, one plays, **resume works**" — the first two
   are built, the third is NOT: resume depends on the three §6 open questions (where `durationSec` is
   cached from `lengthMs()`, the `watched` threshold, prompt-vs-silent resume) and all three are
-  owner calls that are still open. **0.2.17 as built is browse-and-play.** Either settle them and
-  finish resume, or ship it as browse-and-play and move resume to 0.3.0 — where it is listed anyway
-  ("resume everywhere").
+  owner calls that are still open. **As built it is browse-and-play.** Recommendation: ship it that
+  way and let resume land in 0.3.0, where it is listed anyway ("resume everywhere") — resume cannot
+  be designed sensibly against a library nobody has used yet.
 - **0.3.0** — series → seasons → episodes, **posters for SERIES** (not movies — see the finding
   above), resume everywhere. The minor bump marks the capability's ARRIVAL, not the start of the work.
 
@@ -570,12 +580,12 @@ films under the Netherlands. The owner's real categories dodge it only because `
 
 Remaining VOD-side costs are inherent and on non-interactive paths: `moviesByGroup()` 2.38 ms,
 `listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows — which is
-why the Movies root shows categories only, as shipped in 0.2.17), bulk insert ~260 ms.
+why the Movies root shows categories only, as shipped), bulk insert ~260 ms.
 
 ### 🔴 The search box is the one per-keystroke path VOD still breaks — OWNER DECISION
 
 **Measured 0.63 → 80.00 ms on the first keystroke** (126×), added to `--benchdb` as
-`searchChannels() 1ch` in the 0.2.17 UI work. **The 7.9 ms previously recorded above was wrong** —
+`searchChannels() 1ch` in the VOD UI work (`e4e01a7`). **The 7.9 ms previously recorded above was wrong** —
 not mismeasured, but measured with the term `"Channel 1"`, which matches **zero** of the benchmark's
 movies (they are named `Film Title Number N`) and no VOD category. It timed the table scan and none
 of the materialization. A real user's first keystroke is one letter, which matches most of the
@@ -598,7 +608,7 @@ every way of fixing it changes what the user gets:
 
 `LIMIT` + an honest count line is the likeliest right answer; it is a product call, not a perf one.
 
-### Recorded, not fixed — measured while finishing 0.2.17
+### Recorded, not fixed — measured while finishing the VOD work
 
 - **`allChannels()` 0.73 → 80.4 ms and `channelsByPlaylist()` 0.59 → 80.0 ms.** Deliberate, per
   `--benchdb`'s own note: "allChannels() legitimately grows with the row count — it is the 'All'

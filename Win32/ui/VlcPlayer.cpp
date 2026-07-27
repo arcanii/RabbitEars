@@ -314,6 +314,7 @@ void VlcPlayer::doStop(bool async) {
         media_ = nullptr;
     }
     playing_.store(false);
+    engaged_.store(false);  // teardown: this player is definitively holding nothing now
     // Drop the position too, or a stopped pane leaves the scrub bar sitting at the old
     // stream's elapsed time — and worse, seekable_ stays true, so the bar stays on
     // screen and a drag would enqueue a seek against a player that no longer exists.
@@ -504,9 +505,17 @@ void VlcPlayer::handleVlcEvent(const libvlc_event_t* e) {
             enqueue({Cmd::Mute});
             break;
         case libvlc_MediaPlayerPaused: ev = PlayerEvent::Paused; break;
-        case libvlc_MediaPlayerStopped: ev = PlayerEvent::Stopped; playing_.store(false); break;
-        case libvlc_MediaPlayerEndReached: ev = PlayerEvent::EndReached; playing_.store(false); break;
-        case libvlc_MediaPlayerEncounteredError: ev = PlayerEvent::Error; playing_.store(false); break;
+        // engaged_ is cleared beside playing_ on all three TERMINAL transitions, not only on an
+        // explicit stop(). A stream that errors (a geo-blocked channel) or ends (a film watched to
+        // the finish) has released its socket, and anything gating on "is this player holding a
+        // connection" must see that — otherwise the flag latches true for a pane holding nothing
+        // and the VOD sync refuses forever with "stop playback first".
+        case libvlc_MediaPlayerStopped:
+            ev = PlayerEvent::Stopped; playing_.store(false); engaged_.store(false); break;
+        case libvlc_MediaPlayerEndReached:
+            ev = PlayerEvent::EndReached; playing_.store(false); engaged_.store(false); break;
+        case libvlc_MediaPlayerEncounteredError:
+            ev = PlayerEvent::Error; playing_.store(false); engaged_.store(false); break;
         default: return;
     }
     // Every libVLC state transition, at DEBUG. This is the single most useful line when a tester
@@ -542,12 +551,19 @@ bool VlcPlayer::play(const std::wstring& url, const std::wstring& userAgent,
     c.url = url;
     c.userAgent = userAgent;
     c.referrer = referrer;
+    // BEFORE the enqueue, on the caller's thread: from here on this player is holding a stream as
+    // far as anyone asking about the provider's connection cap is concerned. Setting it on the
+    // worker instead would leave a window where a queued Play is invisible.
+    engaged_.store(true);
     enqueue(std::move(c));
     return true;
 }
 
 void VlcPlayer::togglePause() { enqueue({Cmd::Pause}); }
-void VlcPlayer::stop() { enqueue({Cmd::Stop}); }
+void VlcPlayer::stop() {
+    engaged_.store(false);  // synchronous, for the same reason play() sets it synchronously
+    enqueue({Cmd::Stop});
+}
 
 void VlcPlayer::seekTo(long long ms) {
     Cmd c{Cmd::Seek};

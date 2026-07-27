@@ -102,6 +102,20 @@ public:
     void setAspectRatio(const char* ar);   // "16:9" / "4:3" / nullptr
     bool isPlaying() const { return playing_.load(); }
 
+    // "This player is holding, or is in the act of acquiring, a stream" — true from the moment
+    // play() is called until the stream stops, ends or errors.
+    //
+    // NOT the same question as isPlaying(), and the difference matters on a metered line.
+    // `playing_` is set from the libvlc_MediaPlayerPlaying EVENT, so it stays FALSE through the
+    // whole open+connect+buffer window — seconds on an IPTV stream, which is what StatusOpening
+    // exists to narrate — while the socket is already open and counting against the provider's
+    // connection cap. Anything deciding whether it may open a SECOND connection (the Xtream VOD
+    // sync) has to ask this, not isPlaying().
+    //
+    // Set synchronously on the caller's thread in play() so there is no window where a queued
+    // Play is invisible; cleared by the Stopped/EndReached/Error events and by stop().
+    bool isEngaged() const { return engaged_.load(); }
+
     // Latest stream-health snapshot (thread-safe copy). Refreshed each time a
     // PlayerEvent::Stats is posted while a stream is loaded.
     FlowStats flowStats() const;
@@ -211,6 +225,7 @@ private:
     int                    savedAudioTrack_ = -1;  // worker-only: track id to restore on unmute
     std::atomic<int>       cachingMs_{1500};  // network-caching applied at media open
     std::atomic<bool>      playing_{false};
+    std::atomic<bool>      engaged_{false};  // see isEngaged(): covers the open/buffer window too
     std::atomic<bool>      recording_{false};
     mutable std::mutex     recMtx_;   // guards recFile_
     std::wstring           recFile_;  // current recording path (empty when idle)
