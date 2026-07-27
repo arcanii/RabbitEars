@@ -456,12 +456,19 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 
 ## 🎬 Xtream VOD + Series — the 0.3.0 epic (scoped 2026-07-26 · **both gates CLOSED 2026-07-27**)
 
-> **STATUS: gate 1 (reconnaissance) and gate 2 (design doc) are both DONE, and the 0.2.16
-> groundwork has LANDED (`ffb69dc`).** The design doc is
-> [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md) and is written off MEASURED numbers from the owner's
-> real provider, not estimates — read it before touching this epic. Next up is **0.2.17: the
-> Xtream client, movies only**. Two reconnaissance findings CHANGED the plan below; they are
-> called out inline and the 0.3.0 scope has been revised accordingly.
+> **STATUS: both gates DONE. 0.2.16 groundwork + the 0.2.17 CLIENT CORE have LANDED** (`ffb69dc`,
+> `1a486be`, `538f0b2`, `1d59783`, `7751cdc` — all unreleased). The design doc is
+> [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md), written off MEASURED numbers from the owner's real
+> provider — read it before touching this epic.
+>
+> **What is left of 0.2.17 is UI only**: wire the Movies nav root, build the sync worker, add the
+> Settings action + i18n. See HANDOVER "▶️ PICK UP HERE". The parser, client, schema, DAO and the
+> Movies-root data model are done and selftested.
+>
+> **Resolved since scoping:** the perf risk called out below was measured with the new
+> `RabbitEarsCli --benchdb` and FIXED — every live-TV path is now immune to VOD library size. Open
+> question #2 (where VOD lives in the nav) was decided by the owner: **a single "Movies" root**, not
+> ~67 sibling categories. Three reconnaissance findings changed the plan; they are inline below.
 
 **Answering "does RabbitEars support VOD?" — no, not at all, and the gap is bigger than it looks.**
 Every "Movies" string in the tree is group-title *test data*. Investigated and confirmed:
@@ -543,10 +550,23 @@ The sandbox cannot see the GUI, so long feedback loops are unusually expensive h
 - **0.3.0** — series → seasons → episodes, **posters for SERIES** (not movies — see the finding
   above), resume everywhere. The minor bump marks the capability's ARRIVAL, not the start of the work.
 
-⚠️ **The biggest regression risk in the epic is not VOD at all** — it is that a 43,599-row import is
-**~4× the existing library**, landing in the same `channels` table that already needed a SQLite scalar
-to keep the country filter under ~30 ms/keystroke at 14k rows. Every cross-channel query has to be
-re-measured at that size, and `kind` filtering must be server-side. Measure BEFORE 0.2.17 ships.
+✅ **The "biggest regression risk" above was measured and FIXED** (`1d59783`, `7751cdc`). New
+`RabbitEarsCli --benchdb [movies] [live]` (defaults: the owner's real 43,599 / 442) times the queries
+`loadForFilter()` runs, live-only then again with the movies present. It was real —
+`listCountries()` 0.12 → **13.01 ms**, `channelsByCountry()` 0.13 → **6.38 ms**, `listGroups()` 0.11 →
+**8.21 ms**, all on per-nav-click or per-keystroke paths. All three are now **at or below their
+live-only baseline** (0.09 / 0.12 / 0.07 ms) and immune to VOD size, via kind-scoped queries plus a
+partial index per side of the discriminator.
+
+The bigger half was **correctness**: a movie has no country, but its category name goes through the
+group-title country fallback, so a provider with `NL - FILMS` categories would have filed all 43,599
+films under the Netherlands. The owner's real categories dodge it only because `VOD` is three letters
+— luck, not design. Pinned by a selftest that inserts exactly that trap row.
+
+Remaining VOD-side costs are inherent and on non-interactive paths: `moviesByGroup()` 2.38 ms,
+`listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows — which is
+why the Movies root should probably show categories only), `searchChannels()` 7.9 ms (movies stay
+searchable on purpose), bulk insert ~260 ms.
 
 ## Tester tasks (need a real stream — the dev sandbox cannot do these)
 

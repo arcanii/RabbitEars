@@ -31,12 +31,23 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **0.2.16 groundwork on `main`, UNRELEASED and unverified** · v0.2.15 SHIPPED · v0.2.14 · macOS 0.2.15
+## Current state — **0.2.16 + the 0.2.17 core on `main`: UNRELEASED, and NOTHING has been seen on a device** · v0.2.15 SHIPPED · macOS 0.2.15
 
-> **Read "Immediate next steps" first.** `main` carries one unreleased commit (`ffb69dc`): player
-> seek + scrub bar, the shared JSON reader, schema v8, the buffer-meter glass, and the `--xtream`
-> reconnaissance probe. `APP_VERSION` is still `0.2.15` — nothing bumped, tagged or released. The
-> Xtream VOD epic's two gates are both CLOSED; the design doc is [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md).
+> **Read "Immediate next steps" first.** `main` carries **four unreleased commits** (`ffb69dc` …
+> `7751cdc`) spanning two version's worth of work.
+>
+> **`APP_VERSION` is now `0.2.16`** (`cmake/AppVersion.cmake:11`; the `if(APPLE)` override is
+> untouched at `0.2.15`). **Bumping is not releasing** — there is no tag and no appcast, which is
+> what actually gates a rollout. A release built from here would stamp `0.2.16.<commit count>`.
+>
+> ⚠️ **Not one line of this has run in front of a human.** It is a mix of visual (glass bezel),
+> interactive (scrub/seek) and destructive-if-wrong (VOD sync) work, none of which the dev sandbox
+> can check. Treat the whole of it as unverified until the owner's pass — see "What still needs the
+> owner".
+>
+> The Xtream VOD epic's two gates are both CLOSED. The design doc — written off a REAL provider's
+> measured answers, not estimates — is **[`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md)**; read it before
+> touching the epic.
 
 ### ✅ 0.2.15 — SHIPPED (2026-07-26)
 
@@ -360,10 +371,62 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-### 🚧 0.2.16 — groundwork LANDED, unreleased, **not yet seen on a device** (`ffb69dc`, 2026-07-27)
+### 🚧 The four unreleased commits (2026-07-27 → 28)
 
-`APP_VERSION` is still **`0.2.15`** — nothing has been bumped, tagged or released. One commit on
-`main`, 19 files, +2872. Both theme flags build clean at /W4 and `--selftest` is ALL PASS.
+`APP_VERSION` = **`0.2.16`**. Both theme flags build clean at /W4 and `--selftest` is ALL PASS after
+every one of them.
+
+| commit | what |
+|---|---|
+| `ffb69dc` | 0.2.16 groundwork: player seek + scrub bar, `common/core/Json`, schema v8, buffer-meter glass, the `--xtream` recon probe |
+| `1a486be` | gate 2 — [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md), written off the real provider run |
+| `538f0b2` | 0.2.17 core: `common/core/XtreamClient`, DAO plumbing, **APP_VERSION → 0.2.16** |
+| `1d59783` + `7751cdc` | the perf work: country views made immune to VOD size, then the **Movies nav root** |
+
+#### 0.2.17 — the Xtream client core (`538f0b2`)
+
+`common/core/XtreamClient.{h,cpp}` — **pure, no network by design.** The caller fetches and hands
+bytes in, because with `max_connections: 1` whether a sync may run at all depends on whether a pane
+is playing, and only the caller knows that. Burying the fetch would hide that decision somewhere it
+cannot be made correctly.
+
+`Database` gained `retireMissingChannels()` (the other half of a sync — a catalogue churns, so
+without it the library only ever grows) and `bulkInsertChannels` now carries `kind`/`added_at`.
+
+#### The Movies nav root (`7751cdc`) — owner's call, data model only
+
+Movies live under **one "Movies" root**, not as ~67 sibling categories in the live tree.
+`listGroups()` is now live-only; `listVodGroups()` / `moviesByGroup()` / `allMovies()` serve the new
+root. The two trees are separate namespaces — a category name present on both sides returns only its
+own rows to each accessor, which is pinned by selftests.
+
+**⚠️ The nav is NOT wired yet.** `ViewKind` has no `Movies`/`MovieGroup`, `refreshNav` does not build
+the root, and `loadForFilter` cannot select it. The DB is ready; the UI is not.
+
+#### Perf — measured, not guessed (`1d59783`, `7751cdc`)
+
+New **`RabbitEarsCli --benchdb [movies] [live]`** (defaults to the owner's real 43,599 / 442). The
+design doc called this the epic's biggest risk and said measure BEFORE the sync ships. It was real:
+
+| query | live-only | +43,599 movies | after |
+|---|---|---|---|
+| `listCountries()` | 0.12 ms | **13.01 ms** | **0.09 ms** |
+| `channelsByCountry()` | 0.13 ms | **6.38 ms** | **0.12 ms** |
+| `listGroups()` | 0.11 ms | **8.21 ms** | **0.07 ms** |
+
+**Every live-TV path is now immune to VOD library size.** The bigger half was CORRECTNESS, not speed:
+a movie has no country, but its category name goes through the country-prefix fallback — a provider
+with `NL - FILMS` categories would have filed all 43,599 films under the Netherlands. The owner's real
+categories dodge it only because `VOD` is three letters, which is luck, not design.
+
+Left as measured, all on non-interactive paths: `moviesByGroup()` 2.38 ms (the real browse path),
+`listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows),
+`searchChannels()` 7.9 ms (movies stay searchable on purpose), bulk insert ~260 ms.
+
+**A dead end, recorded so nobody retries it:** widening the VOD partial index to
+`(kind, group_title)` and inlining `kind` as a literal did NOT fix `listVodGroups` (8.9 → 9.7 ms,
+noise). The composite index is kept because it does serve `moviesByGroup`. Not worth chasing further
+on a once-per-nav-refresh path.
 
 - **Player seek + scrub bar + time readout** — `VlcPlayer` gains `timeMs/lengthMs/isSeekable/seekTo`,
   sampled on the worker beside `videoSize()` and published as atomics. The bar appears only when
@@ -392,7 +455,40 @@ Seek queued behind a Play landed the old film's position on the new stream (now 
 generation). The pattern in all three: **state cleared only on a visibility TRANSITION is not cleared
 at all when the transition doesn't happen.**
 
-### 🎬 Xtream VOD — **both gates CLOSED**; next is 0.2.17, the client
+### ▶️ PICK UP HERE — finish 0.2.17
+
+Everything below the UI line is done and tested. What remains is Win32 UI work:
+
+1. **Wire the Movies nav root.** `ViewKind` gains `Movies` + `MovieGroup`; `refreshNav` builds the
+   root from `listVodGroups()`; `loadForFilter` routes them to `allMovies()` / `moviesByGroup()`.
+   ⚠️ **Settle this first, before wiring:** does clicking "Movies" load all 43,599 films (77 ms and a
+   grid nobody can browse) or show the category list only and make the user pick? **Recommend
+   categories-only** — it dodges the cost entirely and 44k rows is not a browsable view. `ViewKind::Guide`
+   is the existing precedent for a nav node that loads no grid channels.
+2. **The sync worker** — `Win32/ui/VodSync.{h,cpp}`, modelled on `DeadLinkSweep`. Its own sqlite
+   connection, joined in `WM_DESTROY`. Fetch `get_vod_categories` + `get_vod_streams` (two requests,
+   ~27 MB, ~10 s), parse with `XtreamClient`, then `bulkInsertChannels` + `retireMissingChannels`.
+3. **A Settings action** + ~8 i18n keys × 4 languages (`common/i18n/*.json` →
+   `tools/i18n/gen_i18n.py`; never hand-edit `Strings.cpp`).
+
+**Three things the worker must respect — do not rediscover these:**
+
+- 🔴 **`max_connections: 1`.** One connection is the entire budget. **Gate the sync on
+  `isPlaying()` across ALL panes** and make it user-triggered, not a background timer. The dead-link
+  checker learned this the expensive way: a connection cap kicks the user's actual playback.
+- 🔴 **`retireMissingChannels()` is NOT reentrant** and must not run on the shared `AppState::db`
+  handle concurrently — it stages its keep-set in a per-connection temp table inside a transaction.
+  Give the worker its own connection. Documented on the declaration; easy to miss.
+- 🔴 **Never pass a keep-set you do not trust.** An empty set deletes nothing by design, and a
+  partial one aborts — but a *successfully parsed yet suspiciously small* response is the caller's
+  judgement to make. `XtreamVodResult` reports `total` / `skippedNoId` / `skippedNoExt` so the worker
+  can refuse a sync that lost most of the library, exactly as the dead-link sweep discards a run that
+  reached too few servers.
+
+Also still open from the design doc: where duration comes from (the API has none for movies — cache
+`VlcPlayer::lengthMs()` at play time), the `watched` threshold, and resume-prompt vs silent-resume.
+
+### 🎬 Xtream VOD — both gates CLOSED, and what reconnaissance found
 
 `RabbitEarsCli --xtream` ran against the owner's real provider (2026-07-27): `player_api.php` **works**,
 **43,599 movies** / **13,152 series**, `container_extension` on 100% of movies, play URL **HTTP 302
@@ -412,12 +508,22 @@ rows. **Re-measure every cross-channel query at that size before 0.2.17 ships.**
 
 ### What still needs the owner
 
-- **The whole of 0.2.16 is unverified on a device** — it is a mix of visual (glass bezel) and
-  interactive (scrub/seek) work, neither of which the sandbox can check.
-- The **live-HLS-DVR question** above, which decides whether 0.2.16 is a no-op for existing users.
-- The empty-tank fix and glass bezel from 0.2.15 (below) are still unseen.
-- ⏳ The recon account is a **1-connection line that expires ~2026-07-29** — VOD testing windows are
-  short and serialized.
+**Nothing in these four commits has been seen running.** In priority order:
+
+1. 🔴 **The live-HLS-DVR question — ten seconds, and it decides the release's risk profile.** Play an
+   ordinary live channel and see whether a scrub bar appears. "Invisible on live IPTV" is libVLC's
+   judgement (`is_seekable`), not an invariant we enforce, and an HLS feed with a DVR window can
+   legitimately report seekable. If bars show up on live channels, 0.2.16 is **not** the
+   invisible-to-existing-users release it is being described as, and that needs a decision before it
+   ships.
+2. **The rest of the 0.2.16 pass** — the glass bezel (does a framed tank beside four framed
+   mini-meters resolve the 0.2.15 "needs work"?), the scrub bar on something actually seekable, and
+   the two 0.2.15 leftovers below (the empty-tank fix, the bezel).
+3. **A real VOD sync**, once the worker exists — against a 1-connection line, not during playback.
+
+⏳ **The recon account expired ~2026-07-28** (`exp_date` 1785276000 against a server clock of
+1785155974 — ~33 h after the run). Anything needing a live VOD stream needs a renewed line. The
+recon report itself is saved and re-runnable: `RabbitEarsCli --xtream` against any provider.
 
 ---
 
