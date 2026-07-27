@@ -6,6 +6,7 @@
 //   RabbitEarsCli <file.m3u> [--limit N]  parse a playlist file, store it, dump it
 //   RabbitEarsCli --xtream [url] [--raw]  probe a real Xtream provider's player_api.php
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -1514,6 +1515,30 @@ int selftest() {
             // the M3U parser cannot express `kind`, so treating "the M3U didn't say" as "it is
             // Live" would zero added_at, hide every film, and leave retireMissingChannels with
             // no kind=1 rows to act on — a permanent no-op, library grows forever. ***
+            // *** VOD must be invisible to the COUNTRY views. A category named like a country
+            // prefix ("NL - FILMS") would otherwise file every film under the Netherlands and
+            // swamp the country tree — a correctness failure, not just a slow query. Pinned
+            // here because the deny-list approach can never keep up with category naming. ***
+            ParsedChannel trap;
+            trap.name = L"Trap Film";
+            trap.streamUrl = L"http://o/movie/u/p/999.mp4";
+            trap.groupTitle = L"NL - FILMS";  // parses as Netherlands under the group-title rule
+            trap.kind = Channel::Kind::Movie;
+            ParsedChannel trapLive;  // the same prefix on a LIVE row must still work
+            trapLive.name = L"Trap Live";
+            trapLive.streamUrl = L"http://o/live/nl.ts";
+            trapLive.groupTitle = L"NL - NIEUWS";
+            expect(mdb.bulkInsertChannels(7, {trap, trapLive}, 6000) == 2, "vod sync: trap rows inserted");
+            bool trapFilmInCountry = false, trapLiveInCountry = false;
+            for (const auto& ch : mdb.channelsByCountry(L"nl")) {
+                if (ch.name == L"Trap Film") trapFilmInCountry = true;
+                if (ch.name == L"Trap Live") trapLiveInCountry = true;
+            }
+            expect(!trapFilmInCountry,
+                   "vod sync: a movie in an 'NL - …' category does NOT appear under Netherlands");
+            expect(trapLiveInCountry,
+                   "vod sync: ...while a LIVE channel with the same prefix still does");
+
             ParsedChannel refetch;  // exactly what parseM3u would produce for the same URL
             refetch.name = L"Film A";
             refetch.streamUrl = m1.streamUrl;
@@ -2273,6 +2298,139 @@ int epgTool(const std::wstring& source) {
     return epg.programmes.empty() ? 1 : 0;
 }
 
+// Does a real-sized VOD import degrade the EXISTING live-TV UI? Win32/docs/XTREAM_VOD.md
+// calls this the epic's biggest risk and says to measure it BEFORE the sync ships: 43,599
+// movies is ~4x the owner's library, landing in the same `channels` table that already
+// needed a registered SQLite scalar to keep the country filter under ~30 ms/keystroke at
+// 14k rows. Builds an isolated DB, times the queries loadForFilter() actually runs at
+// live-only size, then again after the movies land, and prints the ratio.
+int benchDb(int movies, int live) {
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    _wputenv_s(L"RABBITEARS_DATA_DIR", (std::wstring(tmp) + L"rabbitears_bench").c_str());
+    const std::wstring dbPath = Database::defaultDbPath();
+    DeleteFileW(dbPath.c_str());
+    DeleteFileW((dbPath + L"-wal").c_str());
+    DeleteFileW((dbPath + L"-shm").c_str());
+
+    std::wstring err;
+    Database db;
+    if (!db.open(dbPath, &err)) { line(L"DB open failed: " + err); return 1; }
+    const long long now = static_cast<long long>(time(nullptr));
+    const long long pid = db.addPlaylist(L"Bench", L"http://bench", true, now);
+
+    // Live channels shaped like a real IPTV list: a country-suffixed tvg-id on most, an
+    // Xtream-style "|NL| SPORT" group prefix on the rest — both paths the country filter has
+    // to walk (tvg-id first, then the group-title fallback registered in Database::open).
+    static const wchar_t* kCc[] = {L"nl", L"uk", L"us", L"de", L"fr", L"be", L"es", L"it"};
+    std::vector<ParsedChannel> liveRows;
+    liveRows.reserve(live);
+    for (int i = 0; i < live; ++i) {
+        ParsedChannel c;
+        c.name = L"Channel " + std::to_wstring(i);
+        c.streamUrl = L"http://bench/live/" + std::to_wstring(i) + L".ts";
+        const std::wstring cc = kCc[i % 8];
+        if (i % 3)  // two thirds carry a tvg-id; the rest exercise the group-title fallback
+            c.tvgId = L"Ch" + std::to_wstring(i) + L"." + cc;
+        std::wstring up = cc;
+        for (auto& ch : up) ch = static_cast<wchar_t>(towupper(ch));
+        c.groupTitle = L"|" + up + L"| " + (i % 2 ? L"ALGEMEEN" : L"SPORT");
+        liveRows.push_back(std::move(c));
+    }
+    db.bulkInsertChannels(pid, liveRows, now);
+
+    struct Timing { const char* what; double before = 0, after = 0; };
+    // Median of N runs: a single sample on a network share (this repo lives on one) is noise.
+    auto timeIt = [&](auto&& fn) {
+        constexpr int kRuns = 5;
+        std::vector<double> ms;
+        for (int r = 0; r < kRuns; ++r) {
+            const auto t0 = std::chrono::steady_clock::now();
+            fn();
+            ms.push_back(std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - t0).count());
+        }
+        std::sort(ms.begin(), ms.end());
+        return ms[kRuns / 2];
+    };
+    const std::wstring aGroup = L"|NL| SPORT";
+    auto runAll = [&](std::vector<Timing>& t, bool after) {
+        auto put = [&](const char* what, double v) {
+            for (auto& x : t)
+                if (x.what == what) { (after ? x.after : x.before) = v; return; }
+            Timing n{what};
+            (after ? n.after : n.before) = v;
+            t.push_back(n);
+        };
+        put("allChannels()",        timeIt([&] { (void)db.allChannels(); }));
+        put("listGroups()",         timeIt([&] { (void)db.listGroups(); }));
+        put("listCountries()",      timeIt([&] { (void)db.listCountries(); }));
+        put("channelsByCountry()",  timeIt([&] { (void)db.channelsByCountry(L"nl"); }));
+        put("channelsByGroup()",    timeIt([&] { (void)db.channelsByGroup(aGroup); }));
+        put("favourites()",         timeIt([&] { (void)db.favourites(); }));
+        put("searchChannels()",     timeIt([&] { (void)db.searchChannels(L"Channel 1"); }));
+        put("channelsByPlaylist()", timeIt([&] { (void)db.channelsByPlaylist(pid); }));
+    };
+
+    std::vector<Timing> t;
+    line(L"Building baseline: " + std::to_wstring(live) + L" live channels...");
+    runAll(t, /*after=*/false);
+
+    // Movies exactly as the Xtream client would produce them: kind=Movie, group_title = the
+    // category NAME, no tvg-id (so they must NOT appear in any country bucket).
+    line(L"Adding " + std::to_wstring(movies) + L" movies (kind=Movie)...");
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        std::vector<ParsedChannel> vod;
+        vod.reserve(movies);
+        for (int i = 0; i < movies; ++i) {
+            ParsedChannel c;
+            c.name = L"Film Title Number " + std::to_wstring(i) + L" (2024)";
+            c.streamUrl = L"http://bench/movie/u/p/" + std::to_wstring(i) + L".mp4";
+            c.groupTitle = L"VOD - CATEGORY " + std::to_wstring(i % 67) + L" [NL]";
+            c.kind = Channel::Kind::Movie;
+            c.addedAt = now - i;
+            vod.push_back(std::move(c));
+        }
+        db.bulkInsertChannels(pid, vod, now);
+    }
+    const double insertMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    runAll(t, /*after=*/true);
+
+    line(L"");
+    line(L"  query                   live-only     +VOD        ratio");
+    line(L"  ------------------------------------------------------------");
+    for (const auto& x : t) {
+        wchar_t buf[160];
+        const double ratio = x.before > 0.01 ? x.after / x.before : 0.0;
+        std::wstring what = wideFromUtf8(x.what);
+        what.resize(22, L' ');
+        swprintf_s(buf, L"  %s  %8.2f ms  %8.2f ms   %s%.1fx", what.c_str(), x.before, x.after,
+                   ratio >= 10.0 ? L"** " : L"", ratio);
+        line(buf);
+    }
+    line(L"");
+    {
+        wchar_t buf[128];
+        swprintf_s(buf, L"  bulk insert of %d movies: %.0f ms", movies, insertMs);
+        line(buf);
+    }
+    // The correctness half: VOD rows must stay OUT of the live-TV views, or the country tree
+    // and every group the user already had are swamped by 43,599 films.
+    const size_t nlAfter = db.channelsByCountry(L"nl").size();
+    const size_t groupsAfter = db.listGroups().size();
+    line(L"  countries: channelsByCountry(nl) returned " + std::to_wstring(nlAfter) +
+         L" rows (movies carry no tvg-id and no country prefix, so they must NOT be here)");
+    line(L"  groups:    listGroups() now returns " + std::to_wstring(groupsAfter) +
+         L" (live groups + one per VOD category — the nav tree grows, by design)");
+    line(L"");
+    line(L"Interpretation: anything over ~2x on a per-keystroke path (channelsByCountry,");
+    line(L"channelsByGroup, searchChannels) is a regression the user will feel. allChannels()");
+    line(L"legitimately grows with the row count — it is the 'All' view.");
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     if (argc >= 2 && std::wstring(argv[1]) == L"--selftest") return selftest();
@@ -2281,6 +2439,12 @@ int wmain(int argc, wchar_t** argv) {
     if (argc >= 3 && std::wstring(argv[1]) == L"--epg") return epgTool(argv[2]);
     if (argc >= 2 && std::wstring(argv[1]) == L"--tvgids")
         return tvgIds(argc >= 3 ? std::wstring(argv[2]) : std::wstring());
+    if (argc >= 2 && std::wstring(argv[1]) == L"--benchdb") {
+        // Defaults are the owner's real numbers: 43,599 movies beside a 442-channel list.
+        const int mv = argc >= 3 ? _wtoi(argv[2]) : 43599;
+        const int lv = argc >= 4 ? _wtoi(argv[3]) : 442;
+        return benchDb(mv > 0 ? mv : 43599, lv > 0 ? lv : 442);
+    }
     if (argc >= 2 && std::wstring(argv[1]) == L"--xtream") {
         // Both extra args are optional and order-independent: the URL (omit it to auto-pick
         // an Xtream playlist out of the app's own DB) and --raw (disable redaction).
@@ -2305,6 +2469,8 @@ int wmain(int argc, wchar_t** argv) {
         "  RabbitEarsCli --import <url|file>   (into the app's real DB)\n"
         "  RabbitEarsCli --epg <url|file>\n"
         "  RabbitEarsCli --tvgids [epg url|file]\n"
+        "  RabbitEarsCli --benchdb [movies] [live]  (does a VOD import slow the live-TV UI?\n"
+        "                                            defaults 43599 movies / 442 live)\n"
         "  RabbitEarsCli --xtream [url] [--raw]  (probe an Xtream provider; url defaults\n"
         "                                         to an Xtream playlist in the app's DB.\n"
         "                                         Output is credential-redacted unless --raw.)\n"

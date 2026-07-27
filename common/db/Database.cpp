@@ -85,6 +85,24 @@ constexpr const char* kChannelCols =
 constexpr const char* kEnabledOnly =
     "playlist_id IN (SELECT id FROM playlists WHERE enabled=1)";
 
+// Predicate restricting a query to LIVE channels (schema v8). Used by the two COUNTRY
+// queries, for two independent reasons — and the correctness one is the important half:
+//
+//   • CORRECTNESS: a movie has no country. It carries no tvg-id, and its group_title is a
+//     VOD category name. Feeding those to effective_country() invites a false positive —
+//     a provider whose categories read "NL - FILMS" would file 43,599 films under the
+//     Netherlands and swamp the country tree. Excluding VOD by kind removes the whole class
+//     rather than hoping the deny-list keeps up with category naming.
+//   • SPEED: measured with `RabbitEarsCli --benchdb` at the owner's real shape (43,599
+//     movies beside 442 live channels), effective_country() over every row cost
+//     listCountries 0.13 -> 13.01 ms and channelsByCountry 0.15 -> 6.38 ms. Both are
+//     per-nav-click / per-keystroke paths, and channelsByCountry is the one that already
+//     had to become a SQL scalar to survive 14k channels.
+//
+// Deliberately NOT applied to searchChannels() or listGroups(): a user browsing or
+// searching for a FILM must be able to find it, so those keep the VOD rows and pay for them.
+constexpr const char* kLiveOnly = "kind=0";
+
 Channel readChannel(Stmt& q) {
     Channel c;
     c.id = q.intCol(0);
@@ -490,9 +508,19 @@ void Database::migrate() {
         exec("ALTER TABLE channels ADD COLUMN watched INTEGER NOT NULL DEFAULT 0");
         exec("ALTER TABLE channels ADD COLUMN added_at INTEGER NOT NULL DEFAULT 0");
     }
-    // Partial index: VOD is a minority of a mixed library, and the live-only case (every
-    // existing user) pays nothing for it.
+    // TWO partial indexes, one per side of the discriminator, because the two directions
+    // have different users and neither index serves the other:
+    //   kind<>0 — "show me the VOD" (the future poster/series views).
+    //   kind=0  — "show me the live channels", which is the one that MATTERS TODAY. The
+    //             country queries walk every row and evaluate effective_country() on it;
+    //             measured with `--benchdb` at the owner's shape (43,599 movies beside 442
+    //             live), that took listCountries 0.13 -> 13.01 ms. `kind=0` as a plain
+    //             predicate only halved it, because it still scanned 44k rows to find 442.
+    //             The partial index holds ONLY the live rowids, so the scan is 442 entries.
+    // A live-only library (every existing user) pays for neither: both are partial, and the
+    // kind<>0 index is empty until a VOD sync runs.
     exec("CREATE INDEX IF NOT EXISTS idx_channels_kind ON channels(kind) WHERE kind<>0;");
+    exec("CREATE INDEX IF NOT EXISTS idx_channels_live ON channels(kind) WHERE kind=0;");
 
     // Advance user_version to reflect exactly what actually landed, so a partial
     // failure retries the missing step next open instead of skipping it. (hasColumn on a
@@ -812,7 +840,7 @@ std::vector<std::wstring> Database::listCountries() {
     std::vector<std::wstring> out;
     Stmt q(db_, (std::string("SELECT DISTINCT effective_country(tvg_id, group_title) "
                              "FROM channels WHERE ") +
-                 kEnabledOnly + " ORDER BY 1")
+                 kLiveOnly + " AND " + kEnabledOnly + " ORDER BY 1")
                     .c_str());
     if (!q) return out;
     while (q.step()) {
@@ -833,10 +861,13 @@ std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
     want.reserve(code.size());
     for (wchar_t c : code)
         want.push_back((c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c);
+    // kLiveOnly comes FIRST so SQLite discards a VOD row before ever calling the scalar —
+    // that is where the 43,599-row cost actually lived. See kLiveOnly for why movies are
+    // excluded on correctness grounds too, not merely for speed.
     return runChannelQuery(db_,
-                           std::string("SELECT ") + kChannelCols +
-                               " FROM channels WHERE effective_country(tvg_id, group_title)=? AND " +
-                               kEnabledOnly +
+                           std::string("SELECT ") + kChannelCols + " FROM channels WHERE " +
+                               kLiveOnly +
+                               " AND effective_country(tvg_id, group_title)=? AND " + kEnabledOnly +
                                " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
                            &want);
 }
