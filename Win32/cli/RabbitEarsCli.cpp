@@ -21,6 +21,7 @@
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/Json.h"
+#include "core/XtreamClient.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
 #include "core/PowerPolicy.h"
@@ -1429,6 +1430,103 @@ int selftest() {
             }
             expect(ver == 8, "v8: user_version advances to 8 after the v2 DB is migrated");
         }
+        {   // --- VOD sync retirement. This DELETES rows, so it is pinned hard: the failure
+            // mode is wiping somebody's library, and the live-TV list must be untouchable
+            // by a VOD sync no matter what the provider returned.
+            ParsedChannel live;  // a live channel in the same playlist, which must survive
+            live.name = L"BBC One";
+            live.streamUrl = L"http://o/live/1.ts";
+            ParsedChannel m1, m2;
+            m1.name = L"Film A"; m1.streamUrl = L"http://o/movie/u/p/1.mp4";
+            m1.kind = Channel::Kind::Movie; m1.addedAt = 1742736240LL;
+            m2.name = L"Film B"; m2.streamUrl = L"http://o/movie/u/p/2.mkv";
+            m2.kind = Channel::Kind::Movie;
+            expect(mdb.bulkInsertChannels(7, {live, m1, m2}, 4000) == 3,
+                   "vod sync: live + 2 movies inserted");
+            auto after = mdb.channelsByPlaylist(7);
+            int movies = 0, lives = 0;
+            long long addedSeen = 0;
+            for (const auto& ch : after) {
+                if (ch.kind == Channel::Kind::Movie) { ++movies; if (ch.name == L"Film A") addedSeen = ch.addedAt; }
+                if (ch.kind == Channel::Kind::Live) ++lives;
+            }
+            expect(movies == 2, "vod sync: kind=Movie round-trips through the DAO");
+            expect(addedSeen == 1742736240LL, "vod sync: added_at round-trips");
+
+            // The provider dropped Film B. Only it should go.
+            const int removed = mdb.retireMissingChannels(7, static_cast<int>(Channel::Kind::Movie),
+                                                          {m1.streamUrl});
+            expect(removed == 1, "vod sync: exactly the vanished movie is retired");
+            after = mdb.channelsByPlaylist(7);
+            bool haveA = false, haveB = false, haveLive = false, haveLegacy = false;
+            for (const auto& ch : after) {
+                if (ch.name == L"Film A") haveA = true;
+                if (ch.name == L"Film B") haveB = true;
+                if (ch.name == L"BBC One") haveLive = true;
+                if (ch.name == L"Old") haveLegacy = true;  // the pre-v8 row from above
+            }
+            expect(haveA && !haveB, "vod sync: the surviving movie stays, the dropped one goes");
+            expect(haveLive && haveLegacy,
+                   "vod sync: LIVE channels are untouched — a VOD sync can never wipe the TV list");
+
+            // *** The disaster guard. A failed or empty fetch must delete NOTHING; the
+            // dead-link checker learned the same lesson (discard a sweep that reached no
+            // server) after a bad verdict could make a library vanish. ***
+            expect(mdb.retireMissingChannels(7, static_cast<int>(Channel::Kind::Movie), {}) == 0,
+                   "vod sync: an EMPTY keep-set retires nothing (a failed fetch cannot wipe a library)");
+            after = mdb.channelsByPlaylist(7);
+            int stillMovies = 0;
+            for (const auto& ch : after)
+                if (ch.kind == Channel::Kind::Movie) ++stillMovies;
+            expect(stillMovies == 1, "vod sync: ...and the movie really is still there");
+            // Retiring the OTHER kind must not touch movies. Assert the EXACT count, not
+            // ">= 0" — sqlite3_changes is never negative, so that form could not fail. This
+            // retires the pre-v8 "Old" row (kind=0, not in the keep set), which is correct
+            // and is re-checked below.
+            expect(mdb.retireMissingChannels(7, static_cast<int>(Channel::Kind::Live),
+                                             {L"http://o/live/1.ts"}) == 1,
+                   "vod sync: a live retirement removes exactly the one stale live row");
+            after = mdb.channelsByPlaylist(7);
+            bool movieSurvived = false, keptLive = false, oldGone = true;
+            for (const auto& ch : after) {
+                if (ch.name == L"Film A") movieSurvived = true;
+                if (ch.name == L"BBC One") keptLive = true;
+                if (ch.name == L"Old") oldGone = false;
+            }
+            expect(movieSurvived, "vod sync: a LIVE retirement leaves movies alone (kind scoping works)");
+            expect(keptLive && oldGone, "vod sync: ...and retires exactly the live row not kept");
+
+            // *** A partially-staged keep set must delete NOTHING. The keep-URL inserts are
+            // now checked per row: a failure aborts and rolls back, because a URL that failed
+            // to stage is indistinguishable from one the provider dropped — and silently
+            // deleting the difference is how a library gets wiped. ***
+            std::vector<std::wstring> dupes{m1.streamUrl, m1.streamUrl, m1.streamUrl};
+            expect(mdb.retireMissingChannels(7, static_cast<int>(Channel::Kind::Movie), dupes) == 0,
+                   "vod sync: duplicate keep-URLs stage cleanly (INSERT OR IGNORE) and retire nothing");
+            // channel_count must not go stale after a retire — a sync runs insert-then-retire.
+            long long counted = 0;
+            for (const auto& pl : mdb.listPlaylists())
+                if (pl.id == 7) counted = pl.channelCount;
+            expect(counted == static_cast<long long>(mdb.channelsByPlaylist(7).size()),
+                   "vod sync: playlists.channel_count is recomputed after a retirement");
+
+            // *** An M3U refresh must NOT revert a movie to a live channel. ParsedChannel from
+            // the M3U parser cannot express `kind`, so treating "the M3U didn't say" as "it is
+            // Live" would zero added_at, hide every film, and leave retireMissingChannels with
+            // no kind=1 rows to act on — a permanent no-op, library grows forever. ***
+            ParsedChannel refetch;  // exactly what parseM3u would produce for the same URL
+            refetch.name = L"Film A";
+            refetch.streamUrl = m1.streamUrl;
+            expect(mdb.bulkInsertChannels(7, {refetch}, 5000) == 1, "vod sync: m3u refresh applies");
+            after = mdb.channelsByPlaylist(7);
+            for (const auto& ch : after)
+                if (ch.name == L"Film A") {
+                    expect(ch.kind == Channel::Kind::Movie,
+                           "vod sync: an M3U refresh does NOT revert a movie to kind=Live");
+                    expect(ch.addedAt == 1742736240LL,
+                           "vod sync: ...nor zero the provider's added_at");
+                }
+        }
         const long long np = mdb.addPlaylist(L"New", L"http://n", true, 2000, L"http://n/epg");
         std::wstring got;
         for (const auto& pl : mdb.listPlaylists())
@@ -1628,6 +1726,20 @@ int selftest() {
             expect(v["a"].asString() == "1234",
                    "json: a number renders from its ORIGINAL token, not a reformatted double");
         }
+        {   // Numeric overflow must FAIL, not saturate. A saturated stream_id passes the
+            // caller's `id > 0` test, escapes the skip counter, and becomes an ordinary
+            // movie row whose URL 404s — "obviously wrong wherever it surfaces" was not true.
+            JsonValue o;
+            expect(parseJson("{\"a\":\"99999999999999999999\",\"b\":\"99999999999999999999abc\"}",
+                             o, &jerr) && o["a"].asInt64(-1) == -1 && o["b"].asInt64(-1) == -1,
+                   "json: an integer too large for 64 bits FAILS rather than saturating");
+            // double -> long long out of range is UNDEFINED, and the two architectures
+            // RabbitEars ships DISAGREE: x64 yields LLONG_MIN (rejected by an `id > 0` test),
+            // ARM64 saturates to LLONG_MAX (accepted -> a bogus row). Range-check, don't cast.
+            expect(parseJson("{\"a\":1e300,\"b\":\"1e30\"}", o, &jerr) &&
+                       o["a"].asInt64(-1) == -1 && o["b"].asInt64(-1) == -1,
+                   "json: an out-of-range double yields the default on BOTH architectures");
+        }
         {   // 64-bit ids must survive exactly — a double would round them
             const std::string j = "{\"id\":9007199254740993,\"s\":\"9007199254740993\"}";
             expect(parseJson(j, v, &jerr), "json: 64-bit id fixture parses");
@@ -1681,6 +1793,197 @@ int selftest() {
                    "json: 1, \"1\" and true all read true");
             expect(!v["r"].asBool() && !v["s"].asBool() && !v["u"].asBool(),
                    "json: 0, \"0\" and \"\" all read false (this is user_info.auth)");
+        }
+    }
+
+    out("\n== Xtream client (player_api -> models) ==\n");
+    {
+        // Fixtures are cut from what the owner's REAL provider returned on 2026-07-27
+        // (Win32/docs/XTREAM_VOD.md §1) — including the shapes that would break a strict
+        // client: a field quoted on some rows and bare on others, a null, and an absent
+        // container_extension.
+        XtreamCreds cr;
+        expect(parseXtreamPlaylistUrl(
+                   L"http://line.example.com/get.php?username=abc&password=def&type=m3u_plus", cr),
+               "xtream: credentials parsed from a get.php playlist URL");
+        expect(cr.origin == L"http://line.example.com" && cr.username == L"abc" &&
+                   cr.password == L"def",
+               "xtream: origin/username/password split correctly");
+        XtreamCreds bad;
+        expect(!parseXtreamPlaylistUrl(L"http://host/playlist.m3u", bad),
+               "xtream: a plain .m3u URL is NOT an Xtream playlist (a legitimate answer)");
+        // Scheme-less forms. The earlier version of this test passed only because its fixture
+        // had no "//" at all — these are the shapes that actually slipped through.
+        expect(!parseXtreamPlaylistUrl(L"line.example.com/get.php?username=a&password=b", bad),
+               "xtream: a URL with no scheme is rejected");
+        expect(!parseXtreamPlaylistUrl(L"host//x/get.php?username=a&password=b", bad),
+               "xtream: a bare '//' is not a scheme");
+        expect(!parseXtreamPlaylistUrl(L"//host/get.php?username=a&password=b", bad),
+               "xtream: a protocol-relative URL is rejected");
+        // *** No path at all: the authority must end at '?', or the whole query is swallowed
+        // into the origin and every constructed URL becomes nonsense. ***
+        XtreamCreds noPath;
+        expect(parseXtreamPlaylistUrl(L"http://host?username=a&password=bb", noPath) &&
+                   noPath.origin == L"http://host",
+               "xtream: the origin terminates at '?' when the URL has no path");
+        expect(xtreamMovieUrl(noPath, 12, L"mp4") == L"http://host/movie/a/bb/12.mp4",
+               "xtream: ...so the play URL is still well-formed");
+
+        // *** Credentials cross from a QUERY position to a PATH position. '+' means space in
+        // a query and a literal '+' in a path, so carrying the raw spelling made the API URL
+        // right and the play URL silently wrong — and the auth probe would still succeed. ***
+        XtreamCreds enc;
+        expect(parseXtreamPlaylistUrl(L"http://h/get.php?username=a+b&password=p%2Fq", enc),
+               "xtream: a %-encoded credential parses");
+        expect(enc.username == L"a b" && enc.password == L"p/q",
+               "xtream: credentials are stored DECODED ('+' is a space, %2F is '/')");
+        expect(xtreamApiUrl(enc).find(L"username=a%20b&password=p%2Fq") != std::wstring::npos,
+               "xtream: re-encoded for a QUERY position");
+        expect(xtreamMovieUrl(enc, 7, L"mp4") == L"http://h/movie/a%20b/p%2Fq/7.mp4",
+               "xtream: and re-encoded for a PATH position, so both URLs are right");
+
+        expect(xtreamApiUrl(cr) == L"http://line.example.com/player_api.php?username=abc&password=def",
+               "xtream: the auth URL takes no action verb");
+        expect(xtreamApiUrl(cr, L"get_vod_streams").find(L"&action=get_vod_streams") !=
+                   std::wstring::npos,
+               "xtream: an action verb is appended");
+        expect(xtreamMovieUrl(cr, 1218804, L"mp4") ==
+                   L"http://line.example.com/movie/abc/def/1218804.mp4",
+               "xtream: the movie play URL matches the form verified reachable (HTTP 302)");
+        expect(xtreamEpisodeUrl(cr, 1306481, L"mkv") ==
+                   L"http://line.example.com/series/abc/def/1306481.mkv",
+               "xtream: the episode play URL uses /series/");
+        // *** A guessed suffix would 404 and read as "VOD is broken" when the truth is
+        // "this panel did not tell us the container". Those must stay distinguishable. ***
+        expect(xtreamMovieUrl(cr, 1218804, L"").empty(),
+               "xtream: NO url is built when container_extension is missing (never guess)");
+        expect(xtreamMovieUrl(cr, 0, L"mp4").empty(), "xtream: no url without a stream id");
+        // .empty() alone let junk into the play URL, producing exactly the 404-that-reads-as-
+        // broken this design promises to avoid — and without counting it.
+        expect(xtreamMovieUrl(cr, 1, L"  ").empty() && xtreamMovieUrl(cr, 1, L"mp4?a=b").empty() &&
+                   xtreamMovieUrl(cr, 1, L"toolongext").empty(),
+               "xtream: a non-extension-shaped container_extension builds no URL either");
+
+        {   // auth — the real shape, with every numeric field quoted as the panel sends them
+            const std::string body =
+                "{\"user_info\":{\"username\":\"abc\",\"password\":\"def\",\"message\":\"\","
+                "\"auth\":1,\"status\":\"Active\",\"exp_date\":\"1785276000\",\"is_trial\":\"0\","
+                "\"active_cons\":\"1\",\"max_connections\":\"1\"},"
+                "\"server_info\":{\"port\":\"80\",\"timestamp_now\":1785155974}}";
+            XtreamAccount a;
+            std::wstring aerr;
+            expect(parseXtreamAccount(body, a, &aerr), "xtream: auth response parses");
+            expect(a.authOk, "xtream: auth=1 reads as accepted");
+            expect(a.status == L"Active", "xtream: account status read");
+            expect(a.expiresAt == 1785276000LL, "xtream: quoted exp_date reads as an epoch");
+            expect(a.maxConnections == 1,
+                   "xtream: quoted max_connections reads as 1 (the constraint on every sync)");
+            expect(a.serverTime == 1785155974LL, "xtream: server timestamp read");
+            // A panel answers BAD CREDENTIALS with HTTP 200 — "responded" != "let us in".
+            XtreamAccount r;
+            expect(parseXtreamAccount("{\"user_info\":{\"auth\":0}}", r, nullptr) && !r.authOk,
+                   "xtream: auth=0 (bad credentials, HTTP 200) reads as REJECTED");
+            expect(parseXtreamAccount("{\"user_info\":{\"auth\":\"0\"}}", r, nullptr) && !r.authOk,
+                   "xtream: ...and so does a quoted \"0\"");
+            XtreamAccount noUi;
+            expect(!parseXtreamAccount("[]", noUi, nullptr),
+                   "xtream: a response with no user_info is not an auth response");
+            // ABSENT != 0. A fork reporting status without an `auth` member must not be told
+            // its credentials were rejected.
+            XtreamAccount noAuth;
+            expect(parseXtreamAccount("{\"user_info\":{\"status\":\"Active\"}}", noAuth, nullptr) &&
+                       noAuth.authOk,
+                   "xtream: an ABSENT auth member falls back to status, not to 'rejected'");
+            XtreamAccount expired;
+            expect(parseXtreamAccount("{\"user_info\":{\"status\":\"Expired\"}}", expired, nullptr) &&
+                       !expired.authOk,
+                   "xtream: ...and a non-Active status without auth is not accepted");
+        }
+
+        {   // categories
+            const std::string body =
+                "[{\"category_id\":\"1407\",\"category_name\":\"VOD - ACTIE [NL]\",\"parent_id\":0},"
+                "{\"category_id\":\"1479\",\"category_name\":\"VOD - VIDEOLAND [NL]\",\"parent_id\":0}]";
+            std::vector<XtreamCategory> cats;
+            expect(parseXtreamCategories(body, cats, nullptr) && cats.size() == 2,
+                   "xtream: categories parse");
+            expect(cats[0].id == L"1407" && cats[0].name == L"VOD - ACTIE [NL]",
+                   "xtream: quoted category_id is kept as a key, name read");
+        }
+
+        {   // *** the VOD list, with every real-world hazard in five items ***
+            const std::string body =
+                "["
+                // 1: the ordinary case
+                "{\"num\":1,\"name\":\"Young Hearts (2024)\",\"stream_id\":1218804,"
+                "\"stream_icon\":\"http://i/1.jpg\",\"rating\":\"7.3\",\"rating_5based\":3.7,"
+                "\"added\":\"1742736240\",\"is_adult\":\"0\",\"category_id\":\"1407\","
+                "\"container_extension\":\"mp4\",\"custom_sid\":null,\"direct_source\":\"\"},"
+                // 2: mixed typing on the SAME fields, and an empty icon (~90% of the real library)
+                "{\"name\":\"Werewolves (2024)\",\"stream_id\":\"1218803\","
+                "\"stream_icon\":\"\",\"rating_5based\":\"0\",\"added\":1742736000,"
+                "\"is_adult\":1,\"category_id\":1479,\"container_extension\":\"mkv\"},"
+                // 3: no container_extension -> no constructible URL -> skipped, counted
+                "{\"name\":\"No Ext\",\"stream_id\":99,\"category_id\":\"1407\"},"
+                // 4: container_extension present but NULL -> same
+                "{\"name\":\"Null Ext\",\"stream_id\":98,\"container_extension\":null},"
+                // 5: no id at all -> skipped, counted separately
+                "{\"name\":\"No Id\",\"container_extension\":\"mp4\"}"
+                "]";
+            XtreamVodResult r;
+            std::wstring verr;
+            // Two statements, deliberately: building the message in the same call as the
+            // parse leaves the two arguments indeterminately sequenced, and MSVC evaluates
+            // right-to-left — so the diagnostic would be built from `verr` BEFORE the parse
+            // wrote it, showing an empty error on the one occasion it matters.
+            const bool vodOk = parseXtreamVodStreams(body, r, &verr);
+            expect(vodOk, "xtream: VOD list parses (" + utf8FromWide(verr) + ")");
+            expect(r.total == 5, "xtream: every element is counted, including the skipped ones");
+            expect(r.movies.size() == 2, "xtream: only the constructible items are kept");
+            expect(r.skippedNoExt == 2,
+                   "xtream: a missing AND a null container_extension both count as no-extension");
+            expect(r.skippedNoId == 1, "xtream: an item with no stream_id is counted separately");
+            expect(r.movies[0].streamId == 1218804 && r.movies[1].streamId == 1218803,
+                   "xtream: a bare id and a QUOTED id both read (the panel mixes them)");
+            expect(r.movies[0].added == 1742736240LL && r.movies[1].added == 1742736000LL,
+                   "xtream: quoted and bare `added` epochs both read");
+            expect(!r.movies[0].adult && r.movies[1].adult,
+                   "xtream: is_adult reads from \"0\" and from a bare 1");
+            expect(r.movies[1].categoryId == L"1479",
+                   "xtream: a BARE numeric category_id still yields the same key as a quoted one");
+            expect(r.movies[1].icon.empty(),
+                   "xtream: an empty stream_icon is preserved as empty (~90% of the real library)");
+
+            // mapping to DB rows
+            std::vector<XtreamCategory> cats{{L"1407", L"VOD - ACTIE [NL]"}, {L"1479", L"VOD - VIDEOLAND [NL]"}};
+            const auto rows = xtreamMoviesToChannels(cr, r.movies, cats);
+            expect(rows.size() == 2, "xtream: every kept movie becomes a row");
+            expect(rows[0].streamUrl == L"http://line.example.com/movie/abc/def/1218804.mp4",
+                   "xtream: the row's stream URL is the constructed play URL");
+            expect(rows[0].kind == Channel::Kind::Movie && rows[1].kind == Channel::Kind::Movie,
+                   "xtream: rows are marked kind=Movie, so schema v8 discriminates them");
+            expect(rows[0].groupTitle == L"VOD - ACTIE [NL]" &&
+                       rows[1].groupTitle == L"VOD - VIDEOLAND [NL]",
+                   "xtream: group_title is the category NAME, so VOD lands in the existing nav tree");
+            expect(rows[0].addedAt == 1742736240LL, "xtream: added_at carried onto the row");
+            expect(rows[0].isValid(), "xtream: the produced row passes the DAO's validity gate");
+            // An unknown category must not produce an empty group (which would read as a
+            // blank nav entry) — it falls back.
+            std::vector<XtreamMovie> orphan{r.movies[0]};
+            orphan[0].categoryId = L"9999";
+            const auto oRows = xtreamMoviesToChannels(cr, orphan, cats, L"Movies");
+            expect(oRows.size() == 1 && oRows[0].groupTitle == L"Movies",
+                   "xtream: an unknown category falls back rather than producing a blank group");
+        }
+
+        {   // structural failures must be distinguishable from an empty library
+            XtreamVodResult r;
+            expect(!parseXtreamVodStreams("{\"user_info\":{}}", r, nullptr),
+                   "xtream: an OBJECT where a list belongs fails (not an empty library)");
+            expect(!parseXtreamVodStreams("<html>blocked</html>", r, nullptr),
+                   "xtream: an HTML error page fails");
+            expect(parseXtreamVodStreams("[]", r, nullptr) && r.movies.empty() && r.total == 0,
+                   "xtream: an EMPTY list parses and reports zero, which is a real answer");
         }
     }
 

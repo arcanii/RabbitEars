@@ -67,12 +67,13 @@ bool integerText(const std::string& s, long long* out) {
     for (; i < end; ++i) {
         if (s[i] < '0' || s[i] > '9') return false;
         const unsigned d = static_cast<unsigned>(s[i] - '0');
-        // Saturate rather than wrap. A wrapped id is a plausible-looking wrong number;
-        // a saturated one is obviously wrong wherever it surfaces.
-        if (v > (0x7FFFFFFFFFFFFFFFull - d) / 10ull) {
-            v = 0x7FFFFFFFFFFFFFFFull;
-            break;
-        }
+        // Overflow is a FAILURE, not a saturation. Saturating looked defensible — "obviously
+        // wrong wherever it surfaces" — but it is not: a saturated stream_id passes the
+        // caller's `id > 0` test, is not counted as skipped, and becomes an ordinary-looking
+        // movie row whose URL 404s. Returning false routes it to the skip counter instead,
+        // where it is visible. (It also stopped this function accepting "999…999abc", whose
+        // trailing garbage was never validated once the break fired.)
+        if (v > (0x7FFFFFFFFFFFFFFFull - d) / 10ull) return false;
         v = v * 10ull + d;
     }
     if (out) *out = neg ? -static_cast<long long>(v) : static_cast<long long>(v);
@@ -112,18 +113,31 @@ bool JsonValue::isNumericString() const {
     return type_ == Type::String && numericText(str_, nullptr);
 }
 
+// double -> long long is UNDEFINED when the value is out of range, and the two
+// architectures RabbitEars ships DISAGREE: x64's cvttsd2si yields LLONG_MIN (negative, so a
+// caller's `id > 0` test rejects it), while AArch64's fcvtzs saturates to LLONG_MAX
+// (positive, so the same body produces a bogus movie row on the ARM64 build and a clean skip
+// on x64). Range-check first so both behave identically.
+namespace {
+bool doubleToInt64(double d, long long& out) {
+    if (!(d >= -9.2233720368547748e18 && d <= 9.2233720368547748e18)) return false;
+    out = static_cast<long long>(d);
+    return true;
+}
+}  // namespace
+
 long long JsonValue::asInt64(long long def) const {
     long long v = 0;
     switch (type_) {
         case Type::Number:
             // str_ holds the original token, so an exact integer stays exact.
             if (integerText(str_, &v)) return v;
-            return static_cast<long long>(num_);
+            return doubleToInt64(num_, v) ? v : def;
         case Type::String:
             if (integerText(str_, &v)) return v;
             {   // "7.8" as an int is 7 — a panel that quotes a float where an int belongs
                 double d = 0;
-                if (numericText(str_, &d)) return static_cast<long long>(d);
+                if (numericText(str_, &d) && doubleToInt64(d, v)) return v;
             }
             return def;
         case Type::Bool: return bool_ ? 1 : 0;

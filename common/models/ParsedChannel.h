@@ -5,6 +5,8 @@
 
 #include <string>
 
+#include "models/Channel.h"  // Channel::Kind — a parsed row carries its own kind
+
 namespace rabbitears {
 
 // The value produced for one #EXTINF entry (+ its following URL and any
@@ -22,6 +24,15 @@ struct ParsedChannel {
     // Passed to libVLC as per-media options (":http-user-agent=", ":http-referrer=").
     std::wstring userAgent;    // http-user-agent
     std::wstring referrer;     // http-referrer
+
+    // ---- VOD (schema v8) ----------------------------------------------------
+    // Defaults are the live-TV answer, so the M3U parser — which never sets either —
+    // keeps producing exactly the rows it always has.
+    Channel::Kind kind = Channel::Kind::Live;
+    long long     addedAt = 0;  // provider's "added" epoch; 0 == unknown
+    // NOTE there is deliberately no duration here. The Xtream API does not expose one for
+    // a movie (get_vod_info returns an empty `info`), so duration is cached from libVLC at
+    // play time instead — see Win32/docs/XTREAM_VOD.md §1 F2.
 
     bool isValid() const { return !streamUrl.empty(); }
 };

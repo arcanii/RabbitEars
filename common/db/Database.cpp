@@ -602,14 +602,30 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
                                  long long nowEpoch) {
     if (!db_) return 0;
     Tx tx(db_);
+    // v8 adds kind + added_at. Both are updated ON CONFLICT only when the incoming row
+    // ASSERTS a value, never downward to the default — the two directions are NOT
+    // symmetric. An Xtream `m3u_plus` playlist already carries /movie/USER/PASS/id.ext
+    // rows, and the VOD sync constructs the identical URL, so they collide on
+    // idx_channels_dedupe BY DESIGN. But ParsedChannel from the M3U parser cannot express
+    // `kind` — it defaults to Live — so a plain "kind=excluded.kind" would let a routine
+    // playlist refresh silently revert every movie to a live channel, zero the provider's
+    // added_at, and (worst) leave zero kind=1 rows so retireMissingChannels becomes a
+    // permanent no-op and the library grows forever. "The M3U didn't say" is not "it is
+    // Live".
+    //
+    // resume_sec / watched / duration_sec / is_favourite / lcn / dead_status are absent
+    // from the SET list entirely: those are the USER's data, not the provider's, and a
+    // refresh must never discard how far someone got into a film.
     Stmt ins(db_,
              "INSERT INTO channels("
              "playlist_id,name,stream_url,logo_url,group_title,tvg_id,tvg_name,lcn,sort_order,"
-             "user_agent,referrer) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+             "user_agent,referrer,kind,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
              "ON CONFLICT(playlist_id,stream_url) DO UPDATE SET "
              "name=excluded.name,logo_url=excluded.logo_url,group_title=excluded.group_title,"
              "tvg_id=excluded.tvg_id,tvg_name=excluded.tvg_name,sort_order=excluded.sort_order,"
-             "user_agent=excluded.user_agent,referrer=excluded.referrer");
+             "user_agent=excluded.user_agent,referrer=excluded.referrer,"
+             "kind=CASE WHEN excluded.kind<>0 THEN excluded.kind ELSE kind END,"
+             "added_at=CASE WHEN excluded.added_at<>0 THEN excluded.added_at ELSE added_at END");
     if (!ins) return 0;
     int n = 0, order = 0;
     for (const ParsedChannel& c : channels) {
@@ -626,6 +642,8 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
         ins.bindInt(9, order++);
         ins.bindText(10, c.userAgent);
         ins.bindText(11, c.referrer);
+        ins.bindInt(12, static_cast<long long>(c.kind));
+        ins.bindInt(13, c.addedAt);
         if (ins.stepDone() == SQLITE_DONE) ++n;
     }
     {
@@ -640,6 +658,69 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
     }
     tx.commit();
     return n;
+}
+
+// Retire VOD rows the provider has dropped. A catalogue churns constantly, so without this
+// the library only ever GROWS: a film removed upstream keeps a row whose URL 404s forever.
+//
+// Scoped to (playlist_id, kind) so a VOD sync can never touch live channels — the failure
+// this guards against is a partial or empty VOD response wiping someone's TV list, the same
+// class of disaster the dead-link checker's "discard the whole sweep unless enough of it
+// reached a server" rule exists to prevent. The CALLER owes that judgement: pass only a
+// successfully-parsed, non-empty set. An empty `keepUrls` deletes NOTHING, by design.
+//
+// A temp-table anti-join rather than one giant NOT IN (...) literal: at 43,599 URLs the
+// literal would be megabytes of SQL and would hit SQLITE_MAX_SQL_LENGTH.
+int Database::retireMissingChannels(long long playlistId, int kind,
+                                    const std::vector<std::wstring>& keepUrls) {
+    if (!db_ || keepUrls.empty()) return 0;
+    Tx tx(db_);
+    exec("CREATE TEMP TABLE IF NOT EXISTS _keep_urls(url TEXT PRIMARY KEY)");
+    exec("DELETE FROM _keep_urls");
+    {
+        Stmt ins(db_, "INSERT OR IGNORE INTO _keep_urls(url) VALUES(?)");
+        if (!ins) return 0;
+        for (const std::wstring& u : keepUrls) {
+            ins.reset();
+            ins.bindText(1, u);
+            // ⚠ EVERY row must land. A keep-URL that failed to insert is indistinguishable
+            // from one the provider dropped, so the DELETE below would retire a film the
+            // caller explicitly asked to keep. One SQLITE_FULL on the temp store partway
+            // through 43,599 inserts would wipe the library from that point on — the exact
+            // disaster the empty-set guard above is written to prevent, but harder to spot
+            // because it looks like it worked. Bail and let ~Tx roll back.
+            if (ins.stepDone() != SQLITE_DONE) return 0;
+        }
+    }
+    int removed = 0;
+    {
+        Stmt del(db_,
+                 "DELETE FROM channels WHERE playlist_id=?1 AND kind=?2 "
+                 "AND stream_url NOT IN (SELECT url FROM _keep_urls)");
+        if (!del) return 0;
+        del.bindInt(1, playlistId);
+        del.bindInt(2, kind);
+        // Read changes() ONLY after a confirmed DELETE: on failure it still holds the count
+        // from the last successful statement (the final INSERT), so an unchecked read would
+        // report "1 retired" when nothing was deleted.
+        if (del.stepDone() != SQLITE_DONE) return 0;
+        removed = sqlite3_changes(db_);
+    }
+    // Keep playlists.channel_count honest — bulkInsertChannels recomputes it, and a sync
+    // runs insert-then-retire, so without this the playlist list shows the pre-retirement
+    // count until some later import happens to correct it.
+    if (removed > 0) {
+        Stmt upd(db_,
+                 "UPDATE playlists SET channel_count=(SELECT COUNT(*) FROM channels WHERE "
+                 "playlist_id=?1) WHERE id=?1");
+        if (upd) {
+            upd.bindInt(1, playlistId);
+            upd.stepDone();
+        }
+    }
+    exec("DELETE FROM _keep_urls");
+    tx.commit();
+    return removed;
 }
 
 std::vector<Channel> Database::allChannels() {

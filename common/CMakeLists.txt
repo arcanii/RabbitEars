@@ -11,6 +11,7 @@ add_library(RabbitEarsCore STATIC
   core/DeadLinkCheck.cpp       # pure dead-link verdict logic (beta) — unit-tested headlessly
   core/Gzip.cpp       # gunzip `.xml.gz` EPG feeds via vendored miniz — unit-tested headlessly
   core/Json.cpp       # JSON reader for the Xtream player_api client — unit-tested headlessly
+  core/XtreamClient.cpp  # pure Xtream player_api response -> model mapping — unit-tested
   core/M3uParser.cpp
   core/M3uWriter.cpp  # M3U exporter symmetric with the parser (favourites export) — unit-tested
   core/PowerPolicy.cpp         # pure wake-timer preflight decision core — unit-tested headlessly

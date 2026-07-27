@@ -65,6 +65,23 @@ public:
     int bulkInsertChannels(long long playlistId, const std::vector<ParsedChannel>& channels,
                            long long nowEpoch);
 
+    // Delete rows of ONE kind in one playlist whose stream_url is not in `keepUrls` — the
+    // other half of a VOD sync, since a provider's catalogue churns and without this the
+    // library only ever grows. Scoped by kind so a VOD sync can never touch live channels.
+    // An EMPTY keepUrls deletes nothing (a failed/partial fetch must not wipe a library);
+    // the caller is responsible for only passing a set it actually trusts. Any failure to
+    // stage the keep-set aborts and rolls back rather than deleting a partial difference.
+    // Returns the number of rows removed, and recomputes playlists.channel_count.
+    //
+    // ⚠ NOT REENTRANT, and NOT safe to run concurrently on ONE Database handle. It stages
+    // the keep-set in a per-CONNECTION temp table inside a transaction, so two overlapping
+    // calls would clear each other's set mid-flight and the inner commit would end the outer
+    // transaction early — mass deletion. Database::open uses SQLITE_OPEN_FULLMUTEX, so
+    // sharing a handle across threads is otherwise fine; this one function is the exception.
+    // Run the VOD sync on a worker with its OWN connection, per Win32/docs/XTREAM_VOD.md §4.
+    int retireMissingChannels(long long playlistId, int kind,
+                              const std::vector<std::wstring>& keepUrls);
+
     std::vector<Channel> allChannels();
     std::vector<Channel> channelsByPlaylist(long long playlistId);
     std::vector<Channel> channelsByGroup(const std::wstring& group);

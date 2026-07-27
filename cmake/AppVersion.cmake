@@ -8,7 +8,7 @@
 # source of truth for the Windows version: the .exe VERSIONINFO (packaging/RabbitEars.rc via the
 # generated version.h), the app manifest (generated from packaging/app.manifest.in), and the Inno
 # installer (generated packaging/version.iss) all derive from it — nothing else to hand-edit.
-set(APP_VERSION "0.2.15")
+set(APP_VERSION "0.2.16")
 
 # macOS carries its own decoupled version: the mac port still lacks the Windows theme
 # engine, so the platforms are NOT lockstep on patch numbers. This is the one intentional
