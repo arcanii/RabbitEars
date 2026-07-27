@@ -31,7 +31,12 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.15 SHIPPED (the instruments release: VU relit + blue · framed glass · tank reoriented)** · v0.2.14 · macOS 0.2.15
+## Current state — **0.2.16 groundwork on `main`, UNRELEASED and unverified** · v0.2.15 SHIPPED · v0.2.14 · macOS 0.2.15
+
+> **Read "Immediate next steps" first.** `main` carries one unreleased commit (`ffb69dc`): player
+> seek + scrub bar, the shared JSON reader, schema v8, the buffer-meter glass, and the `--xtream`
+> reconnaissance probe. `APP_VERSION` is still `0.2.15` — nothing bumped, tagged or released. The
+> Xtream VOD epic's two gates are both CLOSED; the design doc is [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md).
 
 ### ✅ 0.2.15 — SHIPPED (2026-07-26)
 
@@ -355,6 +360,67 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
+### 🚧 0.2.16 — groundwork LANDED, unreleased, **not yet seen on a device** (`ffb69dc`, 2026-07-27)
+
+`APP_VERSION` is still **`0.2.15`** — nothing has been bumped, tagged or released. One commit on
+`main`, 19 files, +2872. Both theme flags build clean at /W4 and `--selftest` is ALL PASS.
+
+- **Player seek + scrub bar + time readout** — `VlcPlayer` gains `timeMs/lengthMs/isSeekable/seekTo`,
+  sampled on the worker beside `videoSize()` and published as atomics. The bar appears only when
+  libVLC reports the media seekable with a real length; seeks commit on `TB_ENDTRACK` only (one seek
+  per gesture, not per drag tick — a network stream would re-buffer continuously).
+  ⚠️ **"Invisible on live IPTV" is libVLC's judgement, not an invariant we enforce.** An HLS feed with
+  a DVR window can legitimately report seekable, and a fair number of IPTV channels are exactly that.
+  Showing a scrub bar there is arguably CORRECT — but it means the "strip is unchanged for existing
+  users" claim needs an eye on a real channel list. **This is the top thing to check on device.**
+- **`common/core/Json.{h,cpp}`** — hand-rolled JSON reader (house style). Tolerant exactly where
+  panels are non-standard, strict on structure. 32 selftests.
+- **Schema v8** — `channels.kind/duration_sec/resume_sec/watched/added_at`. A movie is a channel row,
+  not a second table. All columns default to the live-TV answer; verified by migrating a hand-built
+  v2 DB and asserting a pre-v8 row comes back `kind=Live`.
+- **Buffer-meter glass** — the backlog's likeliest answer to the 0.2.15 "bezel needs work". Grid
+  geometry lifted into `BufferMeter.h` so `--selftest` can pin the one property that cannot be
+  eyeballed: glass OFF is bit-identical to the pre-glass renderer at every size/DPI.
+- **`RabbitEarsCli --xtream`** — the reconnaissance probe (below).
+
+**Three defects an adversarial review caught in the seek work, worth remembering:** pressing **Stop**
+stranded the scrub bar on screen forever, because `doStop()` DETACHES its libVLC callbacks before
+teardown (deliberately, so a dying stream cannot post stale events) — so **no event follows a stop**
+and `sampleStats()` has already quit. Nothing existed to retire the bar. Also: a pane switch between
+two *seekable* panes never flipped visibility, so pane A's seek target drove pane B's thumb; and a
+Seek queued behind a Play landed the old film's position on the new stream (now stamped with a stream
+generation). The pattern in all three: **state cleared only on a visibility TRANSITION is not cleared
+at all when the transition doesn't happen.**
+
+### 🎬 Xtream VOD — **both gates CLOSED**; next is 0.2.17, the client
+
+`RabbitEarsCli --xtream` ran against the owner's real provider (2026-07-27): `player_api.php` **works**,
+**43,599 movies** / **13,152 series**, `container_extension` on 100% of movies, play URL **HTTP 302
+reachable**, all 8 bodies parsed cleanly. The design doc is
+**[`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md)** — written off measured numbers, with the shared-core
+boundary flagged to the macOS team in its §2.
+
+**Three findings changed the plan** (full detail in BACKLOG + the doc): **`max_connections: 1`** is the
+governing constraint; **movies carry NO metadata** (`get_vod_info` returns 204 bytes with an empty
+`info`, so duration must be cached from `lengthMs()` at play time); and **poster art inverts** —
+`stream_icon` is empty on ~90% of movies but series `cover` is populated, so **movies stay in the text
+grid and posters become a SERIES feature**.
+
+⚠️ **The biggest risk is not VOD** — 43,599 rows is ~4× the current library, in the same `channels`
+table that already needed a SQLite scalar to keep the country filter under ~30 ms/keystroke at 14k
+rows. **Re-measure every cross-channel query at that size before 0.2.17 ships.**
+
+### What still needs the owner
+
+- **The whole of 0.2.16 is unverified on a device** — it is a mix of visual (glass bezel) and
+  interactive (scrub/seek) work, neither of which the sandbox can check.
+- The **live-HLS-DVR question** above, which decides whether 0.2.16 is a no-op for existing users.
+- The empty-tank fix and glass bezel from 0.2.15 (below) are still unseen.
+- ⏳ The recon account is a **1-connection line that expires ~2026-07-29** — VOD testing windows are
+  short and serialized.
+
+---
+
 ✅ **0.2.15 SHIPPED** (2026-07-26) — tag `v0.2.15` @ `1324f5f`, `0.2.15.365`, three signed installers on
 GitHub release `v0.2.15`, both appcasts LIVE @ `77035ed` (feeds AND enclosure URLs verified HTTP 200).
 See the "Current state" block for the full feature list, the NO-GO blocker the pre-release check caught,
@@ -382,13 +448,14 @@ provider (panels are wildly non-standard and some disable the API), then a desig
 prior epic of this size, and with the same obligation to flag the shared-core boundary to the macOS
 team, since the client, parser, schema and models all land in `common/`.
 
-**Candidates for 0.2.16:** glass bezel pass 4 (top of the list — it is the one owner-flagged
-reservation in a shipped release); **wire the glass into the buffer meter**, which is the likeliest
-single explanation for the bezel reading half-done — four framed mini-meters currently sit beside one
-unframed fluid tank; the **buffer-depth tester task** (does `bufferedBytes` report at all on IPTV? — a
-10-minute capture that decides whether the tank can track live buffer depth); the About box's **"Bg"
-swatch not saying it is the VU lamp**; the **x86-64 arch label**; and Authenticode signing (still
-owner-gated, also unblocks the Microsoft Store track).
+**Candidates for 0.2.16** (as judged before the work started; ✅ = now landed in `ffb69dc`):
+✅ **wire the glass into the buffer meter** — done, and it was indeed the item with the clearest
+rationale; whether it resolves the bezel reservation is still an owner call. Glass bezel **pass 4**
+remains open and is now better informed (the tank is no longer the unframed odd one out, so if the
+bezel still reads wrong, the suspects narrow to the three luminance steps / the light skin / the
+corner pip). Still open and untouched: the **buffer-depth tester task** (does `bufferedBytes` report
+at all on IPTV?); the About box's **"Bg" swatch not saying it is the VU lamp**; the **x86-64 arch
+label**; and Authenticode signing (still owner-gated, also unblocks the Microsoft Store track).
 
 **Still open from 0.2.14:** the 22 dead-link verdicts from that release's one real sweep have never
 been confirmed as true positives — much less pressing now that "Clear dead-link results" makes a wrong

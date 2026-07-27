@@ -349,7 +349,15 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   a real chamfer is constant width, and axis-derived rims are what made a 112×30 meter read as two
   horizontal bands — the fix was removing axis-derived geometry entirely (Chebyshev ring), not
   splitting X from Y. Trim knob if it reads heavy: `kLipTop` (0.431), then `kShadowDeep` (0.30).
-- **🔍 Glass cover — wire the buffer meter** (deferred out of the 0.2.15 framed-pane pass). `BufferMeter.cpp`
+- **🔍 Glass cover — wire the buffer meter** — ✅ **DONE in the 0.2.16 groundwork** (`ffb69dc`), to the
+  recipe below. The grid geometry was lifted into `BufferMeter.h` as an inline `bufferGrid()` so
+  `--selftest` can finally reach it (the objection below was that it could not): it now pins that with
+  glass OFF the grid is **bit-identical** to the pre-glass renderer at every size and DPI, and that
+  with glass ON it costs exactly one row and one column (38×10 → 37×9 at 115×30), containment inside
+  the bezel band verified across a size/DPI sweep. `drawMetrics` and the `ID_MTR_GLASS` preview
+  invalidation were handled as prescribed. **Still needs the owner's eye** — whether four framed
+  mini-meters beside a now-framed tank actually resolves the "bezel needs work" reservation is a
+  visual question the sandbox cannot answer. Original recipe kept below as the record. `BufferMeter.cpp`
   has no glass code and no border at all, so it is now the only meter still literally flush to the strip —
   four framed mini-meters beside one unframed fluid tank may read as half-done. It was deferred because it
   is the only place real dial would be spent: its LED grid is genuinely edge-to-edge (at 115×30 the layout
@@ -446,7 +454,14 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 - **Date/time format strings** in the schedule dialog/columns are left numeric (yyyy-MM-dd) — revisit if
   locale-aware date formatting is wanted.
 
-## 🎬 Xtream VOD + Series — the 0.3.0 epic (scoped 2026-07-26, NOT started)
+## 🎬 Xtream VOD + Series — the 0.3.0 epic (scoped 2026-07-26 · **both gates CLOSED 2026-07-27**)
+
+> **STATUS: gate 1 (reconnaissance) and gate 2 (design doc) are both DONE, and the 0.2.16
+> groundwork has LANDED (`ffb69dc`).** The design doc is
+> [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md) and is written off MEASURED numbers from the owner's
+> real provider, not estimates — read it before touching this epic. Next up is **0.2.17: the
+> Xtream client, movies only**. Two reconnaissance findings CHANGED the plan below; they are
+> called out inline and the 0.3.0 scope has been revised accordingly.
 
 **Answering "does RabbitEars support VOD?" — no, not at all, and the gap is bigger than it looks.**
 Every "Movies" string in the tree is group-title *test data*. Investigated and confirmed:
@@ -480,29 +495,58 @@ shapes, missing fields, numbers-as-strings, and some disable `player_api.php` ou
 VOD libraries run 10k–50k items, so the poster grid inherits the perf discipline the country filter
 already needed (a C++-side filter benchmarked at ~30 ms/call and was pushed into a SQLite scalar).
 
-### Do these two things FIRST, in this order
+### ✅ Both gates are closed — what reconnaissance actually found
 
-1. **A 30-minute reconnaissance against the owner's real provider** (a tester task, like the
-   `bufferedBytes` one below): does `player_api.php` respond at all, and what does
-   `get_vod_streams` / `get_series_info` actually return? If it is disabled or the shape is odd, the
-   estimate changes completely. **Nothing should be designed before this is answered.**
-2. **A design doc — `Win32/docs/XTREAM_VOD.md` — written BEFORE any code**, exactly as
-   `Win32/docs/THEME_ENGINE.md` was for the theme engine (the one prior epic of this size). Same two
-   rules apply: doc first, **and flag the shared-core boundary to the macOS team before anything
-   lands**, because the client, JSON parser, schema and models all belong in `common/` — mac gets
-   the core free but owns a whole second UI, and every one of those files is subject to the
-   shared-core traps (exact-arity parsers, mac's duplicate copies).
+1. ✅ **Reconnaissance — DONE 2026-07-27** via `RabbitEarsCli --xtream` against the owner's real
+   provider. `player_api.php` **works** (`auth=1`, Active). **43,599 movies** (13.46 MB / 5.2 s) and
+   **13,152 series** (13.33 MB / 4.7 s); 67 VOD + 39 series categories, flat. `container_extension`
+   present and non-empty on **all** 43,599; the constructed play URL probed **HTTP 302 (reachable)**.
+   All 8 bodies parsed cleanly. Full numbers in the design doc §1; the report itself is
+   credential-redacted and re-runnable against any future provider.
+2. ✅ **Design doc — DONE**, [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md). The shared-core boundary is
+   flagged to the macOS team in its §2, including the two mac-side traps (an older mac build opening
+   a v8 DB; `Channel` having gained fields).
+
+**Three findings the estimate above did not anticipate:**
+
+- 🔴 **`max_connections: 1`.** One connection is the entire budget. A sync can never overlap
+  playback, and the 0.3.0 poster fetcher gets NO concurrency. This is the dead-link checker's lesson
+  (a connection cap kicks the user's actual playback) arriving early enough to design around.
+- 🔴 **Movies have NO metadata.** `get_vod_info` returns 204 bytes with `info` as an empty array — no
+  duration, plot, cast or year. Series *episodes* carry a full ffprobe block; movies carry nothing.
+  So `durationSec` cannot be an import field: it must be cached from `VlcPlayer::lengthMs()` at play
+  time, which makes the 0.2.16 seek work a harder prerequisite than assumed. And `get_vod_info` must
+  NOT be called per item (43,599 requests, for nothing, against a 1-connection cap).
+- 🔴 **Poster art inverts the 0.3.0 plan.** `stream_icon` is empty on ~90% of movies (39,048 of
+  43,599) while series `cover` is well populated. A movie poster grid would be nine-tenths blank and
+  read as broken. **Movies stay in the existing text grid; posters become a SERIES feature.**
+
+Also confirmed: `episodes` really is a **map keyed by season number**; `direct_source` is empty and
+`custom_sid` null on every movie (so the play URL must be constructed, never taken from the payload);
+and types are mixed **within a single field** — `rating_5based` and `tmdb` are `string+number`,
+`category_id` is `string+null`, `backdrop_path` is `array+null`. A strict parser dies on this
+provider, which is exactly why `common/core/Json.h`'s scalar accessors are tolerant. **Never add a
+strict mode.**
 
 ### Ship it in three, landing at 0.3.0 — not as one branch
 
 A 3–5 week monolith contradicts how this project ships well: small, owner-verified, corrected fast.
 The sandbox cannot see the GUI, so long feedback loops are unusually expensive here.
 
-- **0.2.16** — player seek + scrub bar + time readout. Independently useful, prerequisite for all of it.
-- **0.2.17** — JSON parser + Xtream client + schema v8. Movies only, in the existing grid, no posters.
-  Proves the API against a real provider at minimum cost.
-- **0.3.0** — posters, series/seasons/episodes, resume. The minor bump marks the capability's
-  ARRIVAL, not the start of the work.
+- **0.2.16 — ✅ GROUNDWORK LANDED** (`ffb69dc`): player seek + scrub bar + time readout,
+  `common/core/Json.{h,cpp}` (the JSON reader moved EARLIER than planned — the recon tool needed the
+  shape questions answered first, and the parser is the cheapest thing to test headlessly), schema
+  v8, plus the buffer-meter glass. *Pending the owner's on-device pass.*
+- **0.2.17** — the **Xtream client**, movies only, existing grid, no posters. `common/core/XtreamClient`
+  + the sync worker + a "Sync VOD" action. Success = 43,599 movies in the grid, one plays, resume
+  works. (JSON parser and schema v8 moved down to 0.2.16, so this release is now just the client.)
+- **0.3.0** — series → seasons → episodes, **posters for SERIES** (not movies — see the finding
+  above), resume everywhere. The minor bump marks the capability's ARRIVAL, not the start of the work.
+
+⚠️ **The biggest regression risk in the epic is not VOD at all** — it is that a 43,599-row import is
+**~4× the existing library**, landing in the same `channels` table that already needed a SQLite scalar
+to keep the country filter under ~30 ms/keystroke at 14k rows. Every cross-channel query has to be
+re-measured at that size, and `kind` filtering must be server-side. Measure BEFORE 0.2.17 ships.
 
 ## Tester tasks (need a real stream — the dev sandbox cannot do these)
 

@@ -647,6 +647,10 @@ private:
     }
 };
 
+// Path column width. Real paths reach ~45 chars on a series_info ffprobe block
+// (episodes.#[].info.video.disposition.hearing_impaired); anything longer wraps.
+constexpr size_t kPathCol = 38;
+
 // The rendered census table. `label` names the container whose children we list.
 void printCensus(const Census& c) {
     if (c.paths.empty()) { sayln("    (no values)"); return; }
@@ -655,8 +659,8 @@ void printCensus(const Census& c) {
     for (const auto& kv : c.paths) rows.push_back(&kv);
     std::sort(rows.begin(), rows.end(), [](auto* a, auto* b) { return a->second.order < b->second.order; });
 
-    sayln("    " + pad("path", 34) + pad("present", 16) + pad("types", 22) + "samples");
-    sayln("    " + std::string(34 + 16 + 22 + 20, '-'));
+    sayln("    " + pad("path", kPathCol) + pad("present", 16) + pad("types", 22) + "samples");
+    sayln("    " + std::string(kPathCol + 16 + 22 + 20, '-'));
     for (const auto* r : rows) {
         const std::string& path = r->first;
         const PathInfo& p = r->second;
@@ -692,8 +696,15 @@ void printCensus(const Census& c) {
         if (p.nEmpty > 0 && p.count > 0 && p.nEmpty * 4 >= p.count)
             flags += "  [empty x" + commas(p.nEmpty) + "]";
 
-        sayln("    " + pad(path.empty() ? "(root)" : path, 34) + pad(present, 16) + pad(types, 22) +
-              samples + flags);
+        // A path longer than its column used to run straight into the next one
+        // ("…codec_long_name3/3"), which is unreadable exactly where the nesting is deepest
+        // and the reader needs it most. Overflow wraps onto its own line instead.
+        const std::string label = path.empty() ? "(root)" : path;
+        const std::string cols = pad(present, 16) + pad(types, 22) + samples + flags;
+        if (label.size() > kPathCol)
+            sayln("    " + label + "\n    " + std::string(kPathCol, ' ') + cols);
+        else
+            sayln("    " + pad(label, kPathCol) + cols);
 
         const auto nk = c.numericKeys.find(path);
         if (nk != c.numericKeys.end() && !nk->second.empty()) {
