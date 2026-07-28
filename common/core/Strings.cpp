@@ -635,6 +635,9 @@ constexpr std::array<const char*, N> kEn = {{
     "Movie sync failed — {0}",  // StatusVodSyncFailed
     "Movie sync incomplete — {0} added or updated before it stopped ({1}).",  // StatusVodSyncPartial
     "  ·  showing the first {0} — search or pick a group to narrow",  // StatusGridTruncatedSuffix
+    // --- Transport ---
+    "Back {0} seconds",  // TooltipBtnSkipBack
+    "Forward {0} seconds",  // TooltipBtnSkipFwd
 }};
 
 // 日本語
@@ -1260,6 +1263,9 @@ constexpr std::array<const char*, N> kJa = {{
     "映画の同期に失敗しました — {0}",  // StatusVodSyncFailed
     "映画の同期は完了しませんでした — 停止するまでに {0} 件を追加・更新しました（{1}）。",  // StatusVodSyncPartial
     "  ·  先頭 {0} 件のみ表示 — 検索するかグループを選んで絞り込んでください",  // StatusGridTruncatedSuffix
+    // --- Transport ---
+    "{0} 秒戻る",  // TooltipBtnSkipBack
+    "{0} 秒進む",  // TooltipBtnSkipFwd
 }};
 
 // 繁體中文
@@ -1885,6 +1891,9 @@ constexpr std::array<const char*, N> kZhHant = {{
     "電影同步失敗 — {0}",  // StatusVodSyncFailed
     "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",  // StatusVodSyncPartial
     "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍",  // StatusGridTruncatedSuffix
+    // --- Transport ---
+    "倒退 {0} 秒",  // TooltipBtnSkipBack
+    "快轉 {0} 秒",  // TooltipBtnSkipFwd
 }};
 
 // 繁體中文（香港）
@@ -2510,6 +2519,9 @@ constexpr std::array<const char*, N> kZhHK = {{
     "電影同步失敗 — {0}",  // StatusVodSyncFailed
     "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",  // StatusVodSyncPartial
     "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍",  // StatusGridTruncatedSuffix
+    // --- Transport ---
+    "倒退 {0} 秒",  // TooltipBtnSkipBack
+    "快轉 {0} 秒",  // TooltipBtnSkipFwd
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

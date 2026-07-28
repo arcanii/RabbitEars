@@ -156,7 +156,7 @@ void remakeUiFonts(AppState* st) {
                    st->seekBar, st->timeLabel})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->uiFont), TRUE);
     SendMessageW(st->volIcon, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
-    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->btnSeekBack, st->btnSeekFwd})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
     if (oldUi) DeleteObject(oldUi);
     if (oldTitle) DeleteObject(oldTitle);
@@ -175,7 +175,7 @@ void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
     const Theme& th = currentTheme();
     const wchar_t* sub = th.dark ? L"DarkMode_Explorer" : L"Explorer";
     for (HWND h : {st->search, st->status, st->volBar, st->bufBar, st->bufLabel, st->nav,
-                   st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->seekBar, st->timeLabel})
+                   st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->btnSeekBack, st->btnSeekFwd, st->seekBar, st->timeLabel})
         SetWindowTheme(h, sub, nullptr);
     TreeView_SetBkColor(st->nav, th.panelBg);
     TreeView_SetTextColor(st->nav, th.textPrimary);
@@ -205,7 +205,8 @@ constexpr DWORD kTransportBtnStyle = WS_CHILD | WS_VISIBLE | BS_OWNERDRAW;
 // strip band), a palette hover / pressed wash, and an accent glyph while playing /
 // recording. Flag-off this whole path compiles out and they stay classic BUTTONs.
 bool isTransportBtn(AppState* st, HWND h) {
-    return h == st->btnPlay || h == st->btnStop || h == st->btnRec || h == st->btnFull;
+    return h == st->btnPlay || h == st->btnStop || h == st->btnRec || h == st->btnFull ||
+           h == st->btnSeekBack || h == st->btnSeekFwd;
 }
 
 // Owner-draw buttons don't report hover in DRAWITEMSTRUCT::itemState, so each is
@@ -340,6 +341,14 @@ void createChildren(HWND hwnd, AppState* st) {
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_STOP)), hInst, nullptr);
     st->btnRec = CreateWindowExW(0, L"BUTTON", kGlyphRecord, kTransportBtnStyle, 0, 0, 10, 10, hwnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BTN_REC)), hInst, nullptr);
+    // Skip back / skip forward. Created here with the rest of the transport, but shown ONLY
+    // alongside the scrub bar (see layout) — they are meaningless on a stream that cannot seek.
+    st->btnSeekBack = CreateWindowExW(0, L"BUTTON", kGlyphSkipBack, kTransportBtnStyle, 0, 0, 10, 10,
+                                      hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SEEK_BACK)),
+                                      hInst, nullptr);
+    st->btnSeekFwd = CreateWindowExW(0, L"BUTTON", kGlyphSkipFwd, kTransportBtnStyle, 0, 0, 10, 10,
+                                     hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SEEK_FWD)),
+                                     hInst, nullptr);
     // Speaker glyph (Segoe MDL2 "Volume") so the slider is obviously the volume.
     st->volIcon = CreateWindowExW(0, L"STATIC", L"",
                                   WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE | SS_NOTIFY, 0, 0,
@@ -405,7 +414,8 @@ void createChildren(HWND hwnd, AppState* st) {
         ti.lpszText = LPSTR_TEXTCALLBACKW;
         for (HWND tool : {st->volBar, st->volIcon, st->bufBar, st->bufferMeter, st->meterSpectrum,
                           st->meterSignal, st->meterBitrate, st->meterFrames, st->btnPlay,
-                          st->btnStop, st->btnRec, st->btnFull}) {
+                          st->btnStop, st->btnRec, st->btnFull, st->btnSeekBack,
+                          st->btnSeekFwd}) {
             ti.uId = reinterpret_cast<UINT_PTR>(tool);
             SendMessageW(st->tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
         }
@@ -418,14 +428,14 @@ void createChildren(HWND hwnd, AppState* st) {
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
     // Transport buttons render Segoe MDL2 icon glyphs, so they take the glyph font.
-    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull}) {
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->btnSeekBack, st->btnSeekFwd}) {
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->glyphFont), TRUE);
         SetWindowTheme(h, L"DarkMode_Explorer", nullptr);
     }
 #ifdef RABBITEARS_THEME_ENGINE
     // BS_OWNERDRAW transport buttons are painted by drawTransportButton (WM_DRAWITEM in
     // MainProc); subclass each to track hover, which owner-draw doesn't report on its own.
-    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull})
+    for (HWND h : {st->btnPlay, st->btnStop, st->btnRec, st->btnFull, st->btnSeekBack, st->btnSeekFwd})
         SetWindowSubclass(h, TransportBtnSubProc, 1, 0);
 #endif
     TreeView_SetBkColor(st->nav, currentTheme().panelBg);
@@ -1124,6 +1134,26 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 }
                 case ID_BTN_PLAY: st->ap().player.togglePause(); return 0;
+                case ID_SEEK_BACK:
+                case ID_SEEK_FWD: {
+                    // Relative seek, clamped. Guarded on the same condition that shows the buttons
+                    // at all, because a keyboard accelerator or a stale click could still arrive
+                    // after the media stopped being seekable.
+                    VlcPlayer& p = st->ap().player;
+                    const long long len = p.lengthMs();
+                    if (!p.isSeekable() || len <= 0) return 0;
+                    const long long delta = (id == ID_SEEK_FWD) ? kSeekStepMs : -kSeekStepMs;
+                    const long long target = std::clamp(p.timeMs() + delta, 0LL, len);
+                    p.seekTo(target);
+                    // Move the thumb now rather than waiting for the next ~4 Hz Stats event, so
+                    // the button feels connected to the bar. The player's own position overwrites
+                    // this on the next sample, which is exactly the correction we want if the
+                    // demuxer lands somewhere else (a keyframe, or the edge of a live window).
+                    if (st->seekBar && st->seekShown && !st->seekDragging)
+                        SendMessageW(st->seekBar, TBM_SETPOS, TRUE,
+                                     static_cast<LPARAM>(target * kSeekTicks / len));
+                    return 0;
+                }
                 case ID_BTN_STOP:
                     st->ap().player.stop();
                     st->ap().nowPlayingId = 0;
@@ -1218,6 +1248,18 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
                 if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnStop)) {
                     lstrcpynW(di->szText, tr(i18n::StringId::TooltipBtnStop).c_str(),
+                              ARRAYSIZE(di->szText));
+                    di->lpszText = di->szText;
+                    return 0;
+                }
+                if (nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnSeekBack) ||
+                    nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnSeekFwd)) {
+                    const bool back = nh->idFrom == reinterpret_cast<UINT_PTR>(st->btnSeekBack);
+                    lstrcpynW(di->szText,
+                              trf(back ? i18n::StringId::TooltipBtnSkipBack
+                                       : i18n::StringId::TooltipBtnSkipFwd,
+                                  {std::to_wstring(kSeekStepMs / 1000)})
+                                  .c_str(),
                               ARRAYSIZE(di->szText));
                     di->lpszText = di->szText;
                     return 0;

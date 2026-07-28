@@ -3768,5 +3768,21 @@
       "{0}"
     ],
     "comment": "Appended to whatever the status line says when the grid was capped. {0} = the cap (5000). Leading separator included."
+  },
+  {
+    "id": "TooltipBtnSkipBack",
+    "cluster": "Transport",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "{0} = the step in seconds (10)."
+  },
+  {
+    "id": "TooltipBtnSkipFwd",
+    "cluster": "Transport",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "{0} = the step in seconds (10)."
   }
 ]

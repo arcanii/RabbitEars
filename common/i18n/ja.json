@@ -582,5 +582,7 @@
   "StatusVodSyncCancelled": "映画の同期を中止しました — 変更はありません。",
   "StatusVodSyncFailed": "映画の同期に失敗しました — {0}",
   "StatusVodSyncPartial": "映画の同期は完了しませんでした — 停止するまでに {0} 件を追加・更新しました（{1}）。",
-  "StatusGridTruncatedSuffix": "  ·  先頭 {0} 件のみ表示 — 検索するかグループを選んで絞り込んでください"
+  "StatusGridTruncatedSuffix": "  ·  先頭 {0} 件のみ表示 — 検索するかグループを選んで絞り込んでください",
+  "TooltipBtnSkipBack": "{0} 秒戻る",
+  "TooltipBtnSkipFwd": "{0} 秒進む"
 }

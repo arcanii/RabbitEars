@@ -400,19 +400,28 @@ void layout(HWND hwnd, AppState* st) {
     const int seekW = dp(180, st->dpi), seekGap = dp(6, st->dpi);
     const int timeW = std::max(dp(104, st->dpi),
                                measureText(hwnd, st->uiFont, L"1:45:07 / 1:45:07") + dp(8, st->dpi));
+    // The seek cluster: [skip back] [====== scrub ======] [skip forward] [12:34 / 1:45:07].
+    // The skip buttons flank the bar so the three seek controls read as one group, and they share
+    // the scrub bar's visibility exactly — a stream that cannot seek must not offer to skip.
+    const int skipW = bw;  // same square as the other transport buttons
+    const int seekClusterW = skipW + ig + seekW + ig + skipW + seekGap + timeW;
     const int trayLimit = vidR.right - pad - bufMeterW - pad;
-    const bool showSeek = st->seekShown && (x + seekW + seekGap + timeW <= trayLimit);
+    const bool showSeek = st->seekShown && (x + seekClusterW <= trayLimit);
+    const UINT seekSwp = showSeek ? (kSwpMove | SWP_SHOWWINDOW)
+                                  : (kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
     // Show/hide through the SAME deferred pass as the meters, so a strip that grows or
     // shrinks never paints a control at its old position for one frame.
+    const int xBack = x, xBar = xBack + skipW + ig, xFwd = xBar + seekW + ig,
+              xTime = xFwd + skipW + seekGap;
+    if (st->btnSeekBack && dwp)
+        dwp = DeferWindowPos(dwp, st->btnSeekBack, nullptr, xBack, by, skipW, btnH, seekSwp);
     if (st->seekBar && dwp)
-        dwp = DeferWindowPos(dwp, st->seekBar, nullptr, x, by, seekW, btnH,
-                             showSeek ? (kSwpMove | SWP_SHOWWINDOW)
-                                      : (kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW));
+        dwp = DeferWindowPos(dwp, st->seekBar, nullptr, xBar, by, seekW, btnH, seekSwp);
+    if (st->btnSeekFwd && dwp)
+        dwp = DeferWindowPos(dwp, st->btnSeekFwd, nullptr, xFwd, by, skipW, btnH, seekSwp);
     if (st->timeLabel && dwp)
-        dwp = DeferWindowPos(dwp, st->timeLabel, nullptr, x + seekW + seekGap, by, timeW, btnH,
-                             showSeek ? (kSwpMove | SWP_SHOWWINDOW)
-                                      : (kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW));
-    if (showSeek) x += seekW + seekGap + timeW + pad;
+        dwp = DeferWindowPos(dwp, st->timeLabel, nullptr, xTime, by, timeW, btnH, seekSwp);
+    if (showSeek) x += seekClusterW + pad;
     // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
     // meters are hidden (also via the deferred pass, so show/move stay atomic).
     int rightX = vidR.right - pad;

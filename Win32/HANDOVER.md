@@ -31,7 +31,26 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.16 SHIPPED (2026-07-28)** · macOS 0.2.15
+## Current state — **0.2.17 IN PROGRESS on `main`** · v0.2.16 SHIPPED (2026-07-28) · macOS 0.2.15
+
+### 🚧 0.2.17 — unreleased, `APP_VERSION` = `0.2.17`
+
+Everything below is committed to `main` and **owner-verified on device** unless marked otherwise.
+The theme is *"the library is ten times bigger than anyone assumed"* — every item traces back to the
+0.2.16 pass discovering a real 411k-row library where the design assumed 44k.
+
+| what | why |
+|---|---|
+| **v8 migration fix** (`aad57f5`) | five `ALTER`s shared ONE guard, so a partial failure latched `user_version=8` over a half-migrated table and every channel query then failed to prepare — **library silently empty, permanently**. Ships in v0.2.16 binaries. |
+| **`canonicalStreamUrl()` + schema v9** (`22253b6`, `9eed4ff`, `986df48`) | the m3u writes `host:80`, the VOD sync builds `host` → the dedupe index saw two strings and **every film was stored twice**. v9 rewrites stored URLs and merges. Verified on a copy of the real DB: 454,195 → 410,596 rows, 0 duplicates, 14/14 favourites kept. ✅ ran on the owner's live DB. |
+| **Grid row cap** (`04b4d22`) | All Channels 1485 ms → **108 ms**; search 1626 ms → ~134 ms **per keystroke**. The filters moved into SQL so the cap composes with them. ✅ "all channels appears instantly, search much more responsive". |
+| **Skip back / forward** | ±10 s buttons flanking the scrub bar, same visibility as it. ✅ "works good, looks good". |
+
+**Still to decide before a cut:** whether this is `0.2.17` or folds into `0.3.0` with series. `APP_VERSION`
+is already bumped to `0.2.17`, and the bump commit must precede the installer build (build number =
+commit count).
+
+## Previous release — **v0.2.16 SHIPPED (2026-07-28)** · macOS 0.2.15
 
 ### ✅ 0.2.16 — SHIPPED (2026-07-28) — the Xtream VOD release
 
@@ -624,12 +643,20 @@ priority order:
    provider actually dropped is the failure to watch for. If it ever goes wrong the library is
    rebuildable: delete the playlist and re-import.
 
-1. ✅ **ANSWERED ON DEVICE (2026-07-28) — GO.** The live-HLS-DVR question is closed. On the owner's
-   real provider the scrub bar and time readout are **absent on an ordinary live channel**
-   (`NL - SPONGEBOB`, a 24/7 feed) and **present and working on seekable content** (a series episode,
-   `0:49 / 43:30`). So `is_seekable` behaves as hoped on this provider and **0.2.16 IS the
-   invisible-to-existing-users release it is described as.** ⚠️ Still libVLC's judgement, not an
-   invariant we enforce — a different provider's HLS-with-DVR feeds could still report seekable.
+1. ✅ **ANSWERED ON DEVICE (2026-07-28) — and the FIRST answer here was WRONG. Read the correction.**
+   The initial pass sampled ONE live channel (`NL - SPONGEBOB`), saw no scrub bar, and this entry
+   recorded "absent on live channels — 0.2.16 is invisible to existing users". **A wider look
+   disproved it the same day:** BBC News shows `0:36 / 0:36`, another channel `1:00`, another
+   `1:54` — and **all of them actually rewind.** These are real HLS DVR windows, so libVLC's
+   `is_seekable` is telling the truth and the bar is doing something useful.
+   **Verdict: leave it exactly as it is.** A short rewind buffer on live TV is a capability, not a
+   glitch, and suppressing it would throw away working functionality. What is wrong is only the
+   CLAIM: 0.2.16 is *not* invisible on live channels — on any provider offering a DVR window it
+   adds a working rewind, which is a nicer surprise than the one we were braced for.
+   ⚠️ **The methodological lesson is the point of keeping this entry.** One channel was treated as
+   the answer to a question about a whole class of streams, and the wrong conclusion was written
+   into three documents before a second sample was taken. `is_seekable` varies PER CHANNEL on one
+   provider — sample several before concluding anything about it.
 2. **The rest of the 0.2.16 pass** — the glass bezel (does a framed tank beside four framed
    mini-meters resolve the 0.2.15 "needs work"?), the scrub bar on something actually seekable, and
    the two 0.2.15 leftovers below (the empty-tank fix, the bezel).

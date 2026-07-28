@@ -636,6 +636,9 @@ enum class StringId {
     StatusVodSyncFailed,
     StatusVodSyncPartial,
     StatusGridTruncatedSuffix,
+    // --- Transport ---
+    TooltipBtnSkipBack,
+    TooltipBtnSkipFwd,
     Count  // sentinel — MUST stay last
 };
 

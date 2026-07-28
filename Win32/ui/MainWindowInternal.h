@@ -128,6 +128,10 @@ constexpr int ID_SYSTEM_SETTINGS = 2023;  // Settings → System… (logging lev
 // 2027 is a genuine gap: the 2020..2029 block runs 2020,2021,2022,2023,2024,2025,2026 and stops,
 // and it is nowhere near ID_DOCK_BASE (2051..2062) or either ID_LAYOUT_*_BASE range.
 constexpr int ID_VOD_SYNC = 2027;  // Settings → Channels → Sync movies from provider (Xtream VOD)
+// 2028/2029 close out the 2020..2029 block (2020..2027 used above); clear of every computed
+// range (ID_DOCK_BASE 2051+, ID_LAYOUT_*_BASE 2079+, ID_THEME_SKIN_BASE 2100+).
+constexpr int ID_SEEK_BACK = 2028;  // scrub bar: skip back kSeekStepMs
+constexpr int ID_SEEK_FWD = 2029;   // scrub bar: skip forward kSeekStepMs
 #ifdef RABBITEARS_THEME_ENGINE
 constexpr UINT_PTR kSkinAnimTimer = 0xA1;  // ~60fps repaint of the GPU transport-strip underglow
 #endif
@@ -140,6 +144,14 @@ constexpr wchar_t kGlyphPause[] = L"";
 constexpr wchar_t kGlyphStop[] = L"";
 constexpr wchar_t kGlyphRecord[] = L"";
 constexpr wchar_t kGlyphFull[] = L"";
+// Skip back / skip forward for the VOD (and live-rewind) scrub bar. Segoe MDL2 "Previous"
+// (E100) and "Next" (E101) — the standard transport skip pair, beside Play/Pause/Stop above.
+constexpr wchar_t kGlyphSkipBack[] = L"";
+constexpr wchar_t kGlyphSkipFwd[] = L"";
+// How far one press moves. 10 s rather than 30: the same buttons serve VOD (hours long) and a
+// live HLS rewind window, which on the owner's provider measured only 36-60 s — a 30 s jump
+// there would cross half the window at a time. Coarse seeking is what the scrub bar is for.
+constexpr long long kSeekStepMs = 10000;
 
 // ---- buffer-slider bounds + local view/EPG/pane types ---------------------
 // Buffer (network-caching) slider bounds in ms, snapped to kBufStepMs. This is the
@@ -263,6 +275,8 @@ struct AppState {
     HWND       btnPlay = nullptr;
     HWND       btnStop = nullptr;
     HWND       btnRec = nullptr;
+    HWND       btnSeekBack = nullptr;  // shown only with the scrub bar
+    HWND       btnSeekFwd = nullptr;
     HWND       btnFull = nullptr;
     HWND       volIcon = nullptr;   // speaker glyph left of the volume slider
     HWND       volBar = nullptr;

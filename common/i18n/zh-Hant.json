@@ -582,5 +582,7 @@
   "StatusVodSyncCancelled": "已取消電影同步 — 未變更任何項目。",
   "StatusVodSyncFailed": "電影同步失敗 — {0}",
   "StatusVodSyncPartial": "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",
-  "StatusGridTruncatedSuffix": "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍"
+  "StatusGridTruncatedSuffix": "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍",
+  "TooltipBtnSkipBack": "倒退 {0} 秒",
+  "TooltipBtnSkipFwd": "快轉 {0} 秒"
 }

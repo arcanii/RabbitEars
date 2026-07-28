@@ -582,5 +582,7 @@
   "StatusVodSyncCancelled": "Movie sync cancelled — nothing was changed.",
   "StatusVodSyncFailed": "Movie sync failed — {0}",
   "StatusVodSyncPartial": "Movie sync incomplete — {0} added or updated before it stopped ({1}).",
-  "StatusGridTruncatedSuffix": "  ·  showing the first {0} — search or pick a group to narrow"
+  "StatusGridTruncatedSuffix": "  ·  showing the first {0} — search or pick a group to narrow",
+  "TooltipBtnSkipBack": "Back {0} seconds",
+  "TooltipBtnSkipFwd": "Forward {0} seconds"
 }
