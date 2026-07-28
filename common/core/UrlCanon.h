@@ -34,6 +34,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 namespace rabbitears {
 
@@ -47,5 +48,14 @@ namespace rabbitears {
 //
 // Idempotent: canonicalStreamUrl(canonicalStreamUrl(u)) == canonicalStreamUrl(u).
 std::wstring canonicalStreamUrl(const std::wstring& url);
+
+// The same rule over UTF-8 bytes, for the SQLite scalar that rewrites the column in bulk (410,147
+// rows on the owner's library — converting each one to UTF-16 and back would dominate the cost).
+//
+// Byte-identical results are guaranteed rather than hoped for: every delimiter the rule looks at
+// (`:` `/` `?` `#` `@` `[` `]` and the ASCII digits) is below 0x80, and UTF-8 never encodes those
+// bytes inside a multi-byte sequence — so a host or path containing non-ASCII cannot be misparsed,
+// and the two overloads are pinned against each other in --selftest.
+std::string canonicalStreamUrlU8(std::string_view url);
 
 }  // namespace rabbitears

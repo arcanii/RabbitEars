@@ -169,7 +169,24 @@ zh-HK — a future mac VOD UI gets its labels for free. `NavMovies` ("🎬 Movie
 `MainWindowController.mm:909`, after Favourites. **Never hand-edit `Strings.cpp`** — it is generated
 from `common/i18n/*.json` by `tools/i18n/gen_i18n.py`.
 
-**5. Worth doing on your side:** the i18n completeness + placeholder-parity check is Windows-only
+**5. 🔴 SCHEMA v9 — `channels.stream_url` is now stored CANONICAL, and this one has a mac to-do.**
+Landed after v0.2.16. A provider's m3u emits `http://host:80/movie/…` while the VOD sync constructs
+`http://host/movie/…`, and the dedupe index is on the literal string — so every film was stored
+twice. `common/core/UrlCanon` strips the scheme's default port and nothing else; the v9 migration
+rewrites stored rows and merges the ones that become equal (verified on a real 454,195-row DB →
+410,596, zero duplicates, zero favourites lost, 6.6 s once).
+- **No mac source change is needed to build or run**, and the migration runs identically there.
+- ⚠️ **But mac's favourites import has the same literal URL match** and is NOT fixed:
+  `mac/src/app/MainWindowController.mm`, the `byUrl` set. A favourites file exported before v9 holds
+  the old spelling, so it will miss on URL and fall back to tvg-id — lossy for channels that have
+  none. Two lines: canonicalise both sides, exactly as `onFavImport` now does on Win32. Not done
+  here because a mac edit cannot be compiled in the Windows sandbox, and a broken mac build is a
+  worse outcome than the degradation.
+- Note `Database::schemaVersion_` gates the canonicalising WRITE path on the migration having
+  actually landed. Do not bypass it: writing canonical URLs into a table whose rows are still
+  literal makes the next playlist refresh insert a duplicate of the entire library.
+
+**6. Worth doing on your side:** the i18n completeness + placeholder-parity check is Windows-only
 (`Win32/cli/RabbitEarsCli.cpp`), despite `Strings.h` implying it is shared. Porting that ~35-line
 block into `mac/src/tools/selftest.cpp` would catch an empty or placeholder-mismatched row in mac CI
 before it reaches a user.

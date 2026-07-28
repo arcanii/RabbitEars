@@ -610,6 +610,51 @@ Remaining VOD-side costs are inherent and on non-interactive paths: `moviesByGro
 `listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows — which is
 why the Movies root shows categories only, as shipped), bulk insert ~260 ms.
 
+### ✅ FIXED (schema v9) — every film was stored twice; the m3u/sync dedupe collision did NOT happen
+
+**Fixed and verified against the owner's live 454,195-row database.** `common/core/UrlCanon` gives
+`stream_url` one canonical spelling, `bulkInsertChannels` and `retireMissingChannels` both write and
+compare through it, and the v9 migration rewrites the stored rows, merging the ones that become
+equal. Measured on a copy of the real DB: **454,195 → 410,596 rows**, `user_version` 9, `PRAGMA
+integrity_check` ok, **0** rows left non-canonical, **0** duplicate `(playlist_id, stream_url)`
+pairs, all 14 favourites intact, `playlists.channel_count` correct on every playlist,
+`last_channel_id` still resolving. **6.6 s** for the migration (behind the existing splash, which is
+a layered window DWM keeps compositing while `WM_CREATE` blocks); a second open is **0.2 s**,
+confirming the early return.
+
+Three things the design review caught that would have shipped broken, kept here because each is a
+pattern rather than a one-off:
+
+1. **`Tx::commit()` cannot express "only on success".** `Stmt` swallows a prepare failure and
+   `exec()`'s bool is ignored throughout `migrate()`, so a transaction in which EVERY statement
+   failed still COMMITs cleanly. Latching v9 off that would have turned on the canonical write path
+   over un-migrated rows — and the next refresh inserts a duplicate of the whole library. Every v9
+   statement is now checked, and `PRAGMA user_version=9` is written INSIDE the transaction
+   (user_version is a header field and fully transactional), so the version cannot disagree with
+   the data.
+2. **The write path must be gated on the migration having landed.** `Database::schemaVersion_`
+   holds what `migrate()` actually left behind, and canonical writes happen only at `>= 9`. A failed
+   migration therefore degrades to the old literal behaviour — duplicated movies, survivable, and
+   repaired by the next successful open — instead of the destructive one.
+3. **Canonicalisation belongs to the COLUMN, not to a call site.** `retireMissingChannels` anti-joins
+   a caller-supplied keep-set against the stored column, and `VodSync` builds that set from the RAW
+   constructed URL. Canonicalising only the INSERT would mean that for any user whose playlist URL
+   carries `:80`, every stored movie missed every keep entry — and the sync would **delete the
+   entire catalogue it had just inserted, on every run, for ever.** Both sides now canonicalise
+   inside the DAO, pinned by a selftest that passes a `:80` keep-set and asserts 0 retired.
+
+Consumers that compare URLs as literals were fixed too: favourites import (a file exported before
+v9 holds the old spelling) and the schedule/rule editor's channel preselect (the schedule stores a
+COPY of the URL). `scheduled_recordings.stream_url` itself is deliberately NOT rewritten — it is
+used for playback, never for lookup, and both spellings resolve to the same resource.
+
+🍎 **macOS has the same favourites-import URL match** (`mac/src/app/MainWindowController.mm`, the
+`byUrl` set) and it is NOT fixed here — editing mac code that cannot be compiled in this sandbox is
+a worse trade than the graceful degradation, which is that a pre-v9 favourites file falls back to
+tvg-id matching. Two lines, same shape as the Win32 fix.
+
+<details><summary>The original finding, kept for the record</summary>
+
 ### 🔴🔴🔴 EVERY FILM IS STORED TWICE — the m3u/sync dedupe collision does NOT happen · found on-device 2026-07-28
 
 **The first real VOD sync ran successfully** (owner's provider, 43,606 movies, 67 categories, Movies
@@ -681,6 +726,8 @@ it will, and cover it with a hand-built fixture in `--selftest` where the duplic
 state.
 
 Re-measure afterwards: dropping 43,599 rows is also the cheapest perf win available (see below).
+
+</details>
 
 ### 🔴🔴 THE BENCHMARK'S DEFAULT SHAPE IS NOT THE OWNER'S LIBRARY — measured on-device 2026-07-28
 

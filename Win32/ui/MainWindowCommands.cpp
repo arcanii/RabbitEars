@@ -32,6 +32,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/Http.h"
 #include "core/M3uParser.h"
 #include "core/M3uWriter.h"
+#include "core/UrlCanon.h"
 #include "core/RecordingRules.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
@@ -195,17 +196,23 @@ void onImportFavourites(AppState* st) {
     }
     // One pass over the library builds both match keys; the file may star a channel that
     // appears in several playlists — match ALL library rows carrying that URL / tvg-id.
+    // Both sides go through canonicalStreamUrl. Since schema v9 the LIBRARY stores the canonical
+    // spelling, but a favourites file exported before that upgrade (or by another app) still holds
+    // whatever the provider wrote — typically the `:80` form — so a literal comparison would miss
+    // every row and silently fall back to tvg-id matching, which is lossy for channels that have
+    // no tvg-id at all.
     const std::vector<Channel> all = st->db.allChannels();
     std::unordered_map<std::wstring, std::vector<long long>> byUrl, byTvg;
     for (const Channel& c : all) {
-        byUrl[c.streamUrl].push_back(c.id);
+        byUrl[canonicalStreamUrl(c.streamUrl)].push_back(c.id);
         if (!c.tvgId.empty()) byTvg[c.tvgId].push_back(c.id);
     }
     std::set<long long> ids;  // de-duped targets
     int missed = 0;
     for (const ParsedChannel& p : doc.channels) {
         const std::vector<long long>* hits = nullptr;
-        if (auto it = byUrl.find(p.streamUrl); it != byUrl.end()) hits = &it->second;
+        if (auto it = byUrl.find(canonicalStreamUrl(p.streamUrl)); it != byUrl.end())
+            hits = &it->second;
         else if (!p.tvgId.empty())
             if (auto jt = byTvg.find(p.tvgId); jt != byTvg.end()) hits = &jt->second;
         if (hits)

@@ -181,8 +181,22 @@ private:
     void migrate();  // incremental, idempotent schema upgrades keyed off PRAGMA user_version
     bool hasColumn(const char* table, const char* column);  // PRAGMA table_info membership test
 
+    // Runs the v9 step: rewrite every stream_url to its canonical spelling and merge the rows that
+    // become equal. Returns true when the DB is at v9 afterwards. Separate from migrate() because
+    // it is the only step that REWRITES existing rows rather than adding columns, and the only one
+    // whose failure has to be reported rather than probed for structurally.
+    bool canonicalizeStreamUrls();
+
     sqlite3*     db_ = nullptr;
     std::wstring lastError_;
+    // The schema version this connection actually left the database at, captured by migrate().
+    // ⚠ LOAD-BEARING: the canonicalising write path is gated on it being >= 9. Storing canonical
+    // URLs into a database whose existing rows are still un-canonical is the destructive
+    // combination — the next playlist refresh would miss every stored row on idx_channels_dedupe
+    // and insert a duplicate of the ENTIRE library. If the migration does not land, this stays at
+    // 8 and writes keep the old literal behaviour, which merely duplicates movies: bad, survivable,
+    // and repaired by the next successful open.
+    int          schemaVersion_ = 0;
 };
 
 }  // namespace rabbitears

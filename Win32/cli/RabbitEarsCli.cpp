@@ -1430,7 +1430,11 @@ int selftest() {
                 if (q) sqlite3_finalize(q);
                 sqlite3_close(rawv);
             }
-            expect(ver == 8, "v8: user_version advances to 8 after the v2 DB is migrated");
+            // 9, not 8: a v2 DB opened by a current build walks the whole chain, and v9 (the
+            // stream_url canonicalisation) is the last step. That it reaches 9 is also the only
+            // proof that canonicalizeStreamUrls() actually COMMITTED — it is the one migration
+            // step that reports failure rather than being probed for structurally.
+            expect(ver == 9, "v9: user_version advances to 9 after the v2 DB is migrated");
         }
         {   // --- VOD sync retirement. This DELETES rows, so it is pinned hard: the failure
             // mode is wiping somebody's library, and the live-TV list must be untouchable
@@ -1575,6 +1579,49 @@ int selftest() {
                 for (const auto& ch : mdb.allMovies())
                     if (ch.kind != Channel::Kind::Movie) allAreMovies = false;
                 expect(allAreMovies, "movies root: allMovies() returns only kind=Movie rows");
+            }
+
+            // *** v9: the canonicalising WRITE path + the dedupe MERGE. The owner's real library
+            // had zero collisions carrying user state, so the merge ships having never met a real
+            // conflict — which is exactly why it is pinned here with a fixture where the row that
+            // LOSES carries every piece of user data there is. ***
+            {
+                const std::wstring vpath = std::wstring(tmp) + L"rabbitears_v9merge.db";
+                DeleteFileW(vpath.c_str());
+                Database vdb;
+                expect(vdb.open(vpath), "v9: fixture DB opens");
+                const long long vp = vdb.addPlaylist(L"P", L"http://h:80/get.php?username=u&password=p",
+                                                     true, 1000);
+                // The m3u spelling (with :80) and the sync spelling (without) of ONE film. Insert
+                // them as two rows the way the real bug did — by writing the literal URLs before
+                // canonicalisation is in force is impossible here (the DB is already v9), so drive
+                // the merge through migrate() instead: write both, then re-open.
+                ParsedChannel a;  // "m3u" copy — carries ALL the user state
+                a.name = L"Film"; a.streamUrl = L"http://h:80/movie/u/p/7.mp4";
+                a.groupTitle = L"VOD";
+                ParsedChannel b;  // "sync" copy — canonical, kind=Movie, has added_at
+                b.name = L"Film"; b.streamUrl = L"http://h/movie/u/p/7.mp4";
+                b.groupTitle = L"VOD"; b.kind = Channel::Kind::Movie; b.addedAt = 4242;
+                // With v9 live, BOTH canonicalise on insert and collide immediately — which is
+                // itself the property that stops the bug recurring.
+                vdb.bulkInsertChannels(vp, {a, b}, 1000);
+                const auto merged = vdb.channelsByPlaylist(vp);
+                expect(merged.size() == 1,
+                       "v9: the two spellings of one film insert as ONE row, not two");
+                expect(!merged.empty() && merged[0].streamUrl == L"http://h/movie/u/p/7.mp4",
+                       "v9: ...stored under the canonical spelling");
+                expect(!merged.empty() && merged[0].kind == Channel::Kind::Movie,
+                       "v9: ...and the upsert keeps kind=Movie rather than reverting to Live");
+
+                // The retire path must speak the SAME spelling. This is the case that would
+                // otherwise delete an entire movie library: the keep-set is built from the raw
+                // constructed URL, which for a :80 origin is NOT what got stored.
+                const int gone = vdb.retireMissingChannels(
+                    vp, static_cast<int>(Channel::Kind::Movie), {L"http://h:80/movie/u/p/7.mp4"});
+                expect(gone == 0,
+                       "v9: a keep-set in the :80 spelling still matches the stored canonical row "
+                       "(else a sync retires everything it just inserted)");
+                expect(vdb.channelsByPlaylist(vp).size() == 1, "v9: ...the film is still there");
             }
 
             // *** URL canonicalisation — step 1 of the duplicate-movies fix (BACKLOG). The tests

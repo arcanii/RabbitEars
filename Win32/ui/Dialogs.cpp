@@ -18,6 +18,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
 
 #include "core/RecordingRules.h"  // normaliseTvgId — preselect a rule's channel in the editor combo
+#include "core/UrlCanon.h"        // canonicalStreamUrl — a pre-v9 schedule holds the literal URL
 #include "platform/Updater.h"
 #include "resource.h"
 #include "ui/BufferMeter.h"  // the Data-flow row's preview (createBufferMeter / bufferMeterSet*)
@@ -2584,7 +2585,13 @@ bool scheduleDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::vector<Ch
         const int idx = static_cast<int>(
             SendMessageW(st.combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(sorted[i]->name.c_str())));
         SendMessageW(st.combo, CB_SETITEMDATA, idx, reinterpret_cast<LPARAM>(sorted[i]));
-        if (preSel < 0 && !out.streamUrl.empty() && sorted[i]->streamUrl == out.streamUrl) preSel = idx;
+        // Canonicalised on both sides: `out.streamUrl` is a COPY stored on the schedule/rule row
+        // when it was created, so one saved before schema v9 still holds the provider's literal
+        // spelling (typically with `:80`) while the library row is now canonical. A literal
+        // compare would silently fail to preselect the channel the schedule is actually for.
+        if (preSel < 0 && !out.streamUrl.empty() &&
+            canonicalStreamUrl(sorted[i]->streamUrl) == canonicalStreamUrl(out.streamUrl))
+            preSel = idx;
         else if (preSel < 0 && !out.channelId.empty() && sorted[i]->tvgId == out.channelId) preSel = idx;
     }
     if (preSel >= 0) SendMessageW(st.combo, CB_SETCURSEL, preSel, 0);

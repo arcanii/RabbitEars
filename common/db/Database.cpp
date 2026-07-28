@@ -3,9 +3,12 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <set>
 #include <string_view>
+#include <utility>
 
+#include "core/UrlCanon.h"
 #include "platform/Encoding.h"
 
 namespace rabbitears {
@@ -300,6 +303,23 @@ void effectiveCountrySqlFn(sqlite3_context* ctx, int argc, sqlite3_value** argv)
     sqlite3_result_text(ctx, cc.c_str(), static_cast<int>(cc.size()), SQLITE_TRANSIENT);
 }
 
+// canonical_url(stream_url) — see common/core/UrlCanon.h. A NULL argument comes back as NULL
+// rather than as "": stream_url is NOT NULL so this cannot happen on the real column, but a
+// canonicaliser that turns NULL into a value is exactly the kind of surprise a bulk UPDATE should
+// not contain.
+void canonicalUrlSqlFn(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+    if (argc != 1 || sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+        sqlite3_result_null(ctx);
+        return;
+    }
+    const auto* p = sqlite3_value_text(argv[0]);
+    const std::string out = canonicalStreamUrlU8(
+        p ? std::string_view(reinterpret_cast<const char*>(p),
+                             static_cast<size_t>(sqlite3_value_bytes(argv[0])))
+          : std::string_view());
+    sqlite3_result_text(ctx, out.c_str(), static_cast<int>(out.size()), SQLITE_TRANSIENT);
+}
+
 }  // namespace
 
 Database::~Database() { close(); }
@@ -350,6 +370,13 @@ bool Database::open(const std::wstring& path, std::wstring* error) {
     // Countries queries filter server-side instead of materializing every channel row.
     sqlite3_create_function(db_, "effective_country", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC,
                             nullptr, &effectiveCountrySqlFn, nullptr, nullptr);
+    // canonical_url() — the v9 migration rewrites 410k rows with it, and doing that as one SQL
+    // UPDATE rather than a C++ round trip per row is the difference between ~2 s and minutes.
+    // ⚠ If this registration ever fails, every v9 statement using it fails to PREPARE — which is
+    // exactly the case the migration's per-statement checking exists to catch, because a
+    // transaction full of failed statements still COMMITs cleanly.
+    sqlite3_create_function(db_, "canonical_url", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+                            &canonicalUrlSqlFn, nullptr, nullptr);
     if (!createSchema()) {
         if (error) *error = lastError_;
         close();
@@ -416,6 +443,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v8: channels.kind/duration_sec/resume_sec/watched/added_at — VOD. A movie is a channel row
 //       with kind=1, so it inherits the grid, search, favourites and playback path; every column
 //       defaults to the live-TV answer, so pre-v8 rows and older builds are unaffected.
+//   v9: channels.stream_url rewritten to its CANONICAL spelling, merging the rows that become
+//       equal. The first step here that rewrites existing DATA rather than adding columns — see
+//       canonicalizeStreamUrls().
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -424,7 +454,8 @@ void Database::migrate() {
         Stmt q(db_, "PRAGMA user_version");
         if (q && q.step()) v = q.intCol(0);
     }
-    if (v >= 8) return;  // newest schema; bump in lockstep with the highest step below
+    schemaVersion_ = static_cast<int>(v);
+    if (v >= 9) return;  // newest schema; bump in lockstep with the highest step below
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -586,6 +617,176 @@ void Database::migrate() {
     else if (haveV4) exec("PRAGMA user_version=4");
     else if (haveV3) exec("PRAGMA user_version=3");
     else if (haveV2) exec("PRAGMA user_version=2");
+    schemaVersion_ = haveV8 ? 8 : haveV7 ? 7 : haveV6 ? 6 : haveV5 ? 5 : haveV4 ? 4
+                              : haveV3   ? 3
+                              : haveV2   ? 2
+                                         : 1;
+
+    // v9 — the DATA migration. Gated on haveV8 because it reads channels.kind: running it against
+    // a table that never got the v8 columns would fail every statement, and "every statement
+    // failed" is indistinguishable from "there was nothing to do" at the COMMIT.
+    //
+    // It sets schemaVersion_ = 9 itself, and ONLY when the work provably landed. Everything
+    // downstream that writes a canonical URL is gated on that, so a failure here degrades to the
+    // pre-v9 literal behaviour rather than to the destructive one.
+    if (haveV8 && canonicalizeStreamUrls()) schemaVersion_ = 9;
+}
+
+// ---------------------------------------------------------------------------
+// v9 — canonicalise channels.stream_url and merge the rows that become equal.
+//
+// The problem, measured rather than imagined (Win32/BACKLOG.md): a provider's m3u_plus emits
+// `http://host:80/movie/U/P/1.mp4` while the Xtream VOD sync constructs `http://host/movie/...`
+// from a port-less playlist URL. `idx_channels_dedupe` is UNIQUE on the LITERAL string, so those
+// are two channels, and the first sync stored 43,606 movies beside the 43,599 the m3u already had.
+//
+// Three properties this is built around, in the order they matter:
+//
+//  1. IT CANNOT LIE ABOUT SUCCEEDING. `Tx::commit()` reports only whether COMMIT ran — and `Stmt`
+//     swallows a prepare failure while `exec()`'s bool is ignored everywhere else in migrate() —
+//     so a transaction in which EVERY statement failed still commits cleanly. That matters more
+//     here than anywhere else in this file, because the caller latches the version off the return
+//     value and the canonicalising write path is gated on it. So every statement is checked, and
+//     `PRAGMA user_version=9` is written INSIDE the transaction: user_version lives in the database
+//     header and is fully transactional, so it rolls back WITH the data instead of being a separate
+//     write that can disagree with it.
+//  2. IT CANNOT LEAVE DUPLICATES BEHIND. The UNIQUE dedupe index is dropped for the bulk rewrite
+//     and recreated at the end, inside the same transaction. That is a 4x speedup (7.9 s -> 1.9 s
+//     on 366k rows, measured) but the real reason is that the recreate FAILS if the merge missed a
+//     collision — turning "the merge was incomplete" from a silent corruption into a rollback.
+//  3. IT KEEPS THE USER'S DATA. The survivor inherits favourite / LCN / resume / watched /
+//     dead-status from every row it absorbs. On the owner's library no collision involved any of
+//     those, so this path ships having never met a real conflict — which is exactly why it is
+//     pinned by a --selftest fixture where the LOSER carries all of it.
+bool Database::canonicalizeStreamUrls() {
+    if (!db_) return false;
+    Tx tx(db_);
+
+    // Stage every row's canonical key once. A temp table + index rather than a correlated
+    // subquery: the grouping below is otherwise quadratic over 454k rows.
+    if (!exec("CREATE TEMP TABLE IF NOT EXISTS _canon("
+              "id INTEGER PRIMARY KEY, pid INTEGER, cu TEXT, kind INTEGER)") ||
+        !exec("DELETE FROM _canon") ||
+        !exec("INSERT INTO _canon(id,pid,cu,kind) "
+              "SELECT id, playlist_id, canonical_url(stream_url), kind FROM channels") ||
+        !exec("CREATE INDEX IF NOT EXISTS _canon_key ON _canon(pid, cu)"))
+        return false;
+
+    // Groups that will collide once the rewrite lands. Note this is over the FULL post-canonical
+    // key space, so it catches a canonicalised row colliding with one that was ALREADY canonical
+    // (the m3u/sync case) just as well as two canonicalised rows colliding with each other.
+    struct Group { long long pid; std::wstring cu; };
+    std::vector<Group> groups;
+    {
+        Stmt q(db_, "SELECT pid, cu FROM _canon GROUP BY pid, cu HAVING COUNT(*)>1");
+        if (!q) return false;
+        while (q.step()) groups.push_back({q.intCol(0), q.textCol(1)});
+    }
+
+    std::vector<long long> losers;
+    std::vector<std::pair<long long, long long>> remap;  // loser id -> survivor id
+    for (const Group& g : groups) {
+        // Survivor = highest kind, then lowest id. Deterministic (so a re-run after a rollback
+        // makes the same choice) and it prefers the Movie row, which is the one carrying the
+        // provider's added_at and the correct kind.
+        struct Row {
+            long long id, kind, fav, resume, watched, duration, added, dead, checked;
+            bool hasLcn; long long lcn;
+        };
+        std::vector<Row> rows;
+        {
+            Stmt q(db_,
+                   "SELECT c.id,c.kind,c.is_favourite,c.resume_sec,c.watched,c.duration_sec,"
+                   "c.added_at,c.dead_status,c.last_checked_at,c.lcn IS NOT NULL,COALESCE(c.lcn,0) "
+                   "FROM _canon k JOIN channels c ON c.id=k.id "
+                   "WHERE k.pid=?1 AND k.cu=?2 ORDER BY c.kind DESC, c.id ASC");
+            if (!q) return false;
+            q.bindInt(1, g.pid);
+            q.bindText(2, g.cu);
+            while (q.step())
+                rows.push_back({q.intCol(0), q.intCol(1), q.intCol(2), q.intCol(3), q.intCol(4),
+                                q.intCol(5), q.intCol(6), q.intCol(7), q.intCol(8),
+                                q.intCol(9) != 0, q.intCol(10)});
+        }
+        if (rows.size() < 2) continue;  // raced away, or the group query lied — nothing to merge
+
+        // Fold every loser's user data into the survivor. MAX throughout, because for all of these
+        // "someone set it" beats "nobody did"; dead_status travels WITH last_checked_at so a stale
+        // verdict cannot overwrite a fresher one.
+        Row s = rows[0];
+        long long dead = rows[0].dead, checked = rows[0].checked;
+        for (size_t i = 1; i < rows.size(); ++i) {
+            const Row& r = rows[i];
+            s.fav = std::max(s.fav, r.fav);
+            s.resume = std::max(s.resume, r.resume);
+            s.watched = std::max(s.watched, r.watched);
+            s.duration = std::max(s.duration, r.duration);
+            s.added = std::max(s.added, r.added);
+            s.kind = std::max(s.kind, r.kind);
+            if (!s.hasLcn && r.hasLcn) { s.hasLcn = true; s.lcn = r.lcn; }
+            if (r.checked > checked) { checked = r.checked; dead = r.dead; }
+            losers.push_back(r.id);
+            remap.emplace_back(r.id, s.id);
+        }
+        Stmt u(db_,
+               "UPDATE channels SET is_favourite=?1, resume_sec=?2, watched=?3, duration_sec=?4,"
+               " added_at=?5, kind=?6, dead_status=?7, last_checked_at=?8, lcn=?9 WHERE id=?10");
+        if (!u) return false;
+        u.bindInt(1, s.fav);
+        u.bindInt(2, s.resume);
+        u.bindInt(3, s.watched);
+        u.bindInt(4, s.duration);
+        u.bindInt(5, s.added);
+        u.bindInt(6, s.kind);
+        u.bindInt(7, dead);
+        u.bindInt(8, checked);
+        u.bindOptInt(9, s.hasLcn ? std::optional<int>(static_cast<int>(s.lcn)) : std::nullopt);
+        u.bindInt(10, s.id);
+        if (u.stepDone() != SQLITE_DONE) return false;
+    }
+
+    if (!losers.empty()) {
+        Stmt del(db_, "DELETE FROM channels WHERE id=?1");
+        if (!del) return false;
+        for (long long id : losers) {
+            del.reset();
+            del.bindInt(1, id);
+            if (del.stepDone() != SQLITE_DONE) return false;
+        }
+        // A persisted last_channel_id naming a row we just deleted would silently stop resuming —
+        // channelById() returns nullopt and the caller shrugs, so the user simply never gets their
+        // last channel back and nothing says why. Point it at the survivor of its own group.
+        // Deliberately done in C++ off the map built above: the SQL equivalent is a correlated
+        // triple-subquery that nobody could review, and this runs once over a 1-row lookup.
+        if (auto lc = getSetting(L"last_channel_id"); lc && !lc->empty()) {
+            const long long was = _wtoll(lc->c_str());
+            for (const auto& [loser, survivor] : remap)
+                if (loser == was) {
+                    setSetting(L"last_channel_id", std::to_wstring(survivor));
+                    break;
+                }
+        }
+    }
+
+    // The bulk rewrite, with the UNIQUE index out of the way — see property 2 above. Predicated on
+    // an actual difference so a re-run over an already-canonical table touches nothing.
+    if (!exec("DROP INDEX IF EXISTS idx_channels_dedupe") ||
+        !exec("UPDATE channels SET stream_url=canonical_url(stream_url) "
+              "WHERE stream_url<>canonical_url(stream_url)") ||
+        !exec("CREATE UNIQUE INDEX idx_channels_dedupe ON channels(playlist_id, stream_url)"))
+        return false;
+
+    // Every other bulk mutator recomputes this and says why: without it the nav tree keeps showing
+    // the pre-merge count until some later import happens to correct it — and that count is the one
+    // number a user can check to see whether the merge did anything. Unscoped: any playlist can
+    // have lost rows.
+    if (!exec("UPDATE playlists SET channel_count="
+              "(SELECT COUNT(*) FROM channels WHERE playlist_id=playlists.id)"))
+        return false;
+
+    if (!exec("DELETE FROM _canon")) return false;
+    if (!exec("PRAGMA user_version=9")) return false;  // transactional: rolls back with the data
+    return tx.commit();
 }
 
 bool Database::hasColumn(const char* table, const char* column) {
@@ -707,7 +908,13 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
         ins.reset();
         ins.bindInt(1, playlistId);
         ins.bindText(2, c.name);
-        ins.bindText(3, c.streamUrl);
+        // 🔴 CANONICAL, and gated on the v9 migration having actually landed. Storing canonical
+        // URLs into a table whose existing rows are still literal is the destructive combination:
+        // every incoming row would miss its stored counterpart on idx_channels_dedupe and insert a
+        // duplicate of the ENTIRE library (410,147 rows on the owner's, measured). If v9 did not
+        // land, this keeps the old literal behaviour — which merely duplicates movies, and which
+        // the next successful open repairs.
+        ins.bindText(3, schemaVersion_ >= 9 ? canonicalStreamUrl(c.streamUrl) : c.streamUrl);
         ins.bindText(4, c.logoUrl);
         ins.bindText(5, c.groupTitle);
         ins.bindText(6, c.tvgId);
@@ -760,7 +967,16 @@ int Database::retireMissingChannels(long long playlistId, int kind,
         if (!ins) return -1;
         for (const std::wstring& u : keepUrls) {
             ins.reset();
-            ins.bindText(1, u);
+            // 🔴 THE SAME canonicalisation as the INSERT, and it MUST live here rather than at the
+            // call site. This function anti-joins the keep-set against the stored column, so the
+            // two have to be spelled the same way — and VodSync builds its keep-set from the RAW
+            // constructed URL. A user whose playlist URL carries an explicit `:80` (which is how
+            // this very provider spells it) would otherwise have every stored movie miss every
+            // keep entry, and the DELETE below would retire the ENTIRE catalogue the sync just
+            // inserted, on every run, for ever. Putting it in the DAO makes it impossible for a
+            // caller — including future ones — to get this wrong. INSERT OR IGNORE already absorbs
+            // the duplicate keys canonicalisation can produce.
+            ins.bindText(1, schemaVersion_ >= 9 ? canonicalStreamUrl(u) : u);
             // ⚠ EVERY row must land. A keep-URL that failed to insert is indistinguishable
             // from one the provider dropped, so the DELETE below would retire a film the
             // caller explicitly asked to keep. One SQLITE_FULL on the temp store partway
