@@ -31,24 +31,49 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **0.2.17 IN PROGRESS on `main`** · v0.2.16 SHIPPED (2026-07-28) · macOS 0.2.15
+## Current state — **v0.2.17 SHIPPED (2026-07-28)** · macOS 0.2.15 · `main` clean
 
-### 🚧 0.2.17 — unreleased, `APP_VERSION` = `0.2.17`
+### ✅ 0.2.17 — SHIPPED (2026-07-28) — the big-library release
 
-Everything below is committed to `main` and **owner-verified on device** unless marked otherwise.
-The theme is *"the library is ten times bigger than anyone assumed"* — every item traces back to the
-0.2.16 pass discovering a real 411k-row library where the design assumed 44k.
+**Released:** tag **`v0.2.17`** @ `3660441`, full version **`0.2.17.388`**; three installers on GitHub
+release `v0.2.17` — x64 `35,376,445` / arm64 `30,241,924` / universal `63,319,122` bytes — **two
+appcasts** (`0.2.17.388`) committed @ `fe3d872` and LIVE (both feeds HTTP 200, and both enclosure URLs
+downloaded end-to-end with the byte count matching the signed length). Owner-signed on the Mac; the
+two feeds cross-checked so the x64 and arm64 signatures cannot be swapped.
 
-| what | why |
-|---|---|
-| **v8 migration fix** (`aad57f5`) | five `ALTER`s shared ONE guard, so a partial failure latched `user_version=8` over a half-migrated table and every channel query then failed to prepare — **library silently empty, permanently**. Ships in v0.2.16 binaries. |
-| **`canonicalStreamUrl()` + schema v9** (`22253b6`, `9eed4ff`, `986df48`) | the m3u writes `host:80`, the VOD sync builds `host` → the dedupe index saw two strings and **every film was stored twice**. v9 rewrites stored URLs and merges. Verified on a copy of the real DB: 454,195 → 410,596 rows, 0 duplicates, 14/14 favourites kept. ✅ ran on the owner's live DB. |
-| **Grid row cap** (`04b4d22`) | All Channels 1485 ms → **108 ms**; search 1626 ms → ~134 ms **per keystroke**. The filters moved into SQL so the cap composes with them. ✅ "all channels appears instantly, search much more responsive". |
-| **Skip back / forward** | ±10 s buttons flanking the scrub bar, same visibility as it. ✅ "works good, looks good". |
+**The theme: the library is TEN TIMES bigger than the design assumed.** Every item traces back to the
+0.2.16 on-device pass discovering a real **411,149-row** library where `docs/XTREAM_VOD.md` had
+planned for 44k. `--benchdb`'s defaults still model the small shape — see BACKLOG.
 
-**Still to decide before a cut:** whether this is `0.2.17` or folds into `0.3.0` with series. `APP_VERSION`
-is already bumped to `0.2.17`, and the bump commit must precede the installer build (build number =
-commit count).
+| what | why | verified |
+|---|---|---|
+| **v8 migration fix** (`aad57f5`) | five `ALTER`s shared ONE guard, so a partial failure latched `user_version=8` over a half-migrated table and every channel query then failed to prepare — **library silently empty, permanently**. Present in the v0.2.16 binaries. | selftest |
+| **`canonicalStreamUrl()` + schema v9** (`22253b6`, `9eed4ff`, `986df48`) | the m3u writes `host:80`, the VOD sync builds `host` → the dedupe index saw two strings and **every film was stored twice**. v9 rewrites stored URLs and merges the rows that become equal. | dry run on a COPY of the real DB (454,195 → 410,596 rows, 0 duplicates, 14/14 favourites kept, integrity ok), then ✅ **ran on the owner's live DB** |
+| **Grid row cap** (`04b4d22`) | All Channels **1485 → 108 ms**; search **1626 → ~134 ms PER KEYSTROKE**. The two view filters moved into SQL so the cap composes with them. | ✅ *"all channels appears instantly, search much more responsive"* |
+| **Skip back / forward** (`3660441`) | ±10 s buttons flanking the scrub bar, sharing its visibility exactly. | ✅ *"used forward back — works good, looks good"* |
+
+⚠️ **Two things shipped that no one has exercised**, recorded here rather than discovered later:
+1. **Schema v9 runs on every user's first launch.** It is a no-op on a live-TV-only library (nothing
+   to canonicalise, nothing to merge) and the transaction retries rather than half-applying — but the
+   owner's is the **only real library it has ever touched**, and it is the first migration here that
+   rewrites existing rows rather than adding columns. *First place to look if anyone reports a wrong
+   channel list after upgrading.*
+2. **The VOD sync's DELETION path still has no live run.** A first sync only inserts; the **second**
+   is the one that calls `retireMissingChannels` in anger. `0 removed` is the healthy answer.
+
+**The three lessons this line actually taught** (all three cost real time, none was a coding error):
+
+- **A confident claim in a comment is not a verified fact.** `bulkInsertChannels` documented that the
+  m3u and sync URLs "collide on idx_channels_dedupe BY DESIGN" — a real provider falsified it with
+  one `:80` and doubled a 43,599-film library. Two more of the same shape shipped in this line:
+  "macOS needs no source change" (it did not compile — `_wtoll`), and "pinned by a selftest" twice
+  over, where the tests did not execute the code they claimed to cover.
+- **One sample is not an answer about a class.** The live-scrub-bar question was recorded as
+  ANSWERED off a single channel; a second look found `is_seekable` varies **per channel on one
+  provider**, and the bar is a *working rewind* rather than the bug it was nearly suppressed as.
+- **A fix can be the regression.** Arming the exit watchdog before the worker joins (to stop them
+  skipping the wake-task registration) put two unbounded joins inside a 4 s budget, which would have
+  force-exited past the only code that finalises an in-progress recording.
 
 ## Previous release — **v0.2.16 SHIPPED (2026-07-28)** · macOS 0.2.15
 
@@ -394,10 +419,12 @@ Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** �
 merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
 only branch local and remote. (All five were verified fully merged with zero unmerged commits and no
 open PRs before deletion; four of them belonged to already-merged macOS PRs #33/#34/#35/#42.)
-Tags `v0.1.0`…**`v0.2.16`**; **the next tag is `v0.2.17`** (or `v0.3.0`) — nothing is reserved or
-burned. **v0.2.16 released @ `d83b002`** (full `0.2.16.377`; both appcasts @ `0344b54`) —
-the Xtream VOD release: movies sync into a 🎬 Movies root, player seek + scrub bar, buffer-meter
-glass. Prior: **v0.2.15 released @ `1324f5f`** (full `0.2.15.365`; both appcasts @
+Tags `v0.1.0`…**`v0.2.17`**; **the next tag is `v0.2.18`** (or `v0.3.0` if series lands first).
+**v0.2.17 released @ `3660441`** (full `0.2.17.388`; both appcasts @ `fe3d872`) — the big-library
+release: canonical `stream_url` + **schema v9** (the duplicate-films merge), the grid row cap, skip
+back/forward, and the v8-migration fix. Prior: **v0.2.16 released @ `d83b002`** (full `0.2.16.377`;
+both appcasts @ `0344b54`) — the Xtream VOD release: movies sync into a 🎬 Movies root, player seek +
+scrub bar, buffer-meter glass. Prior: **v0.2.15 released @ `1324f5f`** (full `0.2.15.365`; both appcasts @
 `77035ed`) — the instruments release: VU relit from a bottom bulb + optional blue lamp, framed glass,
 the data-flow tank reoriented to pour in at the top and drain at the floor, user-selectable fluid
 colour, look-aware meter knobs, About tip section, PIP menu + swap, dead-link checker out of beta.
@@ -612,36 +639,35 @@ rows. ✅ **Re-measured with `--benchdb` before shipping — but AGAINST THE WRO
 doc's 43,599 movies + 442 live, the country/group paths came out immune and only the search box
 degraded (0.63 → 80.00 ms per keystroke). Then the on-device pass showed the owner's real library is
 **410,147 rows, ALL `kind=Live`** — the provider lists movies and series flat in the m3u — where the
-same queries cost **0.6–1.4 SECONDS**. That is pre-existing and ships in v0.2.15 today, so it does not
-block 0.2.16, but it retires the claim that the live-TV paths are safe at scale. **Read the numbers
-and the analysis in BACKLOG before doing any more perf work on this table.**
+same queries cost **0.6–1.4 SECONDS**. ✅ **FIXED in 0.2.17** by the grid row cap (All Channels 1485 →
+108 ms; search 1626 → ~134 ms). **Read the numbers and the analysis in BACKLOG before doing any more
+perf work on this table — `--benchdb`'s DEFAULTS still model the 44k shape, not the real one.**
 
 ### What still needs the owner
 
-**0.2.16 SHIPPED with its headline feature unexercised.** The scrub bar, glass and tank were all
-owner-verified before the cut (below); the VOD sync was not, because the line expired first. In
-priority order:
+**0.2.17 shipped better verified than anything before it** — all four changes were confirmed on the
+owner's real 411,149-row library BEFORE the cut, rather than after. What is left:
 
 0. ✅ **THE FIRST REAL VOD SYNC RAN (2026-07-28) — and it works.** Owner's live provider:
    **43,606 movies, 67 categories**, all with group titles and `added_at` populated, the 🎬 Movies
    root appeared in the sidebar when it finished, films play, and seek/pause/scrub work on them.
    The headline feature of 0.2.16 is no longer unexercised.
 
-   🔴🔴🔴 **…but it DOUBLED the movie library instead of upgrading it in place — see BACKLOG,
-   "EVERY FILM IS STORED TWICE".** The provider's m3u emits `http://host:80/movie/…` while
-   `xtreamMovieUrl()` builds `http://host/movie/…` from the port-less playlist URL, so the
-   `(playlist_id, stream_url)` dedupe never fires. `bulkInsertChannels`' comment claims that
-   collision happens "BY DESIGN"; a real provider has falsified it. 43,599 `kind=0` duplicates now
-   sit in the LIVE tree beside 43,606 `kind=1` rows. **Not destructive, does not self-heal, and a
-   second sync is safe** (the keep-set matches the `kind=1` rows exactly). The fix is a canonical
-   `stream_url` plus a deduping migration — scoped in BACKLOG, and the migration is the half that
-   can lose user state, so it wants care rather than speed.
+   ⚠️ It also **doubled** the movie library — the m3u/sync `:80` mismatch — ✅ **FIXED by schema v9
+   in 0.2.17**, which merged the 43,599 duplicates away on the owner's live database.
 
-   **Still worth doing: run the sync a SECOND time.** The first can only insert; the second is the
-   one that calls `retireMissingChannels` in anger and can DELETE. "Movie sync done — N added or
-   updated, **0 removed**" is the healthy answer. A removal count out of proportion to what the
-   provider actually dropped is the failure to watch for. If it ever goes wrong the library is
-   rebuildable: delete the playlist and re-import.
+   🔴 **STILL OUTSTANDING, and it is now the single least-exercised path in the app: run the sync a
+   SECOND time.** The first can only INSERT; the second is the one that calls
+   `retireMissingChannels` in anger and can **DELETE**. *"Movie sync done — N added or updated,
+   **0 removed**"* is the healthy answer, and with canonical URLs it should now UPDATE the existing
+   movies rather than adding any. A removal count out of proportion to what the provider actually
+   dropped is the failure to watch for. If it ever goes wrong the library is rebuildable: delete the
+   playlist and re-import.
+
+0b. 🔴 **Schema v9 on somebody else's library.** It ran cleanly on the owner's (454,195 → 410,596,
+   integrity ok, 14/14 favourites kept) and is a no-op on a live-TV-only one, but that is the only
+   real library it has ever touched, and it is the first migration here that REWRITES existing rows.
+   *First place to look if any user reports a wrong or empty channel list after upgrading to 0.2.17.*
 
 1. ✅ **ANSWERED ON DEVICE (2026-07-28) — and the FIRST answer here was WRONG. Read the correction.**
    The initial pass sampled ONE live channel (`NL - SPONGEBOB`), saw no scrub bar, and this entry
@@ -739,43 +765,64 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars`.
 >
-> **Read `Win32/HANDOVER.md` first** — the top "Current state" block and "Immediate next steps" —
-> plus `Win32/BACKLOG.md`. Per-release history older than the current line is in
-> `Win32/HANDOVER-ARCHIVE.md`; you rarely need it, but check it before re-trying an idea, because
-> several have already been tried and reverted.
+> **Read `Win32/HANDOVER.md` first** — the top "Current state" block and "What still needs the
+> owner" — plus `Win32/BACKLOG.md`. The Xtream VOD epic's design doc is `Win32/docs/XTREAM_VOD.md`
+> (written off a REAL provider's measured numbers). Older per-release history is in
+> `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea, several have been tried and
+> reverted.
 >
-> **State:** last SHIPPED = **`v0.2.15`** (2026-07-26, `0.2.15.365`, tag @ `1324f5f`, both appcasts
-> LIVE @ `77035ed`) — the instruments release. `main` is the ONLY branch, local and remote, and it is
-> clean. `APP_VERSION` is `0.2.15`; the next release bumps it. **Bumping ≠ releasing** — the tag and
-> the two appcasts are what gate the rollout.
+> **State:** last SHIPPED = **`v0.2.17`** (2026-07-28, `0.2.17.388`, tag @ `3660441`, both appcasts
+> LIVE @ `fe3d872`) — the big-library release: canonical `stream_url` + **schema v9** (merged away
+> 43,599 duplicate films), the grid row cap (All Channels 1485 → 108 ms, search 1626 → ~134 ms per
+> keystroke), skip back/forward, and a v8-migration fix. `main` is the ONLY branch, clean, and
+> fully pushed. `APP_VERSION` is `0.2.17`; the next release bumps it. **Bumping ≠ releasing** — the
+> tag and the two appcasts gate the rollout.
+>
+> **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
+> design assumed. `--benchdb`'s DEFAULTS still model the small shape and have misrepresented this
+> library twice. Measure against the real one before believing any perf claim.
+>
+> **Two things shipped unexercised — check these before adding features:**
+> * **Schema v9 rewrites `stream_url` and merges rows on first launch.** It ran cleanly on the
+>   owner's DB and is a no-op on a live-TV-only one, but that is the only real library it has met.
+>   First suspect if anyone reports a wrong/empty channel list after upgrading.
+> * **The VOD sync's DELETE path has never run live.** A first sync only inserts; the SECOND calls
+>   `retireMissingChannels` in anger. "0 removed" is the healthy answer.
 >
 > **Traps that have already cost real time, in order of cost:**
+> * **A confident claim in a comment is not a verified fact.** `bulkInsertChannels` documented that
+>   the m3u and sync URLs "collide BY DESIGN" — a real provider falsified it with one `:80` and
+>   doubled a 43,599-film library. Same shape twice more in that line: "macOS needs no source
+>   change" (it did not compile — `_wtoll` is MSVC-only in shared code), and "pinned by a selftest"
+>   where the test did not execute the code it claimed to cover. **If a comment asserts behaviour,
+>   verify it or weaken it.**
 > * **`common/` is shared with mac, and mac keeps its own copies of some of it.** `Log.h` is
->   implemented by BOTH `Win32/platform/Log.cpp` and `mac/platform/Log.mm` — adding a function to that
->   header breaks their link (which is why log levels are header-only inline). `mac/src/app/
->   MeterModel.cpp` parses `MeterTuning` and `MeterPalette` with **exact arity** (`!= 5`, `!= 7`), so a
->   new field silently resets every mac user's meters. A new `ScheduleStatus` needs a case in mac's
->   `RecordingsWindowController.mm` in the SAME commit (`-Wswitch -Werror`). **Always grep `mac/`
->   before changing anything under `common/`.**
+>   implemented by BOTH platforms; `mac/src/app/MeterModel.cpp` parses `MeterTuning`/`MeterPalette`
+>   with **exact arity**; a new `ScheduleStatus` needs a mac `switch` case in the SAME commit
+>   (`-Wswitch -Werror`). **Always grep `mac/` before changing anything under `common/`** — and
+>   remember you cannot COMPILE mac here, so prefer flagging over editing their tree.
 > * **Command ids: pick from a genuine gap.** The computed ranges (`ID_DOCK_BASE` 2051–2062,
->   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+) have no literal to grep — one collision
->   already shipped as a bug. `WM_APP+1..+8` and `+10` are taken.
-> * **Release:** bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` (everything derives), leaving the
->   `if(APPLE)` mac override alone. Three installers, two appcasts; always pass `-Tag v<ver>` to
+>   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+) have no literal to grep — one
+>   collision already shipped as a bug. 2010–2033 and 2044–2050 are largely taken; `WM_APP+1..+10`
+>   are all used.
+> * **Release:** bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` line 11 (leave the `if(APPLE)`
+>   mac override alone). Three installers, two appcasts; always pass `-Tag v<ver>` to
 >   `make-appcast.ps1` — it defaults to `v<full.version>`, which 404s. Only EdDSA signing happens on
 >   the owner's Mac. **PUSH BEFORE TAGGING and verify `git ls-remote origin refs/heads/main` equals
->   HEAD** — `gh release create` tags the REMOTE head, so an unpushed commit tags source that does not
->   contain what you built, and the build number (= commit count) is baked into the binaries. This
->   returned NO-GO on the 0.2.15 cut. Verify the enclosure URLs resolve HTTP 200, not just the feeds.
-> * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the default is ON but build dirs cache
->   it, and a stale OFF cache once shipped a Theme-menu-less exe. Verify BOTH flags before committing.
->   Occasional `LNK1104`/`LNK1168` on `G:\` is the exe being locked (the owner runs it) or SMB
->   flakiness — retry once, don't loop.
-> * **i18n:** `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*` (never
->   hand-edit). ~566 keys × 4 languages; `zh-HK` is an override layer over `zh-Hant`, so most new keys
->   need no HK entry. CJK is a machine draft.
+>   HEAD BEFORE you build** — the build number is the commit count and is baked at configure time,
+>   so discovering a mismatch afterwards means rebuilding everything. This check has now caught a
+>   real blocker on two consecutive cuts. Verify the enclosure URLs resolve HTTP 200, not just the
+>   feeds.
+> * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the default is ON but build dirs
+>   cache it, and a stale OFF cache once shipped a Theme-menu-less exe. Verify BOTH flags before
+>   committing. `LNK1168` means the owner is running the app — close it with `WM_CLOSE`
+>   (`CloseMainWindow`), never a force-kill, or an in-progress recording loses its moov atom.
+> * **i18n:** `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*`
+>   (never hand-edit). ~586 keys × 4 languages; `zh-HK` is an override layer over `zh-Hant`. CJK is
+>   a machine draft.
 >
-> **Working rules:** every change adversarially reviewed (background agent) + build-verified BOTH
-> theme flags + `--selftest` before committing. **This sandbox cannot launch the GUI** — hand every
-> visual/runtime pass to the owner. Commit only when asked; stage specific paths (never `git add -A`).
-
+> **Working rules:** every change adversarially reviewed (background agent/workflow) + build-verified
+> BOTH theme flags + `--selftest` before committing. **This sandbox cannot launch the GUI** — hand
+> every visual/runtime pass to the owner, and do not conclude anything about a class of streams from
+> a single channel. Commit only when asked; stage specific paths (never `git add -A`); end commit
+> messages with the Co-Authored-By trailer.
