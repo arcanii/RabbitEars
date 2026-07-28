@@ -27,6 +27,7 @@
 #include "core/M3uWriter.h"
 #include "core/PowerPolicy.h"
 #include "core/RecordingRules.h"
+#include "core/UrlCanon.h"
 #include "core/Strings.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
@@ -1574,6 +1575,72 @@ int selftest() {
                 for (const auto& ch : mdb.allMovies())
                     if (ch.kind != Channel::Kind::Movie) allAreMovies = false;
                 expect(allAreMovies, "movies root: allMovies() returns only kind=Movie rows");
+            }
+
+            // *** URL canonicalisation — step 1 of the duplicate-movies fix (BACKLOG). The tests
+            // that matter here are the NEGATIVE ones. Stripping a default port is worth one
+            // duplicate row if it fails to fire; stripping anything else REPOINTS EVERY STREAM IN
+            // THE LIBRARY at a different endpoint, silently, and the user finds out when nothing
+            // plays. So every "leave it alone" case below is load-bearing. ***
+            {
+                auto same = [](const wchar_t* in, const wchar_t* want) {
+                    return canonicalStreamUrl(in) == std::wstring(want);
+                };
+                // The measured real-world case: the owner's m3u writes :80, the VOD sync does not.
+                expect(same(L"http://line.example.ru:80/movie/u/p/1218804.mp4",
+                            L"http://line.example.ru/movie/u/p/1218804.mp4"),
+                       "urlcanon: an explicit :80 on http is stripped");
+                expect(canonicalStreamUrl(L"http://line.example.ru:80/movie/u/p/1218804.mp4") ==
+                           canonicalStreamUrl(L"http://line.example.ru/movie/u/p/1218804.mp4"),
+                       "urlcanon: ...so the m3u and the sync spelling converge on ONE dedupe key");
+                expect(same(L"https://h/p", L"https://h/p"), "urlcanon: no port is already canonical");
+                expect(same(L"https://h:443/p", L"https://h/p"), "urlcanon: :443 on https is stripped");
+
+                // --- the dangerous half: everything that must survive untouched ---
+                expect(same(L"http://h:8080/p", L"http://h:8080/p"),
+                       "urlcanon: a NON-default port is preserved (stripping it repoints the stream)");
+                expect(same(L"https://h:80/p", L"https://h:80/p"),
+                       "urlcanon: :80 is NOT default for https, so it stays");
+                expect(same(L"http://h:443/p", L"http://h:443/p"),
+                       "urlcanon: :443 is NOT default for http, so it stays");
+                expect(same(L"rtsp://h:554/p", L"rtsp://h:554/p"),
+                       "urlcanon: a scheme we do not know the default for is never touched");
+                expect(same(L"udp://@239.0.0.1:1234", L"udp://@239.0.0.1:1234"),
+                       "urlcanon: multicast udp is left exactly as-is");
+                expect(same(L"http://h:8/p", L"http://h:8/p") &&
+                           same(L"http://h:800/p", L"http://h:800/p"),
+                       "urlcanon: a port that merely resembles the default is preserved");
+                expect(same(L"http://h:/p", L"http://h:/p"),
+                       "urlcanon: an EMPTY port is left alone rather than guessed at");
+
+                // --- authority parsing: the two places a naive 'find the colon' goes wrong ---
+                expect(same(L"http://u:pw@h/p", L"http://u:pw@h/p"),
+                       "urlcanon: a colon inside USERINFO is not a port");
+                expect(same(L"http://u:pw@h:80/p", L"http://u:pw@h/p"),
+                       "urlcanon: ...and the real port after it still strips, credentials intact");
+                expect(same(L"http://[::1]/p", L"http://[::1]/p"),
+                       "urlcanon: the colons in an IPv6 literal are not a port");
+                expect(same(L"http://[::1]:80/p", L"http://[::1]/p"),
+                       "urlcanon: ...but a port after the closing bracket is");
+
+                // --- shape preservation ---
+                expect(same(L"HTTP://h:80/p", L"HTTP://h/p"),
+                       "urlcanon: the scheme matches case-insensitively but is not rewritten");
+                expect(same(L"http://h:80", L"http://h"), "urlcanon: authority-only URL, no path");
+                expect(same(L"http://h:80/p?a=b#f", L"http://h/p?a=b#f"),
+                       "urlcanon: query and fragment survive verbatim");
+                expect(same(L"http://h:80/PaTh/Mixed.MP4", L"http://h/PaTh/Mixed.MP4"),
+                       "urlcanon: path case is NOT normalised (paths are case-sensitive)");
+                expect(same(L"", L"") && same(L"not a url", L"not a url") &&
+                           same(L"http:///p", L"http:///p"),
+                       "urlcanon: empty, scheme-less and authority-less input come back untouched");
+
+                // Idempotent, because the migration will run it over rows that may already be
+                // canonical and a second pass must be a no-op.
+                for (const wchar_t* u : {L"http://h:80/p", L"http://h:8080/p", L"http://[::1]:80/p",
+                                         L"https://h:443/p", L"rtsp://h:554/p"})
+                    expect(canonicalStreamUrl(canonicalStreamUrl(u)) == canonicalStreamUrl(u),
+                           "urlcanon: canonicalising twice changes nothing");
             }
 
             ParsedChannel refetch;  // exactly what parseM3u would produce for the same URL

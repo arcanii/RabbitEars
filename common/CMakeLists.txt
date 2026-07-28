@@ -18,6 +18,7 @@ add_library(RabbitEarsCore STATIC
   core/RecordingRules.cpp      # pure EPG->schedule rule expander (series recording) — unit-tested
   core/Strings.cpp             # pure i18n catalog (en/ja) — completeness + parity unit-tested
   core/RecordingScheduler.cpp  # pure recording-scheduler decision core — unit-tested headlessly
+  core/UrlCanon.cpp   # one canonical spelling for a stream URL (dedupe) — unit-tested headlessly
   core/XmltvParser.cpp  # XMLTV EPG parser — unit-tested headlessly
   db/Database.cpp
   ui/DockLayout.cpp   # pure layout-tree logic (no HWNDs) — unit-tested headlessly

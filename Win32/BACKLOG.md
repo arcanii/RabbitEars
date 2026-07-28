@@ -641,21 +641,46 @@ it will never touch the `kind=0` duplicates; and every ordinary playlist refresh
 `kind=1` rows exactly and should report `0 removed`. Nothing here is urgent-destructive; it is
 duplication, not loss.
 
-**The fix is a canonical `stream_url`, and it is not a one-liner.** Sketch, in the order the risk
-sits:
-1. A pure `canonicalStreamUrl()` in `common/` — strip the scheme's default port (`:80` http, `:443`
-   https), and nothing else. Cheap, testable headlessly, obviously correct.
-2. Apply it on **both** write paths (`bulkInsertChannels` for the M3U import AND the VOD rows), so
-   new writes converge.
-3. ⚠️ **The migration is the hard half.** Rewriting existing rows makes previously-distinct URLs
-   equal, which **violates `idx_channels_dedupe`** — so it has to dedupe as it rewrites, and decide
-   which row survives. The surviving row should keep the USER's data (favourite, LCN, resume
-   position, watched) merged from both, and `kind` should win toward Movie. Get this wrong and it is
-   the first migration in this project that can lose user state rather than just columns.
-4. Re-measure: dropping 43,599 duplicate rows is also the cheapest perf win available (see below).
+**The fix is a canonical `stream_url`.** Three steps, and **steps 2 and 3 MUST ship in the same
+commit, migration first** — see the sequencing warning below, it is the whole trap here.
 
-**Do not skip step 1's selftest.** A URL-canonicalizer that is even slightly too aggressive (dropping
-a NON-default port, say) silently repoints every stream in the library at the wrong endpoint.
+1. ✅ **DONE — `common/core/UrlCanon.{h,cpp}`**, a pure `canonicalStreamUrl()`: strip the scheme's
+   DEFAULT port (`:80` http, `:443` https) and nothing else. 29 selftests, and **the negative ones
+   are the point** — a non-default port, `:80` on https, `:443` on http, an unknown scheme, a colon
+   inside userinfo, an IPv6 literal's colons, and path case all have to survive untouched. A
+   canonicaliser that is even slightly too eager does not cause a bad dedupe; it silently REPOINTS
+   EVERY STREAM IN THE LIBRARY and the user finds out when nothing plays.
+2. Apply it on **both** write paths (`bulkInsertChannels`, for the M3U import AND the VOD rows).
+3. The migration: rewrite stored URLs, merging the rows that become equal.
+
+🔴 **SEQUENCING — step 2 ALONE IS DESTRUCTIVE.** 410,147 of the owner's 454,195 rows carry an
+explicit `:80`. Canonicalising on write without migrating first means the very next playlist refresh
+writes the canonical spelling, misses every stored row on the dedupe index, and inserts **410k
+duplicate live channels** — turning a 43k duplication problem into a 450k one. The migration has to
+run first, in the same open.
+
+**The migration's shape, MEASURED against the owner's live 454,195-row database (2026-07-28)** — not
+estimated:
+
+| | |
+|---|---|
+| rows whose URL changes | **410,147** |
+| canonical keys that collide (must merge) | **43,599** |
+| collision shape | **every one is exactly one `(kind=0, kind=1)` pair** |
+| `(0,0)` or `(1,1)` collisions | **none** — the m3u has no internal duplicates, nor does the sync |
+| collisions involving a favourite | **0** |
+| collisions involving a custom LCN | **0** |
+| rows after merge | **410,596** (from 454,195) |
+
+So on this database the merge rule is trivially decidable: **keep the `kind=1` row** (it carries the
+provider's `added_at` and the right kind), drop the `kind=0` copy. ⚠️ **That is a fact about THIS
+library, not a general one.** Another user can perfectly well have favourited a film under its m3u
+row, so the migration must still merge `is_favourite` / `lcn` / `resume_sec` / `watched` / `dead_status`
+toward the survivor — and that code path will ship having never met a real conflict. Write it as if
+it will, and cover it with a hand-built fixture in `--selftest` where the duplicate DOES carry user
+state.
+
+Re-measure afterwards: dropping 43,599 rows is also the cheapest perf win available (see below).
 
 ### 🔴🔴 THE BENCHMARK'S DEFAULT SHAPE IS NOT THE OWNER'S LIBRARY — measured on-device 2026-07-28
 
