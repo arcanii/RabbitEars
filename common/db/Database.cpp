@@ -4,6 +4,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cwchar>  // std::wcstoll — NOT _wtoll, which is MSVC-only and breaks the macOS build
 #include <set>
 #include <string_view>
 #include <utility>
@@ -64,7 +65,19 @@ struct Stmt {
 struct Tx {
     sqlite3* db;
     bool done = false;
-    explicit Tx(sqlite3* d) : db(d) { sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr); }
+    // ⚠ Whether the transaction actually OPENED. Discarding this was a silent hole under the whole
+    // class: BEGIN IMMEDIATE takes the WAL writer lock and runs the busy handler, so with
+    // busy_timeout=5000 it returns SQLITE_BUSY whenever another connection holds a write
+    // transaction for longer than 5 s — which the v9 migration (6.6 s measured) and a 410k-row
+    // playlist upsert both do. The connection then stays in AUTOCOMMIT, so every statement in the
+    // body commits individually, the destructor's ROLLBACK is a no-op, and commit() fails — i.e.
+    // the work lands with no atomicity and is then reported as a FAILURE. Every guarantee written
+    // in terms of "inside one transaction" evaluates to nothing in that state, so callers check.
+    bool began = false;
+    explicit Tx(sqlite3* d) : db(d) {
+        began = sqlite3_exec(db, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) == SQLITE_OK;
+    }
+    explicit operator bool() const { return began; }
     // Returns false when the COMMIT itself failed. Most callers ignore it — a lost settings write
     // is survivable — but retireMissingChannels does NOT: it is the one operation here that
     // DELETES in bulk, and reporting a plausible "n removed" for a transaction that never landed
@@ -77,12 +90,16 @@ struct Tx {
     // destructor clean up. In the other failure modes the statement has already released the
     // transaction and the compensating ROLLBACK is a harmless "no transaction is active".
     bool commit() {
+        if (!began) return false;  // never opened: there is nothing to commit and nothing landed
         const bool ok = sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr) == SQLITE_OK;
         done = ok;
         return ok;
     }
     ~Tx() {
-        if (!done) sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
+        // Only roll back a transaction we actually opened — otherwise this fires a stray ROLLBACK
+        // in autocommit, which at best errors harmlessly and at worst aborts an unrelated
+        // transaction a future caller opened on the same connection.
+        if (began && !done) sqlite3_exec(db, "ROLLBACK", nullptr, nullptr, nullptr);
     }
 };
 
@@ -661,6 +678,9 @@ void Database::migrate() {
 bool Database::canonicalizeStreamUrls() {
     if (!db_) return false;
     Tx tx(db_);
+    // No transaction, no guarantees: everything this function claims about atomicity and about
+    // user_version rolling back with the data is only true inside one. Retry next open.
+    if (!tx) return false;
 
     // Stage every row's canonical key once. A temp table + index rather than a correlated
     // subquery: the grouping below is otherwise quadratic over 454k rows.
@@ -759,7 +779,9 @@ bool Database::canonicalizeStreamUrls() {
         // Deliberately done in C++ off the map built above: the SQL equivalent is a correlated
         // triple-subquery that nobody could review, and this runs once over a 1-row lookup.
         if (auto lc = getSetting(L"last_channel_id"); lc && !lc->empty()) {
-            const long long was = _wtoll(lc->c_str());
+            // std::wcstoll, not _wtoll: this file is compiled into RabbitEarsCore, which the macOS
+            // app links too, and _wtoll is an MSVC CRT extension that does not exist there.
+            const long long was = std::wcstoll(lc->c_str(), nullptr, 10);
             for (const auto& [loser, survivor] : remap)
                 if (loser == was) {
                     setSetting(L"last_channel_id", std::to_wstring(survivor));
@@ -877,6 +899,7 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
                                  long long nowEpoch) {
     if (!db_) return 0;
     Tx tx(db_);
+    if (!tx) return 0;  // contended writer: report nothing imported rather than a partial batch
     // v8 adds kind + added_at. Both are updated ON CONFLICT only when the incoming row
     // ASSERTS a value, never downward to the default — the two directions are NOT
     // symmetric. An Xtream `m3u_plus` playlist already carries /movie/USER/PASS/id.ext
@@ -960,6 +983,9 @@ int Database::retireMissingChannels(long long playlistId, int kind,
     if (!db_) return -1;
     if (keepUrls.empty()) return 0;  // nothing to compare against: a no-op, not a failure
     Tx tx(db_);
+    // -1, not 0: a contended BEGIN means the retirement did not happen, and 0 would read as
+    // "the provider dropped nothing" — the one lie this function must never tell.
+    if (!tx) return -1;
     exec("CREATE TEMP TABLE IF NOT EXISTS _keep_urls(url TEXT PRIMARY KEY)");
     exec("DELETE FROM _keep_urls");
     {
@@ -1250,6 +1276,7 @@ int Database::bulkInsertProgrammes(long long playlistId, const std::vector<Progr
                                    long long nowEpoch) {
     if (!db_) return 0;
     Tx tx(db_);
+    if (!tx) return 0;  // contended writer: the guide was not replaced
     {  // A refresh replaces this playlist's guide wholesale — the feed is authoritative.
         Stmt del(db_, "DELETE FROM epg_programmes WHERE playlist_id=?");
         if (del) { del.bindInt(1, playlistId); del.stepDone(); }

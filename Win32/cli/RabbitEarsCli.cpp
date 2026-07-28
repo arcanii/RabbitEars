@@ -1586,42 +1586,108 @@ int selftest() {
             // conflict — which is exactly why it is pinned here with a fixture where the row that
             // LOSES carries every piece of user data there is. ***
             {
+                // ⚠ The fixture must arrive at Database::open() ALREADY AT v8 and already holding
+                // the two literal spellings — otherwise canonicalizeStreamUrls() lands on an empty
+                // table and the MERGE (the only code here that can destroy user data) is never
+                // executed at all. A first attempt at this test built the DB fresh at v9 and then
+                // inserted both rows, which exercises the ON CONFLICT upsert instead and passes
+                // while the merge is completely uncovered. Hand-build with raw sqlite3, exactly as
+                // the v2 migration fixture above does.
                 const std::wstring vpath = std::wstring(tmp) + L"rabbitears_v9merge.db";
-                DeleteFileW(vpath.c_str());
-                Database vdb;
-                expect(vdb.open(vpath), "v9: fixture DB opens");
-                const long long vp = vdb.addPlaylist(L"P", L"http://h:80/get.php?username=u&password=p",
-                                                     true, 1000);
-                // The m3u spelling (with :80) and the sync spelling (without) of ONE film. Insert
-                // them as two rows the way the real bug did — by writing the literal URLs before
-                // canonicalisation is in force is impossible here (the DB is already v9), so drive
-                // the merge through migrate() instead: write both, then re-open.
-                ParsedChannel a;  // "m3u" copy — carries ALL the user state
-                a.name = L"Film"; a.streamUrl = L"http://h:80/movie/u/p/7.mp4";
-                a.groupTitle = L"VOD";
-                ParsedChannel b;  // "sync" copy — canonical, kind=Movie, has added_at
-                b.name = L"Film"; b.streamUrl = L"http://h/movie/u/p/7.mp4";
-                b.groupTitle = L"VOD"; b.kind = Channel::Kind::Movie; b.addedAt = 4242;
-                // With v9 live, BOTH canonicalise on insert and collide immediately — which is
-                // itself the property that stops the bug recurring.
-                vdb.bulkInsertChannels(vp, {a, b}, 1000);
-                const auto merged = vdb.channelsByPlaylist(vp);
-                expect(merged.size() == 1,
-                       "v9: the two spellings of one film insert as ONE row, not two");
-                expect(!merged.empty() && merged[0].streamUrl == L"http://h/movie/u/p/7.mp4",
-                       "v9: ...stored under the canonical spelling");
-                expect(!merged.empty() && merged[0].kind == Channel::Kind::Movie,
-                       "v9: ...and the upsert keeps kind=Movie rather than reverting to Live");
+                for (const wchar_t* sfx : {L"", L"-wal", L"-shm"})
+                    DeleteFileW((vpath + sfx).c_str());
+                {
+                    sqlite3* raw = nullptr;
+                    sqlite3_open(utf8FromWide(vpath).c_str(), &raw);
+                    sqlite3_exec(
+                        raw,
+                        "CREATE TABLE playlists(id INTEGER PRIMARY KEY, name TEXT NOT NULL,"
+                        " source_url TEXT, source_path TEXT, is_url INTEGER NOT NULL DEFAULT 1,"
+                        " added_at INTEGER NOT NULL, last_refreshed_at INTEGER,"
+                        " channel_count INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,"
+                        " epg_url TEXT);"
+                        // v8 shape up front so the guarded ALTERs are skipped and the DB is a
+                        // genuine v8, not a half-migrated one.
+                        "CREATE TABLE channels(id INTEGER PRIMARY KEY, playlist_id INTEGER NOT NULL"
+                        " REFERENCES playlists(id) ON DELETE CASCADE, name TEXT NOT NULL,"
+                        " stream_url TEXT NOT NULL, logo_url TEXT, group_title TEXT, tvg_id TEXT,"
+                        " tvg_name TEXT, lcn INTEGER, is_favourite INTEGER NOT NULL DEFAULT 0,"
+                        " dead_status INTEGER NOT NULL DEFAULT 0,"
+                        " last_checked_at INTEGER NOT NULL DEFAULT 0,"
+                        " sort_order INTEGER NOT NULL DEFAULT 0, user_agent TEXT, referrer TEXT,"
+                        " kind INTEGER NOT NULL DEFAULT 0, duration_sec INTEGER NOT NULL DEFAULT 0,"
+                        " resume_sec INTEGER NOT NULL DEFAULT 0, watched INTEGER NOT NULL DEFAULT 0,"
+                        " added_at INTEGER NOT NULL DEFAULT 0);"
+                        "CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);"
+                        "CREATE TABLE scheduled_recordings(id INTEGER PRIMARY KEY, channel_id TEXT,"
+                        " channel_name TEXT NOT NULL, stream_url TEXT NOT NULL, user_agent TEXT,"
+                        " referrer TEXT, title TEXT, start_utc INTEGER NOT NULL,"
+                        " stop_utc INTEGER NOT NULL, mux TEXT NOT NULL DEFAULT 'ts',"
+                        " status INTEGER NOT NULL DEFAULT 0, file_path TEXT,"
+                        " created_at INTEGER NOT NULL, rule_id INTEGER, episode_key TEXT,"
+                        " prog_start_utc INTEGER NOT NULL DEFAULT 0);"
+                        "CREATE TABLE recording_rules(id INTEGER PRIMARY KEY, channel_id TEXT,"
+                        " channel_name TEXT, title_match TEXT NOT NULL, match_kind INTEGER NOT NULL,"
+                        " enabled INTEGER NOT NULL DEFAULT 1, lead_sec INTEGER NOT NULL DEFAULT 0,"
+                        " trail_sec INTEGER NOT NULL DEFAULT 0, mux TEXT NOT NULL DEFAULT 'ts',"
+                        " created_at INTEGER NOT NULL);"
+                        "INSERT INTO playlists(id,name,added_at,enabled) VALUES(7,'P',1000,1);"
+                        // id 1 = the SYNC row: canonical, kind=Movie, carries the provider's
+                        // added_at, and NO user state. It should win (highest kind).
+                        "INSERT INTO channels(id,playlist_id,name,stream_url,kind,added_at)"
+                        " VALUES(1,7,'Film','http://h/movie/u/p/7.mp4',1,4242);"
+                        // id 2 = the M3U row: the :80 spelling, kind=Live, and it carries EVERY
+                        // piece of user data. It must LOSE the survivor contest and yet have all
+                        // of this survive on the winner. Note last_checked_at is NEWER than the
+                        // survivor's 0, so dead_status must travel across with it.
+                        "INSERT INTO channels(id,playlist_id,name,stream_url,kind,lcn,is_favourite,"
+                        " dead_status,last_checked_at,resume_sec,watched,duration_sec)"
+                        " VALUES(2,7,'Film','http://h:80/movie/u/p/7.mp4',0,42,1,2,9999,900,1,5400);"
+                        // ...and the persisted last channel points at the row about to be deleted.
+                        "INSERT INTO settings(key,value) VALUES('last_channel_id','2');"
+                        "PRAGMA user_version=8;",
+                        nullptr, nullptr, nullptr);
+                    sqlite3_close(raw);
+                }
 
-                // The retire path must speak the SAME spelling. This is the case that would
-                // otherwise delete an entire movie library: the keep-set is built from the raw
-                // constructed URL, which for a :80 origin is NOT what got stored.
+                Database vdb;
+                expect(vdb.open(vpath), "v9: v8 fixture with two literal spellings opens");
+                const auto merged = vdb.channelsByPlaylist(7);
+                expect(merged.size() == 1, "v9 merge: the two rows collapse to ONE");
+                const Channel m = merged.empty() ? Channel{} : merged[0];  // by value: no dangle
+                expect(m.streamUrl == L"http://h/movie/u/p/7.mp4",
+                       "v9 merge: ...stored under the canonical spelling");
+                expect(m.id == 1, "v9 merge: the kind=Movie row is the survivor, not the m3u row");
+                expect(m.kind == Channel::Kind::Movie, "v9 merge: ...and it stays kind=Movie");
+                expect(m.addedAt == 4242, "v9 merge: the provider's added_at survives");
+                // The whole point: the LOSER's user data has to end up on the winner.
+                expect(m.favourite, "v9 merge: the loser's FAVOURITE is inherited");
+                expect(m.lcn.has_value() && *m.lcn == 42, "v9 merge: the loser's custom LCN is inherited");
+                expect(m.resumeSec == 900, "v9 merge: the loser's RESUME POSITION is inherited");
+                expect(m.watched, "v9 merge: the loser's WATCHED flag is inherited");
+                expect(m.durationSec == 5400, "v9 merge: the loser's cached DURATION is inherited");
+                expect(m.deadStatus == DeadStatus::Dead && m.lastCheckedAt == 9999,
+                       "v9 merge: dead_status travels WITH the fresher last_checked_at");
+                // A last_channel_id naming the deleted row must follow the merge, or resume-last
+                // silently stops working with nothing to explain it.
+                const auto lc = vdb.getSetting(L"last_channel_id");
+                expect(lc && *lc == L"1", "v9 merge: last_channel_id is repointed at the survivor");
+                // And the housekeeping every other bulk mutator does.
+                long long stored = -1;
+                for (const auto& pl : vdb.listPlaylists())
+                    if (pl.id == 7) stored = pl.channelCount;
+                expect(stored == 1, "v9 merge: playlists.channel_count is recomputed after the merge");
+
+                // The retire path must speak the SAME spelling as the stored column. This is the
+                // case that would otherwise delete an entire movie library: VodSync builds its
+                // keep-set from the RAW constructed URL, which for a :80 origin is not what the
+                // DAO stored.
                 const int gone = vdb.retireMissingChannels(
-                    vp, static_cast<int>(Channel::Kind::Movie), {L"http://h:80/movie/u/p/7.mp4"});
+                    7, static_cast<int>(Channel::Kind::Movie), {L"http://h:80/movie/u/p/7.mp4"});
                 expect(gone == 0,
                        "v9: a keep-set in the :80 spelling still matches the stored canonical row "
                        "(else a sync retires everything it just inserted)");
-                expect(vdb.channelsByPlaylist(vp).size() == 1, "v9: ...the film is still there");
+                expect(vdb.channelsByPlaylist(7).size() == 1, "v9: ...the film is still there");
             }
 
             // *** URL canonicalisation — step 1 of the duplicate-movies fix (BACKLOG). The tests
@@ -1688,6 +1754,47 @@ int selftest() {
                                          L"https://h:443/p", L"rtsp://h:554/p"})
                     expect(canonicalStreamUrl(canonicalStreamUrl(u)) == canonicalStreamUrl(u),
                            "urlcanon: canonicalising twice changes nothing");
+
+                // *** The WIDE and UTF-8 overloads must agree byte for byte. They are not the same
+                // code path at the type level, and the migration rewrites 410k rows through the
+                // UTF-8 one (the SQLite scalar) while every write goes through the wide one — so a
+                // divergence would canonicalise the stored column differently from the values
+                // compared against it, which is the duplicate-library bug all over again.
+                // Non-ASCII is the case that matters: `char` is SIGNED on MSVC, so a UTF-8 byte
+                // >= 0x80 is NEGATIVE, and any digit/range test that meets one must not misfire. ***
+                {
+                    bool agree = true;
+                    for (const wchar_t* u : {L"http://h:80/p",
+                                             L"http://h:8080/p",
+                                             L"https://h:443/p",
+                                             L"https://h:80/p",
+                                             L"rtsp://h:554/p",
+                                             L"http://u:pw@h:80/p",
+                                             L"http://[::1]:80/p",
+                                             L"http://[::1]/p",
+                                             L"HTTP://h:80/p",
+                                             L"http://h:/p",
+                                             L"http://h:80",
+                                             L"",
+                                             L"not a url",
+                                             // non-ASCII host, path and query — the signed-char case
+                                             L"http://\u00e9x\u00e4mple.com:80/f\u00eflm/\u65e5\u672c.mp4?q=\u00fc",
+                                             L"http://\u00e9x\u00e4mple.com:8080/f\u00eflm.mp4",
+                                             L"http://\u65e5\u672c\u8a9e.example:443/p"}) {
+                        const std::wstring w = canonicalStreamUrl(u);
+                        const std::string b = canonicalStreamUrlU8(utf8FromWide(u));
+                        if (utf8FromWide(w) != b) agree = false;
+                    }
+                    expect(agree,
+                           "urlcanon: the wide and UTF-8 overloads agree, non-ASCII hosts included");
+                    // And the UTF-8 one really does strip, rather than bailing out on the first
+                    // high byte it meets — an overload that silently never fires would "agree"
+                    // with nothing and pass a weaker test.
+                    expect(canonicalStreamUrlU8(utf8FromWide(
+                               L"http://\u00e9x\u00e4mple.com:80/p")) ==
+                               utf8FromWide(L"http://\u00e9x\u00e4mple.com/p"),
+                           "urlcanon: ...and the UTF-8 overload still strips :80 past a high byte");
+                }
             }
 
             ParsedChannel refetch;  // exactly what parseM3u would produce for the same URL
