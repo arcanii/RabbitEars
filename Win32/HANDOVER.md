@@ -31,7 +31,36 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **0.2.16 is CODE COMPLETE on `main`, UNRELEASED, and NOTHING has been seen on a device** · v0.2.15 SHIPPED · macOS 0.2.15
+## Current state — **v0.2.16 SHIPPED (2026-07-28)** · macOS 0.2.15
+
+### ✅ 0.2.16 — SHIPPED (2026-07-28) — the Xtream VOD release
+
+**Released:** tag **`v0.2.16`** @ `d83b002`, full version **`0.2.16.377`**; three installers on GitHub
+release `v0.2.16` — x64 `35,370,751` / arm64 `30,218,567` / universal `63,289,025` bytes — **two
+appcasts** (`0.2.16.377`) committed @ `0344b54` and LIVE (both feeds HTTP 200, and **both enclosure
+URLs downloaded end-to-end with the byte count matching the signed length**, which is the check that
+catches a bad `-Tag`). Owner-signed on the Mac; the two feeds cross-checked so the x64 and arm64
+signatures cannot be swapped.
+
+⚠️ **The pre-release verification returned NO-GO once, on the same class of blocker as 0.2.15** — the
+docs commit `d83b002` had not reached the remote when the release was called for. `gh release create`
+tags the REMOTE head, so building then would have stamped `0.2.16.377` while the tag pointed at
+count 376. Caught by `git ls-remote origin refs/heads/main` before anything was built. **That check
+has now saved two consecutive releases; run it before you build, not after.**
+
+**✅ OWNER-VERIFIED ON-DEVICE before the cut** — the two things the sandbox cannot check:
+- **The scrub bar is INVISIBLE on live TV and works on seekable content.** Confirmed on the real
+  provider: absent on `NL - SPONGEBOB` (a 24/7 feed), present and tracking on a series episode
+  (`0:49 / 43:30`). This was the release's top risk item and it closed as GO.
+- **Glass bezel and the empty-tank fix: "look fine"** — clearing the one reservation carried over
+  from 0.2.15 ("needs work — but ok for this release").
+
+⛔ **What shipped UNVERIFIED, and it is the riskiest thing in the release: the VOD sync itself.** The
+owner's Xtream line expired before a real sync could run, so insert + `retireMissingChannels` has
+never executed against a live provider — only against selftests. Mitigated by design rather than by
+luck: it is user-triggered, invisible without an Xtream playlist, gated on playback/recording, and
+refuses to delete anything when too much of the response was unusable. **First real sync is still
+outstanding — see "What still needs the owner".**
 
 > ### ⚠️ Version note — the 0.2.16 / 0.2.17 split collapsed (owner's call, 2026-07-28)
 >
@@ -43,21 +72,14 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 > "0.2.17" where it means "the Xtream VOD work" — commit messages (`538f0b2`, `e4e01a7`) say it too
 > and cannot be rewritten. Read those as *the VOD half of 0.2.16*.
 
-> **Read "Immediate next steps" first.** `main` carries **four unreleased commits** (`ffb69dc` …
-> `7751cdc`) spanning two version's worth of work.
+> **`main` is clean and fully released.** `APP_VERSION` is `0.2.16` (`cmake/AppVersion.cmake:11`; the
+> `if(APPLE)` override is untouched at `0.2.15`) — **the next release bumps it**, and since 0.2.17 was
+> skipped, that means **0.2.18** (or 0.3.0 if series lands first).
 >
-> **`APP_VERSION` is now `0.2.16`** (`cmake/AppVersion.cmake:11`; the `if(APPLE)` override is
-> untouched at `0.2.15`). **Bumping is not releasing** — there is no tag and no appcast, which is
-> what actually gates a rollout. A release built from here would stamp `0.2.16.<commit count>`.
->
-> ⚠️ **Not one line of this has run in front of a human.** It is a mix of visual (glass bezel),
-> interactive (scrub/seek) and destructive-if-wrong (VOD sync) work, none of which the dev sandbox
-> can check. Treat the whole of it as unverified until the owner's pass — see "What still needs the
-> owner".
->
-> The Xtream VOD epic's two gates are both CLOSED. The design doc — written off a REAL provider's
-> measured answers, not estimates — is **[`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md)**; read it before
-> touching the epic.
+> The Xtream VOD epic's two gates are both CLOSED and **movies have SHIPPED**. The design doc —
+> written off a REAL provider's measured answers, not estimates — is
+> **[`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md)**; read it before touching the epic. **Series
+> (0.3.0) is the remaining half**, and §1 already has the measured shape for it.
 
 ### ✅ 0.2.15 — SHIPPED (2026-07-26)
 
@@ -353,7 +375,10 @@ Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** �
 merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
 only branch local and remote. (All five were verified fully merged with zero unmerged commits and no
 open PRs before deletion; four of them belonged to already-merged macOS PRs #33/#34/#35/#42.)
-Tags `v0.1.0`…**`v0.2.15`**; **v0.2.15 released @ `1324f5f`** (full `0.2.15.365`; both appcasts @
+Tags `v0.1.0`…**`v0.2.16`** — note **`v0.2.17` will never exist**, the number was skipped when the
+split collapsed. **v0.2.16 released @ `d83b002`** (full `0.2.16.377`; both appcasts @ `0344b54`) —
+the Xtream VOD release: movies sync into a 🎬 Movies root, player seek + scrub bar, buffer-meter
+glass. Prior: **v0.2.15 released @ `1324f5f`** (full `0.2.15.365`; both appcasts @
 `77035ed`) — the instruments release: VU relit from a bottom bulb + optional blue lamp, framed glass,
 the data-flow tank reoriented to pour in at the top and drain at the floor, user-selectable fluid
 colour, look-aware meter knobs, About tip section, PIP menu + swap, dead-link checker out of beta.
@@ -574,14 +599,20 @@ and the analysis in BACKLOG before doing any more perf work on this table.**
 
 ### What still needs the owner
 
-**Nothing in these six commits has been seen running, and that is the ONLY thing between here and
-the 0.2.16 release.** In priority order:
+**0.2.16 SHIPPED with its headline feature unexercised.** The scrub bar, glass and tank were all
+owner-verified before the cut (below); the VOD sync was not, because the line expired first. In
+priority order:
 
-0. 🔴 **A real VOD sync, and it needs a renewed line.** Settings ▸ Channels ▸ "Sync movies from
-   provider", with **playback stopped** (the gate refuses otherwise, by design). Expect ~10 s and
-   ~13.5 MB. Watch for: the 🎬 Movies root appearing with its categories, a category listing films,
-   one film playing, and the status line's added/removed counts. The recon account **expired
-   ~2026-07-28**, so this is blocked until the line is renewed.
+0. 🔴🔴 **THE FIRST REAL VOD SYNC — still outstanding, and it is now shipped code.** Needs a renewed
+   Xtream line. Settings ▸ Channels ▸ "Sync movies from provider", with **playback stopped** (the
+   gate refuses otherwise, by design). Expect ~10 s and ~13.5 MB. Watch for: the 🎬 Movies root
+   appearing with its categories, a category listing films, one film playing, and the status line's
+   added/removed counts.
+   **What to look at hardest is the SECOND sync**, not the first: the first can only insert, while
+   the second is the one that calls `retireMissingChannels` in anger and can DELETE. A count of
+   removals wildly out of proportion to what the provider actually dropped is the failure to watch
+   for — and "Movie sync done — N added or updated, 0 removed" on a second run is the healthy answer.
+   If it goes wrong, the library is rebuildable: delete the playlist and re-import.
 
 1. ✅ **ANSWERED ON DEVICE (2026-07-28) — GO.** The live-HLS-DVR question is closed. On the owner's
    real provider the scrub bar and time readout are **absent on an ordinary live channel**
