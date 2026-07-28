@@ -582,6 +582,35 @@ Remaining VOD-side costs are inherent and on non-interactive paths: `moviesByGro
 `listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows — which is
 why the Movies root shows categories only, as shipped), bulk insert ~260 ms.
 
+### 🔴🔴 THE BENCHMARK'S DEFAULT SHAPE IS NOT THE OWNER'S LIBRARY — measured on-device 2026-07-28
+
+`--benchdb` defaults to **43,599 movies + 442 live**, straight from the design doc. The owner's real
+library is **410,147 rows in one playlist** (seen in the nav during the 0.2.16 verification pass) and
+**every one of them is `kind=Live`**, because no VOD sync has ever run — the provider's `m3u_plus`
+lists movies AND series episodes flat, as ordinary channels. Re-measured at `--benchdb 1 410147`:
+
+| query | owner's library TODAY |
+|---|---|
+| `allChannels()` | **1266 ms** |
+| `channelsByPlaylist()` | **1403 ms** |
+| `searchChannels()` first keystroke | **1256 ms** |
+| `listGroups()` / `listCountries()` | **629 / 679 ms** |
+| `channelsByGroup()` / `channelsByCountry()` | **632 / 602 ms** |
+
+⚠️ **This is PRE-EXISTING and ships in v0.2.15 today — 0.2.16 does not cause it.** But it retires the
+comfortable reading of "every live-TV path is now immune to VOD library size". That claim is true as
+written (adding `kind=Movie` rows does not hurt those queries) and **irrelevant at this shape**: the
+kind-scoping only engages for rows actually marked `kind=Movie`, and here nothing is. A VOD sync
+would reclassify ~43,599 of the 410,147 and buy back roughly 10%; the remaining ~366k are series
+episodes and live channels that stay `kind=Live`.
+
+The real problem is **materialization**, not the scan: these queries build a `std::vector<Channel>`
+of every matching row and hand it to the grid. At 410k rows that is hundreds of MB of `wstring`
+churn per nav click. The fix is almost certainly a `LIMIT` + windowing on the grid, not more indexes
+— and it wants its own measured investigation, because the last index-widening attempt here was a
+dead end (see the note above). Until then, note that `listVodGroups()` runs on every `refreshNav`,
+so the Movies root adds ~600-800 ms to a nav rebuild at this scale once VOD is synced.
+
 ### 🔴 The search box is the one per-keystroke path VOD still breaks — OWNER DECISION
 
 **Measured 0.63 → 80.00 ms on the first keystroke** (126×), added to `--benchdb` as

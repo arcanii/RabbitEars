@@ -564,9 +564,13 @@ grid and posters become a SERIES feature**.
 
 ⚠️ **The biggest risk is not VOD** — 43,599 rows is ~4× the current library, in the same `channels`
 table that already needed a SQLite scalar to keep the country filter under ~30 ms/keystroke at 14k
-rows. ✅ **Done — every cross-channel query was re-measured with `--benchdb` before shipping.** The
-country/group paths came out immune; **the search box did not** (0.63 → 80.00 ms per keystroke), and
-that is the one live-TV path this epic degrades. See BACKLOG — it is an open owner decision.
+rows. ✅ **Re-measured with `--benchdb` before shipping — but AGAINST THE WRONG SHAPE.** At the design
+doc's 43,599 movies + 442 live, the country/group paths came out immune and only the search box
+degraded (0.63 → 80.00 ms per keystroke). Then the on-device pass showed the owner's real library is
+**410,147 rows, ALL `kind=Live`** — the provider lists movies and series flat in the m3u — where the
+same queries cost **0.6–1.4 SECONDS**. That is pre-existing and ships in v0.2.15 today, so it does not
+block 0.2.16, but it retires the claim that the live-TV paths are safe at scale. **Read the numbers
+and the analysis in BACKLOG before doing any more perf work on this table.**
 
 ### What still needs the owner
 
@@ -579,12 +583,12 @@ the 0.2.16 release.** In priority order:
    one film playing, and the status line's added/removed counts. The recon account **expired
    ~2026-07-28**, so this is blocked until the line is renewed.
 
-1. 🔴 **The live-HLS-DVR question — ten seconds, and it decides the release's risk profile.** Play an
-   ordinary live channel and see whether a scrub bar appears. "Invisible on live IPTV" is libVLC's
-   judgement (`is_seekable`), not an invariant we enforce, and an HLS feed with a DVR window can
-   legitimately report seekable. If bars show up on live channels, 0.2.16 is **not** the
-   invisible-to-existing-users release it is being described as, and that needs a decision before it
-   ships.
+1. ✅ **ANSWERED ON DEVICE (2026-07-28) — GO.** The live-HLS-DVR question is closed. On the owner's
+   real provider the scrub bar and time readout are **absent on an ordinary live channel**
+   (`NL - SPONGEBOB`, a 24/7 feed) and **present and working on seekable content** (a series episode,
+   `0:49 / 43:30`). So `is_seekable` behaves as hoped on this provider and **0.2.16 IS the
+   invisible-to-existing-users release it is described as.** ⚠️ Still libVLC's judgement, not an
+   invariant we enforce — a different provider's HLS-with-DVR feeds could still report seekable.
 2. **The rest of the 0.2.16 pass** — the glass bezel (does a framed tank beside four framed
    mini-meters resolve the 0.2.15 "needs work"?), the scrub bar on something actually seekable, and
    the two 0.2.15 leftovers below (the empty-tank fix, the bezel).
