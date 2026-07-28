@@ -708,23 +708,25 @@ every way of fixing it changes what the user gets:
 
 ## Polish / cleanup
 
-- **🔍 Glass bezel — pass 4** (owner, 2026-07-26, on the shipped 0.2.15 build: *"needs work — but ok
-  for this release"*). The framed-pane model (`5f447b7`) is a keeper structurally — band 0 is the
-  theme's own border left bit-identical, band 1 an opaque hard-stepped bezel in the chrome gutter,
-  band 2 the dial with only a cast shadow and `add` exactly 0 — so **do not go back to gradients on
-  the face**; that was the blur, twice. What is not yet right is unspecified, so start by pinning it
-  down. The design panel's own "cannot verify headlessly" list is the shortlist of suspects, in order:
-  (a) **three luminance steps inside 2px** — border 48 / lip 112 / shadow 15 on consecutive rows may
-  be reading as banding rather than as a frame; (b) the **light skin**, where a near-black 1px ring
-  sits inside a 214 border around a white face — much the biggest swing of any skin; (c) the **corner
-  pip** (130 vs 112, a single pixel), the design's only decorative term and the most likely to read as
-  a stuck sub-pixel — `kLipCorner = 0.0f` deletes it and changes nothing else; (d) whether four framed
-  mini-meters beside the *unframed* buffer tank reads as half-done (see the separate "wire the buffer
-  meter" entry — that is the likeliest single answer). Knobs, in the order to reach for them:
-  `kLipTop` (0.431) carries the whole look; then `kShadowDeep` (0.30) if the *shadow* rather than the
-  lip reads heavy. Do NOT reach for `kBodyMul` — that changes what the frame *is*. All in
-  `common/ui/GlassMask.cpp`, all covered by the 27 selftest assertions, which will tell you loudly if
-  a change breaks the band-0-untouched invariant.
+- **🔍 Glass bezel — pass 4 — ✅ CLOSED, resolved by 0.2.16** (owner on the shipped 0.2.16 build,
+  2026-07-28: *"the bezel and tank look fine"*, clearing the 0.2.15 reservation *"needs work — but ok
+  for this release"*).
+  **The item's own leading hypothesis was right, and it is worth recording why.** The shortlist of
+  suspects ended with *(d) whether four framed mini-meters beside the **unframed** buffer tank reads
+  as half-done — that is the likeliest single answer*. 0.2.16's groundwork (`ffb69dc`) wired the
+  glass into the buffer meter for unrelated reasons, and the reservation went away on its own. So the
+  bezel was never wrong: **the SET of framed things was incomplete**, and the eye was reading the odd
+  one out, not a defect in the frame.
+  The generalisable lesson: *"needs work"* on a visual element does not localise the fault to that
+  element. Three of the four suspects here (luminance banding, the light skin's contrast swing, the
+  corner pip) proposed changing the bezel itself, and every one of them would have made it worse
+  while the real cause sat outside the component.
+  **Nothing to do.** The framed-pane model (`5f447b7`) stands as shipped — band 0 the theme's own
+  border bit-identical, band 1 an opaque hard-stepped bezel in the chrome gutter, band 2 the dial
+  carrying only a cast shadow with `add` exactly 0. If it is ever reopened, the one rule that
+  survives from two failed attempts is: **do not go back to gradients on the face** — that was the
+  blur, twice. Knobs live in `common/ui/GlassMask.cpp` behind 27 selftest assertions that pin the
+  band-0-untouched invariant.
 
 - **Meters dialog: the "Bg" swatch means something different on a VU, and nothing says so**
   (flagged while landing the VU lamp, 0.2.15). On every cell look `palette.bg` is the panel
