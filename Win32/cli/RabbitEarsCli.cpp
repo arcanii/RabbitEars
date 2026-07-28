@@ -2714,9 +2714,13 @@ int benchDb(int movies, int live) {
         put("searchChannels()",     timeIt([&] { (void)db.searchChannels(L"Channel 1"); }));
         // The FIRST KEYSTROKE, which is the honest worst case and the one the line above misses:
         // "Channel 1" matches no movie by name or category, so it measures the scan and none of
-        // the materialization. A single letter matches most of the library, and the search box
-        // runs this synchronously on the UI thread on every EN_CHANGE with no debounce and no
-        // LIMIT — so this figure, not the one above, is what the user feels while typing.
+        // the materialization. A single letter matches most of the library, so this figure, not
+        // the one above, is what a search actually costs.
+        // ⚠ This unlimited variant is NOT what the UI runs any more — see the [grid cap] rows
+        // below for that. Since 0.2.17 the search box passes a row cap, and it now debounces
+        // (kSearchDebounceMs), so a typing burst costs ONE capped query rather than one uncapped
+        // query per keystroke. Both figures are kept: this one is the DAO's own cost, the capped
+        // one is the user's.
         put("searchChannels() 1ch",  timeIt([&] { (void)db.searchChannels(L"e"); }));
         put("channelsByPlaylist()", timeIt([&] { (void)db.channelsByPlaylist(pid); }));
         // *** What the UI ACTUALLY runs. Everything above uses the DAO's default (unlimited)

@@ -105,7 +105,42 @@ bool trimToGridCap(std::vector<Channel>& ch) {
     return true;
 }
 
+void cancelSearchDebounce(AppState* st) {
+    st->searchPending = false;
+    if (st->hwnd) KillTimer(st->hwnd, kSearchDebounceTimer);
+}
+
+// The search box's EN_CHANGE only ARMS a timer; this is the work it defers. Deliberately global
+// (any name/group/tvg match across the whole library), not scoped to the current nav view.
+//
+// Known and accepted: the closing updateCounts() now lands ~200 ms after the keystroke instead of
+// during it, so it can overwrite a status message written in that window (a player event, say).
+// That race already existed — the status line is one shared slot and this was always its last
+// writer for the final keystroke of a burst — the debounce only widens the window, and the same
+// keystroke previously froze the UI for longer than the window it opens. The sticky truncation
+// notice is unaffected: setStatus re-appends it from st->gridTruncated on every write.
+void applySearch(AppState* st) {
+    cancelSearchDebounce(st);  // consuming the request, whether it came from the tick or directly
+    wchar_t buf[256] = L"";
+    GetWindowTextW(st->search, buf, ARRAYSIZE(buf));
+    const std::wstring q = buf;
+    if (q.empty()) {
+        loadForFilter(st);  // back to the current nav view
+        return;
+    }
+    std::vector<Channel> hits = st->db.searchChannels(q, gridFilter(st, /*capped=*/true));
+    st->gridTruncated = trimToGridCap(hits);
+    channelGridSetChannels(st->grid, std::move(hits));
+    channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
+    updateCounts(st);
+}
+
 void loadForFilter(AppState* st) {
+    // Whatever brought us here — a nav click, a view toggle, a finished sweep — is a newer answer
+    // to "what should the grid show" than a keystroke that has not been queried yet. Cancelling
+    // here rather than at each call site means a future caller cannot forget to. It also preserves
+    // today's semantics exactly: a synchronous search was already clobbered by these same paths.
+    cancelSearchDebounce(st);
     std::vector<Channel> ch;
     const Database::GridFilter g = gridFilter(st, /*capped=*/true);
     switch (st->filter.kind) {

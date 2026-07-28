@@ -444,7 +444,12 @@ until that expires (looked like "0.2.1 doesn't detect the update" for a few min;
 branch was **merged to `main` + deleted** (only
 `main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
 **`git fetch` + rebase before a release** — the 0.2.0 push integrated a concurrent mac commit mid-flight
-(the first push was rejected until re-fetched). Working tree clean.
+(the first push was rejected until re-fetched).
+⚠️ **`main` is AHEAD of `origin/main` by ONE commit** (2026-07-29): the search-debounce commit.
+`origin/main` is at `4ec0e27` (the v0.2.17 HANDOVER update). Post-release, so nothing about the
+shipped v0.2.17 is affected — but the build number is the commit count, so **push and re-verify
+`git ls-remote origin refs/heads/main` == HEAD before building anything for a release.** That check
+has already caught a real blocker on two consecutive cuts. Working tree otherwise clean.
 Build number = git commit count, baked at CMake configure time
 **after** the commit — so a build must follow the release commit to stamp the matching `0.2.0.<count>`. Commit/push only when the
 owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`); end
@@ -643,6 +648,34 @@ same queries cost **0.6–1.4 SECONDS**. ✅ **FIXED in 0.2.17** by the grid row
 108 ms; search 1626 → ~134 ms). **Read the numbers and the analysis in BACKLOG before doing any more
 perf work on this table — `--benchdb`'s DEFAULTS still model the 44k shape, not the real one.**
 
+### 🔎 Search debounce — DONE, UNCOMMITTED, needs the owner's keyboard (2026-07-28)
+
+The first work after v0.2.17, and the "cheap next step" BACKLOG named after the grid cap. The search
+box's `EN_CHANGE` used to run `searchChannels()` synchronously on the UI thread **on every
+keystroke** — ~134 ms each on the real 411,149-row library. It now arms a 200 ms one-shot timer
+(`kSearchDebounceTimer` = `0xA4`, a genuine gap; the main window's only other timers are `0xA1`-`0xA3`)
+and the tick re-reads the box, so a typing burst is one query instead of one per letter.
+
+Three files, +~80 lines, all Win32-only — **nothing under `common/`, so mac is untouched.**
+`Win32/ui/MainWindow.cpp` (arm / tick / `WM_DESTROY`), `Win32/ui/MainWindowData.cpp` (`applySearch`,
+`cancelSearchDebounce`, the cancel inside `loadForFilter`), `Win32/ui/MainWindowInternal.h`.
+
+⚠️ **It reduces the NUMBER of stalls, not the length of one** — one search is still ~134 ms of frozen
+UI thread. The floor is the `LIKE` scan; **FTS5 is still the real fix.** Don't read "search is fixed"
+into this.
+
+**Verified:** both theme flags build clean at /W4, `--selftest` ALL PASS, and an adversarial review
+(4 lenses × independent refutation, 19 agents) raised 15 findings of which **0 survived**. Two
+refutations conceded their mechanism while disputing the harm; both are now written into the code as
+comments rather than left implicit. One of my own comment claims was false on inspection and was
+corrected before review — it called `loadForFilter`'s load "uncapped" when `gridFilter(st, capped=true)`
+plainly caps it. *Same trap as ever: a comment asserting behaviour is a claim, not a fact.*
+
+🔴 **NONE of that is runtime verification.** `applySearch` sits in a GUI TU the CLI does not link, so
+the change has **zero automated coverage** and the sandbox cannot launch the GUI. The owner's checks
+are listed in BACKLOG — in short: typing feels smooth, results land after you stop, clearing returns
+to the nav view, and a nav click right after typing shows the NODE rather than the search results.
+
 ### What still needs the owner
 
 **0.2.17 shipped better verified than anything before it** — all four changes were confirmed on the
@@ -774,9 +807,16 @@ Paste this verbatim to start a fresh session with working context restored:
 > **State:** last SHIPPED = **`v0.2.17`** (2026-07-28, `0.2.17.388`, tag @ `3660441`, both appcasts
 > LIVE @ `fe3d872`) — the big-library release: canonical `stream_url` + **schema v9** (merged away
 > 43,599 duplicate films), the grid row cap (All Channels 1485 → 108 ms, search 1626 → ~134 ms per
-> keystroke), skip back/forward, and a v8-migration fix. `main` is the ONLY branch, clean, and
-> fully pushed. `APP_VERSION` is `0.2.17`; the next release bumps it. **Bumping ≠ releasing** — the
-> tag and the two appcasts gate the rollout.
+> keystroke), skip back/forward, and a v8-migration fix. `main` is the ONLY branch and the working
+> tree is clean, but ⚠️ **one commit is UNPUSHED** (the search debounce) — post-release, so v0.2.17
+> is unaffected, but **push before you build anything**, because the build number is the commit
+> count. `APP_VERSION` is `0.2.17`; the next release bumps it. **Bumping ≠ releasing** — the tag and
+> the two appcasts gate the rollout.
+>
+> **Unreleased work sitting on `main`:** the **search debounce** — `EN_CHANGE` arms a 200 ms
+> one-shot timer instead of querying per keystroke. Reviewed (15 findings, 0 survived), both theme
+> flags clean, `--selftest` ALL PASS — but it lives in a GUI TU the CLI cannot link, so it has
+> **zero automated coverage and has never run**. Owner check listed in BACKLOG.
 >
 > **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
 > design assumed. `--benchdb`'s DEFAULTS still model the small shape and have misrepresented this

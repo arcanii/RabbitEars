@@ -408,29 +408,18 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   MeterStyle enum WITHOUT `Vu`; its parser falls back on the unknown `"vu"` token, so a shared DB is
   safe, but a mac user switching a meter Win32 set to VU silently gets LED. Mac-team change: add the
   enumerator + a Core Graphics renderer.
-- **🐞 PIP resize letterboxes (black bars left/right)** — owner-reported 2026-07-26, on 0.2.14-dev.
-  Resizing the PIP popup leaves black bars down one side: the window is free-form but the video
-  inside keeps its own aspect ratio, so the leftover client area shows the `BLACK_BRUSH` letterbox.
-  Decide the intended behaviour first — either (a) **constrain the resize to the video's aspect**
-  (handle `WM_SIZING` on the PIP popup, snapping the dragged edge so w/h matches the stream's
-  `libvlc_video_get_size`, which is the usual PIP convention and makes bars impossible), or
-  (b) keep free-form and centre the video, accepting bars on one axis. (a) is almost certainly what
-  the owner wants. NB the PIP popup uses `kVideoClass` (`addPane`, `MainWindowCommands.cpp:652`) and
-  its size persists as `pip_size`, so a snap must apply on restore too, not just during the drag.
-- **🐞 Leaving PIP view moves the PIP stream into the main pane** — owner-reported 2026-07-26.
-  Switching PIP → Single takes whatever was playing in the PIP and plays it in the main view; it
-  should leave the main view's channel alone and simply close the PIP. Look at the `ViewMode::Pip` →
-  `ViewMode::Single` transition (`ID_VIEW_SINGLE`/`ID_VIEW_PIP` in `MainWindowCommands.cpp`) and how
-  panes are torn down — the floating pane's channel is presumably being promoted to pane 0 rather
-  than discarded.
-- **PIP: right-click context menu** (owner request, 2026-07-26) — the PIP popup has no context menu
-  today. Wants at least: close PIP, and the swap below. `kVideoClass`'s WndProc already handles
-  right-click for the main video's view menu (see `VideoProc`), so this is mostly deciding the item
-  set and reusing that path for a `floating` pane.
-- **PIP ⇄ main swap** (owner request, 2026-07-26) — a deliberate "promote the PIP to the main view
-  and demote the main view into the PIP" action, from the PIP right-click menu above. Note this is
-  the *intentional* version of the bug two entries up: the swap should be something the user asks
-  for, never a side-effect of changing view mode.
+- ~~**🐞 PIP resize letterboxes (black bars left/right)**~~ — ✅ **SHIPPED in 0.2.14** (`a4b93aa`):
+  option (a) as predicted — the PIP resize snaps to the video's aspect, which needed a new
+  worker-sampled `VlcPlayer::videoSize()` (libVLC calls stay off the UI thread), published as one
+  atomic. *(Original: resizing the free-form popup left `BLACK_BRUSH` bars down one side.)*
+- ~~**🐞 Leaving PIP view moves the PIP stream into the main pane**~~ — ✅ **SHIPPED in 0.2.14**
+  (`a4b93aa`): `applyViewMode` was carrying the active pane's stream into pane 0 — right for Split
+  (equal tiles), wrong for PIP (a secondary overlay).
+- ~~**PIP: right-click context menu**~~ — ✅ **SHIPPED in 0.2.15** (`e02e140`): the floating PIP gets
+  its own menu rather than inheriting the main window's view menu.
+- ~~**PIP ⇄ main swap**~~ — ✅ **SHIPPED in 0.2.15** (`e02e140`), from that menu. Allowed *while
+  recording*: recording runs on a separate headless player (`VlcPlayer::rec_`) that `doStop()` never
+  touches. ⚠️ Still **not exercised** in any owner pass.
 - **PIP "always on top of other apps" toggle** — ✅ **SHIPPED in 0.2.14** (`9774418`): Settings ▸ View ▸
   "Keep PIP above other apps", default ON. Off ⇒ PIP is topmost only while RabbitEars is the
   foreground app (re-raised on `WM_ACTIVATEAPP`) — it can never be left plain non-topmost, because
@@ -792,8 +781,49 @@ fixture.** Same lesson as the section below: the bench defaults are not this lib
 
 **Not fixed, and it is the floor:** ~90-100 ms of every search keystroke is the `LIKE` scan over
 411k rows, irreducible without a different index strategy (FTS5 or a trigram index). So search went
-1626 → ~134 ms, not to zero, and it is still synchronous on the UI thread with no debounce. A
-debounce is the cheap next step; FTS is the real one.
+1626 → ~134 ms, not to zero, and it is still synchronous on the UI thread. A debounce is the cheap
+next step; FTS is the real one.
+
+### ✅ The debounce landed (UNRELEASED, on `main` working tree) — and what it does NOT do
+
+`EN_CHANGE` no longer queries. It arms a 200 ms one-shot `kSearchDebounceTimer` (`0xA4`) plus an
+`AppState::searchPending` flag; the tick calls a new `applySearch()` which **re-reads the edit
+control** rather than capturing the text, so a late tick can only ever act on what the box says now.
+A typing burst collapses to one query of the final term instead of one per keystroke.
+
+⚠️ **This changes the NUMBER of stalls, not the length of one.** A single search still blocks the UI
+thread for ~134 ms on the real library. Anyone reading "search is fixed" into this is reading too
+much: the floor is still the `LIKE` scan, and **FTS5 remains the real fix**.
+
+Three design points worth not re-litigating:
+
+- **`loadForFilter()` cancels the pending debounce**, so every path that refills the grid — nav
+  click, view toggle, finished sweep — automatically beats a keystroke that was never queried. Put
+  there rather than at each call site so a future caller cannot forget. It preserves today's
+  semantics exactly: a synchronous search was already clobbered by those same paths.
+- **`searchPending`, not `KillTimer`, is what makes cancellation authoritative.** MSDN states
+  KillTimer "does not remove WM_TIMER messages already posted", so the flag closes the gap without
+  depending on purge semantics. (An adversarial reviewer disputed that mechanism, arguing WM_TIMER
+  is synthesized on demand and so *is* purged. The guard is a bool and costs nothing, this repo has
+  already been bitten by a stale tick once — `maybeShowSupportPrompt`'s `inPrompt` latch — and MSDN
+  is the conservative authority. Kept deliberately; don't "simplify" it away.)
+- **The empty query is debounced too**, not special-cased: it is the tail of a backspace burst, and
+  `loadForFilter` is not free either (~108 ms capped for All Channels), so running it eagerly would
+  reintroduce a per-keystroke stall on the exact path being fixed.
+
+**Accepted, recorded rather than discovered later:** `applySearch`'s closing `updateCounts()` now
+lands ~200 ms after the keystroke, so it can overwrite a status message written in that window. The
+race pre-existed (one shared status slot, and this was always its last writer for a burst's final
+keystroke); the debounce only widens it, by less than the freeze it removes.
+
+🔴 **Untested by anything automatic, and it cannot be otherwise.** `applySearch` /
+`cancelSearchDebounce` live in a GUI translation unit that `RabbitEarsCli --selftest` does not link,
+so the change has **zero automated coverage** — both theme flags compile clean at /W4 and the
+selftest is ALL PASS, but neither statement touches this code. It needs the owner at a keyboard:
+type a multi-letter term into the search box on the real 411k library and confirm (a) typing feels
+smooth rather than stuttering, (b) results appear shortly after you stop, (c) clearing the box
+returns to the nav view, and (d) clicking a nav node immediately after typing shows the NODE, not
+the search results.
 
 ### ~~🔴 The search box is the one per-keystroke path VOD still breaks — OWNER DECISION~~ (superseded by the above)
 

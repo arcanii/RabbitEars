@@ -913,6 +913,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 onSchedulerTick(st);
                 return 0;
             }
+            if (st && wParam == kSearchDebounceTimer) {
+                // One-shot. The `searchPending` test is the load-bearing half — see the field's
+                // comment: KillTimer is documented NOT to remove an already-posted WM_TIMER, so
+                // the flag is what actually makes a cancellation stick. If a nav click (or any
+                // other loadForFilter caller) ran in that gap, this request is void and its fresh
+                // grid must not be overwritten. applySearch clears the flag itself.
+                if (!st->searchPending) {
+                    KillTimer(hwnd, kSearchDebounceTimer);
+                    return 0;
+                }
+                applySearch(st);
+                return 0;
+            }
             if (st && wParam == kSupportPromptTimer) {
                 // One-shot: kill it first, since maybeShowSupportPrompt re-arms it itself if the
                 // moment is wrong (a modal is up / the user is watching fullscreen).
@@ -1106,21 +1119,15 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_COMMAND: {
             const int id = LOWORD(wParam);
             if (id == ID_SEARCH && HIWORD(wParam) == EN_CHANGE) {
-                wchar_t buf[256] = L"";
-                GetWindowTextW(st->search, buf, ARRAYSIZE(buf));
-                const std::wstring q = buf;
-                if (q.empty()) {
-                    loadForFilter(st);  // back to the current nav view
-                } else {
-                    // Global search across the whole library (any name/group/tvg match),
-                    // not just the current nav view.
-                    std::vector<Channel> hits =
-                        st->db.searchChannels(q, gridFilter(st, /*capped=*/true));
-                    st->gridTruncated = trimToGridCap(hits);
-                    channelGridSetChannels(st->grid, std::move(hits));
-                    channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
-                    updateCounts(st);
-                }
+                // Arm, don't query. applySearch re-reads the box when the tick lands, so the
+                // text is never captured here and a burst of keystrokes collapses to one query
+                // of the final term. The empty case is debounced too rather than run straight
+                // away: it is the tail of a backspace burst, and loadForFilter is not free
+                // either (All Channels is ~108 ms capped on the real library), so special-casing
+                // it would reintroduce a per-keystroke stall on exactly the path being fixed.
+                KillTimer(hwnd, kSearchDebounceTimer);  // restart the window on every keystroke
+                st->searchPending = true;
+                SetTimer(hwnd, kSearchDebounceTimer, kSearchDebounceMs, nullptr);
                 return 0;
             }
             switch (id) {
@@ -1624,6 +1631,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_DESTROY:
             KillTimer(hwnd, kSchedulerTimer);
+            // The flag is what actually makes a late tick inert (the KillTimer is hygiene): a
+            // WM_TIMER posted just before this would otherwise reach applySearch, which reads
+            // st->search and touches the DB and the grid while both are being torn down.
+            cancelSearchDebounce(st);
             // Hand the queue to Windows on the way out — this is the whole point of wake-to-record:
             // the wake task must be registered for whatever is still pending BEFORE we stop running.
             // Also drop the sleep block; the process is going away and the state is per-thread.

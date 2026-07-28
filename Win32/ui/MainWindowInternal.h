@@ -54,6 +54,15 @@ constexpr UINT WM_APP_VOD_PROGRESS = WM_APP + 8;
 constexpr UINT WM_APP_VOD_DONE = WM_APP + 9;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 constexpr UINT_PTR kSupportPromptTimer = 0xA3;  // ONE-SHOT: the "support RabbitEars" tip prompt
+constexpr UINT_PTR kSearchDebounceTimer = 0xA4;  // ONE-SHOT: coalesce a typing burst in the search box
+// Long enough that an ordinary typing burst produces ONE query, short enough that it never reads
+// as lag after the user stops. Even WITH the kMaxGridRows cap, search runs synchronously on the UI
+// thread and cost ~134 ms on the first keystroke of the owner's real 411,149-row library, with a
+// measured floor of ~90-100 ms per keystroke thereafter (the LIKE scan; see BACKLOG). So a
+// five-letter word was five separate stalls totalling roughly half a second of frozen chrome, and
+// is now one. ⚠ This reduces the NUMBER of stalls, not the length of one — that floor needs a
+// different index strategy (FTS5 / trigram), not a timer.
+constexpr UINT kSearchDebounceMs = 200;
 
 // ---- command ids ----------------------------------------------------------
 constexpr int ID_ADD_URL = 2001;
@@ -370,6 +379,15 @@ struct AppState {
     // which appends a sticky notice — the flows that truncate are the same ones that overwrite the
     // status line immediately afterwards, so a one-shot message would never be seen.
     bool gridTruncated = false;
+    // Armed by EN_CHANGE, consumed by the kSearchDebounceTimer tick, cleared by
+    // cancelSearchDebounce. This flag — not the KillTimer — is what makes cancellation
+    // AUTHORITATIVE. MSDN states plainly that KillTimer "does not remove WM_TIMER messages
+    // already posted to the message queue", so a KillTimer alone is not a guarantee that a tick
+    // cannot still be dispatched; if one is, a nav click that just refilled the grid would have
+    // it replaced by the stale search a moment later. The flag closes that off without depending
+    // on the exact purge semantics. This repo has already been bitten by the same class of stale
+    // tick once — see the inPrompt re-entry latch in maybeShowSupportPrompt (MainWindow.cpp).
+    bool searchPending = false;
     SpectrumTap spectrumTap;             // read-only WASAPI process-loopback → spectrum meter
     DockLayout  dock;                    // user-arrangeable region layout (persisted)
     std::vector<DockLayout::Gutter> gutters;  // splitter gutters from the last layout()
@@ -428,6 +446,13 @@ void updateCounts(AppState* st);
 Database::GridFilter gridFilter(AppState* st, bool capped);
 // Trim the +1 probe row; returns true when it was present, i.e. the view IS truncated.
 bool trimToGridCap(std::vector<Channel>& ch);
+// Run the search box's CURRENT text against the library and fill the grid — or restore the nav
+// view when it is empty. Reads the control rather than taking the text as a parameter, so a tick
+// that arrives late can only ever act on what the box says now.
+void applySearch(AppState* st);
+// Disarm a pending debounce. Called by loadForFilter, so every path that refills the grid
+// automatically wins over a search the user has already stopped caring about.
+void cancelSearchDebounce(AppState* st);
 void loadForFilter(AppState* st);
 HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM param, bool bold);
 std::wstring countryLabel(const std::wstring& code);
