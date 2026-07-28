@@ -111,8 +111,75 @@ UI. Flagging early, as the theme engine did.
    `!= 5`), needs a look. The shared DAO handles the DB path, so this is only about mac-side code that
    builds or serializes a `Channel` itself.
 
-**Still to land in `common/`** (this document's subject): `core/XtreamClient.{h,cpp}` and the VOD DAO
-additions. Neither has a mac UI implication beyond "you can call it".
+### ✅ ALL OF IT HAS NOW LANDED AND SHIPPED (Windows v0.2.16, 2026-07-28) — the full mac impact
+
+Audited change by change against the `mac/` tree after the release (`git diff v0.2.15..v0.2.16 --
+common/`), with every "no mac consumer" claim checked by grep rather than assumed. **Headline: mac
+needs no source change to build or run on this core — but read items 1 and 2, they are not
+cosmetic.**
+
+**1. 🔴 A schema-v8 migration bug that could silently empty a mac library. FIXED after the release —
+take this commit.** The five v8 `ALTER TABLE channels ADD COLUMN` statements were wrapped in one
+`if (!hasColumn("channels","kind"))`, and `haveV8` asked the same single question. If the sequence
+died partway — a disk filling between two statements is enough, and `exec()` does not report
+failure — then `kind` exists, every later open skips the remaining four **forever**, and
+`user_version` still latches to 8. Since `kChannelCols` now names all twenty columns, every channel
+query then fails to prepare, and `runChannelQuery` returns an empty vector on a prepare failure: the
+library comes back **empty, silently, permanently**. Each ALTER is now guarded individually and
+`haveV8` checks all five columns. v2–v7 never needed this because each adds exactly one column;
+**v8 is the first multi-column step and it broke the invariant the surrounding comment promises.**
+
+**2. ⚠️ `Tx::commit()` changed semantics for EVERY transaction, mac included.** It now returns
+`bool` and sets `done = ok` rather than `done = true`, so a COMMIT that fails now **rolls back**
+where it previously left the transaction open on the connection. Net improvement — a `SQLITE_BUSY`
+commit can no longer strand an open write transaction on the shared handle — and safe on mac today
+*only because mac never has two transactions in flight*: there is exactly one `Database`
+(`MainWindowController.mm:224`) and both background writers marshal to the main queue first
+(`PlaylistsDialog.mm:318→322`, `MainWindowController.mm:2428→2439`). **If mac ever opens a second
+connection or moves a DB write off the main queue, revisit this** — a stray ROLLBACK from a failed
+commit could then abort an unrelated in-flight transaction. `bulkInsertChannels` and
+`bulkInsertProgrammes` now also return `0` instead of a positive count when their commit fails, so a
+mac import can no longer report "N imported" for a batch that was discarded.
+
+**3. Everything else is source-compatible and behaviour-preserving on mac, because mac cannot
+produce a `kind != 0` row.** `common/core/M3uParser.*` is byte-identical between the two tags, the
+parser never sets `ParsedChannel::kind`, and mac has no `XtreamClient` caller — so every kind-scoped
+query behaves exactly as it did in 0.2.15:
+- `listGroups()` is now LIVE-only (`listGroupsOfKind(0)`); `listVodGroups()` is the VOD side. mac's
+  two call sites (`MainWindowController.mm:911` nav filter, `:2335` Categories checklist) are
+  unaffected. **Latent divergence to remember:** if mac adopts the VOD sync, movie categories
+  silently vanish from both, and mac would need its own Movies root on
+  `listVodGroups()`/`moviesByGroup()`/`allMovies()`.
+- `allChannels()` / `channelsByPlaylist()` now `ORDER BY kind` first. Byte-identical while every row
+  is `kind=0`. The only order-sensitive mac consumer is the channel grid
+  (`MainWindowController.mm:942`); the others re-sort or build maps/sets.
+- `bulkInsertChannels` gained `kind`/`added_at` binds and a `CASE WHEN excluded.kind<>0` upsert
+  guard. Signature unchanged; all seven mac call sites compile untouched. **Do not "tidy" the
+  default off `ParsedChannel::kind`** — it is what stops a plain M3U refresh reverting a movie to a
+  live channel.
+- `Channel` and `ParsedChannel` gained fields; grep found no mac code that aggregate-initializes or
+  arity-parses either. **Standing rule: never brace-initialize `Channel` positionally on mac** —
+  it is on a growth path (`Kind::Episode` lands with series).
+- `ParsedChannel.h` now `#include`s `Channel.h` — the include direction flipped, worth knowing if
+  mac has anything that included only `ParsedChannel.h`.
+
+**4. 15 new `StringId`s, all APPENDED before `Count`** (`NavMovies`, `MenuVodSync`, the
+`StatusVodSync*` family). Ordinal-safe, no `-Wswitch` hazard, already translated into ja/zh-Hant/
+zh-HK — a future mac VOD UI gets its labels for free. `NavMovies` ("🎬 Movies") would slot in at
+`MainWindowController.mm:909`, after Favourites. **Never hand-edit `Strings.cpp`** — it is generated
+from `common/i18n/*.json` by `tools/i18n/gen_i18n.py`.
+
+**5. Worth doing on your side:** the i18n completeness + placeholder-parity check is Windows-only
+(`Win32/cli/RabbitEarsCli.cpp`), despite `Strings.h` implying it is shared. Porting that ~35-line
+block into `mac/src/tools/selftest.cpp` would catch an empty or placeholder-mismatched row in mac CI
+before it reaches a user.
+
+**Still Windows-only by design:** `RabbitEarsCli --xtream` (`Win32/cli/XtreamRecon.*`) — a
+disposable, deliberately permissive census tool, explicitly *not* the production JSON path. Not
+worth porting. And the VOD sync WORKER (`Win32/ui/VodSync.*`) is Win32 UI code; when mac builds its
+half, build against `common/core/XtreamClient` and **keep the fetch on the mac side** — the header
+explains why the provider's `max_connections: 1` cap makes "may this sync run at all" a question
+only the UI can answer.
 
 **`RabbitEarsCli --xtream` (`Win32/cli/XtreamRecon.*`) is deliberately Win32-only and deliberately
 disposable** — a permissive census tool, explicitly *not* the production JSON path. Delete it whole

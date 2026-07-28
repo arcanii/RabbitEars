@@ -7,6 +7,34 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🍎 Shared-core changes in v0.2.16 · **for the macOS team**, 2026-07-28
+
+Windows shipped **v0.2.16** (Xtream VOD movies, player seek, scrub bar). Everything below the UI
+landed in `common/`, so mac inherits it on the next merge. **The full change-by-change audit — every
+claim checked against actual `mac/` call sites — is [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md) §2.**
+
+**mac needs no source change to build or run.** Two items are not cosmetic, though:
+
+1. 🔴 **A schema-v8 migration bug that could silently empty a mac library — fixed AFTER the v0.2.16
+   tag, so pick up that commit.** The five v8 `ALTER TABLE channels` statements shared one
+   `hasColumn("channels","kind")` guard, and the `user_version` probe asked the same single
+   question. A partial failure (a disk filling mid-sequence; `exec()` reports nothing) left `kind`
+   present, so later opens skipped the other four forever while `user_version` still latched to 8 —
+   and because `kChannelCols` names all twenty columns, every channel query then fails to prepare
+   and `runChannelQuery` returns empty. Library gone, silently, with no retry. Now individually
+   guarded, with all five columns checked.
+2. ⚠️ **`Tx::commit()` changed semantics for every transaction**, mac included: a failed COMMIT now
+   ROLLS BACK instead of leaving the transaction open. Safe on mac *only because* mac has one
+   `Database` and marshals both background writers to the main queue — **revisit if mac ever adds a
+   second connection or writes off the main queue.** `bulkInsertChannels`/`bulkInsertProgrammes` now
+   return 0 rather than a positive count when their commit fails.
+
+Everything else is behaviour-preserving on mac because mac cannot produce a `kind != 0` row
+(`M3uParser` is byte-identical between the tags and never sets `kind`; mac has no `XtreamClient`
+caller). The latent divergence to remember: `listGroups()` is now LIVE-only, so **if mac adopts the
+VOD sync, movie categories silently vanish from the nav filter and the Categories checklist** unless
+mac also builds a Movies root on `listVodGroups()`/`moviesByGroup()`/`allMovies()`.
+
 ## 🌍 Shared-core addition: Xtream group-title→country fallback · flagged by the macOS team, 2026-07-16
 
 `common/db/Database.cpp` (PR #41): `listCountries()` / `channelsByCountry()` now derive a channel's

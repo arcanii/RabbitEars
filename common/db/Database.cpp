@@ -519,13 +519,29 @@ void Database::migrate() {
     // this safe in both directions: an existing row becomes a live channel with no VOD data,
     // and an OLDER build (including the macOS app, which shares this file) opening a v8 DB
     // takes the `v >= 7` early return, ignores the extra columns, and is unharmed.
-    if (!hasColumn("channels", "kind")) {
+    // ⚠ Each ALTER is guarded INDIVIDUALLY, and the v8 probe below checks ALL FIVE columns.
+    // Wrapping the five in one `if (!hasColumn("channels","kind"))` was wrong in a way that only
+    // appears after a failure, and then permanently: if the sequence died partway — the disk
+    // filling between two statements is enough, and exec() does not report failure — then `kind`
+    // would exist, so every later open would skip the remaining four forever, while `haveV8`
+    // (which asked the same single question) still latched `user_version=8`. Since kChannelCols
+    // now names all twenty columns, EVERY channel query would then fail to prepare, and
+    // runChannelQuery returns an empty vector on a prepare failure: the user's entire library
+    // would come back EMPTY, silently, with no error and no way to retry.
+    //
+    // v2..v7 never needed this because each of those steps adds exactly ONE column, so guarding
+    // on it is the same question as "did this step land". v8 is the first multi-column step, and
+    // it quietly broke the invariant the comment below promises.
+    if (!hasColumn("channels", "kind"))
         exec("ALTER TABLE channels ADD COLUMN kind INTEGER NOT NULL DEFAULT 0");
+    if (!hasColumn("channels", "duration_sec"))
         exec("ALTER TABLE channels ADD COLUMN duration_sec INTEGER NOT NULL DEFAULT 0");
+    if (!hasColumn("channels", "resume_sec"))
         exec("ALTER TABLE channels ADD COLUMN resume_sec INTEGER NOT NULL DEFAULT 0");
+    if (!hasColumn("channels", "watched"))
         exec("ALTER TABLE channels ADD COLUMN watched INTEGER NOT NULL DEFAULT 0");
+    if (!hasColumn("channels", "added_at"))
         exec("ALTER TABLE channels ADD COLUMN added_at INTEGER NOT NULL DEFAULT 0");
-    }
     // TWO partial indexes, one per side of the discriminator, because the two directions
     // have different users and neither index serves the other:
     //   kind<>0 — "show me the VOD" (the future poster/series views).
@@ -555,7 +571,14 @@ void Database::migrate() {
         haveV4 && hasColumn("recording_rules", "id") && hasColumn("scheduled_recordings", "rule_id");
     const bool haveV6 = haveV5 && hasColumn("scheduled_recordings", "episode_key");
     const bool haveV7 = haveV6 && hasColumn("scheduled_recordings", "prog_start_utc");
-    const bool haveV8 = haveV7 && hasColumn("channels", "kind");
+    // ALL FIVE v8 columns, not just the first. With the ALTERs individually guarded above, a
+    // failure on any one of them leaves the others applied — so asking about `kind` alone (or
+    // about `added_at` alone) would still report v8 for a half-migrated table. Five extra
+    // table_info reads at open is nothing; latching v8 over a missing column is unrecoverable.
+    const bool haveV8 = haveV7 && hasColumn("channels", "kind") &&
+                        hasColumn("channels", "duration_sec") &&
+                        hasColumn("channels", "resume_sec") && hasColumn("channels", "watched") &&
+                        hasColumn("channels", "added_at");
     if (haveV8) exec("PRAGMA user_version=8");
     else if (haveV7) exec("PRAGMA user_version=7");
     else if (haveV6) exec("PRAGMA user_version=6");
@@ -707,7 +730,10 @@ int Database::bulkInsertChannels(long long playlistId, const std::vector<ParsedC
             upd.stepDone();
         }
     }
-    tx.commit();
+    // A failed COMMIT rolled the whole batch back, so NOTHING was imported. Returning `n` here
+    // would tell the caller "added 43,599 channels" about rows that are not in the table — the
+    // same lie retireMissingChannels' -1 exists to prevent, on the path a user sees most often.
+    if (!tx.commit()) return 0;
     return n;
 }
 
@@ -1035,7 +1061,7 @@ int Database::bulkInsertProgrammes(long long playlistId, const std::vector<Progr
     }
     // Record the refresh time so the UI can show "guide updated N ago" (part of the Tx).
     setSetting(L"epg_refreshed_" + std::to_wstring(playlistId), std::to_wstring(nowEpoch));
-    tx.commit();
+    if (!tx.commit()) return 0;  // rolled back: no programmes stored, and no refresh timestamp
     return n;
 }
 
