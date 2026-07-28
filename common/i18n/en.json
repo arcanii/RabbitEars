@@ -581,5 +581,6 @@
   "StatusVodSyncNoProvider": "No Xtream provider found — movie sync needs a playlist URL with a username and password.",
   "StatusVodSyncCancelled": "Movie sync cancelled — nothing was changed.",
   "StatusVodSyncFailed": "Movie sync failed — {0}",
-  "StatusVodSyncPartial": "Movie sync incomplete — {0} added or updated before it stopped ({1})."
+  "StatusVodSyncPartial": "Movie sync incomplete — {0} added or updated before it stopped ({1}).",
+  "StatusGridTruncatedSuffix": "  ·  showing the first {0} — search or pick a group to narrow"
 }

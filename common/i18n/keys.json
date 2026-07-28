@@ -3760,5 +3760,13 @@
       "{1}"
     ],
     "comment": "A run that committed work and then stopped. {0} = rows added or updated, {1} = the technical reason it stopped."
+  },
+  {
+    "id": "StatusGridTruncatedSuffix",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Appended to whatever the status line says when the grid was capped. {0} = the cap (5000). Leading separator included."
   }
 ]

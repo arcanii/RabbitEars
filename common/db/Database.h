@@ -89,25 +89,51 @@ public:
     int retireMissingChannels(long long playlistId, int kind,
                               const std::vector<std::wstring>& keepUrls);
 
+    // ---- Grid queries ------------------------------------------------------
+    // What the channel GRID displays, and the only place a row cap belongs.
+    //
+    // ⚠ THE FILTERS LIVE HERE, IN SQL, AND THAT IS THE WHOLE POINT. They used to be applied in
+    // C++ over the returned vector, which composes the wrong way round the moment a limit exists:
+    // "the matches among the first 5,000 rows" instead of "the first 5,000 matches". Those are not
+    // the same set and the difference is not cosmetic — with a 20,000-channel playlist whose Sports
+    // block sits at position ~15,000, an include-filter of {Sports} would return an EMPTY grid while
+    // Groups ▸ Sports (its own query) showed the same channels perfectly. Pushing the predicates
+    // down means the limit applies to the filtered set, which is what a user means by "show me the
+    // first N".
+    //
+    // Every field defaults to "no restriction", so a default-constructed GridFilter reproduces the
+    // pre-0.2.17 query exactly — which is what leaves the macOS app, and every non-grid caller
+    // here, byte-for-byte unaffected.
+    struct GridFilter {
+        // 0 == unlimited. Callers that need a COMPLETE list (favourites export, the recording
+        // scheduler, the rule/schedule editors, the dead-link sweep) must leave it at 0: a
+        // truncated list there silently drops the user's data rather than merely hiding rows.
+        int  limit = 0;
+        bool hideDead = false;                  // drop DeadStatus::Dead
+        std::vector<std::wstring> categories;   // empty == no category restriction
+    };
+
 private:
     std::vector<std::wstring> listGroupsOfKind(int kind);
-    std::vector<Channel> channelsByGroupOfKind(const std::wstring& group, int kind);
+    std::vector<Channel> channelsByGroupOfKind(const std::wstring& group, int kind,
+                                               const GridFilter& g);
 
 public:
 
-    std::vector<Channel> allChannels();
-    std::vector<Channel> channelsByPlaylist(long long playlistId);
+    // ---- Grid queries ------------------------------------------------------
+    std::vector<Channel> allChannels(const GridFilter& g = {});
+    std::vector<Channel> channelsByPlaylist(long long playlistId, const GridFilter& g = {});
     // LIVE channels in `group`. Kind-scoped: the live tree and the Movies tree are separate
     // namespaces, so a VOD category sharing a live group's name cannot cross-contaminate.
-    std::vector<Channel> channelsByGroup(const std::wstring& group);
+    std::vector<Channel> channelsByGroup(const std::wstring& group, const GridFilter& g = {});
     // ---- VOD (schema v8) ----------------------------------------------------
     // Movies live under their own "Movies" nav root rather than as ~67 extra siblings in the
     // live group tree — see listGroups().
-    std::vector<Channel> moviesByGroup(const std::wstring& group);
-    std::vector<Channel> allMovies();          // newest-first (provider `added`)
+    std::vector<Channel> moviesByGroup(const std::wstring& group, const GridFilter& g = {});
+    std::vector<Channel> allMovies(const GridFilter& g = {});  // newest-first (provider `added`)
     std::vector<std::wstring> listVodGroups();  // the VOD categories
-    std::vector<Channel> favourites();
-    std::vector<Channel> searchChannels(const std::wstring& term);
+    std::vector<Channel> favourites(const GridFilter& g = {});
+    std::vector<Channel> searchChannels(const std::wstring& term, const GridFilter& g = {});
     std::optional<Channel> channelByLcn(int lcn);
     // First enabled channel carrying this tvg-id (the EPG join key); nullopt if none.
     // Used to resolve a guide programme back to a recordable stream.
@@ -120,7 +146,7 @@ public:
     // Distinct ISO country codes (lowercase) derived from tvg-id suffixes
     // (iptv-org convention: "<name>.<cc>", e.g. "CNN.us"); + channels for one code.
     std::vector<std::wstring> listCountries();
-    std::vector<Channel> channelsByCountry(const std::wstring& code);
+    std::vector<Channel> channelsByCountry(const std::wstring& code, const GridFilter& g = {});
 
     void setFavourite(long long channelId, bool favourite);
     void toggleFavourite(long long channelId);

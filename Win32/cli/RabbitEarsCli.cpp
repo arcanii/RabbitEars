@@ -1690,6 +1690,88 @@ int selftest() {
                 expect(vdb.channelsByPlaylist(7).size() == 1, "v9: ...the film is still there");
             }
 
+            // *** GridFilter — the row cap plus the two view filters, now in SQL. These replaced
+            // C++ filtering over the returned vector, and the ORDER of composition is the whole
+            // point: a cap applied AFTER a filter yields "the matches among the first N" instead
+            // of "the first N matches", which can be an empty grid while the same channels show
+            // fine under Groups. The last assertion here is the one that pins that. ***
+            {
+                const std::wstring gpath = std::wstring(tmp) + L"rabbitears_grid.db";
+                for (const wchar_t* sfx : {L"", L"-wal", L"-shm"})
+                    DeleteFileW((gpath + sfx).c_str());
+                Database gdb;
+                expect(gdb.open(gpath), "grid: fixture DB opens");
+                const long long gp = gdb.addPlaylist(L"G", L"http://g/p.m3u", true, 1000);
+                std::vector<ParsedChannel> rows;
+                for (int i = 0; i < 40; ++i) {
+                    ParsedChannel c;
+                    c.name = L"Ch" + std::to_wstring(i);
+                    c.streamUrl = L"http://g/" + std::to_wstring(i) + L".ts";
+                    // Only the LAST ten rows are in "Sports" — so a Sports filter combined with a
+                    // small cap is exactly the "the cap ate the matches" trap if composed wrongly.
+                    c.groupTitle = (i >= 30) ? L"Sports" : L"News";
+                    rows.push_back(std::move(c));
+                }
+                expect(gdb.bulkInsertChannels(gp, rows, 1000) == 40, "grid: 40 rows inserted");
+
+                Database::GridFilter none;
+                expect(gdb.allChannels(none).size() == 40, "grid: an empty filter returns everything");
+
+                Database::GridFilter cap;
+                cap.limit = 10;
+                expect(gdb.allChannels(cap).size() == 10, "grid: limit caps the row count");
+                Database::GridFilter zero;  // 0 must mean UNLIMITED, not SQLite's "LIMIT 0" = none
+                zero.limit = 0;
+                expect(gdb.allChannels(zero).size() == 40,
+                       "grid: limit 0 means unlimited (SQLite's LIMIT 0 would return NOTHING)");
+
+                // dead_status filtering, server-side.
+                const auto all = gdb.allChannels();
+                expect(all.size() == 40, "grid: baseline before marking dead");
+                gdb.setDeadStatus(all[0].id, DeadStatus::Dead, 5000);
+                Database::GridFilter hide;
+                hide.hideDead = true;
+                expect(gdb.allChannels(hide).size() == 39, "grid: hideDead drops the dead row");
+
+                // Category include-filter, server-side.
+                Database::GridFilter cats;
+                cats.categories = {L"Sports"};
+                expect(gdb.allChannels(cats).size() == 10, "grid: a category filter keeps only that group");
+
+                // *** THE COMPOSITION TEST. Cap of 10 + a filter matching only rows 30..39. If the
+                // cap were applied before the filter (the old C++ order) this returns ZERO. ***
+                Database::GridFilter both;
+                both.categories = {L"Sports"};
+                both.limit = 10;
+                expect(gdb.allChannels(both).size() == 10,
+                       "grid: cap + filter returns the first N MATCHES, not the matches among the "
+                       "first N (the empty-grid bug)");
+
+                // The exemptions the Categories dialog cannot express must survive the filter.
+                ParsedChannel blank;  // no group at all — unofferable in the dialog
+                blank.name = L"NoGroup"; blank.streamUrl = L"http://g/blank.ts";
+                ParsedChannel movie;  // VOD — the dialog is built from listGroups(), live-only
+                movie.name = L"Film"; movie.streamUrl = L"http://g/film.mp4";
+                movie.groupTitle = L"VOD - X"; movie.kind = Channel::Kind::Movie;
+                gdb.bulkInsertChannels(gp, {blank, movie}, 1000);
+                bool keptBlank = false, keptMovie = false;
+                for (const auto& c : gdb.allChannels(cats)) {
+                    if (c.name == L"NoGroup") keptBlank = true;
+                    if (c.name == L"Film") keptMovie = true;
+                }
+                expect(keptBlank, "grid: a blank-group channel is exempt from the category filter");
+                expect(keptMovie, "grid: a MOVIE is exempt too (the dialog cannot offer VOD groups)");
+
+                // searchChannels is the hot path and does not share runChannelQuery's body — pin
+                // that it honours the filter rather than silently ignoring it.
+                Database::GridFilter scap;
+                scap.limit = 3;
+                expect(gdb.searchChannels(L"Ch", scap).size() == 3,
+                       "grid: searchChannels honours the cap (its own Stmt would have ignored it)");
+                expect(gdb.searchChannels(L"Ch").size() == 40,
+                       "grid: ...and is unlimited by default");
+            }
+
             // *** URL canonicalisation — step 1 of the duplicate-movies fix (BACKLOG). The tests
             // that matter here are the NEGATIVE ones. Stripping a default port is worth one
             // duplicate row if it fails to fire; stripping anything else REPOINTS EVERY STREAM IN
@@ -2637,6 +2719,17 @@ int benchDb(int movies, int live) {
         // LIMIT — so this figure, not the one above, is what the user feels while typing.
         put("searchChannels() 1ch",  timeIt([&] { (void)db.searchChannels(L"e"); }));
         put("channelsByPlaylist()", timeIt([&] { (void)db.channelsByPlaylist(pid); }));
+        // *** What the UI ACTUALLY runs. Everything above uses the DAO's default (unlimited)
+        // filter, which is still the right default — mac and every non-grid caller need complete
+        // lists. But loadForFilter and the search box pass a row cap, so without these rows the
+        // table measures a path the app no longer takes and reads as "nothing improved". The cap
+        // mirrors kMaxGridRows in Win32/ui/MainWindowInternal.h (GUI-internal, not includable
+        // here); if that changes, change this. ***
+        Database::GridFilter cap;
+        cap.limit = 5000 + 1;  // +1 is the probe row the UI uses to detect truncation
+        put("allChannels() [grid cap]",  timeIt([&] { (void)db.allChannels(cap); }));
+        put("searchChannels() 1ch [cap]", timeIt([&] { (void)db.searchChannels(L"e", cap); }));
+        put("channelsByPlaylist() [cap]", timeIt([&] { (void)db.channelsByPlaylist(pid, cap); }));
     };
 
     std::vector<Timing> t;

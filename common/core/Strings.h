@@ -635,6 +635,7 @@ enum class StringId {
     StatusVodSyncCancelled,
     StatusVodSyncFailed,
     StatusVodSyncPartial,
+    StatusGridTruncatedSuffix,
     Count  // sentinel — MUST stay last
 };
 

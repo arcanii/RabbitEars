@@ -581,5 +581,6 @@
   "StatusVodSyncNoProvider": "找不到 Xtream 供應商 — 電影同步需要含有使用者名稱與密碼的播放清單網址。",
   "StatusVodSyncCancelled": "已取消電影同步 — 未變更任何項目。",
   "StatusVodSyncFailed": "電影同步失敗 — {0}",
-  "StatusVodSyncPartial": "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。"
+  "StatusVodSyncPartial": "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",
+  "StatusGridTruncatedSuffix": "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍"
 }

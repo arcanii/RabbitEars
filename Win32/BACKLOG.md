@@ -758,7 +758,44 @@ churn per nav click. The fix is almost certainly a `LIMIT` + windowing on the gr
 dead end (see the note above). Until then, note that `listVodGroups()` runs on every `refreshNav`,
 so the Movies root adds ~600-800 ms to a nav rebuild at this scale once VOD is synced.
 
-### 🔴 The search box is the one per-keystroke path VOD still breaks — OWNER DECISION
+### ✅ FIXED — the grid row cap (0.2.17). Measured 13.7x on the real library
+
+`Database::GridFilter` carries a row `limit` plus the two view filters (`hideDead`, `categories`),
+and **the filters moved from C++ into SQL**. That ordering is the entire point: a cap applied AFTER
+a filter yields *"the matches among the first N"* instead of *"the first N matches"* — with a
+20,000-channel playlist whose Sports block sits at position ~15,000, an include-filter of {Sports}
+would have returned an EMPTY grid while Groups ▸ Sports showed the same channels perfectly. Pinned
+by a selftest that returns 0 rows if the composition is ever inverted again.
+
+Measured on the owner's real 411,149-row library:
+
+| | unlimited | `LIMIT 5001` |
+|---|---|---|
+| `allChannels()` | **1485 ms** | **108 ms** |
+| first search keystroke | 1626 ms | ~134 ms |
+
+`kMaxGridRows = 5000`, chosen because the cost curve is nearly flat below ~20,000 (500 → 99 ms,
+5,000 → 116 ms, 20,000 → 162 ms): a generous cap costs almost nothing over a tight one. The UI asks
+for `kMaxGridRows + 1` and trims, so "there are more" is known exactly rather than guessed from
+`size() == limit`.
+
+**The default is still unlimited (0)**, which is what leaves macOS and every non-grid caller
+untouched — favourites export/import, the recording scheduler, both editor dialogs and the dead-link
+sweep all need COMPLETE lists, and a truncated one there would silently drop the user's data rather
+than just hide rows.
+
+⚠️ **`--benchdb` understates this at 2.4x** because its synthetic fixture is not shaped like a real
+library (the owner's has ZERO rows with an LCN and 395,158 distinct `sort_order` values, so the
+bounded sorter discards far more aggressively). The table now includes `[grid cap]` rows so the tool
+at least measures the path the app actually takes — but **trust the real-library number, not the
+fixture.** Same lesson as the section below: the bench defaults are not this library.
+
+**Not fixed, and it is the floor:** ~90-100 ms of every search keystroke is the `LIKE` scan over
+411k rows, irreducible without a different index strategy (FTS5 or a trigram index). So search went
+1626 → ~134 ms, not to zero, and it is still synchronous on the UI thread with no debounce. A
+debounce is the cheap next step; FTS is the real one.
+
+### ~~🔴 The search box is the one per-keystroke path VOD still breaks — OWNER DECISION~~ (superseded by the above)
 
 **Measured 0.63 → 80.00 ms on the first keystroke** (126×), added to `--benchdb` as
 `searchChannels() 1ch` in the VOD UI work (`e4e01a7`). **The 7.9 ms previously recorded above was wrong** —

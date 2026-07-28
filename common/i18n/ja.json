@@ -581,5 +581,6 @@
   "StatusVodSyncNoProvider": "Xtream プロバイダーが見つかりません — 映画の同期にはユーザー名とパスワードを含むプレイリスト URL が必要です。",
   "StatusVodSyncCancelled": "映画の同期を中止しました — 変更はありません。",
   "StatusVodSyncFailed": "映画の同期に失敗しました — {0}",
-  "StatusVodSyncPartial": "映画の同期は完了しませんでした — 停止するまでに {0} 件を追加・更新しました（{1}）。"
+  "StatusVodSyncPartial": "映画の同期は完了しませんでした — 停止するまでに {0} 件を追加・更新しました（{1}）。",
+  "StatusGridTruncatedSuffix": "  ·  先頭 {0} 件のみ表示 — 検索するかグループを選んで絞り込んでください"
 }

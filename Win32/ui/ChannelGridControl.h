@@ -27,7 +27,6 @@ void registerChannelGridClass(HINSTANCE hInst);
 HWND createChannelGrid(HWND parent, HINSTANCE hInst, int id, UINT dpi);
 
 void channelGridSetChannels(HWND grid, std::vector<Channel> channels);
-void channelGridSetFilter(HWND grid, const std::wstring& text);
 void channelGridSetCallbacks(HWND grid, ChannelGridCallbacks cb);
 void channelGridUpdateDpi(HWND grid, UINT dpi);
 void channelGridApplyTheme(HWND grid);

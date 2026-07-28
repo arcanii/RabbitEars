@@ -96,7 +96,19 @@ int dp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
 AppState* stateOf(HWND h) { return reinterpret_cast<AppState*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
 void setStatus(AppState* st, const std::wstring& s) {
-    if (st->status) SetWindowTextW(st->status, s.c_str());
+    if (!st->status) return;
+    // The truncation notice is STICKY, appended here rather than written once by loadForFilter.
+    // The status line is a single shared slot and three flows overwrite it on the very next
+    // statement after refilling the grid — the worst being the playlist import, which reports
+    // "Added 411,149 channels" over a grid holding 5,000 of them. A message that can be clobbered
+    // by the one event most likely to cause truncation is not a message.
+    if (st->gridTruncated)
+        SetWindowTextW(st->status,
+                       (s + trf(i18n::StringId::StatusGridTruncatedSuffix,
+                                {std::to_wstring(kMaxGridRows)}))
+                           .c_str());
+    else
+        SetWindowTextW(st->status, s.c_str());
 }
 
 int cmdBarH(UINT dpi) { return dp(46, dpi); }
@@ -1092,8 +1104,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 } else {
                     // Global search across the whole library (any name/group/tvg match),
                     // not just the current nav view.
-                    std::vector<Channel> hits = st->db.searchChannels(q);
-                    applyChannelFilters(st, hits);
+                    std::vector<Channel> hits =
+                        st->db.searchChannels(q, gridFilter(st, /*capped=*/true));
+                    st->gridTruncated = trimToGridCap(hits);
                     channelGridSetChannels(st->grid, std::move(hits));
                     channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
                     updateCounts(st);

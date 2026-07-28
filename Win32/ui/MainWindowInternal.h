@@ -160,6 +160,15 @@ constexpr int kSeekTicks = 1000;
 // not an omission: `allMovies()` on the owner's real library is 43,599 rows (77 ms measured,
 // Win32/docs/XTREAM_VOD.md), and a 44k-row grid is not something anyone browses. The root's
 // content IS its category list; picking one lands on `MovieGroup`, which is 2.4 ms.
+// Most rows the channel grid will hold. The cap exists because loadForFilter and the search
+// box both materialise their result set on the UI thread: on a real 411,149-row library that
+// was 1,522 ms for All Channels and 1,626 ms PER KEYSTROKE for search. The cost curve is
+// almost flat below ~20,000 (LIMIT 500 = 99 ms, 5,000 = 116 ms, 20,000 = 162 ms) because a
+// LIMIT lets SQLite use a bounded sorter and stop materialising rows, so the cap is set
+// generously rather than tightly — 5,000 costs 17 ms more than 500 and is 13x faster than
+// unlimited. A user cannot meaningfully scroll past it; they narrow with search or a group.
+constexpr int kMaxGridRows = 5000;
+
 enum class ViewKind { All, Favourites, Group, Country, Playlist, Guide, Movies, MovieGroup };
 struct ViewFilter {
     ViewKind     kind = ViewKind::All;
@@ -343,6 +352,10 @@ struct AppState {
     // Channels, which materializes every row (measured 0.65 -> 76.99 ms once VOD is loaded).
     // Rebuilt by refreshNav on every call, so it never outlives its HTREEITEM.
     HTREEITEM navMovies = nullptr;
+    // True when the last grid fill hit kMaxGridRows and the library holds more. Read by setStatus,
+    // which appends a sticky notice — the flows that truncate are the same ones that overwrite the
+    // status line immediately afterwards, so a one-shot message would never be seen.
+    bool gridTruncated = false;
     SpectrumTap spectrumTap;             // read-only WASAPI process-loopback → spectrum meter
     DockLayout  dock;                    // user-arrangeable region layout (persisted)
     std::vector<DockLayout::Gutter> gutters;  // splitter gutters from the last layout()
@@ -396,7 +409,11 @@ void endPanelDrag(HWND hwnd, AppState* st, bool commit);
 LRESULT CALLBACK DockGripProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK VSplitterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void updateCounts(AppState* st);
-void applyChannelFilters(AppState* st, std::vector<Channel>& ch);
+// Build the DAO filter from the current view settings. `capped` asks for kMaxGridRows + 1 rows
+// so the caller can tell "there are more" from "there are exactly this many".
+Database::GridFilter gridFilter(AppState* st, bool capped);
+// Trim the +1 probe row; returns true when it was present, i.e. the view IS truncated.
+bool trimToGridCap(std::vector<Channel>& ch);
 void loadForFilter(AppState* st);
 HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM param, bool bold);
 std::wstring countryLabel(const std::wstring& code);

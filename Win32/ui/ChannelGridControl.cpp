@@ -201,7 +201,6 @@ void logoWorker(std::shared_ptr<LogoCache> cache) {
 struct GridState {
     std::vector<Channel> channels;
     std::vector<size_t>  rowOrder;
-    std::wstring         filterLower;
     int                  selectedRow = -1;
     int                  hoverRow = -1;
     long long            nowPlayingId = 0;
@@ -339,20 +338,18 @@ ID2D1Bitmap* logoBitmap(GridState* st, const std::wstring& url) {
     return nullptr;
 }
 
+// rowOrder is the identity permutation of `channels`: the grid displays exactly what it is handed,
+// in the order it is handed, and does NOT filter or sort client-side.
+//
+// That is worth stating because it used to be able to. A `channelGridSetFilter` existed but was
+// never called from anywhere in Win32/ or mac/, so the branch was dead — and it was actively
+// misleading once the DAO gained a row cap: a client-side filter over a capped window would make a
+// channel unfindable even by typing, which is a far worse failure than a visibly truncated list.
+// Search is a DATABASE query (Database::searchChannels), so narrowing always sees the whole library.
 void applyFilter(GridState* st) {
     st->rowOrder.clear();
-    if (st->filterLower.empty()) {
-        st->rowOrder.reserve(st->channels.size());
-        for (size_t i = 0; i < st->channels.size(); ++i) st->rowOrder.push_back(i);
-    } else {
-        for (size_t i = 0; i < st->channels.size(); ++i) {
-            const Channel& c = st->channels[i];
-            if (lower(c.name).find(st->filterLower) != std::wstring::npos ||
-                lower(c.groupTitle).find(st->filterLower) != std::wstring::npos ||
-                lower(c.tvgName).find(st->filterLower) != std::wstring::npos)
-                st->rowOrder.push_back(i);
-        }
-    }
+    st->rowOrder.reserve(st->channels.size());
+    for (size_t i = 0; i < st->channels.size(); ++i) st->rowOrder.push_back(i);
     st->selectedRow = -1;
 }
 
@@ -809,17 +806,6 @@ void channelGridSetChannels(HWND grid, std::vector<Channel> channels) {
     InvalidateRect(grid, nullptr, FALSE);
 }
 
-void channelGridSetFilter(HWND grid, const std::wstring& textFilter) {
-    GridState* st = stateOf(grid);
-    if (!st) return;
-    const std::wstring lo = lower(textFilter);
-    if (lo == st->filterLower) return;
-    st->filterLower = lo;
-    applyFilter(st);
-    st->scrollY = 0;
-    updateScrollbar(grid, st);
-    InvalidateRect(grid, nullptr, FALSE);
-}
 
 void channelGridSetCallbacks(HWND grid, ChannelGridCallbacks cb) {
     if (GridState* st = stateOf(grid)) st->cb = std::move(cb);

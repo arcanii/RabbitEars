@@ -79,43 +79,49 @@ void updateCounts(AppState* st) {
 
 // Apply the global view settings (currently: hide unavailable/geo-blocked). Reused
 // by the nav views and global search so the toggle is consistent everywhere.
-void applyChannelFilters(AppState* st, std::vector<Channel>& ch) {
-    if (st->hideDead)
-        ch.erase(std::remove_if(ch.begin(), ch.end(),
-                                [](const Channel& c) { return c.deadStatus == DeadStatus::Dead; }),
-                 ch.end());
+// The grid's view settings as a DAO filter. These used to be applied in C++ over the returned
+// vector; they moved into SQL when the row cap arrived, because a cap composed with a post-query
+// filter yields "the matches among the first N" rather than "the first N matches" — see
+// Database::GridFilter. The exemptions for VOD rows and blank groups are unchanged and are
+// documented there.
+//
+// `limit` is asked for as kMaxGridRows + 1 on purpose: getting that many back is what tells the
+// caller the library has MORE, exactly, instead of guessing from `size() == limit` — which cannot
+// distinguish a truncated view from one that happens to hold exactly kMaxGridRows rows.
+Database::GridFilter gridFilter(AppState* st, bool capped) {
+    Database::GridFilter g;
+    g.hideDead = st->hideDead;
     if (st->categoryActive && !st->categories.empty())
-        ch.erase(std::remove_if(ch.begin(), ch.end(),
-                                [st](const Channel& c) {
-                                    // Uncategorized channels (blank group) can't be picked in
-                                    // the Categories dialog, so never hide them behind it. Movies
-                                    // can't either — the dialog is built from `listGroups()`,
-                                    // which is LIVE-only, so a VOD category is not merely
-                                    // unchecked, it is unofferable. Without this exemption a user
-                                    // with any category filter set opens a movie category and
-                                    // gets an empty grid with nothing to explain it.
-                                    return !c.isVod() && !c.groupTitle.empty() &&
-                                           st->categories.find(c.groupTitle) == st->categories.end();
-                                }),
-                 ch.end());
+        g.categories.assign(st->categories.begin(), st->categories.end());
+    if (capped) g.limit = kMaxGridRows + 1;
+    return g;
+}
+
+// Trim the +1 probe row and report whether it was there. Keeping this beside gridFilter() so the
+// two halves of the trick cannot drift apart.
+bool trimToGridCap(std::vector<Channel>& ch) {
+    if (static_cast<int>(ch.size()) <= kMaxGridRows) return false;
+    ch.resize(kMaxGridRows);
+    return true;
 }
 
 void loadForFilter(AppState* st) {
     std::vector<Channel> ch;
+    const Database::GridFilter g = gridFilter(st, /*capped=*/true);
     switch (st->filter.kind) {
-        case ViewKind::All: ch = st->db.allChannels(); break;
-        case ViewKind::Favourites: ch = st->db.favourites(); break;
-        case ViewKind::Group: ch = st->db.channelsByGroup(st->filter.group); break;
-        case ViewKind::Country: ch = st->db.channelsByCountry(st->filter.country); break;
-        case ViewKind::Playlist: ch = st->db.channelsByPlaylist(st->filter.playlistId); break;
+        case ViewKind::All: ch = st->db.allChannels(g); break;
+        case ViewKind::Favourites: ch = st->db.favourites(g); break;
+        case ViewKind::Group: ch = st->db.channelsByGroup(st->filter.group, g); break;
+        case ViewKind::Country: ch = st->db.channelsByCountry(st->filter.country, g); break;
+        case ViewKind::Playlist: ch = st->db.channelsByPlaylist(st->filter.playlistId, g); break;
         case ViewKind::Guide: break;  // action node (opens the TV Guide window); loads no grid channels
         // The Movies ROOT loads nothing on purpose — see the ViewKind comment. It still falls
         // through to the clear-the-grid path below so the view has a defined state rather than
         // the previous nav node's rows left sitting there.
         case ViewKind::Movies: break;
-        case ViewKind::MovieGroup: ch = st->db.moviesByGroup(st->filter.group); break;
+        case ViewKind::MovieGroup: ch = st->db.moviesByGroup(st->filter.group, g); break;
     }
-    applyChannelFilters(st, ch);
+    st->gridTruncated = trimToGridCap(ch);
     channelGridSetChannels(st->grid, std::move(ch));
     channelGridSetNowPlaying(st->grid, st->ap().nowPlayingId);
     updateCounts(st);

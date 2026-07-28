@@ -230,15 +230,51 @@ RecordingRule readRule(Stmt& q) {
     return r;
 }
 
+// The grid filters as a SQL fragment, appended to the caller's own WHERE and BEFORE its ORDER BY,
+// with the values it needs pushed onto `binds` (in placeholder order, after the caller's own).
+//
+// Both predicates mirror, exactly, the C++ filtering this replaced:
+//   hideDead  — DeadStatus::Dead is 2 (models/Channel.h).
+//   categories — keep a row when it is VOD, or has no group at all, or its group is in the set.
+//                The first two exemptions are not incidental: the Categories dialog is built from
+//                listGroups(), which is LIVE-only and skips blank groups, so neither a movie nor an
+//                ungrouped channel can ever be *offered* for ticking — hiding them behind a filter
+//                that cannot express them would make them unreachable.
+std::string gridWhere(const Database::GridFilter& g, std::vector<std::wstring>& binds) {
+    std::string sql;
+    if (g.hideDead) sql += " AND dead_status<>2";
+    if (!g.categories.empty()) {
+        sql += " AND (kind<>0 OR group_title IS NULL OR group_title='' OR group_title IN (";
+        for (size_t i = 0; i < g.categories.size(); ++i) {
+            sql += (i ? ",?" : "?");
+            binds.push_back(g.categories[i]);
+        }
+        sql += "))";
+    }
+    return sql;
+}
+
+// Appended AFTER the ORDER BY. Guarded on > 0 for two independent reasons: a default-constructed
+// GridFilter must reproduce the original SQL byte-for-byte (mac, and every non-grid caller), and
+// SQLite's `LIMIT 0` returns ZERO ROWS — so an unguarded append would silently empty every view.
+std::string gridLimit(const Database::GridFilter& g) {
+    return g.limit > 0 ? " LIMIT " + std::to_string(g.limit) : std::string();
+}
+
 std::vector<Channel> runChannelQuery(sqlite3* db, const std::string& sql,
                                      const std::wstring* bindText = nullptr,
-                                     std::optional<long long> bindInt = std::nullopt) {
+                                     std::optional<long long> bindInt = std::nullopt,
+                                     const std::vector<std::wstring>* extraBinds = nullptr) {
     std::vector<Channel> out;
     Stmt q(db, sql.c_str());
     if (!q) return out;
     int idx = 1;
     if (bindText) q.bindText(idx++, *bindText);
     if (bindInt) q.bindInt(idx++, *bindInt);
+    // The grid-filter values, in the order gridWhere() emitted their placeholders. They come last
+    // because gridWhere() appends its fragment after the caller's own predicates.
+    if (extraBinds)
+        for (const std::wstring& b : *extraBinds) q.bindText(idx++, b);
     while (q.step()) out.push_back(readChannel(q));
     return out;
 }
@@ -1055,69 +1091,91 @@ int Database::retireMissingChannels(long long playlistId, int kind,
 //
 // For a live-only library every row is kind=0, so this term is constant and the ordering is
 // byte-identical to before — including on macOS, which calls allChannels() in four places.
-std::vector<Channel> Database::allChannels() {
+std::vector<Channel> Database::allChannels(const GridFilter& g) {
+    std::vector<std::wstring> binds;
     return runChannelQuery(
-        db_, std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + kEnabledOnly +
-                 " ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE");
+        db_,
+        std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + kEnabledOnly +
+            gridWhere(g, binds) +
+            " ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g),
+        nullptr, std::nullopt, &binds);
 }
 
-std::vector<Channel> Database::channelsByPlaylist(long long playlistId) {
-    return runChannelQuery(db_,
-                           std::string("SELECT ") + kChannelCols +
-                               " FROM channels WHERE playlist_id=? "
-                               "ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
-                           nullptr, playlistId);
+std::vector<Channel> Database::channelsByPlaylist(long long playlistId, const GridFilter& g) {
+    std::vector<std::wstring> binds;
+    return runChannelQuery(
+        db_,
+        std::string("SELECT ") + kChannelCols + " FROM channels WHERE playlist_id=?" +
+            gridWhere(g, binds) +
+            " ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g),
+        nullptr, playlistId, &binds);
 }
 
 // Kind-scoped, so a VOD category that happens to share a name with a live group cannot pull
 // 43,599 films into a live group view (or the reverse). The live tree and the Movies tree
 // are separate namespaces.
-std::vector<Channel> Database::channelsByGroup(const std::wstring& group) {
-    return channelsByGroupOfKind(group, 0);
+std::vector<Channel> Database::channelsByGroup(const std::wstring& group, const GridFilter& g) {
+    return channelsByGroupOfKind(group, 0, g);
 }
 
-std::vector<Channel> Database::moviesByGroup(const std::wstring& group) {
-    return channelsByGroupOfKind(group, static_cast<int>(Channel::Kind::Movie));
+std::vector<Channel> Database::moviesByGroup(const std::wstring& group, const GridFilter& g) {
+    return channelsByGroupOfKind(group, static_cast<int>(Channel::Kind::Movie), g);
 }
 
-std::vector<Channel> Database::channelsByGroupOfKind(const std::wstring& group, int kind) {
+std::vector<Channel> Database::channelsByGroupOfKind(const std::wstring& group, int kind,
+                                                     const GridFilter& g) {
     // kind first: the partial indexes make it the cheap discriminator.
+    std::vector<std::wstring> binds;
     std::string sql = std::string("SELECT ") + kChannelCols +
                       " FROM channels WHERE kind=" + std::to_string(kind) +
-                      " AND group_title=? AND " + kEnabledOnly +
-                      " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE";
-    return runChannelQuery(db_, sql, &group);
+                      " AND group_title=? AND " + kEnabledOnly + gridWhere(g, binds) +
+                      " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g);
+    return runChannelQuery(db_, sql, &group, std::nullopt, &binds);
 }
 
 // Every movie, for the "Movies" root itself. Sorted newest-first on the provider's `added`
 // stamp — with 43,599 items an alphabetical wall is useless, and "what's new" is the one
 // ordering a VOD library is actually browsed by. Ties fall back to name so the order is
 // stable (added_at is 0 for anything imported before v8 or from a panel that omits it).
-std::vector<Channel> Database::allMovies() {
-    return runChannelQuery(db_, std::string("SELECT ") + kChannelCols +
-                                    " FROM channels WHERE kind=1 AND " + kEnabledOnly +
-                                    " ORDER BY added_at DESC, name COLLATE NOCASE");
+std::vector<Channel> Database::allMovies(const GridFilter& g) {
+    std::vector<std::wstring> binds;
+    return runChannelQuery(db_,
+                           std::string("SELECT ") + kChannelCols +
+                               " FROM channels WHERE kind=1 AND " + kEnabledOnly +
+                               gridWhere(g, binds) +
+                               " ORDER BY added_at DESC, name COLLATE NOCASE" + gridLimit(g),
+                           nullptr, std::nullopt, &binds);
 }
 
-std::vector<Channel> Database::favourites() {
-    return runChannelQuery(db_, std::string("SELECT ") + kChannelCols +
-                                    " FROM channels WHERE is_favourite=1 AND " + kEnabledOnly +
-                                    " ORDER BY (lcn IS NULL), lcn, name COLLATE NOCASE");
+std::vector<Channel> Database::favourites(const GridFilter& g) {
+    std::vector<std::wstring> binds;
+    return runChannelQuery(db_,
+                           std::string("SELECT ") + kChannelCols +
+                               " FROM channels WHERE is_favourite=1 AND " + kEnabledOnly +
+                               gridWhere(g, binds) +
+                               " ORDER BY (lcn IS NULL), lcn, name COLLATE NOCASE" + gridLimit(g),
+                           nullptr, std::nullopt, &binds);
 }
 
-std::vector<Channel> Database::searchChannels(const std::wstring& term) {
+std::vector<Channel> Database::searchChannels(const std::wstring& term, const GridFilter& g) {
     // Case-insensitive substring match on name/group/tvg_name.
+    //
+    // ⚠ Routed through runChannelQuery like every other grid query, and that is deliberate: this
+    // used to build its own Stmt, which meant a "central" limit added to the shared helper would
+    // have silently skipped THE hottest path in the app. This runs on every EN_CHANGE of the search
+    // box, synchronously on the UI thread — 1,626 ms per keystroke on a 411k-row library before the
+    // cap, 134 ms after. The pattern is bound once at ?1 and referenced three times; the grid
+    // filter's bare `?` placeholders take the next free indexes after it.
     const std::wstring pattern = L"%" + term + L"%";
-    std::vector<Channel> out;
-    Stmt q(db_, (std::string("SELECT ") + kChannelCols +
-                 " FROM channels WHERE (name LIKE ?1 COLLATE NOCASE "
-                 "OR group_title LIKE ?1 COLLATE NOCASE OR tvg_name LIKE ?1 COLLATE NOCASE) AND " +
-                 kEnabledOnly + " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE")
-                    .c_str());
-    if (!q) return out;
-    q.bindText(1, pattern);
-    while (q.step()) out.push_back(readChannel(q));
-    return out;
+    std::vector<std::wstring> binds;
+    return runChannelQuery(
+        db_,
+        std::string("SELECT ") + kChannelCols +
+            " FROM channels WHERE (name LIKE ?1 COLLATE NOCASE "
+            "OR group_title LIKE ?1 COLLATE NOCASE OR tvg_name LIKE ?1 COLLATE NOCASE) AND " +
+            kEnabledOnly + gridWhere(g, binds) +
+            " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g),
+        &pattern, std::nullopt, &binds);
 }
 
 std::optional<Channel> Database::channelByLcn(int lcn) {
@@ -1196,7 +1254,7 @@ std::vector<std::wstring> Database::listCountries() {
     return out;
 }
 
-std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
+std::vector<Channel> Database::channelsByCountry(const std::wstring& code, const GridFilter& g) {
     // Filter on the same effective country as listCountries (one rule, the SQL scalar), so
     // the two stay in lockstep. Filtering server-side matters: the mac search path evaluates
     // the active country filter per keystroke, and materializing every channel row here
@@ -1210,12 +1268,15 @@ std::vector<Channel> Database::channelsByCountry(const std::wstring& code) {
     // kLiveOnly comes FIRST so SQLite discards a VOD row before ever calling the scalar —
     // that is where the 43,599-row cost actually lived. See kLiveOnly for why movies are
     // excluded on correctness grounds too, not merely for speed.
+    std::vector<std::wstring> binds;
     return runChannelQuery(db_,
                            std::string("SELECT ") + kChannelCols + " FROM channels WHERE " +
                                kLiveOnly +
                                " AND effective_country(tvg_id, group_title)=? AND " + kEnabledOnly +
-                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE",
-                           &want);
+                               gridWhere(g, binds) +
+                               " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" +
+                               gridLimit(g),
+                           &want, std::nullopt, &binds);
 }
 
 void Database::setFavourite(long long channelId, bool favourite) {
