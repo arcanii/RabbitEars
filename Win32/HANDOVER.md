@@ -603,16 +603,26 @@ and the analysis in BACKLOG before doing any more perf work on this table.**
 owner-verified before the cut (below); the VOD sync was not, because the line expired first. In
 priority order:
 
-0. 🔴🔴 **THE FIRST REAL VOD SYNC — still outstanding, and it is now shipped code.** Needs a renewed
-   Xtream line. Settings ▸ Channels ▸ "Sync movies from provider", with **playback stopped** (the
-   gate refuses otherwise, by design). Expect ~10 s and ~13.5 MB. Watch for: the 🎬 Movies root
-   appearing with its categories, a category listing films, one film playing, and the status line's
-   added/removed counts.
-   **What to look at hardest is the SECOND sync**, not the first: the first can only insert, while
-   the second is the one that calls `retireMissingChannels` in anger and can DELETE. A count of
-   removals wildly out of proportion to what the provider actually dropped is the failure to watch
-   for — and "Movie sync done — N added or updated, 0 removed" on a second run is the healthy answer.
-   If it goes wrong, the library is rebuildable: delete the playlist and re-import.
+0. ✅ **THE FIRST REAL VOD SYNC RAN (2026-07-28) — and it works.** Owner's live provider:
+   **43,606 movies, 67 categories**, all with group titles and `added_at` populated, the 🎬 Movies
+   root appeared in the sidebar when it finished, films play, and seek/pause/scrub work on them.
+   The headline feature of 0.2.16 is no longer unexercised.
+
+   🔴🔴🔴 **…but it DOUBLED the movie library instead of upgrading it in place — see BACKLOG,
+   "EVERY FILM IS STORED TWICE".** The provider's m3u emits `http://host:80/movie/…` while
+   `xtreamMovieUrl()` builds `http://host/movie/…` from the port-less playlist URL, so the
+   `(playlist_id, stream_url)` dedupe never fires. `bulkInsertChannels`' comment claims that
+   collision happens "BY DESIGN"; a real provider has falsified it. 43,599 `kind=0` duplicates now
+   sit in the LIVE tree beside 43,606 `kind=1` rows. **Not destructive, does not self-heal, and a
+   second sync is safe** (the keep-set matches the `kind=1` rows exactly). The fix is a canonical
+   `stream_url` plus a deduping migration — scoped in BACKLOG, and the migration is the half that
+   can lose user state, so it wants care rather than speed.
+
+   **Still worth doing: run the sync a SECOND time.** The first can only insert; the second is the
+   one that calls `retireMissingChannels` in anger and can DELETE. "Movie sync done — N added or
+   updated, **0 removed**" is the healthy answer. A removal count out of proportion to what the
+   provider actually dropped is the failure to watch for. If it ever goes wrong the library is
+   rebuildable: delete the playlist and re-import.
 
 1. ✅ **ANSWERED ON DEVICE (2026-07-28) — GO.** The live-HLS-DVR question is closed. On the owner's
    real provider the scrub bar and time readout are **absent on an ordinary live channel**

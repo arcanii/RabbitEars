@@ -610,6 +610,53 @@ Remaining VOD-side costs are inherent and on non-interactive paths: `moviesByGro
 `listVodGroups()` 9.7 ms (nav refresh), `allMovies()` **77 ms** (materializes 43,599 rows — which is
 why the Movies root shows categories only, as shipped), bulk insert ~260 ms.
 
+### 🔴🔴🔴 EVERY FILM IS STORED TWICE — the m3u/sync dedupe collision does NOT happen · found on-device 2026-07-28
+
+**The first real VOD sync ran successfully** (owner's provider, 43,606 movies, 67 categories, Movies
+root appeared) — **and it doubled the movie library instead of upgrading it in place.**
+
+`bulkInsertChannels` documents the intended behaviour explicitly: *"An Xtream `m3u_plus` playlist
+already carries /movie/USER/PASS/id.ext rows, and the VOD sync constructs the identical URL, so they
+collide on idx_channels_dedupe BY DESIGN."* **A real provider has falsified that.** Measured from
+the owner's live DB:
+
+```
+m3u  (kind=0)   http://line.dndnscloud.ru:80/movie/USER/PASS/1218804.mp4
+sync (kind=1)   http://line.dndnscloud.ru/movie/USER/PASS/1218804.mp4
+```
+
+Same stream id, same container, **different string** — the provider's m3u emits the explicit default
+port `:80`, while `xtreamMovieUrl()` builds the origin from the *playlist* URL, which the owner
+entered without a port. The unique index is on the literal `stream_url`, so nothing collides.
+
+Result on the owner's library: playlist rows went **410,147 → 453,753**, i.e. +43,606 rather than
++7. There are now **43,599 `kind=0`** movie rows (m3u, grouped `VOD - …` in the LIVE tree) beside
+**43,606 `kind=1`** rows (the Movies root). Every film shows twice in All Channels and in search, and
+appears both under Groups and under Movies.
+
+**It does not self-heal, and it gets worse:** `retireMissingChannels` is scoped to `kind=Movie`, so
+it will never touch the `kind=0` duplicates; and every ordinary playlist refresh re-imports them.
+
+**A second sync is SAFE** — the keep-set is built from the same constructed URLs, so it matches the
+`kind=1` rows exactly and should report `0 removed`. Nothing here is urgent-destructive; it is
+duplication, not loss.
+
+**The fix is a canonical `stream_url`, and it is not a one-liner.** Sketch, in the order the risk
+sits:
+1. A pure `canonicalStreamUrl()` in `common/` — strip the scheme's default port (`:80` http, `:443`
+   https), and nothing else. Cheap, testable headlessly, obviously correct.
+2. Apply it on **both** write paths (`bulkInsertChannels` for the M3U import AND the VOD rows), so
+   new writes converge.
+3. ⚠️ **The migration is the hard half.** Rewriting existing rows makes previously-distinct URLs
+   equal, which **violates `idx_channels_dedupe`** — so it has to dedupe as it rewrites, and decide
+   which row survives. The surviving row should keep the USER's data (favourite, LCN, resume
+   position, watched) merged from both, and `kind` should win toward Movie. Get this wrong and it is
+   the first migration in this project that can lose user state rather than just columns.
+4. Re-measure: dropping 43,599 duplicate rows is also the cheapest perf win available (see below).
+
+**Do not skip step 1's selftest.** A URL-canonicalizer that is even slightly too aggressive (dropping
+a NON-default port, say) silently repoints every stream in the library at the wrong endpoint.
+
 ### 🔴🔴 THE BENCHMARK'S DEFAULT SHAPE IS NOT THE OWNER'S LIBRARY — measured on-device 2026-07-28
 
 `--benchdb` defaults to **43,599 movies + 442 live**, straight from the design doc. The owner's real
