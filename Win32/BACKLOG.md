@@ -461,11 +461,11 @@ completeness + placeholder parity across ALL shipped languages. Remaining:
 > [`docs/XTREAM_VOD.md`](docs/XTREAM_VOD.md), written off MEASURED numbers from the owner's real
 > provider — read it before touching this epic.
 >
-> ⚠️ **The 0.2.16 / 0.2.17 split COLLAPSED into one release (owner's call, 2026-07-28).** 0.2.16 was
-> never tagged and never given an appcast, so no user ever had it — both halves ship as a single
-> **0.2.16** and the number 0.2.17 is skipped. `APP_VERSION` is already `0.2.16`, so no bump is
-> needed. Text below (and the commit messages) that says "0.2.17" predates that call and means *the
-> Xtream VOD work*.
+> ⚠️ **The two PLANNED releases merged into one shipped 0.2.16 (owner's call, 2026-07-28).** 0.2.16
+> was never tagged and never given an appcast, so no user ever had it — both halves shipped together
+> as **v0.2.16**. What merged is the release plan, not the numbering: **0.2.17 is the next version,
+> unused and available.** Text below (and the commit messages) that says "0.2.17" predates that call
+> and means *the Xtream VOD work*.
 >
 > **Nothing is left to BUILD for movies** — the parser, client, schema, DAO, the Movies nav root, the
 > sync worker, the Settings action and the i18n are all done, selftested and committed. What is left
@@ -553,8 +553,8 @@ kept as the plan of record because the shape of the work is unchanged.
   `common/core/Json.{h,cpp}` (the JSON reader moved EARLIER than planned — the recon tool needed the
   shape questions answered first, and the parser is the cheapest thing to test headlessly), schema
   v8, plus the buffer-meter glass. *Pending the owner's on-device pass.*
-- **~~0.2.17~~ → also ships as 0.2.16** — the **Xtream client**, movies only, existing grid, no
-  posters. `common/core/XtreamClient` (`538f0b2`) + the sync worker, Movies nav root and Settings
+- **✅ SHIPPED in v0.2.16 (the planned "0.2.17" half)** — the **Xtream client**, movies only, existing
+  grid, no posters. `common/core/XtreamClient` (`538f0b2`) + the sync worker, Movies nav root and Settings
   action (`e4e01a7`). **Code complete and pushed; unseen on a device.**
   ⚠️ Success was written as "43,599 movies in the grid, one plays, **resume works**" — the first two
   are built, the third is NOT: resume depends on the three §6 open questions (where `durationSec` is

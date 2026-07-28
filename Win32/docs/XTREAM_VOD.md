@@ -193,23 +193,24 @@ and it lands on features that are already shipped and working.
 
 ## 5. Release plan
 
-⚠️ **The 0.2.16 / 0.2.17 split COLLAPSED into one release (owner's call, 2026-07-28).** 0.2.16 was
-built and version-bumped but never tagged and never given an appcast, so no user ever had it — which
-means the two planned releases can ship as a single **0.2.16**, and the version number 0.2.17 is
-simply skipped. WinSparkle only cares that the offered version is higher than the installed one, and
-0.2.16 > 0.2.15 for every existing user. Below, the two bullets are kept as the *plan of record* with
-their actual shipping vehicle noted; the shape of the work is unchanged.
+⚠️ **The two planned releases MERGED into one — ✅ SHIPPED as v0.2.16 (2026-07-28).** 0.2.16 was
+built and version-bumped but never tagged and never given an appcast, so no user ever had it; both
+halves therefore went out together. What merged is this plan, **not the version numbering — 0.2.17 is
+the next version, unused and available.**
 
-- **~~0.2.16~~ → ships as 0.2.16 — ✅ groundwork landed** (`ffb69dc`). Player seek + scrub bar + time
-  readout; JSON reader; schema v8; buffer-meter glass. Independently useful, all of it a prerequisite.
-- **~~0.2.17~~ → ships as 0.2.16 — Xtream client, movies only, existing grid, no posters.**
+- **✅ SHIPPED in v0.2.16 — groundwork** (`ffb69dc`). Player seek + scrub bar + time readout; JSON
+  reader; schema v8; buffer-meter glass. Independently useful, all of it a prerequisite.
+- **✅ SHIPPED in v0.2.16 — Xtream client, movies only, existing grid, no posters.**
   `common/core/XtreamClient` (`538f0b2`), the sync worker + Movies nav root + Settings action
-  (`e4e01a7`). Proves the API against a real provider at minimum cost.
+  (`e4e01a7`).
   Success was written as "43,599 movies in the grid, one plays, **resume works**" — the first two are
   built; resume is NOT, because it depends on three of §6's open questions that remain owner calls.
-  **As built this is browse-and-play**; resume is listed under 0.3.0 anyway ("resume everywhere").
-- **0.3.0 — series → seasons → episodes, posters *for series*, resume everywhere.** The minor bump
-  marks the capability's arrival, not the start of the work.
+  **As shipped this is browse-and-play**; resume is listed under 0.3.0 anyway ("resume everywhere").
+  ⚠️ The sync itself shipped **never having run against a live provider** (the test line expired) —
+  see HANDOVER "What still needs the owner".
+- **NEXT (0.2.17 or 0.3.0) — series → seasons → episodes, posters *for series*, resume everywhere.**
+  §1 already carries the measured shape for series. A minor bump would mark the capability's arrival;
+  0.2.17 is equally available if it lands incrementally.
 
 ---
 

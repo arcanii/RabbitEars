@@ -62,19 +62,19 @@ luck: it is user-triggered, invisible without an Xtream playlist, gated on playb
 refuses to delete anything when too much of the response was unusable. **First real sync is still
 outstanding — see "What still needs the owner".**
 
-> ### ⚠️ Version note — the 0.2.16 / 0.2.17 split collapsed (owner's call, 2026-07-28)
+> ### ⚠️ Version note — the two PLANNED releases merged into one shipped 0.2.16 (owner's call, 2026-07-28)
 >
 > The plan was 0.2.16 = groundwork, 0.2.17 = the Xtream client. **0.2.16 was version-bumped but never
-> tagged and never given an appcast, so no user ever had it** — which means both land as a single
-> **0.2.16** and the number **0.2.17 is skipped entirely**. WinSparkle only compares against the
-> INSTALLED version, and 0.2.16 > 0.2.15 for everyone. Practical consequences: `APP_VERSION` is
-> already `0.2.16`, so **no bump is needed**; and text below that predates this call may still say
-> "0.2.17" where it means "the Xtream VOD work" — commit messages (`538f0b2`, `e4e01a7`) say it too
-> and cannot be rewritten. Read those as *the VOD half of 0.2.16*.
+> tagged and never given an appcast, so no user ever had it** — so both halves shipped together as a
+> single **0.2.16**. What merged is the *release plan*, not the version numbering: **0.2.17 is simply
+> the next version, unused and available.** Practical consequences: no bump was needed for this cut
+> (`APP_VERSION` already read `0.2.16`); and text elsewhere that says "0.2.17" where it means "the
+> Xtream VOD work" predates this call — commit messages (`538f0b2`, `e4e01a7`) say it too and cannot
+> be rewritten. Read those as *the VOD half of 0.2.16*.
 
 > **`main` is clean and fully released.** `APP_VERSION` is `0.2.16` (`cmake/AppVersion.cmake:11`; the
-> `if(APPLE)` override is untouched at `0.2.15`) — **the next release bumps it**, and since 0.2.17 was
-> skipped, that means **0.2.18** (or 0.3.0 if series lands first).
+> `if(APPLE)` override is untouched at `0.2.15`) — **the next release bumps it to `0.2.17`**, or to
+> `0.3.0` if series lands first and you want the minor bump to mark the capability.
 >
 > The Xtream VOD epic's two gates are both CLOSED and **movies have SHIPPED**. The design doc —
 > written off a REAL provider's measured answers, not estimates — is
@@ -375,8 +375,8 @@ Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** �
 merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
 only branch local and remote. (All five were verified fully merged with zero unmerged commits and no
 open PRs before deletion; four of them belonged to already-merged macOS PRs #33/#34/#35/#42.)
-Tags `v0.1.0`…**`v0.2.16`** — note **`v0.2.17` will never exist**, the number was skipped when the
-split collapsed. **v0.2.16 released @ `d83b002`** (full `0.2.16.377`; both appcasts @ `0344b54`) —
+Tags `v0.1.0`…**`v0.2.16`**; **the next tag is `v0.2.17`** (or `v0.3.0`) — nothing is reserved or
+burned. **v0.2.16 released @ `d83b002`** (full `0.2.16.377`; both appcasts @ `0344b54`) —
 the Xtream VOD release: movies sync into a 🎬 Movies root, player seek + scrub bar, buffer-meter
 glass. Prior: **v0.2.15 released @ `1324f5f`** (full `0.2.15.365`; both appcasts @
 `77035ed`) — the instruments release: VU relit from a bottom bulb + optional blue lamp, framed glass,
@@ -406,10 +406,10 @@ commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
 
-### 🚧 The six unreleased commits (2026-07-27 → 28) — ALL of 0.2.16
+### 📦 What went into 0.2.16 (2026-07-27 → 28) — six commits, all now released
 
-`APP_VERSION` = **`0.2.16`** and **needs no bump** (see the version note at the top: 0.2.17 is
-skipped). Both theme flags build clean at /W4 and `--selftest` is ALL PASS after every one of them.
+`APP_VERSION` was already `0.2.16` when these landed, so the cut needed no bump. Both theme flags
+build clean at /W4 and `--selftest` is ALL PASS after every one of them.
 
 | commit | what |
 |---|---|
