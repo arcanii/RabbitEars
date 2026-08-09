@@ -22,6 +22,7 @@
 #include "core/M3uWriter.h"
 #include "core/RecordingRules.h"
 #include "core/RecordingScheduler.h"
+#include "core/UrlCanon.h"
 #include "core/XmltvParser.h"
 #include "models/Programme.h"
 #include "models/RecordingRule.h"
@@ -116,6 +117,14 @@ struct MacVideoPane {
 // Filter popup tags.
 enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
 
+// Most rows the grid will materialise in one fill (Win32 kMaxGridRows parity). The real cost is
+// not the NSTableView — it is building `_channels`, which on a big library was measured on Windows
+// at 1485 ms for All Channels and 1626 ms PER KEYSTROKE for search. The queries ask for
+// kMaxGridRows + 1 on purpose: getting that many back is what proves the library holds MORE,
+// exactly, instead of guessing from `size() == limit`, which cannot tell a truncated view from one
+// that happens to hold exactly the cap.
+constexpr int kMaxGridRows = 5000;
+
 // Chrome metrics, shared by showWindow and the hide/show-chrome relayout.
 static const CGFloat kBarH = 46;     // top command bar height
 static const CGFloat kStatusH = 22;  // bottom status/volume bar height
@@ -172,6 +181,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
     BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     BOOL           _hideDead;    // Settings ⚙ ▸ Channels ▸ Hide unavailable channels ("hide_dead")
+    BOOL           _gridTruncated;  // last grid fill hit kMaxGridRows and the library holds more
     BOOL           _startupFinished;  // YES once -finishStartup ran (ToU accepted); gates the menu until then
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     IOPMAssertionID _keepDisplayAwake;  // display-sleep/screen-saver assertion held while fullscreen or video-only
@@ -180,6 +190,11 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     // shared planScheduler() core and expands EPG rules.
     std::unique_ptr<VlcPlayerMac> _scheduleRecorder;
     NSTimer*       _schedulerTimer;
+    // Search debounce. Unlike the app-lifetime timers here, this one is invalidated and replaced
+    // on every keystroke, so it is RETAINED explicitly: after -invalidate the run loop drops its
+    // own reference immediately, and a bare ivar would then dangle until the next assignment —
+    // the exact MRC shape that has produced three shipped over-release crashes in this file.
+    NSTimer*       _searchTimer;
     long long      _activeScheduleId;   // the schedule currently on _scheduleRecorder (0 == none)
     BOOL           _schedulerReconciled; // one-time startup reset of stale "Recording" rows
     long long      _rulesExpandedAt;    // last rule-expansion time (throttled; 0 == never)
@@ -293,6 +308,26 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _window.delegate = self;  // windowDidEnter/ExitFullScreen: -> screen-saver (display-sleep) assertion
     NSView* content = _window.contentView;
     const NSSize cs = content.bounds.size;  // real content size — frameAutosave may restore a larger frame
+
+    // ⚠ GET A REAL WINDOW ON SCREEN BEFORE OPENING THE DB, AND PAINT IT.
+    //
+    // `open()` runs migrate(), and as of schema v9 that is no longer bookkeeping: v9 rewrites
+    // every stored stream_url to its canonical spelling and merges the rows that collide
+    // (Database.cpp:714) — measured at 6.6 s on a 454k-row library, synchronously, on the main
+    // thread. Until now the window was not ordered front until ~230 lines later, so that entire
+    // pause happened with NOTHING on screen: the dock icon bounces, no window appears, and the OS
+    // shows the spinner. That is exactly how the 0.2.13 launch-hang was reported, and the lesson
+    // recorded then was "any slow launch-time work must happen behind a window that is already
+    // visible" — a lesson that costs nothing to honour and a support round-trip to relearn.
+    //
+    // makeKeyAndOrderFront: alone is NOT enough: it schedules a display, it does not perform one,
+    // so blocking the main thread immediately afterwards can still beat the first paint.
+    // -displayIfNeeded forces the draw synchronously, so the frame is genuinely up first.
+    // (The later makeKeyAndOrderFront:/activate pair at the end of -showWindow is kept: it is what
+    // re-asserts activation for a non-activating Sparkle relaunch, and is harmless when repeated.)
+    [_window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [_window displayIfNeeded];
 
     std::wstring err;
     if (!_db->open(Database::defaultDbPath(), &err)) {
@@ -754,7 +789,19 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     return m;
 }
 
-- (void)setStatus:(NSString*)s { _status.stringValue = s; }
+// The truncation notice is STICKY — appended to EVERY status message while the grid is capped,
+// rather than written once by -refreshChannels. The status line is a single shared slot and
+// several flows overwrite it on the very next statement after refilling the grid; the worst is a
+// playlist import reporting "Added 411,149 channels" over a grid holding 5,000 of them. A message
+// that can be clobbered by the one event most likely to cause truncation is not a message.
+// (Win32 does the same in its setStatus — MainWindow.cpp:105-111.)
+- (void)setStatus:(NSString*)s {
+    _status.stringValue =
+        _gridTruncated
+            ? [s stringByAppendingString:TrF(StringId::StatusGridTruncatedSuffix,
+                                             {[NSString stringWithFormat:@"%d", kMaxGridRows]})]
+            : s;
+}
 
 // Settings ▸ Language applies LIVE (no restart), the mac peer of Win32 applyLanguageChange. The
 // caller (AppDelegate -selectLanguage:) has already flipped the process-global active language via
@@ -927,55 +974,75 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [_filter selectItemAtIndex:0];
 }
 
+// Build the DAO filter from the current view settings (peer of Win32 gridFilter()). `capped` asks
+// for kMaxGridRows + 1 rows; pass NO for any caller that needs a COMPLETE list.
+- (rabbitears::Database::GridFilter)gridFilterCapped:(BOOL)capped {
+    rabbitears::Database::GridFilter g;
+    g.hideDead = _hideDead ? true : false;
+    if (!_categoryFilter.empty())
+        g.categories.assign(_categoryFilter.begin(), _categoryFilter.end());
+    if (capped) g.limit = kMaxGridRows + 1;
+    return g;
+}
+
+// Trim the +1 probe row and report whether it was there. Beside -gridFilterCapped: so the two
+// halves of the trick cannot drift apart.
+static bool trimToGridCap(std::vector<Channel>& ch) {
+    if ((int)ch.size() <= kMaxGridRows) return false;
+    ch.resize(kMaxGridRows);
+    return true;
+}
+
 // Apply the current search text + filter selection and reload the table.
 - (void)refreshChannels {
-    if (!_db) { _channels.clear(); [_table reloadData]; return; }
+    // Cancel any pending debounced search. Done HERE rather than at each call site so that every
+    // path into a refresh — filter popup, Categories apply, playlist reload, dead-status clear —
+    // is safe from a keystroke fired 200 ms ago landing on top of it.
+    [_searchTimer invalidate];
+    [_searchTimer release];
+    _searchTimer = nil;
+    if (!_db) { _channels.clear(); _gridTruncated = NO; [_table reloadData]; return; }
     const std::wstring q = ws(_search.stringValue);
     NSMenuItem* sel = _filter.selectedItem;
 
+    // ⚠ THE VIEW FILTERS LIVE IN SQL NOW, AND THAT IS THE WHOLE POINT. They used to be applied in
+    // C++ over the returned vector, which composes the wrong way round the moment a limit exists:
+    // "the matches among the first 5,000 rows" instead of "the first 5,000 matches". With a
+    // Sports block sitting at position ~15,000 an include-filter of {Sports} would have returned
+    // an EMPTY grid while Groups ▸ Sports showed the same channels perfectly. Pushing the
+    // predicates down means the cap applies to the FILTERED set — see Database.h.
+    const rabbitears::Database::GridFilter g = [self gridFilterCapped:YES];
+
     // The channel set for the active filter (favourites / group / country / all).
-    auto filteredSet = [&]() -> std::vector<Channel> {
+    auto filteredSet = [&](const rabbitears::Database::GridFilter& gf) -> std::vector<Channel> {
         switch (sel.tag) {
-            case kFilterFavourites: return _db->favourites();
-            case kFilterGroup:      return _db->channelsByGroup(ws(sel.representedObject));
-            case kFilterCountry:    return _db->channelsByCountry(ws(sel.representedObject));
-            default:                return _currentPid ? _db->channelsByPlaylist(_currentPid)
-                                                       : _db->allChannels();
+            case kFilterFavourites: return _db->favourites(gf);
+            case kFilterGroup:      return _db->channelsByGroup(ws(sel.representedObject), gf);
+            case kFilterCountry:    return _db->channelsByCountry(ws(sel.representedObject), gf);
+            default:                return _currentPid ? _db->channelsByPlaylist(_currentPid, gf)
+                                                       : _db->allChannels(gf);
         }
     };
 
     if (q.empty()) {
-        _channels = filteredSet();
+        _channels = filteredSet(g);
+        _gridTruncated = trimToGridCap(_channels);
     } else if (sel.tag == kFilterAll) {
-        _channels = _db->searchChannels(q);  // search across the full (all-channels) view
+        _channels = _db->searchChannels(q, g);  // search across the full (all-channels) view
+        _gridTruncated = trimToGridCap(_channels);
     } else {
-        // Search AND filter both apply: intersect the search hits with the filter
-        // set by id, so e.g. ★ Favourites + "news" shows favourites matching "news".
+        // Search AND filter both apply: intersect the search hits with the filter set by id, so
+        // e.g. ★ Favourites + "news" shows favourites matching "news". The MEMBERSHIP set must be
+        // UNCAPPED — capping it would drop a genuine hit merely for sitting past row 5,000 of the
+        // filter view — so the cap is applied to the intersection afterwards, which is the only
+        // place it means "the first N results". Both queries still carry the view predicates, so
+        // the expensive half is bounded in SQL; these filter views are the narrow ones anyway.
         std::set<long long> keep;
-        for (const auto& c : filteredSet()) keep.insert(c.id);
+        for (const auto& c : filteredSet([self gridFilterCapped:NO])) keep.insert(c.id);
         _channels.clear();
-        for (auto& c : _db->searchChannels(q))
+        for (auto& c : _db->searchChannels(q, [self gridFilterCapped:NO]))
             if (keep.count(c.id)) _channels.push_back(std::move(c));
-    }
-
-    // Categories include-filter: keep only channels whose group is checked (blank groups always show,
-    // matching Win32). Applied after the popup/search filters so it composes with them.
-    if (!_categoryFilter.empty()) {
-        std::vector<Channel> kept;
-        kept.reserve(_channels.size());
-        for (auto& c : _channels)
-            if (c.groupTitle.empty() || _categoryFilter.count(c.groupTitle))
-                kept.push_back(std::move(c));
-        _channels = std::move(kept);
-    }
-
-    // Hide unavailable: drop channels marked Dead (Settings ⚙ ▸ Channels ▸ Hide unavailable channels).
-    if (_hideDead) {
-        std::vector<Channel> kept;
-        kept.reserve(_channels.size());
-        for (auto& c : _channels)
-            if (c.deadStatus != DeadStatus::Dead) kept.push_back(std::move(c));
-        _channels = std::move(kept);
+        _gridTruncated = trimToGridCap(_channels);
     }
 
     [_table deselectAll:nil];
@@ -1104,8 +1171,46 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 
 - (void)filterChanged:(id)__unused sender { [self refreshChannels]; }
 
+// Reset every channel to "not checked" — the undo for a wrong dead-status (Win32 parity).
+// Confirmed, because it throws away results and there is no undo for the undo.
+- (void)clearDeadStatuses:(id)__unused sender {
+    if (!_db) return;
+    NSAlert* a = [[[NSAlert alloc] init] autorelease];
+    a.messageText = Tr(StringId::MenuDeadLinkClear);
+    a.informativeText = Tr(StringId::DialogDeadLinkClearBody);
+    [a addButtonWithTitle:Tr(StringId::ButtonOk)];
+    [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
+    MainWindowController* __unsafe_unretained me = self;
+    [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse r) {
+        if (r != NSAlertFirstButtonReturn || !me->_db) return;
+        const int n = me->_db->clearDeadStatuses();
+        if (n < 0) {  // the write FAILED — never claim success, the channels are still hidden
+            [me setStatus:Tr(StringId::StatusDeadLinkClearFailed)];
+            return;
+        }
+        // Rows hidden by "Hide unavailable" must come back NOW, not on the next navigation: the
+        // grid filters on dead_status in SQL, and _channels is a cached vector.
+        [me refreshChannels];
+        [me setStatus:TrF(StringId::StatusDeadLinkCleared,
+                          {[NSString stringWithFormat:@"%d", n]})];
+    }];
+}
+
+// Live search, DEBOUNCED: a typing burst is one query, not one per keystroke. Even with the
+// kMaxGridRows cap the search runs synchronously on the main thread, so on a large library each
+// keystroke was a full query + table reload (Windows measured 1626 ms per keystroke before its
+// cap). Re-arming a short one-shot timer collapses a burst into a single refresh after the user
+// pauses. -refreshChannels cancels any pending shot itself, so a stale keystroke can never land
+// on top of a filter change, a Categories apply, or a playlist reload.
 - (void)controlTextDidChange:(NSNotification*)note {
-    if (note.object == _search) [self refreshChannels];  // live search
+    if (note.object != _search) return;
+    [_searchTimer invalidate];
+    [_searchTimer release];
+    MainWindowController* __unsafe_unretained me = self;
+    _searchTimer = [[NSTimer scheduledTimerWithTimeInterval:0.2 repeats:NO
+                                                      block:^(NSTimer* __unused t) {
+                                                          [me refreshChannels];
+                                                      }] retain];
 }
 
 - (void)stop:(id)__unused sender {
@@ -1865,6 +1970,11 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)applyViewMode:(ViewMode)mode paneCount:(int)count {
     if (mode == ViewMode::Single) count = 1;
     if (count < 1) count = 1;
+    // Capture the mode we are LEAVING before overwriting it — the collapse rule below depends on
+    // it. (Win32 reads `st->viewMode` for the same test at MainWindowCommands.cpp:780-781, where
+    // it is still the old value because the assignment comes later; porting that condition
+    // literally to mac would test the mode being ENTERED and get it exactly backwards.)
+    const ViewMode prev = _viewMode;
     _viewMode = mode;
     // NB: the PiP inset position/size is PERSISTED (see -paneDragged: / -persistPipGeometry),
     // so entering PiP restores where the user last left it rather than snapping to the corner.
@@ -1872,7 +1982,19 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     while ((int)_panes.size() < count) [self makePane];   // grow
 
     if ((int)_panes.size() > count) {                     // shrink
-        if (_activePane >= count) { [self carryStreamFromPane:_activePane toPane:0]; _activePane = 0; }
+        if (_activePane >= count) {
+            // In 2×2 the tiles are equal peers, so collapsing should keep the tile you had
+            // selected rather than snapping back to the top-left. PiP is NOT that: the backdrop
+            // is the primary and the inset a secondary overlay, so closing PiP must leave the
+            // main view playing what it already was. Carrying there hijacked pane 0 with the
+            // inset's channel whenever the user had clicked the inset active (Win32 parity —
+            // same owner-reported bug, MainWindowCommands.cpp:774-781).
+            if (prev == ViewMode::Split) [self carryStreamFromPane:_activePane toPane:0];
+            // Reset UNCONDITIONALLY, carry or not: this pane is about to be torn down, and the
+            // alias re-point below reads _activePane. Leaving it pointing at a dying pane would
+            // dangle _player/_videoView — the one invariant this method exists to protect.
+            _activePane = 0;
+        }
         // Re-point the aliases at a SURVIVING pane BEFORE tearing anything down, so
         // _player/_videoView can never dangle at a destroyed pane (the stats timer and
         // volume slider dereference them).
@@ -2189,6 +2311,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     NSMenuItem* hide = [chan addItemWithTitle:Tr(StringId::MenuHideUnavailable) action:@selector(toggleHideDead:) keyEquivalent:@""];
     hide.target = self;
     hide.state = _hideDead ? NSControlStateValueOn : NSControlStateValueOff;
+    // The way BACK from a wrong dead-status. mac demotes a channel to Dead purely from playback
+    // failure, and with "Hide unavailable" on those rows leave the grid — so without this the user
+    // has no route to a channel the app misjudged (a provider blip, a geo-block, a flaky open).
+    [[chan addItemWithTitle:Tr(StringId::MenuDeadLinkClear) action:@selector(clearDeadStatuses:) keyEquivalent:@""] setTarget:self];
     // Resume last channel (checkbox) — auto-play the last-watched channel on launch (Win32 parity).
     // Built fresh on each gear open, so the ✓ tracks _resumeLast without an explicit rebuild.
     NSMenuItem* resume = [chan addItemWithTitle:Tr(StringId::MenuResumeLastChannel) action:@selector(toggleResumeLast:) keyEquivalent:@""];
@@ -2587,25 +2713,34 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         // Match by SETS, not last-wins maps: the same stream URL can appear on several channel
         // rows (a channel duplicated across playlists), and every one of them should become a
         // favourite — a map keyed on URL would keep only the last row and mark it arbitrarily.
+        // ⚠ COMPARE CANONICAL URLs ON BOTH SIDES. Schema v9 rewrote every stored `stream_url` to
+        // its canonical spelling (default port stripped), so a favourites .m3u exported by an
+        // older build carries the literal `http://host:80/…` form that no longer matches the
+        // library string-for-string. Matching raw would silently degrade every row to tvg-id-only
+        // — lossy for any channel without a tvg-id, and reported as an innocent "unmatched" count
+        // rather than as the bug it is. canonicalStreamUrl is idempotent (UrlCanon.h:49), so this
+        // is equally correct against a pre-v9 library and against a file exported after v9.
         std::set<std::wstring> wantUrls, wantTvgs;   // exported (from the file)
         for (const auto& pc : doc.channels) {
-            wantUrls.insert(pc.streamUrl);
+            wantUrls.insert(rabbitears::canonicalStreamUrl(pc.streamUrl));
             if (!pc.tvgId.empty()) wantTvgs.insert(pc.tvgId);
         }
         std::set<std::wstring> libUrls, libTvgs;     // present (in the library)
         std::set<long long> toFav;
         for (const auto& c : _db->allChannels()) {
-            libUrls.insert(c.streamUrl);
+            const std::wstring cu = rabbitears::canonicalStreamUrl(c.streamUrl);
+            libUrls.insert(cu);
             if (!c.tvgId.empty()) libTvgs.insert(c.tvgId);
             // Favourite this row if its URL was exported, else if its tvg-id was (URL preferred).
-            if (wantUrls.count(c.streamUrl) ||
+            if (wantUrls.count(cu) ||
                 (!c.tvgId.empty() && wantTvgs.count(c.tvgId)))
                 toFav.insert(c.id);
         }
         // An exported entry is "unmatched" when nothing in the library shares its URL or tvg-id.
+        // Canonical here too — otherwise the fix would mirror the bug in the count the user sees.
         int unmatched = 0;
         for (const auto& pc : doc.channels)
-            if (!libUrls.count(pc.streamUrl) &&
+            if (!libUrls.count(rabbitears::canonicalStreamUrl(pc.streamUrl)) &&
                 !(!pc.tvgId.empty() && libTvgs.count(pc.tvgId)))
                 ++unmatched;
         for (long long id : toFav) _db->setFavourite(id, true);

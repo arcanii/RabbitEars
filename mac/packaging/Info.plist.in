@@ -34,5 +34,26 @@
        explicit user action (enabling the Spectrum meter in Settings ▸ Meters…), which is
        when this consent prompt appears. Playback and the other meters never need it. -->
   <key>NSAudioCaptureUsageDescription</key><string>RabbitEars reads its own audio output to animate the on-screen spectrum meter.</string>
+  <!-- App Transport Security: allow cleartext HTTP.
+
+       IPTV is an http:// world. Provider portals, Xtream panels, channel logos, M3U playlists and
+       XMLTV guides are overwhelmingly served over plain HTTP on a non-standard port, and the user
+       supplies those URLs themselves — there is no fixed set of hosts to whitelist, so a scoped
+       NSExceptionDomains list cannot work here.
+
+       Without this, NSURLSession refuses the request before it leaves the process, which is not a
+       visible failure: logos silently fall back to a placeholder, an http playlist or guide URL
+       just fails to import, and a dead-link probe reports every cleartext channel as unreachable
+       while libVLC happily plays those exact URLs through its own socket stack — because libVLC
+       does NOT go through NSURLSession and was never subject to ATS. So the practical effect of
+       the strict setting was not "no cleartext traffic"; it was "cleartext traffic works for
+       playback and silently fails everywhere else".
+
+       We ship notarized outside the App Store, so there is no review gate to satisfy. HTTPS is
+       still preferred automatically whenever a provider offers it. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key><true/>
+  </dict>
 </dict>
 </plist>

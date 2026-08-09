@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "core/M3uParser.h"
+#include "core/Strings.h"  // shared i18n catalog — completeness + placeholder-parity gate below
 #include "db/Database.h"
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "ui/DockLayout.h"
@@ -317,6 +318,114 @@ int main() {
                "meter tuning clamps 0..1 and falls back per garbled field");
         expect(meterTuningToString(meterTuningFromString("0.1,0.2", tfb)) == meterTuningToString(tfb),
                "meter tuning wrong arity -> whole fallback");
+    }
+
+    // ---- GridFilter pushdown (twin of the Win32 CLI "GridFilter" block) ----------------------
+    //
+    // The mac grid now passes a GridFilter, so these semantics are load-bearing for mac — but the
+    // only gate on them lived in RabbitEarsCli, a WINDOWS-ONLY target. This is the mac twin,
+    // running against real sqlite.
+    {
+        out("\n-- grid filter --\n");
+        Database gdb;
+        const std::wstring gpath = dbPath + L".grid";
+        std::error_code gec;
+        std::filesystem::remove(gpath, gec);
+        std::filesystem::remove(gpath + L"-wal", gec);
+        std::filesystem::remove(gpath + L"-shm", gec);
+        std::wstring gerr;
+        expect(gdb.open(gpath, &gerr), "grid: database opens");
+        const long long gp = gdb.addPlaylist(L"Grid", L"http://g/x.m3u", true, 1000, L"");
+
+        // 40 rows: the first 30 "News", the last 10 "Sports" — so a Sports filter matches ONLY
+        // rows 30..39 and any cap-before-filter ordering shows an empty grid.
+        std::vector<ParsedChannel> rows;
+        for (int i = 0; i < 40; ++i) {
+            ParsedChannel c;
+            c.name = L"Ch " + std::to_wstring(i);
+            c.streamUrl = L"http://g/" + std::to_wstring(i) + L".ts";
+            c.groupTitle = (i < 30) ? L"News" : L"Sports";
+            rows.push_back(std::move(c));
+        }
+        expect(gdb.bulkInsertChannels(gp, rows, 1000) == 40, "grid: 40 rows inserted");
+
+        Database::GridFilter none;
+        expect(gdb.allChannels(none).size() == 40, "grid: an empty filter returns everything");
+
+        Database::GridFilter cap;
+        cap.limit = 10;
+        expect(gdb.allChannels(cap).size() == 10, "grid: limit caps the row count");
+
+        Database::GridFilter zero;  // 0 must mean UNLIMITED, not SQLite's "LIMIT 0" = none
+        zero.limit = 0;
+        expect(gdb.allChannels(zero).size() == 40,
+               "grid: limit 0 means unlimited (SQLite's LIMIT 0 would return NOTHING)");
+
+        const auto gall = gdb.allChannels();
+        gdb.setDeadStatus(gall[0].id, DeadStatus::Dead, 5000);
+        Database::GridFilter hide;
+        hide.hideDead = true;
+        expect(gdb.allChannels(hide).size() == 39, "grid: hideDead drops the dead row");
+
+        Database::GridFilter cats;
+        cats.categories = {L"Sports"};
+        expect(gdb.allChannels(cats).size() == 10, "grid: a category filter keeps only that group");
+
+        // *** THE COMPOSITION TEST. Cap of 10 + a filter matching only rows 30..39. If the cap
+        // were applied BEFORE the filter (the old mac C++ post-filter order) this returns ZERO. ***
+        Database::GridFilter both;
+        both.categories = {L"Sports"};
+        both.limit = 10;
+        expect(gdb.allChannels(both).size() == 10,
+               "grid: cap + filter returns the first N MATCHES, not the matches among the first N "
+               "(the empty-grid bug)");
+
+        // The cap must reach the other grid entry points mac uses, not just allChannels.
+        expect(gdb.searchChannels(L"Ch ", cap).size() == 10, "grid: searchChannels honours the cap");
+        expect(gdb.channelsByGroup(L"News", cap).size() == 10, "grid: channelsByGroup honours the cap");
+        gdb.close();
+        std::filesystem::remove(gpath, gec);
+        std::filesystem::remove(gpath + L"-wal", gec);
+        std::filesystem::remove(gpath + L"-shm", gec);
+    }
+
+    // ---- i18n catalog gate (twin of the Win32 CLI block) -------------------------------------
+    //
+    // The mac app owns ~145 mac-only StringIds, and until now NOTHING on the mac side checked the
+    // catalog: the gate lived only in RabbitEarsCli, a Windows-only target. So a mac-only id added
+    // with an empty ja/zh-Hant row, or a translation that dropped a {0}, could only be caught by
+    // CI running the *Windows* job. Both helpers are header-declared in the shared catalog and
+    // already linked here, so this costs nothing to run on every mac build.
+    {
+        using namespace rabbitears::i18n;
+        out("\n-- i18n catalog --\n");
+        StringId missing = StringId::Count;
+        expect(catalogIsComplete(&missing),
+               "every StringId is non-empty in every shipped language");
+        if (missing != StringId::Count)
+            out("  first missing at StringId #" + std::to_string(static_cast<int>(missing)) + "\n");
+
+        // Placeholder parity: every language must carry the same number of {n}/%d/%s tokens per
+        // key as English, or TrF()/format breaks at RUNTIME, in that language only — the failure
+        // mode least likely to be noticed by an English-speaking developer.
+        struct LangCase { Lang lang; const char* name; };
+        const LangCase others[] = {{Lang::Ja, "ja"}, {Lang::ZhHant, "zh-Hant"}, {Lang::ZhHK, "zh-HK"}};
+        for (const LangCase& lc : others) {
+            int mismatches = 0;
+            StringId firstBad = StringId::Count;
+            for (int k = 0; k < static_cast<int>(StringId::Count); ++k) {
+                const StringId id = static_cast<StringId>(k);
+                if (placeholderCount(id, Lang::En) != placeholderCount(id, lc.lang)) {
+                    if (mismatches++ == 0) firstBad = id;
+                }
+            }
+            expect(mismatches == 0,
+                   std::string("placeholder tokens match between en and ") + lc.name +
+                       " for every key");
+            if (mismatches)
+                out("  first parity mismatch at StringId #" +
+                    std::to_string(static_cast<int>(firstBad)) + "\n");
+        }
     }
 
     out(g_fail == 0 ? "\nALL PASS\n" : "\n" + std::to_string(g_fail) + " FAILURE(S)\n");
