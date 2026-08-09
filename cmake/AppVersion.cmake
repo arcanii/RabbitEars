@@ -28,7 +28,7 @@ set(APP_VERSION "0.2.17")
 # (resume-last-channel, right-click video menu + fullscreen screen-saver suspend, Categories
 # include-filter, hide-unavailable-channels — PRs #36-#39, all on-device GUI-verified). (mac
 # history: 0.1.7 → 0.1.10 → 0.2.0 → 0.2.7 → 0.2.8 → 0.2.9 → 0.2.10 → 0.2.11 → 0.2.12 → 0.2.13
-# → 0.2.14 → 0.2.15.)
+# → 0.2.14 → 0.2.15 → 0.2.16.)
 # 0.2.13 is a launch-hang hotfix: the Terms-of-Use gate now shows as a sheet on the (already
 # shown) window instead of a pre-window app-modal, so a Sparkle post-update relaunch can no
 # longer come up as a buried modal / beachball. 0.2.14 ships two shared-core (common/) fixes —
@@ -36,7 +36,13 @@ set(APP_VERSION "0.2.17")
 # for a padding-proof airing identity) + the Xtream group-title→country fallback in the Countries
 # filter (PRs #40, #41; both Windows-affecting, flagged in Win32/BACKLOG.md). 0.2.15 adds
 # channel-logo thumbnails to the channel grid (a logo NSImageCell column fed by an async, disk-cached,
-# bomb-safe LogoLoader; PR #42 — mac-only, zero common/Win32).
+# bomb-safe LogoLoader; PR #42 — mac-only, zero common/Win32). 0.2.16 is the "safe to upgrade"
+# release: it is the FIRST mac build carrying Windows' schema v8 + v9, and v9 is a DATA migration
+# (it rewrites every stored stream_url to canonical form and merges the rows that collide), so the
+# release is deliberately scoped to correctness — favourites-import canonicalisation, a way back
+# from a wrong dead-status, three shipped bug fixes (swapped meter Look popup, PiP-exit pane
+# hijack, Skipped-vs-Cancelled), the GridFilter/SQL grid pushdown + search debounce, and an ATS
+# exception so cleartext IPTV URLs stop failing invisibly (PR #44).
 if(APPLE)
-  set(APP_VERSION "0.2.15")
+  set(APP_VERSION "0.2.16")
 endif()
