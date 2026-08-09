@@ -7,6 +7,49 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🔴 `updateScheduleStatus` is unverifiable, and a VOD sync can turn a recording into a silent `Missed` · flagged by the macOS team, 2026-08-09
+
+Found while porting the VOD sync to mac. **This is a Windows bug too** — the mechanism is entirely
+in `common/`, and Windows is *more* exposed because it ships wake-to-record, so its scheduled
+recordings fire unattended.
+
+**The chain, no bug required in either component:**
+
+1. `Database::updateScheduleStatus` returns **`void`** (`common/db/Database.h:191`,
+   impl `common/db/Database.cpp:1550`). The step result is discarded and is not even *available*
+   to a caller — matching the warning already written at `Database.cpp:415-420` that a contended
+   write here is a **silently lost write**, not an error the user ever sees.
+2. `planScheduler` decides "is the recorder busy" from the **DB row status**, never from the
+   recorder object: `for (const auto& s : schedules) if (s.status == ScheduleStatus::Recording)
+   recorderBusy = true;` (`common/core/RecordingScheduler.cpp:14-15`).
+3. So if the `Recording` write is lost while the VOD worker holds its write transaction, the row
+   stays **Pending** while the recorder is genuinely recording.
+4. Next tick, `recorderBusy == false` → `plan.start` re-emits the **same id** → `startRecording`,
+   whose first act is a **blocking stop** that finalises (truncates) the file in progress.
+5. The window ends with the row still Pending → `plan.miss` → **`Missed`**.
+
+Net: two truncated files, the DB says `Missed`, nothing logged, and `_activeScheduleId` (Win32:
+`st->activeScheduleId`) disagrees with the row, so the `plan.stop` branch never cleanly stops the
+recorder either.
+
+**The fix we think belongs in shared code (not taken by us — it changes a shared signature):**
+make `updateScheduleStatus` return `bool`, and at the scheduler start site only commit
+`activeScheduleId` when the `Recording` write actually landed; if it did not, stop the recorder and
+leave the row Pending so the next tick retries cleanly. That removes the whole class rather than
+one instance of it. Say the word and the mac team will do it — we left it alone because a shared
+signature change is yours to sequence.
+
+**⚠ And a warning about the obvious workaround, which we tried and reverted.** mac first mitigated
+this by standing the scheduler down while a sync ran (`if (vodSyncRunning()) continue;`). **Do not
+do that.** The deferral has no bound: a slow or multi-target sync can push a due recording past its
+whole window, and `plan.miss` then marks it `Missed` — silently losing the recording the guard was
+protecting. Our adversarial review caught it, and separately *measured* the contention it was
+guarding against at **~0.2 s, not 5 s**, with no write discarded at realistic catalogue size. mac
+now does what Win32 already does — `cancelVodSync()` and proceed, because a due recording outranks
+a catalogue refresh (`Win32/HANDOVER.md:573`). Windows needs no change for that part.
+
+Any pushback → ping the macOS team.
+
 ## 🍎 Shared-core changes in v0.2.16 · **for the macOS team**, 2026-07-28
 
 Windows shipped **v0.2.16** (Xtream VOD movies, player seek, scrub bar). Everything below the UI
