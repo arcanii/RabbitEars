@@ -22,6 +22,34 @@ struct sqlite3;  // forward-declared; sqlite3.h is included only in the .cpp
 
 namespace rabbitears {
 
+// ⚠ THE FILTERS LIVE HERE, IN SQL, AND THAT IS THE WHOLE POINT. They used to be applied in
+// C++ over the returned vector, which composes the wrong way round the moment a limit exists:
+// "the matches among the first 5,000 rows" instead of "the first 5,000 matches". Those are not
+// the same set and the difference is not cosmetic — with a 20,000-channel playlist whose Sports
+// block sits at position ~15,000, an include-filter of {Sports} would return an EMPTY grid while
+// Groups ▸ Sports (its own query) showed the same channels perfectly. Pushing the predicates
+// down means the limit applies to the filtered set, which is what a user means by "show me the
+// first N".
+//
+// Every field defaults to "no restriction", so a default-constructed GridFilter reproduces the
+// pre-0.2.17 query exactly — which is what leaves the macOS app, and every non-grid caller
+// here, byte-for-byte unaffected.
+//
+// ⚠ SCOPE: this is deliberately at NAMESPACE scope, not nested in Database. Nested, its default
+// member initializers belong to Database's complete-class context, so the `= {}` default
+// arguments below could not use them until Database was complete — which MSVC accepts but Clang
+// correctly rejects ("default member initializer for 'limit' needed within definition of
+// enclosing class"), breaking every macOS build. `Database::GridFilter` still resolves via the
+// member alias inside the class, so all existing Win32 call sites are unchanged.
+struct GridFilter {
+    // 0 == unlimited. Callers that need a COMPLETE list (favourites export, the recording
+    // scheduler, the rule/schedule editors, the dead-link sweep) must leave it at 0: a
+    // truncated list there silently drops the user's data rather than merely hiding rows.
+    int  limit = 0;
+    bool hideDead = false;                  // drop DeadStatus::Dead
+    std::vector<std::wstring> categories;   // empty == no category restriction
+};
+
 class Database {
 public:
     Database() = default;
@@ -92,26 +120,9 @@ public:
     // ---- Grid queries ------------------------------------------------------
     // What the channel GRID displays, and the only place a row cap belongs.
     //
-    // ⚠ THE FILTERS LIVE HERE, IN SQL, AND THAT IS THE WHOLE POINT. They used to be applied in
-    // C++ over the returned vector, which composes the wrong way round the moment a limit exists:
-    // "the matches among the first 5,000 rows" instead of "the first 5,000 matches". Those are not
-    // the same set and the difference is not cosmetic — with a 20,000-channel playlist whose Sports
-    // block sits at position ~15,000, an include-filter of {Sports} would return an EMPTY grid while
-    // Groups ▸ Sports (its own query) showed the same channels perfectly. Pushing the predicates
-    // down means the limit applies to the filtered set, which is what a user means by "show me the
-    // first N".
-    //
-    // Every field defaults to "no restriction", so a default-constructed GridFilter reproduces the
-    // pre-0.2.17 query exactly — which is what leaves the macOS app, and every non-grid caller
-    // here, byte-for-byte unaffected.
-    struct GridFilter {
-        // 0 == unlimited. Callers that need a COMPLETE list (favourites export, the recording
-        // scheduler, the rule/schedule editors, the dead-link sweep) must leave it at 0: a
-        // truncated list there silently drops the user's data rather than merely hiding rows.
-        int  limit = 0;
-        bool hideDead = false;                  // drop DeadStatus::Dead
-        std::vector<std::wstring> categories;   // empty == no category restriction
-    };
+    // The grid filter/limit bundle. Defined at namespace scope (see above for why); this alias
+    // keeps the established `Database::GridFilter` spelling working at every call site.
+    using GridFilter = ::rabbitears::GridFilter;
 
 private:
     std::vector<std::wstring> listGroupsOfKind(int kind);
