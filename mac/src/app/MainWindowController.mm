@@ -186,6 +186,20 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     NSButton*      _addBtn;      // "+ Add Playlist"
     NSButton*      _setBtn;      // ⚙ gear
     NSButton*      _stopBtn;     // "Stop"
+    // ---- transport cluster (bottom bar). All UNRETAINED, matching _addBtn/_setBtn/_stopBtn:
+    // they are owned by the content view's subview array for the app's lifetime.
+    NSButton*      _pauseBtn;    // play/pause toggle
+    NSButton*      _skipBackBtn; // -10s
+    NSButton*      _skipFwdBtn;  // +10s
+    NSSlider*      _seek;        // the scrub bar
+    NSTextField*   _seekTime;    // "12:34 / 1:45:00"
+    BOOL           _seekShown;   // is the cluster currently laid out + visible?
+    long long      _panesGeneration;  // ++ on every pane-set change; scopes the post-seek latch
+    int            _seekHideTicks;   // consecutive !want ticks (hysteresis — see -updateTransport)
+    BOOL           _seekDragging;    // thumb held down; suppress sample-driven updates
+    long long      _seekLatchUntilMs;  // steady-clock ms: ignore samples until then (post-seek)
+    long long      _seekLatchTarget;   // the position we asked for, shown during the latch
+    long long      _seekLatchPaneId;   // pane generation the latch belongs to (0 == none)
     std::wstring   _recFormat;   // recording container: "ts" (default) / "mp4"
     BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     BOOL           _hideDead;    // Settings ⚙ ▸ Channels ▸ Hide unavailable channels ("hide_dead")
@@ -429,6 +443,65 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _volume.continuous = YES;
     [content addSubview:_volume];
     _player->setVolume(vol0);
+
+    // ---- transport cluster: ⏸ ⏪ [========] ⏩  "12:34 / 1:45:00" ----------------------------
+    // Hidden until libVLC says the current media is actually seekable (see -updateTransport).
+    // NB these are added BEFORE the split view below, so Video Only's full-bleed video covers
+    // them by z-order as well as by the explicit hide in -applyVideoOnly.
+    //
+    // NO autoresizing masks: unlike everything else on this bar, the cluster's width depends on
+    // whether it is SHOWN, so its geometry (and the status field's) is computed in
+    // -layoutBottomBar and recomputed on every content-view resize and every visibility flip.
+    _pauseBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"pause.fill"
+                                                   accessibilityDescription:Tr(StringId::TooltipBtnPause)]
+                                   target:self action:@selector(togglePause:)];
+    _pauseBtn.bordered = NO;
+    _pauseBtn.toolTip = Tr(StringId::TooltipBtnPause);
+    _pauseBtn.hidden = YES;
+    [content addSubview:_pauseBtn];
+
+    _skipBackBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"gobackward.10"
+                                                      accessibilityDescription:TrF(StringId::TooltipBtnSkipBack, {@"10"})]
+                                      target:self action:@selector(skipBack:)];
+    _skipBackBtn.bordered = NO;
+    _skipBackBtn.toolTip = TrF(StringId::TooltipBtnSkipBack, {@"10"});
+    _skipBackBtn.hidden = YES;
+    [content addSubview:_skipBackBtn];
+
+    _seek = [NSSlider sliderWithValue:0 minValue:0 maxValue:1
+                               target:self action:@selector(seekChanged:)];
+    // continuous so the thumb tracks the drag, but the SEEK itself only fires on mouse-up —
+    // seeking a network stream re-buffers, so a per-tick seek would thrash the demuxer.
+    _seek.continuous = YES;
+    _seek.hidden = YES;
+    [content addSubview:_seek];
+
+    _skipFwdBtn = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"goforward.10"
+                                                     accessibilityDescription:TrF(StringId::TooltipBtnSkipFwd, {@"10"})]
+                                     target:self action:@selector(skipForward:)];
+    _skipFwdBtn.bordered = NO;
+    _skipFwdBtn.toolTip = TrF(StringId::TooltipBtnSkipFwd, {@"10"});
+    _skipFwdBtn.hidden = YES;
+    [content addSubview:_skipFwdBtn];
+
+    _seekTime = [NSTextField labelWithString:@""];
+    _seekTime.textColor = NSColor.secondaryLabelColor;
+    _seekTime.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+    _seekTime.alignment = NSTextAlignmentRight;
+    _seekTime.hidden = YES;
+    [content addSubview:_seekTime];
+
+    // The bottom bar is the ONE strip whose layout is not expressible with autoresizing masks,
+    // because the status field's width depends on whether the transport cluster is present.
+    // Observe the CONTENT VIEW's frame directly rather than piggy-backing on the video pane's
+    // resize notification: this is a bottom-bar concern, and the video pane also moves when the
+    // channel grid is shown/hidden, which has nothing to do with it.
+    content.postsFrameChangedNotifications = YES;
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(contentFrameChanged:)
+                                               name:NSViewFrameDidChangeNotification
+                                             object:content];
+    [self layoutBottomBar];
 
     // ---- split: channel grid | video ----
     NSSplitView* split = [[NSSplitView alloc]
@@ -691,6 +764,15 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _status.hidden = v;
     _muteBtn.hidden = v;
     _volume.hidden = v;
+    // TWO conditions, unlike the always-wanted controls above: the transport cluster has its own
+    // `want` (_seekShown). A single-condition `= v` would un-hide a scrub bar on a live channel
+    // when the user LEAVES Video Only, and it would stay up until a tick re-hid it.
+    _meterBtn.hidden     = v;   // (was missing entirely — it only vanished by z-order before)
+    _pauseBtn.hidden     = v || !_seekShown;
+    _skipBackBtn.hidden  = v || !_seekShown;
+    _seek.hidden         = v || !_seekShown;
+    _skipFwdBtn.hidden   = v || !_seekShown;
+    _seekTime.hidden     = v || !_seekShown;
 
     NSView* content = _window.contentView;
     const CGFloat W = content.bounds.size.width, H = content.bounds.size.height;
@@ -1814,6 +1896,15 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         }
     }
 
+    // ⚠ TRANSPORT FIRST — ABOVE the early return below, and deliberately so. mac attaches NO
+    // libVLC event callbacks (see the TODO at the top of VlcPlayerMac.mm), so this tick is the
+    // ONLY thing in the process that can ever retire the scrub bar. Below the `!fs.playing`
+    // return, a film reaching its end (libvlc_Ended: not playing, no user action, no callback)
+    // would strand the bar on screen forever with no way back. Stop has an explicit reset site;
+    // end-of-film has none. Win32 is immune because it drives its seek UI off every player
+    // event; mac gets no second chance.
+    [self updateTransport];
+
     const FlowStats fs = _player->sampleStats();
     // NOTE: do NOT reset _spectrumSilentTicks here. libVLC's is_playing() dips false at HLS
     // segment boundaries, and zeroing the denial counter on every dip meant it could never
@@ -1938,6 +2029,152 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 }
 
 - (void)videoPaneResized:(NSNotification*)__unused n { [self applyVideoPaneLayout]; [self applyMeterLayout]; }
+
+- (void)contentFrameChanged:(NSNotification*)__unused n { [self layoutBottomBar]; }
+
+// Lay out the bottom strip: [status ......] [⏸ ⏪ ==== ⏩ 12:34 / 1:45:00] [meter] [mute] [vol]
+//
+// ⚠ THIS EXISTS BECAUSE THE STATUS FIELD HAS NO SLACK. Its frame used to be assigned exactly
+// once, with NSViewWidthSizable doing the rest — fine while the right-hand cluster was a fixed
+// 150 pt. The transport cluster is not fixed: it is only present for seekable media, so a
+// permanent reserve would steal ~330 pt from the status line of every live-TV user for a
+// control they never see. At the 560 pt contentMinSize the status field is ALREADY flush with
+// the meter button, so there is nothing to borrow. Hence: compute both here, and re-run on
+// every content resize (-contentFrameChanged:) and every visibility flip.
+//
+// The status line is not decorative — it carries the sticky grid-truncation notice, so
+// truncating IT is a real loss of information.
+- (void)layoutBottomBar {
+    if (!_status) return;                       // called before the bar exists
+    const CGFloat w = _window.contentView.bounds.size.width;
+    const CGFloat statusH = kStatusH;
+    const CGFloat rightClusterW = 150;          // meter + mute + volume, as built above
+    CGFloat transportRight = w - rightClusterW; // left edge of the right-hand cluster
+
+    if (_seekShown) {
+        // Fixed-width pieces; the slider absorbs the remainder, floored so it never inverts.
+        const CGFloat btnW = 22, gap = 4, timeW = 104;
+        const CGFloat wanted = btnW * 3 + gap * 4 + timeW + 120;   // 120 = minimum useful slider
+        // Never take more than half the bar, so the status line keeps a readable share on a
+        // narrow window; the slider shrinks first.
+        const CGFloat avail = MIN(wanted + 200, MAX(wanted, (w - 24) * 0.55));
+        const CGFloat x0 = transportRight - avail;
+        CGFloat x = x0;
+        _pauseBtn.frame    = NSMakeRect(x, 1, btnW, 20);            x += btnW + gap;
+        _skipBackBtn.frame = NSMakeRect(x, 1, btnW, 20);            x += btnW + gap;
+        const CGFloat sliderW = MAX(60, transportRight - timeW - gap * 2 - btnW - gap - x);
+        _seek.frame        = NSMakeRect(x, 2, sliderW, 18);         x += sliderW + gap;
+        _skipFwdBtn.frame  = NSMakeRect(x, 1, btnW, 20);            x += btnW + gap;
+        _seekTime.frame    = NSMakeRect(x, 3, transportRight - x - gap, statusH - 5);
+        transportRight = x0;                     // the status field now ends here
+    }
+    _status.frame = NSMakeRect(12, 3, MAX(40, transportRight - 24), statusH - 5);
+}
+
+// Format a ms position as m:ss, or h:mm:ss once the media is an hour or longer.
+static NSString* fmtPos(long long ms, long long lenMs) {
+    if (ms < 0) ms = 0;
+    const long long s = ms / 1000;
+    const long long h = s / 3600, m = (s / 60) % 60, sec = s % 60;
+    if (lenMs >= 3600000)
+        return [NSString stringWithFormat:@"%lld:%02lld:%02lld", h, m, sec];
+    return [NSString stringWithFormat:@"%lld:%02lld", s / 60, sec];
+}
+
+// Show/hide + refresh the transport from the active pane. Called from -tickStats.
+- (void)updateTransport {
+    VlcPlayerMac* p = [self activePlayer];
+    const long long len  = p ? p->lengthMs() : 0;
+    const BOOL want = (p && p->isSeekable() && len > 0) ? YES : NO;
+
+    // HYSTERESIS ON HIDE, immediate on show. A live HLS input that re-opens mid-stream
+    // (segment discontinuity, rendition switch, reconnect) briefly has no input thread, so
+    // get_length returns -1 → 0 → `want` flips false for a tick or two. Retiring the cluster on
+    // a single sample would make the whole bottom bar twitch at 4 Hz on ordinary live TV, and
+    // every flip re-frames the status line. Win32 hides this inside one DeferWindowPos batch;
+    // mac has no such batch, so the fix is to not flap in the first place.
+    if (want) _seekHideTicks = 0;
+    else if (_seekShown && ++_seekHideTicks < 8) return;   // ~2 s of steady "no" before hiding
+
+    if (want != _seekShown) {
+        _seekShown = want;
+        const BOOL hide = !want || _videoOnly;
+        _pauseBtn.hidden = _skipBackBtn.hidden = _seek.hidden = hide;
+        _skipFwdBtn.hidden = _seekTime.hidden = hide;
+        [self layoutBottomBar];                 // the status field reclaims/yields the width
+    }
+    if (!want) return;
+
+    // Post-seek latch: libVLC keeps reporting the OLD position for a moment after set_time, so
+    // a sample landing in that window would snap the thumb back to where the user dragged from.
+    // The latch is scoped to the pane generation it was created for, so switching panes (or
+    // tearing one down) can never leave pane A's target driving pane B's thumb.
+    const long long nowMs = (long long)(NSDate.timeIntervalSinceReferenceDate * 1000.0);
+    const BOOL latched = _seekLatchUntilMs > nowMs && _seekLatchPaneId == _panesGeneration;
+    const long long pos = _seekDragging ? (long long)_seek.doubleValue
+                        : latched       ? _seekLatchTarget
+                                        : p->timeMs();
+
+    if (!_seekDragging) {
+        _seek.maxValue = (double)len;
+        _seek.doubleValue = (double)MIN(pos, len);
+    }
+    _seekTime.stringValue = [NSString stringWithFormat:@"%@ / %@",
+                                                       fmtPos(pos, len), fmtPos(len, len)];
+    // Reflect libVLC's own pause state rather than a local flag, so a stream that refused to
+    // pause (or ended while paused) can't leave the wrong glyph showing.
+    const BOOL paused = p->isPaused();
+    NSString* sym = paused ? @"play.fill" : @"pause.fill";
+    _pauseBtn.image = [NSImage imageWithSystemSymbolName:sym
+                               accessibilityDescription:Tr(paused ? StringId::LabelPlay
+                                                                  : StringId::TooltipBtnPause)];
+    _pauseBtn.toolTip = Tr(paused ? StringId::LabelPlay : StringId::TooltipBtnPause);
+}
+
+// ---- transport actions ----------------------------------------------------------------
+
+- (void)togglePause:(id)__unused sender {
+    if (VlcPlayerMac* p = [self activePlayer]) p->setPaused(!p->isPaused());
+}
+
+- (void)seekChanged:(id)__unused sender {
+    // NSSlider is continuous, so this fires throughout the drag. Track the thumb, but COMMIT
+    // only on mouse-up: seeking a network stream re-buffers, and seeking per drag tick thrashes
+    // the demuxer. NSApp.currentEvent is the drag/So-up discriminator AppKit gives us here.
+    const NSEventType t = NSApp.currentEvent.type;
+    if (t == NSEventTypeLeftMouseDown || t == NSEventTypeLeftMouseDragged) {
+        _seekDragging = YES;
+        // Live text feedback while dragging, without touching the player.
+        if (VlcPlayerMac* p = [self activePlayer]) {
+            const long long len = p->lengthMs();
+            _seekTime.stringValue = [NSString stringWithFormat:@"%@ / %@",
+                                     fmtPos((long long)_seek.doubleValue, len), fmtPos(len, len)];
+        }
+        return;
+    }
+    // Mouse-up (or a keyboard/accessibility change, which has no drag phase at all): commit.
+    _seekDragging = NO;
+    [self commitSeekTo:(long long)_seek.doubleValue];
+}
+
+// Ask the player to reposition, and latch the UI to the target briefly so the thumb does not
+// snap back while libVLC still reports the old time.
+- (void)commitSeekTo:(long long)ms {
+    VlcPlayerMac* p = [self activePlayer];
+    if (!p || !p->isSeekable()) return;
+    p->seekTo(ms);
+    _seekLatchTarget  = ms;
+    _seekLatchUntilMs = (long long)(NSDate.timeIntervalSinceReferenceDate * 1000.0) + 3000;
+    _seekLatchPaneId  = _panesGeneration;   // scope it to THIS pane incarnation
+}
+
+- (void)skipBack:(id)__unused sender {
+    if (VlcPlayerMac* p = [self activePlayer]) [self commitSeekTo:p->timeMs() - 10000];
+}
+
+- (void)skipForward:(id)__unused sender {
+    if (VlcPlayerMac* p = [self activePlayer]) [self commitSeekTo:p->timeMs() + 10000];
+}
 
 // Record the meter bar's position as a 0..1 fraction of the pane (called after a drag).
 - (void)persistMeterPos {
@@ -2209,6 +2446,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // NB: the PiP inset position/size is PERSISTED (see -paneDragged: / -persistPipGeometry),
     // so entering PiP restores where the user last left it rather than snapping to the corner.
 
+    // Any change to the pane SET invalidates a post-seek latch: it was created for the pane that
+    // was active THEN, and after a grow/shrink/carry the active pane may be a different stream.
+    // Without this, pane A's seek target drives pane B's thumb (a Win32 review-caught defect).
+    ++_panesGeneration;
     while ((int)_panes.size() < count) [self makePane];   // grow
 
     if ((int)_panes.size() > count) {                     // shrink
