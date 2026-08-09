@@ -851,9 +851,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (ap && ap->channelId)
         [self setStatus:TrF(StringId::StatusPlaying, {ns(ap->channel.name)})];
     else
-        [self setStatus:TrF(StringId::MacMainWindowChannelCountStatus,
-                         {[NSString stringWithFormat:@"%lu", (unsigned long)_channels.size()],
-                          _search.stringValue.length ? Tr(StringId::MacMainWindowSearchSuffix) : @""})];
+        // On the 🎬 Movies section head the count is meaningless (it deliberately loads nothing),
+        // so re-derive the prompt rather than telling the user they have "0 channels".
+        [self setStatus:_filter.selectedItem.tag == kFilterMovies
+                            ? Tr(StringId::StatusMoviesPickCategory)
+                            : TrF(StringId::MacMainWindowChannelCountStatus,
+                                  {[NSString stringWithFormat:@"%lu", (unsigned long)_channels.size()],
+                                   _search.stringValue.length ? Tr(StringId::MacMainWindowSearchSuffix) : @""})];
 
     // Views that re-read Tr() in drawRect: — a repaint refreshes their text; the meter also caches a
     // hover toolTip, so it gets a dedicated relabel entry point.
@@ -1043,7 +1047,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // 🎬 The Movies SECTION HEAD deliberately loads nothing. allMovies() is 40k+ rows on a real
     // provider, and a nav click must never be that — the cap would hide most of it anyway and the
     // user would be staring at an arbitrary 5,000. Prompt for a category instead.
-    if (sel.tag == kFilterMovies) {
+    // Only when the box is EMPTY: a search term must still do something. Falling through with a
+    // term runs the normal global search below, which is far better than a search box that
+    // silently does nothing because of which nav row happens to be selected.
+    if (sel.tag == kFilterMovies && q.empty()) {
         _channels.clear();
         _gridTruncated = NO;
         [_table deselectAll:nil];
@@ -1070,7 +1077,11 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     if (q.empty()) {
         _channels = filteredSet(g);
         _gridTruncated = trimToGridCap(_channels);
-    } else if (sel.tag == kFilterAll) {
+    } else if (sel.tag == kFilterAll || sel.tag == kFilterMovies) {
+        // kFilterMovies joins kFilterAll here deliberately: the Movies row is a section HEAD with
+        // no channel set of its own, so a search from it means "search everything". Routing it
+        // down the capped single-query path also keeps it off the uncapped intersect below, which
+        // would otherwise materialise the entire library just to build a membership set.
         _channels = _db->searchChannels(q, g);  // search across the full (all-channels) view
         _gridTruncated = trimToGridCap(_channels);
     } else {
@@ -1113,7 +1124,11 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 // The "no channels yet" hint is a subview of pane 0, so it is only meaningful in Single view
 // (in Split it would sit in the top-left quadrant; in PiP it hides behind the inset).
 - (void)updateEmptyHint {
-    _emptyHint.hidden = !_channels.empty() || _viewMode != ViewMode::Single;
+    // The hint says "no channels yet — click + Add Playlist", which is a lie on the 🎬 Movies
+    // section head: the grid is empty there BY DESIGN (it prompts for a category) and the library
+    // may hold tens of thousands of films. Suppress it for that row only.
+    const BOOL onMoviesHead = (_filter.selectedItem.tag == kFilterMovies);
+    _emptyHint.hidden = !_channels.empty() || _viewMode != ViewMode::Single || onMoviesHead;
 }
 
 // Settings ⚙ ▸ Channels ▸ Hide unavailable channels — toggle + persist, then re-filter the grid.
@@ -1314,6 +1329,16 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // network error on a second line still changed the library, and the nav must show it.
     if (rep.inserted > 0 || rep.retired > 0) {
         [self rebuildFilterMenuPreservingSelection];
+        // Land on 🎬 Movies when the sync actually added films and the user has not navigated
+        // somewhere specific meanwhile. Staying on All Channels would re-materialise a capped
+        // 5,000 rows of mostly live TV and latch the truncation notice — for an action whose
+        // whole point was the films the user cannot see from there. Only ever moves the
+        // selection FROM the default view, never away from a group/country/category the user
+        // chose themselves (Win32 lands on Movies for the same reason).
+        if (rep.inserted > 0 && _filter.selectedItem.tag == kFilterAll) {
+            for (NSMenuItem* it in _filter.itemArray)
+                if (it.tag == kFilterMovies) { [_filter selectItem:it]; break; }
+        }
         [self refreshChannels];
     }
 
@@ -1466,6 +1491,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 - (void)toggleRecord:(id)__unused sender {
     MacVideoPane* p = [self activePane];
     if (!p) return;
+    // Recording opens a SECOND connection to the provider (the headless recorder has its own
+    // socket), so it claims connection budget exactly like playback does — stand the sync down.
+    // Harmless on the stop branch below. Win32 gates the same handler (onToggleRecord).
+    rabbitears::mac::cancelVodSync();
     if (p->player->isRecording()) {
         const std::wstring file = p->player->recordingFile();
         p->player->stopRecordingAsync();  // off-main: a stalled feed can't hang the UI on stop
@@ -1557,23 +1586,21 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         const rabbitears::ScheduledRecording* s = nullptr;
         for (const auto& x : schedules) if (x.id == id) { s = &x; break; }
         if (!s) continue;
-        // 🔴 STAND DOWN WHILE A VOD SYNC IS RUNNING, and leave the row PENDING so planScheduler
-        // simply retries in ~30 s. This is not politeness about the provider connection — it
-        // prevents a silent data loss with no bug in either component:
-        //   the sync's worker holds a write transaction for the whole catalogue insert; SQLite's
-        //   busy_timeout makes a contended write FAIL rather than wait forever, and
-        //   updateScheduleStatus discards its step result — so the row can stay Pending while the
-        //   recorder is genuinely recording. planScheduler derives "recorder busy" from the ROW
-        //   STATUS, not from the recorder object, so the next tick re-emits the same id, and
-        //   startRecording's first act is a BLOCKING stop that truncates the file in progress.
-        //   The window then ends with the row still Pending → marked Missed. Two truncated files,
-        //   the DB says Missed, and nothing is logged.
-        // Deliberately NOT marked Failed or Missed here: nothing has gone wrong, it is just not
-        // this tick's turn. (Win32 has the same gap — flagged to them in Win32/BACKLOG.md.)
-        if (rabbitears::mac::vodSyncRunning()) {
-            diag::info(L"scheduler: deferring recording start — a VOD sync holds the DB writer");
-            continue;
-        }
+        // 🔴 A DUE RECORDING OUTRANKS A CATALOGUE REFRESH — cancel the sync and carry on, never
+        // defer the recording. The recording is time-critical user data that cannot be re-made;
+        // a movie sync can be re-run at any time.
+        //
+        // This deliberately does NOT stand the scheduler down. An earlier revision did, to avoid
+        // contending with the worker's write transaction, and that was a worse bug: the deferral
+        // had no bound, so a slow or multi-target sync could push a recording past its whole
+        // window, at which point plan.miss marks it Missed — silently losing the recording it was
+        // trying to protect. Win32 has always done it this way round (onToggleRecord and
+        // onSchedulerTick both call cancelVodSync; Win32/HANDOVER.md:573).
+        //
+        // Cancellation is soft — an in-flight HTTP body finishes — but no further request is
+        // issued and, critically, no further DB write is attempted, so the writer lock is released
+        // at the current transaction boundary rather than held for the rest of the catalogue.
+        rabbitears::mac::cancelVodSync();
         NSString* ext; std::string mux;
         [MainWindowController extForFormat:s->mux ext:&ext mux:&mux];
         NSString* path = [self recordingPathFor:ns(s->channelName) ext:ext];
@@ -2124,6 +2151,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 - (void)carryStreamFromPane:(int)from toPane:(int)to {
     if (from == to || from < 0 || to < 0 ||
         from >= (int)_panes.size() || to >= (int)_panes.size()) return;
+    // This ends in dst->player->play() below, which claims a connection just as -playChannel:
+    // does — and a view-mode collapse is a common way to reach it without ever going through
+    // -playChannel:. Cancel here too, or the sync survives a carry and kicks the carried stream.
+    rabbitears::mac::cancelVodSync();
     MacVideoPane* src = _panes[(size_t)from].get();
     MacVideoPane* dst = _panes[(size_t)to].get();
     if (src->channelId == 0) return;                 // nothing playing to carry
@@ -2529,6 +2560,13 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // but fail, and an action that only ever fails is worse than an absent one. (The gear menu is
     // rebuilt on every open, so this tracks a playlist being added or removed with no extra work.)
     if (_db && !rabbitears::mac::xtreamTargets(*_db).empty()) {
+        // ⚠ autoenablesItems defaults to YES, and under it AppKit RECOMPUTES every item's enabled
+        // state from NSMenuValidation just before display — silently discarding the explicit
+        // `enabled` set below. The controller implements no -validateMenuItem:, so the item came
+        // back enabled and "Syncing movies…" was still clickable mid-sync. Turning auto-enabling
+        // off makes the explicit flag authoritative; every other item in this submenu has a live
+        // target and NSMenuItem.enabled defaults to YES, so none of them change behaviour.
+        chan.autoenablesItems = NO;
         NSMenuItem* vod = [chan addItemWithTitle:Tr(_vodSyncRunning ? StringId::MenuVodSyncing
                                                                     : StringId::MenuVodSync)
                                           action:@selector(syncMovies:)
