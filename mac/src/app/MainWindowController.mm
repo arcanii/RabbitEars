@@ -309,26 +309,14 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     NSView* content = _window.contentView;
     const NSSize cs = content.bounds.size;  // real content size — frameAutosave may restore a larger frame
 
-    // ⚠ GET A REAL WINDOW ON SCREEN BEFORE OPENING THE DB, AND PAINT IT.
-    //
-    // `open()` runs migrate(), and as of schema v9 that is no longer bookkeeping: v9 rewrites
-    // every stored stream_url to its canonical spelling and merges the rows that collide
-    // (Database.cpp:714) — measured at 6.6 s on a 454k-row library, synchronously, on the main
-    // thread. Until now the window was not ordered front until ~230 lines later, so that entire
-    // pause happened with NOTHING on screen: the dock icon bounces, no window appears, and the OS
-    // shows the spinner. That is exactly how the 0.2.13 launch-hang was reported, and the lesson
-    // recorded then was "any slow launch-time work must happen behind a window that is already
-    // visible" — a lesson that costs nothing to honour and a support round-trip to relearn.
-    //
-    // makeKeyAndOrderFront: alone is NOT enough: it schedules a display, it does not perform one,
-    // so blocking the main thread immediately afterwards can still beat the first paint.
-    // -displayIfNeeded forces the draw synchronously, so the frame is genuinely up first.
-    // (The later makeKeyAndOrderFront:/activate pair at the end of -showWindow is kept: it is what
-    // re-asserts activation for a non-activating Sparkle relaunch, and is harmless when repeated.)
-    [_window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
-    [_window displayIfNeeded];
-
+    // NB: the window is deliberately NOT shown here. Opening the DB runs migrate(), and schema v9
+    // rewrites every stored stream_url + merges colliding rows — seconds of main-thread work on a
+    // very large library. Showing an EMPTY window in front of that is worse than showing none: the
+    // UI below is not built yet, so the user gets a blank frame that macOS then ghosts as "not
+    // responding", and every ordinary (fast) launch pays a visible empty-window flash for it.
+    // The window is shown once it has real content, at the end of -showWindow. If the migration
+    // pause ever needs covering, the fix is a progress sheet gated on a pending migration, not an
+    // unconditional early paint.
     std::wstring err;
     if (!_db->open(Database::defaultDbPath(), &err)) {
         diag::error(L"DB open failed: " + err);
@@ -998,8 +986,11 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // Cancel any pending debounced search. Done HERE rather than at each call site so that every
     // path into a refresh — filter popup, Categories apply, playlist reload, dead-status clear —
     // is safe from a keystroke fired 200 ms ago landing on top of it.
+    // AUTOrelease, not release: this method is called from INSIDE the search timer's own block, so
+    // a plain release can drop the last reference to the timer that is currently firing — and the
+    // timer owns the block still executing. Deferring to the pool keeps it alive past the return.
     [_searchTimer invalidate];
-    [_searchTimer release];
+    [_searchTimer autorelease];
     _searchTimer = nil;
     if (!_db) { _channels.clear(); _gridTruncated = NO; [_table reloadData]; return; }
     const std::wstring q = ws(_search.stringValue);
@@ -1205,7 +1196,7 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 - (void)controlTextDidChange:(NSNotification*)note {
     if (note.object != _search) return;
     [_searchTimer invalidate];
-    [_searchTimer release];
+    [_searchTimer autorelease];
     MainWindowController* __unsafe_unretained me = self;
     _searchTimer = [[NSTimer scheduledTimerWithTimeInterval:0.2 repeats:NO
                                                       block:^(NSTimer* __unused t) {
