@@ -4,6 +4,7 @@
 /out/
 /build-mac/
 /build-mac-universal/
+/build-mac-release/
 /build-xcode/
 /mac/build/
 

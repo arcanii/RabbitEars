@@ -50,6 +50,7 @@
 #import "PlaylistsDialog.h"
 #import "CategoriesDialog.h"
 #import "LogoLoader.h"
+#import "VodSync.h"
 #import "RecordingsWindowController.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
@@ -115,7 +116,14 @@ struct MacVideoPane {
 };
 
 // Filter popup tags.
-enum { kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3 };
+// Nav filter tags. kFilterMovies is a SECTION HEAD, not a view: selecting it loads nothing and
+// only prompts for a category, because "all movies" is 40k+ rows on a real provider and a nav
+// click must never be that. kFilterMovieGroup is one VOD category, and is kind-scoped in SQL
+// (moviesByGroup) so a VOD category cannot collide with a live group of the same name.
+enum {
+    kFilterAll = 0, kFilterFavourites = 1, kFilterGroup = 2, kFilterCountry = 3,
+    kFilterMovies = 4, kFilterMovieGroup = 5
+};
 
 // Most rows the grid will materialise in one fill (Win32 kMaxGridRows parity). The real cost is
 // not the NSTableView — it is building `_channels`, which on a big library was measured on Windows
@@ -182,6 +190,8 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     BOOL           _resumeLast;  // auto-play the last channel on launch (setting "resume_last", default on)
     BOOL           _hideDead;    // Settings ⚙ ▸ Channels ▸ Hide unavailable channels ("hide_dead")
     BOOL           _gridTruncated;  // last grid fill hit kMaxGridRows and the library holds more
+    BOOL           _vodSyncRunning; // mirrors rabbitears::mac::vodSyncRunning() for menu labelling
+    rabbitears::mac::VodSyncReport _vodPendingReport;  // handed from the completion to the deferred apply
     BOOL           _startupFinished;  // YES once -finishStartup ran (ToU accepted); gates the menu until then
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     IOPMAssertionID _keepDisplayAwake;  // display-sleep/screen-saver assertion held while fullscreen or video-only
@@ -831,22 +841,10 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // Empty-pane hint (updateEmptyHint only toggles .hidden; it never re-sets the text).
     _emptyHint.stringValue = Tr(StringId::StatusNoChannelsYet);
 
-    // Filter popup — rebuildFilterMenu re-reads its Tr labels but force-selects index 0; preserve the
-    // user's current filter across the rebuild (the tag+representedObject dance from
-    // -reloadAfterPlaylistChange). Group/country names ride on representedObject as DATA, untranslated.
-    NSMenuItem* prev = _filter.selectedItem;
-    const NSInteger prevTag = prev ? prev.tag : kFilterAll;
-    // RETAIN across the rebuild: rebuildFilterMenu's [removeAllItems] releases the old items, each
-    // of which owns its representedObject string — so a bare pointer here would dangle before the
-    // isEqualToString: below (MRC use-after-free, adversarially reproduced). autorelease so it lives.
-    NSString* const prevRep = prev ? [[(NSString*)prev.representedObject retain] autorelease] : nil;
-    [self rebuildFilterMenu];
-    for (NSMenuItem* it in _filter.itemArray) {
-        if (it.isSeparatorItem) continue;
-        NSString* rep = (NSString*)it.representedObject;
-        const BOOL repEq = (!rep && !prevRep) || (rep && prevRep && [rep isEqualToString:prevRep]);
-        if (it.tag == prevTag && repEq) { [_filter selectItem:it]; break; }
-    }
+    // Filter popup — rebuildFilterMenu re-reads its Tr labels but force-selects index 0; preserve
+    // the user's current filter across the rebuild. Group/country/VOD-category names ride on
+    // representedObject as DATA, untranslated, so they survive a language switch unchanged.
+    [self rebuildFilterMenuPreservingSelection];
 
     // Status line — best-effort re-derive (a transient in-progress message can't be reconstructed;
     // it re-renders in the new language on the next event). Playing → StatusPlaying, else the count.
@@ -938,6 +936,25 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     [it release];               // balance the +1 alloc (MRC) — else a leak per item, per rebuild
 }
 
+// Rebuild the nav popup and put the user's selection back. THE ONE implementation of this dance —
+// it existed twice inline (language switch, playlist reload) and the VOD sync needed a third, and
+// this is the exact code where an MRC use-after-free shipped once already: [removeAllItems]
+// releases the old items, each of which owns its representedObject string, so a bare pointer read
+// after the rebuild dangles. Retain+autorelease across the rebuild is the fix; keeping it in one
+// place is what stops the next caller re-deriving it wrongly.
+- (void)rebuildFilterMenuPreservingSelection {
+    NSMenuItem* prev = _filter.selectedItem;
+    const NSInteger prevTag = prev ? prev.tag : kFilterAll;
+    NSString* const prevRep = prev ? [[(NSString*)prev.representedObject retain] autorelease] : nil;
+    [self rebuildFilterMenu];
+    for (NSMenuItem* it in _filter.itemArray) {
+        if (it.isSeparatorItem) continue;
+        NSString* rep = (NSString*)it.representedObject;
+        const BOOL repEq = (!rep && !prevRep) || (rep && prevRep && [rep isEqualToString:prevRep]);
+        if (it.tag == prevTag && repEq) { [_filter selectItem:it]; break; }
+    }
+}
+
 - (void)rebuildFilterMenu {
     [_filter removeAllItems];
     [self addFilterItem:Tr(StringId::NavAllChannels) tag:kFilterAll group:nil];
@@ -955,6 +972,25 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
             if (cc.empty()) continue;
             [self addFilterItem:TrF(StringId::MacMainWindowCountryFilterItem, {ns(cc).uppercaseString})
                             tag:kFilterCountry group:ns(cc)];
+        }
+        // 🎬 Movies — its own nav ROOT, not ~67 extra siblings in the live group list. Present
+        // only when a VOD catalogue actually exists, so a user with a plain .m3u never sees a
+        // section that could do nothing. listVodGroups() is kind-scoped (kind<>0) and listGroups()
+        // above is LIVE-only, so the two trees are separate namespaces and a VOD category named
+        // "News" cannot merge with a live group named "News".
+        const auto vod = _db->listVodGroups();
+        if (!vod.empty()) {
+            [_filter.menu addItem:[NSMenuItem separatorItem]];
+            [self addFilterItem:Tr(StringId::NavMovies) tag:kFilterMovies group:nil];
+            for (const auto& g : vod) {
+                if (g.empty()) continue;
+                // Indented so a VOD category reads as a child of Movies in a FLAT popup — mac's
+                // nav is an NSPopUpButton, not Win32's tree, so indentation is the only available
+                // hierarchy cue. The representedObject stays the RAW group name (no prefix), since
+                // it is passed straight to moviesByGroup().
+                [self addFilterItem:[@"    " stringByAppendingString:ns(g)]
+                                tag:kFilterMovieGroup group:ns(g)];
+            }
         }
     }
     // Rebuild happens only on playlist load — always reset to "All channels" so a
@@ -1004,12 +1040,28 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // predicates down means the cap applies to the FILTERED set — see Database.h.
     const rabbitears::Database::GridFilter g = [self gridFilterCapped:YES];
 
-    // The channel set for the active filter (favourites / group / country / all).
+    // 🎬 The Movies SECTION HEAD deliberately loads nothing. allMovies() is 40k+ rows on a real
+    // provider, and a nav click must never be that — the cap would hide most of it anyway and the
+    // user would be staring at an arbitrary 5,000. Prompt for a category instead.
+    if (sel.tag == kFilterMovies) {
+        _channels.clear();
+        _gridTruncated = NO;
+        [_table deselectAll:nil];
+        [_table reloadData];
+        [self setStatus:Tr(StringId::StatusMoviesPickCategory)];
+        [self updateEmptyHint];
+        return;
+    }
+
+    // The channel set for the active filter (favourites / group / country / movie category / all).
     auto filteredSet = [&](const rabbitears::Database::GridFilter& gf) -> std::vector<Channel> {
         switch (sel.tag) {
             case kFilterFavourites: return _db->favourites(gf);
             case kFilterGroup:      return _db->channelsByGroup(ws(sel.representedObject), gf);
             case kFilterCountry:    return _db->channelsByCountry(ws(sel.representedObject), gf);
+            case kFilterMovieGroup: return _db->moviesByGroup(ws(sel.representedObject), gf);
+            // NB kFilterMovies never reaches here (early return above). Everything else — and
+            // ONLY kFilterAll actually remains — falls through to the whole-library view.
             default:                return _currentPid ? _db->channelsByPlaylist(_currentPid, gf)
                                                        : _db->allChannels(gf);
         }
@@ -1175,6 +1227,121 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 }
 
 - (void)filterChanged:(id)__unused sender { [self refreshChannels]; }
+
+// 🔴 THE max_connections GATE. One connection is the whole budget on a real Xtream line, so a sync
+// that runs during playback or a recording does not queue — it kicks the user's stream. Three
+// terms, and each covers a case the others do not:
+//   • every pane, because Split shows four;
+//   • the SCHEDULED recorder, which is NOT in _panes — a scheduled recording runs with nothing
+//     playing, and it is precisely what a sync would kick, after which the scheduler would mark
+//     the truncated file Done. `_activeScheduleId != 0` is checked too because a start can be
+//     in flight before isRecording() is true;
+//   • detached players still stopping on a background queue — mac's peer of Win32's dyingPanes.
+//     -teardownPane: and stopRecordingAsync both make isEngaged()/isRecording() read false while
+//     the socket is still open.
+// Keep this as ONE method so a future pane refactor cannot silently drop the scheduled recorder.
+- (BOOL)isProviderConnectionBusy {
+    if (_scheduleRecorder && _scheduleRecorder->isRecording()) return YES;
+    if (_activeScheduleId != 0) return YES;                       // a start is in flight
+    if (rabbitears::vlcDetachedPlayerCount() > 0) return YES;      // still letting go of a socket
+    for (const auto& p : _panes)
+        if (p->player && (p->player->isEngaged() || p->player->isRecording())) return YES;
+    return NO;
+}
+
+// Sync the provider's movie catalogue. User-triggered (never a timer) precisely because of the
+// gate above. The refusal ladder runs in Win32's order, and the module's running flag is claimed
+// LAST, so no refusal here can wedge the menu item at "Syncing…".
+- (void)syncMovies:(id)__unused sender {
+    if (!_db) return;
+    if (rabbitears::mac::vodSyncRunning()) return;                 // already going
+    if ([self isProviderConnectionBusy]) {
+        [self setStatus:Tr(StringId::StatusVodSyncPlaying)];
+        return;
+    }
+    auto targets = rabbitears::mac::xtreamTargets(*_db);
+    if (targets.empty()) {
+        [self setStatus:Tr(StringId::StatusVodSyncNoProvider)];
+        return;
+    }
+
+    rabbitears::mac::VodSyncRequest req;
+    req.targets = std::move(targets);
+    req.dbPath = rabbitears::Database::defaultDbPath();
+    MainWindowController* __unsafe_unretained me = self;
+    req.onProgress = [me](rabbitears::mac::VodSyncPhase ph, int n) {
+        switch (ph) {
+            case rabbitears::mac::VodSyncPhase::Contacting:
+                [me setStatus:Tr(StringId::StatusVodSyncContacting)]; break;
+            case rabbitears::mac::VodSyncPhase::Fetching:
+                [me setStatus:Tr(StringId::StatusVodSyncFetching)]; break;
+            case rabbitears::mac::VodSyncPhase::Saving:
+                [me setStatus:TrF(StringId::StatusVodSyncSaving,
+                                  {[NSString stringWithFormat:@"%d", n]})]; break;
+        }
+    };
+    req.onDone = [me](rabbitears::mac::VodSyncReport rep) { [me vodSyncDidFinish:rep]; };
+
+    if (rabbitears::mac::startVodSync(std::move(req)) != rabbitears::mac::VodSyncStart::Started) return;
+    _vodSyncRunning = YES;
+    [self setStatus:Tr(StringId::StatusVodSyncContacting)];
+}
+
+// 🔴 DEFERRED OUT OF EVENT TRACKING, deliberately. The main queue drains in
+// kCFRunLoopCommonModes, which includes NSEventTrackingRunLoopMode — so a dispatch_async
+// completion runs WHILE a menu is tracking or a drag is in progress. Every row action here
+// resolves _table.clickedRow at ACTION time (playClicked:, toggleFavourite:, editChannelNumber:,
+// showInGuide:, playInPip:), and this completion replaces `_channels` wholesale, so applying it
+// under an open menu makes the next click favourite or renumber a DIFFERENT film — silently, and
+// persistently. An NSTimer scheduled in the DEFAULT run-loop mode cannot fire during tracking,
+// which is exactly the property wanted: the work lands the moment the menu closes.
+- (void)vodSyncDidFinish:(rabbitears::mac::VodSyncReport)rep {
+    _vodSyncRunning = NO;
+    _vodPendingReport = rep;
+    [[NSRunLoop mainRunLoop] addTimer:[NSTimer timerWithTimeInterval:0
+                                                             target:self
+                                                           selector:@selector(applyVodSyncResult:)
+                                                           userInfo:nil
+                                                            repeats:NO]
+                              forMode:NSDefaultRunLoopMode];
+}
+
+- (void)applyVodSyncResult:(NSTimer*)__unused t {
+    using R = rabbitears::mac::VodSyncResult;
+    const rabbitears::mac::VodSyncReport rep = _vodPendingReport;
+
+    // Refresh keyed on COMMITTED work, not on the verdict: a run that inserted rows and then hit a
+    // network error on a second line still changed the library, and the nav must show it.
+    if (rep.inserted > 0 || rep.retired > 0) {
+        [self rebuildFilterMenuPreservingSelection];
+        [self refreshChannels];
+    }
+
+    NSString* msg = nil;
+    switch (rep.result) {
+        case R::Ok:
+            msg = rep.retireRefused
+                      ? TrF(StringId::StatusVodSyncDoneNoRetire,
+                            {[NSString stringWithFormat:@"%d", rep.inserted],
+                             [NSString stringWithFormat:@"%d", rep.retired],
+                             [NSString stringWithFormat:@"%d", rep.unusable]})
+                      : TrF(StringId::StatusVodSyncDone,
+                            {[NSString stringWithFormat:@"%d", rep.inserted],
+                             [NSString stringWithFormat:@"%d", rep.retired]});
+            break;
+        case R::EmptyCatalogue: msg = Tr(StringId::StatusVodSyncEmpty); break;
+        case R::Cancelled:      msg = Tr(StringId::StatusVodSyncCancelled); break;
+        default:
+            // Partial vs outright failure: if rows were committed before it stopped, say so —
+            // "failed" over a library that just gained 40,000 films is not a true report.
+            msg = rep.inserted > 0
+                      ? TrF(StringId::StatusVodSyncPartial,
+                            {[NSString stringWithFormat:@"%d", rep.inserted], ns(rep.detail)})
+                      : TrF(StringId::StatusVodSyncFailed, {ns(rep.detail)});
+            break;
+    }
+    [self setStatus:msg];
+}
 
 // Reset every channel to "not checked" — the undo for a wrong dead-status (Win32 parity).
 // Confirmed, because it throws away results and there is no undo for the undo.
@@ -1390,6 +1557,23 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         const rabbitears::ScheduledRecording* s = nullptr;
         for (const auto& x : schedules) if (x.id == id) { s = &x; break; }
         if (!s) continue;
+        // 🔴 STAND DOWN WHILE A VOD SYNC IS RUNNING, and leave the row PENDING so planScheduler
+        // simply retries in ~30 s. This is not politeness about the provider connection — it
+        // prevents a silent data loss with no bug in either component:
+        //   the sync's worker holds a write transaction for the whole catalogue insert; SQLite's
+        //   busy_timeout makes a contended write FAIL rather than wait forever, and
+        //   updateScheduleStatus discards its step result — so the row can stay Pending while the
+        //   recorder is genuinely recording. planScheduler derives "recorder busy" from the ROW
+        //   STATUS, not from the recorder object, so the next tick re-emits the same id, and
+        //   startRecording's first act is a BLOCKING stop that truncates the file in progress.
+        //   The window then ends with the row still Pending → marked Missed. Two truncated files,
+        //   the DB says Missed, and nothing is logged.
+        // Deliberately NOT marked Failed or Missed here: nothing has gone wrong, it is just not
+        // this tick's turn. (Win32 has the same gap — flagged to them in Win32/BACKLOG.md.)
+        if (rabbitears::mac::vodSyncRunning()) {
+            diag::info(L"scheduler: deferring recording start — a VOD sync holds the DB writer");
+            continue;
+        }
         NSString* ext; std::string mux;
         [MainWindowController extForFormat:s->mux ext:&ext mux:&mux];
         NSString* path = [self recordingPathFor:ns(s->channelName) ext:ext];
@@ -1966,9 +2150,16 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     pane->view = nil;
     VlcPlayerMac* dying = pane->player.release();  // take the player out of the unique_ptr
     if (!dying) { [view release]; return; }
+    // Count the detached player for the whole background stop. Once it leaves _panes nothing can
+    // ask it isEngaged()/isRecording() any more, but its connection to the provider stays open
+    // until the destructor returns — and libVLC's stop() is exactly the call that can take
+    // seconds on a stuck feed. The VOD sync gate reads this count; without it, collapsing a 2×2
+    // and immediately syncing would start against up to three still-open sockets.
+    rabbitears::vlcDetachedPlayerBegin();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         dying->stop();
         delete dying;  // ~VlcPlayerMac: media_player_stop + release (blocking, off-main)
+        rabbitears::vlcDetachedPlayerEnd();
         dispatch_async(dispatch_get_main_queue(), ^{ [view release]; });  // now safe to free
     });
 }
@@ -2333,6 +2524,18 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // failure, and with "Hide unavailable" on those rows leave the grid — so without this the user
     // has no route to a channel the app misjudged (a provider blip, a geo-block, a flaky open).
     [[chan addItemWithTitle:Tr(StringId::MenuDeadLinkClear) action:@selector(clearDeadStatuses:) keyEquivalent:@""] setTarget:self];
+    // 🎬 Sync movies — present ONLY when a playlist actually carries Xtream credentials. A plain
+    // .m3u has no player_api.php behind it, so for those users this item could never do anything
+    // but fail, and an action that only ever fails is worse than an absent one. (The gear menu is
+    // rebuilt on every open, so this tracks a playlist being added or removed with no extra work.)
+    if (_db && !rabbitears::mac::xtreamTargets(*_db).empty()) {
+        NSMenuItem* vod = [chan addItemWithTitle:Tr(_vodSyncRunning ? StringId::MenuVodSyncing
+                                                                    : StringId::MenuVodSync)
+                                          action:@selector(syncMovies:)
+                                   keyEquivalent:@""];
+        vod.target = self;
+        vod.enabled = !_vodSyncRunning;
+    }
     // Resume last channel (checkbox) — auto-play the last-watched channel on launch (Win32 parity).
     // Built fresh on each gear open, so the ✓ tracks _resumeLast without an explicit rebuild.
     NSMenuItem* resume = [chan addItemWithTitle:Tr(StringId::MenuResumeLastChannel) action:@selector(toggleResumeLast:) keyEquivalent:@""];
@@ -2515,21 +2718,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // remove groups/countries). If the active playlist is unchanged, preserve the user's
     // current filter across the rebuild — re-select it if it still exists, else fall back
     // to All. When the playlist itself changed, a fresh view legitimately starts at All.
-    NSMenuItem* prev = _filter.selectedItem;
-    const NSInteger prevTag = prev ? prev.tag : kFilterAll;
-    // RETAIN across the rebuild: rebuildFilterMenu's [removeAllItems] releases the old items, each
-    // of which owns its representedObject string — so a bare pointer here would dangle before the
-    // isEqualToString: below (MRC use-after-free, adversarially reproduced). autorelease so it lives.
-    NSString* const prevRep = prev ? [[(NSString*)prev.representedObject retain] autorelease] : nil;
-    [self rebuildFilterMenu];
-    if (currentOK) {
-        for (NSMenuItem* it in _filter.itemArray) {
-            if (it.isSeparatorItem) continue;
-            NSString* rep = (NSString*)it.representedObject;
-            const BOOL repEq = (!rep && !prevRep) || (rep && prevRep && [rep isEqualToString:prevRep]);
-            if (it.tag == prevTag && repEq) { [_filter selectItem:it]; break; }
-        }
-    }
+    if (currentOK) [self rebuildFilterMenuPreservingSelection];
+    else           [self rebuildFilterMenu];  // the playlist changed — a fresh view starts at All
     [self refreshChannels];
     if (!_currentPid && lastEnabled == 0 && !playlists.empty())
         [self setStatus:Tr(StringId::MacMainWindowAllPlaylistsDisabledSee)];
@@ -2861,6 +3051,13 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // re-asserts that mute once the audio track actually shows up.
 - (void)playChannel:(const Channel&)c intoPane:(int)idx {
     if (idx < 0 || idx >= (int)_panes.size()) return;
+    // 🔴 max_connections:1 — the sync gate cannot be start-only. -syncMovies: refuses while
+    // anything is playing or recording, but nothing stops the user pressing Play two seconds into
+    // a catalogue download, and on a one-connection line that is the sync kicking the stream the
+    // user just asked for. The user's playback always wins, so the sync stands down. Soft: an
+    // in-flight HTTP body still finishes (httpGet has no cancellation handle), but no further
+    // request is issued and nothing more is written.
+    rabbitears::mac::cancelVodSync();
     MacVideoPane* p = _panes[(size_t)idx].get();
     p->player->play(c.streamUrl, c.userAgent, c.referrer);
     p->player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
