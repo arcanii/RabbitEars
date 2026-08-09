@@ -83,6 +83,54 @@ public:
     // silent stream isn't mistaken for denied audio capture.
     bool hasAudioTrack() const;
 
+    // ---- position / seek / pause (the VOD transport) --------------------------------
+    //
+    // LIVE getters: each asks libVLC on the spot. No cached state, no atomics, no worker —
+    // unlike Win32's VlcPlayer, whose WORKER owns `mp_` and must therefore publish position
+    // through relaxed atomics. Here the caller IS the thread that owns the player, so a cache
+    // would only add staleness. It also means a stopped player needs no explicit reset:
+    // libVLC reports -1/-1/false the moment the input is gone, which is exactly what Win32's
+    // doStop() zeroing exists to fake (and its videoWH_, which is never reset, is stale).
+    //
+    // MAIN THREAD ONLY, like playState()/sampleStats(). Cost was MEASURED against the vendored
+    // libVLC 3.0.23, not assumed: get_time ~0.05 µs, get_length ~0.06 µs, is_seekable ~0.16 µs
+    // — together a rounding error at the 250 ms tick, and less than the audio-track enumeration
+    // setMuted() already does there on EVERY pane. They also do NOT block on a wedged feed (the
+    // input thread parks in read()/connect() without holding the player lock).
+    //
+    // ⚠ THE ONE INVARIANT THIS DEPENDS ON: these can block for the full duration of a concurrent
+    // libvlc_media_player_stop(), because they take the lock stop() holds. That is safe today
+    // only because -teardownPane: re-points the active-pane aliases and pops the pane BEFORE
+    // handing the player to its background stop, and play()'s internal stop() runs on this same
+    // thread. If either ever moves off-main, this tick becomes blockable — start here.
+    long long timeMs() const;    // 0 when there is no input (libVLC's -1 is normalized)
+    long long lengthMs() const;  // 0 for a live stream — which is what keeps the bar hidden
+
+    // Whether libVLC says this media can actually be repositioned. ASK LIBVLC — never infer
+    // seekability from a URL suffix, a group title or Channel::Kind: catch-up and timeshift
+    // feeds are live URLs that ARE seekable, an HLS DVR window on an ordinary live channel is
+    // legitimately seekable with a short length, and VOD behind a dead link is not seekable at
+    // all. A stream may also report a length while refusing to seek.
+    bool isSeekable() const;
+
+    // Jump to `ms`. Re-checks seekability against the LIVE player and clamps into range, so a
+    // stale UI cannot ask a live stream to seek. Deliberately does NOT re-sample afterwards:
+    // libVLC often reports the new time before the demuxer has actually repositioned, so an
+    // immediate re-read would clear the UI's post-seek latch early and reproduce the thumb
+    // snap-back the latch exists to hide. Seeking a network stream re-buffers — call it on drag
+    // RELEASE, not per drag tick.
+    void seekTo(long long ms);
+
+    // Pause/resume. libVLC's set_pause is a no-op on a stream that cannot pause, so this is
+    // safe to call on live TV; isPaused() reports libVLC's own state rather than a local flag,
+    // so it cannot drift from reality.
+    void setPaused(bool paused);
+    bool isPaused() const;
+
+    // The decoded video's pixel size; false / 0×0 until the vout is up. Live-polled like the
+    // rest, so it cannot go stale after a stop. Consumer: the PiP inset aspect snap.
+    bool videoSize(unsigned& w, unsigned& h) const;
+
     // ---- recording (independent headless second player) ----------------------------
     // Record the stream to `filePath` via a SECOND, headless libVLC media player that muxes
     // the elementary streams straight to disk (`:sout=#std{...}`, stream-copy, no re-encode,

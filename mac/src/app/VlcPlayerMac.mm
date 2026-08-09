@@ -277,6 +277,87 @@ bool VlcPlayerMac::isEngaged() const {
     return impl_->playDeadline > std::chrono::steady_clock::now();
 }
 
+// ---- position / seek / pause ---------------------------------------------------------------
+// All live reads — see the header for why there is no cached state here and what the one
+// blocking-related invariant is.
+
+long long VlcPlayerMac::timeMs() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return 0;
+    const libvlc_time_t t = libvlc_media_player_get_time(impl_->player);
+    return t > 0 ? (long long)t : 0;   // libVLC returns -1 with no input
+#else
+    return 0;
+#endif
+}
+
+long long VlcPlayerMac::lengthMs() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return 0;
+    const libvlc_time_t l = libvlc_media_player_get_length(impl_->player);
+    return l > 0 ? (long long)l : 0;   // 0 for live — the UI's "no scrub bar" signal
+#else
+    return 0;
+#endif
+}
+
+bool VlcPlayerMac::isSeekable() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    return impl_->player && libvlc_media_player_is_seekable(impl_->player) != 0;
+#else
+    return false;
+#endif
+}
+
+void VlcPlayerMac::seekTo(long long ms) {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return;
+    // Re-check against the LIVE player rather than trusting the caller's last sample: the UI
+    // may have been showing a scrub bar for a stream that has since stopped or switched to a
+    // non-seekable one, and asking a live stream to seek is how you wedge an input.
+    if (!libvlc_media_player_is_seekable(impl_->player)) return;
+    const long long len = lengthMs();
+    if (ms < 0) ms = 0;
+    // Keep a second off the end: seeking exactly to the duration lands past the last frame on
+    // some demuxers and ends the media instead of repositioning.
+    if (len > 1000 && ms > len - 1000) ms = len - 1000;
+    libvlc_media_player_set_time(impl_->player, (libvlc_time_t)ms);
+#else
+    (void)ms;
+#endif
+}
+
+void VlcPlayerMac::setPaused(bool paused) {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    // libvlc_media_player_set_pause is a no-op when the stream can't pause, so this is safe to
+    // call on live TV without a can_pause() gate.
+    if (impl_->player) libvlc_media_player_set_pause(impl_->player, paused ? 1 : 0);
+#else
+    (void)paused;
+#endif
+}
+
+bool VlcPlayerMac::isPaused() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    // libVLC's own state, not a local flag: a stream that refused to pause, or that ended while
+    // paused, cannot leave a stale "paused" showing in the UI.
+    return impl_->player && libvlc_media_player_get_state(impl_->player) == libvlc_Paused;
+#else
+    return false;
+#endif
+}
+
+bool VlcPlayerMac::videoSize(unsigned& w, unsigned& h) const {
+    w = h = 0;
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return false;
+    if (libvlc_video_get_size(impl_->player, 0, &w, &h) != 0) { w = h = 0; return false; }
+    return w > 0 && h > 0;
+#else
+    return false;
+#endif
+}
+
 bool VlcPlayerMac::hasAudioTrack() const {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return false;
