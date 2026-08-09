@@ -85,9 +85,16 @@ traps that cost hours are listed under Working rules.**
 
 ## Current state — mac 0.2.16 on `main`, BUILT + NOTARIZED but **deliberately NOT PUBLISHED** (2026-08-09)
 
-> **Read this box first.** `main` (`e96a86b`, build **402**) carries three merged mac releases' worth
+> **Read this box first.** `main` (`c5ac088`, build **403**) carries three merged mac releases' worth
 > of work that **no user has**. The live appcast still serves **0.2.15**, so every installed mac app
 > is on 0.2.15 and nothing below has reached anyone.
+>
+> **⏳ AND THERE IS UNMERGED WORK IN FLIGHT:** branch **`mac-seek-scrubbar`** (`bbc7db9`) has the
+> whole seek layer — scrub bar, time readout, skip ±10 s, and **pause** (mac had none at all). It
+> **builds clean and the selftest passes, but it has NOT been adversarially reviewed and has NOT
+> been driven on device.** Both are required before merge here — that pair has caught a real bug in
+> every phase of this project, including two regressions the author introduced. **Do not merge it on
+> "it compiles".** See its own section below.
 
 **Windows leapt 0.2.11 → 0.2.17 while mac was on the 0.2.12–0.2.15 line** (their v0.2.16 = the Xtream
 VOD release, v0.2.17 = the "big library" release). `cmake/AppVersion.cmake` now reads Windows
@@ -163,6 +170,70 @@ trigger given the dual-instance trap.
 **Before it: `v0.2.13-mac`** (build 297, universal, notarized; release [`v0.2.13-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.13-mac), appcast @ `6838da3`) — a **launch-hang hotfix**. The owner's installed app auto-updated to 0.2.12 and **beachballed on the Sparkle post-update relaunch**, recovering on a manual restart. **Root cause (confirmed via `showWindow`-phase timing instrumentation, not guessed):** the clean launch path is only ~290 ms, so heavy init was *not* it — the blocker was the **Terms-of-Use gate**, which re-fires on every version change and ran as an **app-modal (`[TermsDialog runModal]`) BEFORE the main window was built and before `[NSApp activateIgnoringOtherApps:]`**. On a Sparkle relaunch the app isn't auto-activated, so the modal came up **buried behind other windows with no visible main window** — reading as a beachball. A manual restart auto-activates the app, so the modal was visible and the user clicked Accept. **Fix (`2c1f9b8`):** build + show + activate the window FIRST, then present the ToU as a **document-modal SHEET** on it (a sheet cannot be buried independently of its window); the "usage" side effects (Spectrum tap, video attach, stats timer, resume auto-play, recording scheduler) moved into a new **`-finishStartup`** run only after Accept. Because a sheet blocks only its window (not the menu bar, unlike the old app-modal), **`AppDelegate -validateMenuItem:` now disables app commands until `-finishStartup` runs** (a `startupFinished` flag on the controller) so the gate still blocks the whole app. **Adversarially reviewed** (3 parallel lenses — MRC/ARC lifetime, threading/AppKit-async, logic/parity; the memory & threading mechanics were clean, and the review CAUGHT the one real regression: a document-modal sheet doesn't disable the menu bar → added the `validateMenuItem` gate). **On-device verified** (sole dev instance, isolated seeded DB): already-accepted → NO sheet, straight to play; version-change → window shown FIRST, ToU sheet descends from the title bar, **View menu commands greyed while pending**, Accept → channels load + resume auto-plays + meters, **menu re-enables**; the non-frontmost/Sparkle case is covered by construction (`makeKeyAndOrderFront` precedes the sheet unconditionally, so there is always a real window). Version 0.2.12→0.2.13 (APPLE override). Same universal recipe; verified end-to-end (downloaded asset sha256-identical, `length=85495168`, spctl Notarized, sparkle:version 297 > 293, feed serves 0.2.13). **`git push` WORKED this session** for all four writes (fix, bump, appcast, and this HANDOVER). Windows stays 0.2.11.
 
 **Before it: `v0.2.12-mac`** (build 293, universal, notarized; release [`v0.2.12-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.12-mac), appcast @ `816e9f0`) **shipped the four Win32-gap parity features below** — the batch that was merged + on-device GUI-verified is now released. Version bumped 0.2.11→0.2.12 (APPLE override in `cmake/AppVersion.cmake`; Windows stays 0.2.11). Standard universal recipe (cached `vlc-3.0.23-universal.dmg` → `package-mac.sh --sign --vlc <universal>` → `hdiutil` dmg → sign → `notarytool --keychain-profile SQLTerminal-notarize --wait` Accepted → `stapler staple` → `sign_update --account SQLTerminal` [keychain prompt — user clicked Allow] → `gh release create --latest=false` → appcast via `gh api PUT`). Verified end-to-end: downloaded asset **sha256 byte-identical** to the signed dmg (edSignature `ezJsOy61…` valid), `length=85492936` matches, spctl "Notarized Developer ID", staple validates, embedded SUPublicEDKey matches, sparkle:version 293 > 276, live raw feed serves 0.2.12. `git push` hung for all three main writes (version bump, HANDOVER, appcast) → each landed via `gh api PUT contents`.
+
+### ⏳ IN FLIGHT — the seek layer (branch `mac-seek-scrubbar` @ `bbc7db9`, NOT merged, NOT verified)
+
+**Status: builds clean, selftest `ALL PASS`, and that is ALL.** No adversarial review has run against
+the code, and it has never been driven on device. Finish those two before merging — on this project
+that pair has caught a real bug in *every* phase, including two the author introduced.
+
+**What it adds.** `VlcPlayerMac` gains `timeMs` / `lengthMs` / `isSeekable` / `seekTo` / `setPaused` /
+`isPaused` / `videoSize`; `MainWindowController` gains a bottom-bar transport cluster (⏸ ⏪ scrub ⏩
+`12:34 / 1:45:00`). mac had **no seek API and no pause at all** (`libvlc_media_player_pause` appeared
+nowhere in `mac/src`), so a film from the new VOD sync could not be scrubbed or even held.
+**Zero new catalog strings** (reuses `TooltipBtnPause`, `LabelPlay`, `TooltipBtnSkipBack`/`Fwd`),
+zero `common/`/`Win32/`.
+
+**The sampling question was SETTLED BY MEASUREMENT — do not "fix" it back to Win32's shape.** The
+getters are LIVE reads on the existing 250 ms main-thread tick. Measured against the vendored libVLC
+3.0.23: `get_time` 0.05 µs, `get_length` 0.06 µs, `is_seekable` 0.16 µs — *less* than the audio-track
+enumeration `setMuted()` already does there on every pane. They do **not** block on a wedged feed
+(the input thread parks in `read()`/`connect()` without holding the player lock, tested on two wedge
+shapes). A background sampler would block **anyway** — it takes the same lock `stop()` holds — and
+would create a thread boundary mac does not have, across a raw `impl_->player` that `-teardownPane:`
+deletes from a background queue. Win32's relaxed atomics exist because **its worker owns `mp_`**;
+that is a Win32 problem. Live polling also means there is no cache to reset on stop, and Win32's
+never-reset `videoWH_` staleness cannot be inherited.
+
+**⚠ The one invariant it depends on** (written into `VlcPlayerMac.h` too): the getters *can* block for
+the duration of a concurrent `libvlc_media_player_stop()`. That is safe today only because
+`-teardownPane:` re-points the active-pane aliases and pops the pane **before** handing the player to
+its background stop, and `play()`'s internal `stop()` runs on the tick's own thread. **If either ever
+moves off-main, this tick becomes blockable — start there.**
+
+**Four things the risk review caught before any code was written:**
+- **The bottom bar had NO relayout pass.** `_status.frame` was assigned exactly once and at the
+  560 pt `contentMinSize` it is already flush with the meter button — *zero slack*. A fixed reserve
+  would have silently truncated the status line (which carries the sticky grid-truncation notice) for
+  **every** user, including live-TV users who never see the bar. Now `-layoutBottomBar`, driven by
+  observing the **content view's** frame — deliberately not the video pane's resize notification,
+  which also fires when the channel grid is toggled.
+- **End-of-film, not Stop, is the unrecoverable case.** mac attaches no libVLC event callbacks, so
+  `-tickStats` is the ONLY thing that can retire the bar; the update sits **above** the
+  `!fs.playing` early return. Stop has an explicit reset site; end-of-film has none.
+- **The gate would flap at 4 Hz on live HLS** (a mid-stream reopen briefly makes `get_length` −1).
+  Hysteresis on hide (~2 s), immediate on show — each flip re-frames the status line and mac has no
+  `DeferWindowPos` batch.
+- **`.hidden = v` in `-applyVideoOnly`** would resurrect the bar on a live channel when *leaving*
+  Video Only → two-condition hide. (`_meterBtn` was missing from that list entirely and only vanished
+  by z-order — also fixed.)
+
+**Win32's three known defects** are prevented with mac mechanisms, not a literal port: the post-seek
+latch is scoped to a `_panesGeneration` counter bumped on every pane-set change, so pane A's seek
+target can never drive pane B's thumb.
+
+**Decisions already taken (owner):** **pause is IN**; **Video Only stays chrome-free** (watching a
+film with seek is ⌃⌘F fullscreen, which keeps chrome) — Win32 parity, and it avoids new overlay logic.
+
+**⚠ Expect the bar on LIVE TV, not just movies.** Win32 commit `3660441` corrected exactly this
+assumption after finding real HLS DVR windows on the owner's provider reporting ~0:36–1:54 that
+genuinely rewind. Gate on `isSeekable() && lengthMs() > 0` only — never on `Channel::Kind::Movie`.
+
+**Known gap to decide during review:** there is still no way to pause from the **video right-click
+menu**, and Video Only has no transport at all. Also flagged for `Win32/BACKLOG.md`:
+`MainWindowChrome.cpp:266-273` hides Win32's seek bar + time label in fullscreen but omits
+`btnSeekBack`/`btnSeekFwd`, then returns before the only place their visibility is set — reads as a
+defect, unconfirmed visually.
 
 ### 🎬 Xtream VOD sync + Movies nav root ([PR #45](https://github.com/arcanii/RabbitEars/pull/45), merged @ `e96a86b`, 2026-08-09)
 
@@ -294,7 +365,8 @@ A gap-scan verified **123 candidate items against real mac source**: 44 were "al
 the mac binary, no caller" (the cheap wins), 31 missing, 27 already present, 12 partial, 9 N/A. Most
 of the actionable set is now closed. **What remains, deduplicated:**
 
-**🥇 THE ONE REAL GAP — the seek layer.** `VlcPlayerMac` has **no `timeMs` / `lengthMs` /
+**🥇 THE ONE REAL GAP — the seek layer. ⏳ NOW BUILT ON `mac-seek-scrubbar`, awaiting review +
+on-device verification (see its section above). The description below is what it was.** `VlcPlayerMac` has **no `timeMs` / `lengthMs` /
 `isSeekable` / `seekTo` / `videoSize` at all**, and nothing shared exists (Win32's seek layer is UI
 code, not `common/`). It is a pure native port, and it is what makes the VOD films that now sync
 actually *watchable*. The scrub bar + elapsed/total readout, skip ±10 s, and PiP aspect-ratio snap
@@ -722,80 +794,73 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 - **A mitigation can be worse than the bug.** Today's scheduler stand-down (deferring a recording while a
   VOD sync ran) was unbounded and could lose the very recording it protected. When a fix inverts a
   priority, check the unbounded-wait case — and prefer an adversarial review that MEASURES (the same
-  review measured the contention at ~0.2 s, not the 5 s the mitigation assumed).
-## Seed prompt for a fresh session
+  review measured the contention at ~0.2 s, not the 5 s the mitigation assumed).## Seed prompt for a fresh session
 
 ```
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions in cmake/AppVersion.cmake (APP_VERSION =
 Windows 0.2.17; an if(APPLE) override = mac 0.2.16) — that file is the recurring cross-team merge
-conflict, keep both lines. App min macOS 26 (Apple-Silicon-only, so the x86_64 slice can never run —
+conflict, keep both lines. App min macOS 26 (Apple-Silicon-only, so the x86_64 slice can never run;
 arm64-only builds are fine). Build: scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64.
-Release recipe + all gotchas: the mac-release-deployment memory.
+Release recipe + gotchas: the mac-release-deployment memory.
 
-STATE (2026-08-09, main @ e96a86b, build 402): THREE releases' worth of merged work that NO USER HAS.
-The live appcast still serves 0.2.15, so every installed mac app is on 0.2.15. mac 0.2.16 is BUILT +
-NOTARIZED + STAPLED but DELIBERATELY UNPUBLISHED at ~/Downloads/RabbitEars-0.2.16.dmg (arm64, build
-398, sha256 36b2f578..., 41,602,223 bytes) — the owner asked to hold the appcast, which is the step
-that actually pushes a build to every user. NOTE the artifact is build 398 but main is 402: a publish
-should REBUILD. To publish: sign_update --account SQLTerminal (one keychain Allow) -> gh release
-create v0.2.16-mac --target main --latest=false -> appcast <item> on main (xmllint FIRST).
+TWO THINGS TO KNOW BEFORE ANYTHING ELSE:
 
-What landed today, in order:
- 1. PR #43 (d6a0434) — THE MAC BUILD WAS BROKEN ON MAIN. Database::GridFilter was a struct nested in
-    Database with default member initializers used as `= {}` default args in the same class body:
-    MSVC accepts it, Clang rejects it, so Windows CI stayed green while every mac build died. Fixed by
-    hoisting GridFilter to namespace scope + a member alias (all 15 Win32 call sites unchanged).
- 2. PR #44 (5b76422) + bump 59ec30a — 0.2.16 "safe to upgrade": the FIRST mac build carrying Windows'
-    schema v8+v9, and v9 is a DATA migration (rewrites every stream_url to canonical form, merges the
-    rows that then collide). Favourites-import canonicalisation, a "Clear dead-link results" gear item
-    (mac marks channels Dead from playback failure and hides them — there was no way back), the
-    GridFilter/SQL pushdown + 5000-row cap + search debounce, an ATS exception (cleartext http now
-    loads), and 3 live shipped bugs (meter Look popup wired to SWAPPED enum values; PiP exit hijacking
-    pane 0; one series airing saying Cancelled where the series keeps running -> Skipped). Added the
-    GridFilter + i18n selftest blocks that were previously Windows-only targets.
- 3. PR #45 (e96a86b) — XTREAM VOD SYNC + a Movies nav root. mac-only, zero common/Win32. New
-    mac/src/app/VodSync.{h,mm} (pure C++ + GCD, holds NO Obj-C objects, so deliberately NOT in the
-    -fobjc-arc list) owning its OWN Database connection (retireMissingChannels stages a per-CONNECTION
-    temp table, non-reentrant). VERIFIED END-TO-END against a fake Xtream panel — a first for either
-    platform (Windows shipped it unverified): 50 films in exactly 3 HTTP requests; retirement removed
-    exactly the 20 dropped at the provider with live rows untouched; the trust guard refused retirement
-    at 25/30 unusable and kept all 30 films.
+1. NOTHING RECENT HAS REACHED USERS. main (c5ac088, build 403) carries three releases' worth of
+   merged work, but the live appcast still serves 0.2.15, so every installed mac app is on 0.2.15.
+   mac 0.2.16 is BUILT + NOTARIZED + STAPLED yet DELIBERATELY UNPUBLISHED at
+   ~/Downloads/RabbitEars-0.2.16.dmg (arm64, build 398, sha256 36b2f578..., 41,602,223 bytes) —
+   the owner asked to hold the appcast, which is the step that actually pushes a build to everyone.
+   The artifact is build 398 and main is 403, so a publish should REBUILD. To publish:
+   sign_update --account SQLTerminal (one keychain Allow) -> gh release create v0.2.16-mac --target
+   main --latest=false -> appcast <item> on main (xmllint FIRST).
 
-NEXT, and it is ONE item: THE SEEK LAYER. VlcPlayerMac has no timeMs/lengthMs/isSeekable/seekTo/
-videoSize at all and nothing shared exists — a pure native port, and what makes the VOD films that
-now sync actually watchable. The scrub bar + time readout, skip +/-10s and PiP aspect-snap all hang
-off it. Take Win32's traps rather than rediscover them: sample OFF the 250ms main-thread poll via
-relaxed atomics (blocking libVLC getters there stall the UI on a wedged feed); read seekability from
-libVLC EVERY tick, never inferred from the URL; a seek generation counter so a stale sample cannot
-clobber a user seek; commit on drag RELEASE only. Then the small tail: dead-link sweep (now unblocked
-by the ATS exception; the dangerous half is already compiled in), Settings > System log level (SKIP
-the beta switchboard — its enum has no enumerators), PiP menu/swap/always-on-top, and the appcast
-host move off raw.githubusercontent.com. mac is NOT behind on resume/watched or series/seasons —
-neither exists on either platform.
+2. THERE IS UNMERGED WORK IN FLIGHT: branch mac-seek-scrubbar (bbc7db9) = the whole seek layer
+   (scrub bar, time readout, skip +/-10s, and PAUSE — mac had none at all). It BUILDS CLEAN and the
+   selftest passes, and that is ALL: it has NOT been adversarially reviewed and has NOT been driven
+   on device. BOTH are required before merge. DO NOT MERGE IT ON "it compiles" — on this project
+   that pair has caught a real bug in every phase, including two the previous session introduced
+   itself. Details + the four already-fixed design traps are in the HANDOVER's own section.
+
+Already merged on main and NOT yet released: PR #43 (a Clang-vs-MSVC break that had mac unbuildable
+on main — GridFilter nested-struct default member initializers), PR #44 = 0.2.16 "safe to upgrade"
+(first mac build carrying schema v8+v9, where v9 is a DATA migration that rewrites every stream_url
+and merges colliding rows; plus favourites canonicalisation, "Clear dead-link results", the
+GridFilter/SQL grid pushdown + 5000-row cap + search debounce, an ATS exception, and three live
+shipped bugs), and PR #45 = the Xtream VOD movie sync + a Movies nav root, VERIFIED end-to-end
+against a fake Xtream panel (a first for either platform — Windows shipped it unverified).
+
+NEXT: finish the seek layer — (a) adversarial ObjC++ find->verify Workflow (MRC/threading/logic
+lenses), (b) apply what it CONFIRMS (not raw findings), (c) GUI-verify against a real seekable file
+AND a live channel, (d) merge + delete branch. Then the small tail: dead-link sweep (now unblocked
+by 0.2.16's ATS exception; the dangerous half is already compiled in), Settings > System log level
+(SKIP the beta switchboard — its enum has no enumerators), PiP menu/swap/always-on-top, the appcast
+host move off raw.githubusercontent.com, and PiP aspect-snap (videoSize() now exists for it).
+mac is NOT behind on resume/watched or series/seasons — neither exists on either platform.
 
 HARD-WON RULES (each cost real time):
 - Win32 gui-build CI is pre-existing red and dies at CONFIGURE (needs fxc), so it compiles NOTHING.
-  The real MSVC gate for a common/ change is Windows core-selftest. A common/ header change can break
-  every mac build while Windows CI stays green.
-- VERIFY MIGRATIONS BY RUNNING THEM. Author the OLD schema with the actually-shipped binary
-  (RABBITEARS_DATA_DIR=<scratch>, kill after ~5s), seed adversarial cases, run the NEW binary.
+  The real MSVC gate for a common/ change is Windows core-selftest. A common/ header change can
+  break every mac build while Windows CI stays green — that is how main sat unbuildable for days.
+- VERIFY BY RUNNING, NOT BY REASONING. Migrations: author the OLD schema with the actually-shipped
+  binary (RABBITEARS_DATA_DIR=<scratch>, kill after ~5s), seed adversarial cases, run the NEW binary.
   Reasoning got v9 wrong on both sides — the Win32 handover calls it a no-op on a live-TV-only
   library and it is not. Seeding a dead_status case? Set last_checked_at too (the merge couples them).
+  Perf/threading: MEASURE. The seek design was settled by benchmarking libVLC getters (0.05-0.16us,
+  and they do not block on a wedged feed), which reversed the inherited "sample off the UI thread"
+  advice.
 - A MITIGATION CAN BE WORSE THAN THE BUG. Deferring a due recording while a VOD sync ran was
   unbounded and could lose the recording it protected; the right rule is Win32's — a due recording
   outranks a catalogue refresh, so cancelVodSync() and proceed. When a fix inverts a priority, check
-  the unbounded-wait case, and prefer a review that MEASURES (it measured the contention at ~0.2s,
-  not the 5s assumed).
+  the unbounded-wait case.
 - mac .mm are MRC by default; -fobjc-arc is PER FILE (list in mac/CMakeLists.txt).
-  MainWindowController.mm / AppDelegate.mm / VlcPlayerMac.mm are MRC. The recurring trap, shipped 3x:
-  an autoreleased object stored into an ivar WITHOUT retain, or a bare pointer into a collection that
-  is then freed. ALWAYS run an adversarial find->verify Workflow (memory/threading/logic lenses) on a
-  native change AND on-device-verify — together they have caught a real bug in EVERY phase, including
-  regressions I introduced myself.
-- GUI/audio cannot be verified headlessly. The INSTALLED /Applications app shares the bundle id with a
-  dev build (dual-instance composite trap) so QUIT it and run the dev build as the SOLE instance
+  MainWindowController.mm / AppDelegate.mm / VlcPlayerMac.mm are MRC; VodSync.mm holds no Obj-C
+  objects on purpose. The recurring trap, shipped 3x: an autoreleased object stored into an ivar
+  WITHOUT retain, or a bare pointer into a collection that is then freed. ALWAYS run an adversarial
+  find->verify Workflow AND on-device-verify a native change.
+- GUI/audio cannot be verified headlessly. The INSTALLED /Applications app shares the bundle id with
+  a dev build (dual-instance composite trap) so QUIT it and run the dev build as the SOLE instance
   against an isolated RABBITEARS_DATA_DIR DB. A ~40-line python player_api.php / m3u / XMLTV stub on
   127.0.0.1 makes provider paths deterministic and offline (loopback is ATS-exempt).
 - git push HANGS intermittently AND gh api throws transient 5xx — sometimes both. Land on main via
@@ -806,8 +871,6 @@ HARD-WON RULES (each cost real time):
 - Sole dev: review the plan, then gh pr merge <n> --merge --delete-branch. Don't wait for an approval
   that never comes. PRs exist as the CI/MSVC gate. Never --admin (auto-mode blocks the bypass flag).
 - i18n: edit common/i18n/*.json + run tools/i18n/gen_i18n.py — Strings.{h,cpp} are GENERATED, never
-  hand-edited (a review once suggested hand-editing them; it was wrong). keys.json order == the
-  StringId enum order, so APPEND a new id, never insert. zh-HK carries only OVERRIDES (11 keys) and
-  inherits zh-Hant via a "base" declared in languages.json — NOT in zh-HK.json itself — so a new id
-  needs en + ja + zh-Hant only. gen_i18n.py --check is the CI gate and fails loudly on a gap.
+  hand-edited. keys.json order == the StringId enum order, so APPEND, never insert. zh-HK carries
+  only overrides and inherits zh-Hant via a "base" declared in languages.json, NOT in zh-HK.json.
 ```
