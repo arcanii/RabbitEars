@@ -303,8 +303,15 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     // A recording in progress can't be cancelled from here (the scheduler owns it).
     if (s.status == ScheduleStatus::Recording) return;
     if (s.status == ScheduleStatus::Pending) {
-        // Mark Cancelled (a tombstone) rather than delete, so a series rule can't re-queue the slot.
-        _db->updateScheduleStatus(s.id, ScheduleStatus::Cancelled);
+        // Mark a tombstone rather than delete, so a series rule can't re-queue the slot (the
+        // expander treats a row of ANY status as owning its slot — RecordingRules.cpp:89).
+        //
+        // WHICH tombstone matters to the user, even though the two are mechanically identical:
+        // for a RULE-generated airing this passes over one episode and leaves the series running,
+        // so reporting "Cancelled" said the exact thing it does not mean. Skipped is the honest
+        // status and is already rendered (:40) and translated (Win32 0.2.14 parity).
+        _db->updateScheduleStatus(
+            s.id, s.ruleId != 0 ? ScheduleStatus::Skipped : ScheduleStatus::Cancelled);
     } else if (s.ruleId != 0 && s.stopUtc > (long long)time(nullptr)) {
         // Rule-generated, still-future, already history (Cancelled/Failed): this row is the dedup
         // anchor. Hard-deleting it lets the next rule expansion recreate the airing — silently

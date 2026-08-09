@@ -153,8 +153,14 @@ std::wstring wkey(int i, const char* suffix) {
     _enable[i] = en;
 
     NSPopUpButton* sp = [[NSPopUpButton alloc] init];
-    [sp addItemsWithTitles:@[ Tr(StringId::MeterLookLed), Tr(StringId::MeterLookLcd),
-                              Tr(StringId::MeterLookVacuumTube), Tr(StringId::MeterLookOscilloscope) ]];  // index == (int)MeterStyle
+    // ⚠ ORDER IS LOAD-BEARING: the item index is cast straight to MeterStyle below (and back in
+    // -apply:), so this array must follow `enum class MeterStyle { Led, Tube, Lcd, Scope }`
+    // (MeterModel.h) EXACTLY. It used to read Led/Lcd/VacuumTube/Oscilloscope, which swapped
+    // indices 1 and 2 — picking "LCD" in shipped 0.2.15 gave you the vacuum-tube look, and
+    // vice versa. Fix the ORDER HERE, never the enum: the enum value is what is persisted in
+    // `meter_<kind>_style`, so renumbering it would silently reinterpret every saved config.
+    [sp addItemsWithTitles:@[ Tr(StringId::MeterLookLed), Tr(StringId::MeterLookVacuumTube),
+                              Tr(StringId::MeterLookLcd), Tr(StringId::MeterLookOscilloscope) ]];  // index == (int)MeterStyle
     [sp selectItemAtIndex:(NSInteger)_cfg[i].style];
     sp.target = self;
     sp.action = @selector(controlChanged:);

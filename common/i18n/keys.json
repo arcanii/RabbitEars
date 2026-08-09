@@ -3784,5 +3784,11 @@
       "{0}"
     ],
     "comment": "{0} = the step in seconds (10)."
+  },
+  {
+    "id": "MacDialogDeadLinkClearBody",
+    "cluster": "Dialog",
+    "placeholders": [],
+    "comment": "mac-only variant of DialogDeadLinkClearBody. mac has no \"Check for dead links\" command (no sweep UI), so it must not tell the user to run one; on mac playback is the only thing that sets a dead status."
   }
 ]

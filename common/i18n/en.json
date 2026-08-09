@@ -584,5 +584,6 @@
   "StatusVodSyncPartial": "Movie sync incomplete — {0} added or updated before it stopped ({1}).",
   "StatusGridTruncatedSuffix": "  ·  showing the first {0} — search or pick a group to narrow",
   "TooltipBtnSkipBack": "Back {0} seconds",
-  "TooltipBtnSkipFwd": "Forward {0} seconds"
+  "TooltipBtnSkipFwd": "Forward {0} seconds",
+  "MacDialogDeadLinkClearBody": "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it."
 }
