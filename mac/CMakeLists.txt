@@ -79,6 +79,9 @@ if(RABBITEARS_BUILD_MAC)
     src/app/EpgGuideView.mm
     src/app/TvGuideWindowController.mm
     src/app/RecordingsWindowController.mm
+    # VodSync.mm is deliberately ABSENT from the -fobjc-arc list below: it holds no Objective-C
+    # objects at all (pure C++ + GCD + std::function), so ARC-vs-MRC has nothing to decide for it.
+    src/app/VodSync.mm
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm

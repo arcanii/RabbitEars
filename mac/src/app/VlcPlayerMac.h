@@ -63,6 +63,21 @@ public:
     enum class PlayState { Other, Playing, Error };
     PlayState playState() const;
 
+    // Whether this player is holding (or about to hold) a connection to the provider — true from
+    // play() until libVLC reaches a terminal state. The peer of Win32 VlcPlayer::isEngaged(), and
+    // the gate the Xtream VOD sync consults: on a max_connections:1 line a sync that runs during
+    // playback does not queue, it KICKS the user's stream.
+    //
+    // Why it is DERIVED from the polled state rather than a flag set in play(): this class attaches
+    // no libVLC event callbacks at all, so a stored flag would have no reliable clear site, and a
+    // geo-blocked channel (libvlc_Error) or a film watched to the end (libvlc_Ended) would latch it
+    // true forever — refusing every future sync while nothing is playing. Win32 tried exactly that
+    // (the pane's nowPlayingId) and rejected it by name. playState() alone is not enough either: it
+    // collapses Opening/Buffering into `Other`, and that window is SECONDS long on an IPTV line
+    // while the socket is already claimed. Hence the short grace window after play(), which
+    // EXPIRES — that is the whole difference from a latch. Main thread only.
+    bool isEngaged() const;
+
     // Whether the current media has at least one audio track (false when stopped or for
     // a video-only stream). Gates the Spectrum consent cross-check so a legitimately
     // silent stream isn't mistaken for denied audio capture.
@@ -95,5 +110,22 @@ private:
     struct Impl;
     Impl* impl_;
 };
+
+// ---- detached players still shutting down (the mac peer of Win32's `dyingPanes`) --------------
+//
+// libVLC's stop()/release() BLOCK for seconds on a stuck IPTV feed, so mac tears a removed pane
+// down on a background queue (-teardownPane:) and stops a recorder the same way
+// (stopRecordingAsync). Both hand the player off and return immediately — after which the object
+// is unreachable, isEngaged()/isRecording() cannot be asked, and yet its SOCKET is still open.
+//
+// Win32 keeps those players in a `dyingPanes` vector and walks it in the sync gate. mac has no
+// such collection, so this counter is the equivalent: a detached player is in flight while it is
+// non-zero. Anything that must not contend for the provider connection has to consult it, or the
+// gate has a hole exactly as wide as a slow teardown.
+//
+// Thread-safe (atomic); Begin/End must be paired around the whole background teardown.
+int  vlcDetachedPlayerCount();
+void vlcDetachedPlayerBegin();
+void vlcDetachedPlayerEnd();
 
 }  // namespace rabbitears

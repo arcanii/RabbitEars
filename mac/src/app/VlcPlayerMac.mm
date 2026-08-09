@@ -11,6 +11,7 @@
 #import "VlcPlayerMac.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <string>
@@ -39,7 +40,20 @@ struct VlcPlayerMac::Impl {
     bool         muted = false;
     std::wstring recFile;     // path the recorder is writing, or empty
     NSView*      videoView = nil;  // weak; owned by the window
+    // Grace window for isEngaged(): libVLC can still report NothingSpecial for a moment after
+    // play(), while the socket is already being opened. Deliberately a DEADLINE, not a flag —
+    // it expires on its own, so it cannot latch the sync gate shut. Outside the libVLC guard so
+    // the stub build compiles.
+    std::chrono::steady_clock::time_point playDeadline{};
 };
+
+// Detached players still stopping on a background queue — see the header. File-static so the
+// count spans every VlcPlayerMac instance (a teardown outlives the object it came from).
+static std::atomic<int> g_detachedPlayers{0};
+
+int  vlcDetachedPlayerCount() { return g_detachedPlayers.load(std::memory_order_acquire); }
+void vlcDetachedPlayerBegin() { g_detachedPlayers.fetch_add(1, std::memory_order_release); }
+void vlcDetachedPlayerEnd()   { g_detachedPlayers.fetch_sub(1, std::memory_order_release); }
 
 // The plugin-path setup + libvlc_new moved to VlcEngineMac (once per process); a player
 // now just allocates state and creates its cheap media player in init(engine).
@@ -107,6 +121,9 @@ void VlcPlayerMac::play(const std::wstring& url, const std::wstring& userAgent,
     libvlc_media_release(media);
     libvlc_media_player_play(impl_->player);
     impl_->firstSample = true;  // fresh stats baseline for the new stream
+    // Arm the isEngaged() grace window: libVLC may report NothingSpecial for a moment yet, but the
+    // provider connection is being claimed as of now.
+    impl_->playDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 #else
     (void)userAgent;
     (void)referrer;
@@ -118,6 +135,7 @@ void VlcPlayerMac::stop() {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (impl_->player) libvlc_media_player_stop(impl_->player);
 #endif
+    impl_->playDeadline = {};  // an explicit stop ends the grace window immediately
 }
 
 void VlcPlayerMac::setVolume(int percent) {
@@ -240,6 +258,25 @@ VlcPlayerMac::PlayState VlcPlayerMac::playState() const {
 #endif
 }
 
+bool VlcPlayerMac::isEngaged() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (impl_->player) {
+        switch (libvlc_media_player_get_state(impl_->player)) {
+            case libvlc_Opening:
+            case libvlc_Buffering:
+            case libvlc_Playing:
+            case libvlc_Paused:
+                return true;  // holding the connection
+            default:
+                break;        // NothingSpecial / Stopped / Ended / Error — not holding it
+        }
+    }
+#endif
+    // Still inside the post-play() grace window: libVLC has not moved off NothingSpecial yet, but
+    // the socket is being claimed. This EXPIRES, which is precisely why it cannot latch the gate.
+    return impl_->playDeadline > std::chrono::steady_clock::now();
+}
+
 bool VlcPlayerMac::hasAudioTrack() const {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->player) return false;
@@ -325,10 +362,16 @@ void VlcPlayerMac::stopRecordingAsync() {
     // a stalled recorder connection or a slow mp4 index write can't hang the UI. The borrowed
     // libVLC instance is an app-lifetime object (it leaks at quit, never released), so this
     // detached stop can safely run even past termination — no use-after-free of the instance.
+    // Count it as in-flight for the whole detached stop: isRecording() went false the moment the
+    // recorder was detached above, but the provider connection stays open until release() returns.
+    // Without this the VOD sync gate would see "nothing recording" and start against a socket that
+    // is still held (the mac peer of Win32 walking its dyingPanes).
+    vlcDetachedPlayerBegin();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         libvlc_media_player_stop(dying);
         libvlc_media_player_release(dying);
         diag::info(L"recording stopped (async)");
+        vlcDetachedPlayerEnd();
     });
 #endif
 }
