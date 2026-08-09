@@ -8,21 +8,23 @@ Release recipe + gotchas: the mac-release-deployment memory.
 
 TWO THINGS TO KNOW BEFORE ANYTHING ELSE:
 
-1. NOTHING RECENT HAS REACHED USERS. main (c5ac088, build 403) carries three releases' worth of
+1. NOTHING RECENT HAS REACHED USERS. main (478ac16, build 409) carries three releases' worth of
    merged work, but the live appcast still serves 0.2.15, so every installed mac app is on 0.2.15.
    mac 0.2.16 is BUILT + NOTARIZED + STAPLED yet DELIBERATELY UNPUBLISHED at
    ~/Downloads/RabbitEars-0.2.16.dmg (arm64, build 398, sha256 36b2f578..., 41,602,223 bytes) —
    the owner asked to hold the appcast, which is the step that actually pushes a build to everyone.
-   The artifact is build 398 and main is 403, so a publish should REBUILD. To publish:
+   The artifact is build 398 and main is 409, so a publish should REBUILD. To publish:
    sign_update --account SQLTerminal (one keychain Allow) -> gh release create v0.2.16-mac --target
    main --latest=false -> appcast <item> on main (xmllint FIRST).
 
-2. THERE IS UNMERGED WORK IN FLIGHT: branch mac-seek-scrubbar (bbc7db9) = the whole seek layer
-   (scrub bar, time readout, skip +/-10s, and PAUSE — mac had none at all). It BUILDS CLEAN and the
-   selftest passes, and that is ALL: it has NOT been adversarially reviewed and has NOT been driven
-   on device. BOTH are required before merge. DO NOT MERGE IT ON "it compiles" — on this project
-   that pair has caught a real bug in every phase, including two the previous session introduced
-   itself. Details + the four already-fixed design traps are in the HANDOVER's own section.
+2. THE SEEK LAYER IS ON main BUT UNVERIFIED. PR #46 (478ac16) landed the scrub bar, time readout,
+   skip +/-10s and PAUSE (mac had none at all). It was merged on a green CI by owner decision, but it
+   has NOT been adversarially reviewed and has NOT been driven on device. That was acceptable only
+   because nothing is published. BOTH GATES ARE A HARD PRECONDITION OF ANY RELEASE CARRYING IT:
+   (a) an adversarial ObjC++ find->verify Workflow (MRC/threading/logic lenses), applying only what
+   it CONFIRMS, and (b) a GUI pass against a real seekable file AND a live channel — the live case
+   is the one Win32 got wrong. The four design traps already fixed, and the measurements that settled
+   its sampling design, are in the HANDOVER's own section; do not "fix" it back to Win32's atomics.
 
 Already merged on main and NOT yet released: PR #43 (a Clang-vs-MSVC break that had mac unbuildable
 on main — GridFilter nested-struct default member initializers), PR #44 = 0.2.16 "safe to upgrade"
@@ -32,9 +34,8 @@ GridFilter/SQL grid pushdown + 5000-row cap + search debounce, an ATS exception,
 shipped bugs), and PR #45 = the Xtream VOD movie sync + a Movies nav root, VERIFIED end-to-end
 against a fake Xtream panel (a first for either platform — Windows shipped it unverified).
 
-NEXT: finish the seek layer — (a) adversarial ObjC++ find->verify Workflow (MRC/threading/logic
-lenses), (b) apply what it CONFIRMS (not raw findings), (c) GUI-verify against a real seekable file
-AND a live channel, (d) merge + delete branch. Then the small tail: dead-link sweep (now unblocked
+NEXT: VERIFY the seek layer (see 2 above) — that is the top priority, because it is already on main
+and a release would carry it. Then the small tail: dead-link sweep (now unblocked
 by 0.2.16's ATS exception; the dangerous half is already compiled in), Settings > System log level
 (SKIP the beta switchboard — its enum has no enumerators), PiP menu/swap/always-on-top, the appcast
 host move off raw.githubusercontent.com, and PiP aspect-snap (videoSize() now exists for it).

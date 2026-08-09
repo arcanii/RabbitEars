@@ -89,12 +89,13 @@ traps that cost hours are listed under Working rules.**
 > of work that **no user has**. The live appcast still serves **0.2.15**, so every installed mac app
 > is on 0.2.15 and nothing below has reached anyone.
 >
-> **⏳ AND THERE IS UNMERGED WORK IN FLIGHT:** branch **`mac-seek-scrubbar`** (`bbc7db9`) has the
-> whole seek layer — scrub bar, time readout, skip ±10 s, and **pause** (mac had none at all). It
-> **builds clean and the selftest passes, but it has NOT been adversarially reviewed and has NOT
-> been driven on device.** Both are required before merge here — that pair has caught a real bug in
-> every phase of this project, including two regressions the author introduced. **Do not merge it on
-> "it compiles".** See its own section below.
+> **⚠ AND THE SEEK LAYER IS ON `main` UNVERIFIED.** PR #46 (merged @ `478ac16`) landed the scrub
+> bar, time readout, skip ±10 s and **pause** — merged by owner decision on a green CI, but it has
+> **NOT been adversarially reviewed and has NOT been driven on device.** That was acceptable only
+> because nothing is published: `main` ships to nobody while the appcast holds at 0.2.15.
+> **BOTH GATES ARE NOW A HARD PRECONDITION OF ANY RELEASE THAT CARRIES IT** — on this project that
+> pair has caught a real bug in every phase, including two regressions the author introduced.
+> See its own section below.
 
 **Windows leapt 0.2.11 → 0.2.17 while mac was on the 0.2.12–0.2.15 line** (their v0.2.16 = the Xtream
 VOD release, v0.2.17 = the "big library" release). `cmake/AppVersion.cmake` now reads Windows
@@ -171,10 +172,11 @@ trigger given the dual-instance trap.
 
 **Before it: `v0.2.12-mac`** (build 293, universal, notarized; release [`v0.2.12-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.12-mac), appcast @ `816e9f0`) **shipped the four Win32-gap parity features below** — the batch that was merged + on-device GUI-verified is now released. Version bumped 0.2.11→0.2.12 (APPLE override in `cmake/AppVersion.cmake`; Windows stays 0.2.11). Standard universal recipe (cached `vlc-3.0.23-universal.dmg` → `package-mac.sh --sign --vlc <universal>` → `hdiutil` dmg → sign → `notarytool --keychain-profile SQLTerminal-notarize --wait` Accepted → `stapler staple` → `sign_update --account SQLTerminal` [keychain prompt — user clicked Allow] → `gh release create --latest=false` → appcast via `gh api PUT`). Verified end-to-end: downloaded asset **sha256 byte-identical** to the signed dmg (edSignature `ezJsOy61…` valid), `length=85492936` matches, spctl "Notarized Developer ID", staple validates, embedded SUPublicEDKey matches, sparkle:version 293 > 276, live raw feed serves 0.2.12. `git push` hung for all three main writes (version bump, HANDOVER, appcast) → each landed via `gh api PUT contents`.
 
-### ⏳ IN FLIGHT — the seek layer (branch `mac-seek-scrubbar` @ `bbc7db9`, NOT merged, NOT verified)
+### ⚠ ON `main` BUT UNVERIFIED — the seek layer (PR #46, merged @ `478ac16`, 2026-08-09)
 
-**Status: builds clean, selftest `ALL PASS`, and that is ALL.** No adversarial review has run against
-the code, and it has never been driven on device. Finish those two before merging — on this project
+**Status: merged, CI green on both platforms, and that is ALL.** No adversarial review has run
+against the code, and it has never been driven on device. Merged by owner decision because nothing
+is published — but **both gates must run before any release that carries it**, and on this project
 that pair has caught a real bug in *every* phase, including two the author introduced.
 
 **What it adds.** `VlcPlayerMac` gains `timeMs` / `lengthMs` / `isSeekable` / `seekTo` / `setPaused` /
@@ -365,8 +367,8 @@ A gap-scan verified **123 candidate items against real mac source**: 44 were "al
 the mac binary, no caller" (the cheap wins), 31 missing, 27 already present, 12 partial, 9 N/A. Most
 of the actionable set is now closed. **What remains, deduplicated:**
 
-**🥇 THE ONE REAL GAP — the seek layer. ⏳ NOW BUILT ON `mac-seek-scrubbar`, awaiting review +
-on-device verification (see its section above). The description below is what it was.** `VlcPlayerMac` has **no `timeMs` / `lengthMs` /
+**🥇 THE ONE REAL GAP — the seek layer. ✅ NOW ON `main` (PR #46), but UNREVIEWED and
+UNVERIFIED — see its section above. The description below is what the gap was.** `VlcPlayerMac` has **no `timeMs` / `lengthMs` /
 `isSeekable` / `seekTo` / `videoSize` at all**, and nothing shared exists (Win32's seek layer is UI
 code, not `common/`). It is a pure native port, and it is what makes the VOD films that now sync
 actually *watchable*. The scrub bar + elapsed/total readout, skip ±10 s, and PiP aspect-ratio snap
