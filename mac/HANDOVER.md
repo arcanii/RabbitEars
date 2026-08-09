@@ -794,7 +794,9 @@ common/core/{XmltvParser,Gzip}.{h,cpp} # SHARED EPG parse + gunzip (already comp
 - **A mitigation can be worse than the bug.** Today's scheduler stand-down (deferring a recording while a
   VOD sync ran) was unbounded and could lose the very recording it protected. When a fix inverts a
   priority, check the unbounded-wait case — and prefer an adversarial review that MEASURES (the same
-  review measured the contention at ~0.2 s, not the 5 s the mitigation assumed).## Seed prompt for a fresh session
+  review measured the contention at ~0.2 s, not the 5 s the mitigation assumed).
+
+## Seed prompt for a fresh session
 
 ```
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
