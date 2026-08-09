@@ -136,6 +136,11 @@ constexpr int kMaxGridRows = 5000;
 // Chrome metrics, shared by showWindow and the hide/show-chrome relayout.
 static const CGFloat kBarH = 46;     // top command bar height
 static const CGFloat kStatusH = 22;  // bottom status/volume bar height
+// Left edge of the bottom bar's right-hand cluster (meter toggle | mute | volume), measured from
+// the right edge of the content view. ONE constant on purpose: _meterBtn is placed at
+// `w - kRightClusterW` and -layoutBottomBar ends the status line and the transport cluster there,
+// so the two can never disagree — they did, and the transport was drawn 8 pt over the button.
+static const CGFloat kRightClusterW = 162;
 static const CGFloat kMeterH = 24;   // meter line height
 static const CGFloat kMeterGap = 8;  // gap between adjacent meters
 // Per-kind meter widths (index = (int)MeterKind: Spectrum, Signal, Bitrate, Frames).
@@ -408,7 +413,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // ---- bottom bar: status line (left) + volume (right) ----
     const CGFloat statusH = kStatusH;
     _status = [NSTextField labelWithString:Tr(StringId::MacMainWindowStatusReady)];
-    _status.frame = NSMakeRect(12, 3, cs.width - 24 - 150, statusH - 5);
+    _status.frame = NSMakeRect(12, 3, cs.width - kRightClusterW - 12, statusH - 5);  // same edge
     _status.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
     _status.textColor = NSColor.secondaryLabelColor;
     [content addSubview:_status];
@@ -431,7 +436,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
                                    target:self action:@selector(toggleMeters:)];
     _meterBtn.bordered = NO;
     _meterBtn.toolTip = Tr(StringId::MacMainWindowToggleMetersTooltip);
-    _meterBtn.frame = NSMakeRect(cs.width - 162, 1, 24, 20);
+    _meterBtn.frame = NSMakeRect(cs.width - kRightClusterW, 1, 24, 20);
     _meterBtn.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
     _meterBtn.alphaValue = _metersHidden ? 0.35 : 1.0;
     [content addSubview:_meterBtn];
@@ -908,6 +913,16 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _meterBtn.image = [NSImage imageWithSystemSymbolName:@"waveform"
                                  accessibilityDescription:Tr(StringId::MacMainWindowToggleMetersTooltip)];
     _meterBtn.toolTip = Tr(StringId::MacMainWindowToggleMetersTooltip);
+    // Transport cluster. _pauseBtn is NOT here on purpose — -updateTransport rebuilds its image
+    // and tooltip on every 250 ms tick, so it re-localizes itself. The two skip buttons are
+    // built ONCE at setup, so without this they kept their launch-language tooltip AND their
+    // launch-language accessibility description (VoiceOver) for the rest of the process.
+    _skipBackBtn.image = [NSImage imageWithSystemSymbolName:@"gobackward.10"
+                                    accessibilityDescription:TrF(StringId::TooltipBtnSkipBack, {@"10"})];
+    _skipBackBtn.toolTip = TrF(StringId::TooltipBtnSkipBack, {@"10"});
+    _skipFwdBtn.image  = [NSImage imageWithSystemSymbolName:@"goforward.10"
+                                    accessibilityDescription:TrF(StringId::TooltipBtnSkipFwd, {@"10"})];
+    _skipFwdBtn.toolTip = TrF(StringId::TooltipBtnSkipFwd, {@"10"});
     _search.placeholderString = Tr(StringId::SearchChannelsPlaceholder);  // NOT stringValue (user text)
 
     // Channel-grid column headers (the ★/# glyph columns are language-independent — leave them).
@@ -2048,8 +2063,17 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     if (!_status) return;                       // called before the bar exists
     const CGFloat w = _window.contentView.bounds.size.width;
     const CGFloat statusH = kStatusH;
-    const CGFloat rightClusterW = 150;          // meter + mute + volume, as built above
+    // ⚠ 162, NOT 150. This is _meterBtn's left edge (`cs.width - 162`, where it is built) and so
+    // the true left edge of the meter+mute+volume cluster. The pre-existing _status formula got
+    // away with 150 only because it also subtracted 24, landing its right edge at exactly
+    // w-162 — flush with the button. A review caught the transport inheriting the 150 without
+    // that compensation, which put the right-aligned readout 8 pt ON TOP of the meter toggle at
+    // every window width: _seekTime is added to the content view after _meterBtn, so it won
+    // hit-testing too and swallowed clicks on the button's leftmost third whenever a seekable
+    // stream was playing. Derive both edges from ONE constant so they cannot drift again.
+    const CGFloat rightClusterW = kRightClusterW;
     CGFloat transportRight = w - rightClusterW; // left edge of the right-hand cluster
+    CGFloat statusRight = transportRight;       // flush with the cluster, exactly as it shipped
 
     if (_seekShown) {
         // Fixed-width pieces; the slider absorbs the remainder, floored so it never inverts.
@@ -2066,9 +2090,9 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         _seek.frame        = NSMakeRect(x, 2, sliderW, 18);         x += sliderW + gap;
         _skipFwdBtn.frame  = NSMakeRect(x, 1, btnW, 20);            x += btnW + gap;
         _seekTime.frame    = NSMakeRect(x, 3, transportRight - x - gap, statusH - 5);
-        transportRight = x0;                     // the status field now ends here
+        statusRight = x0 - 12;                   // the status field now ends 12 pt before it
     }
-    _status.frame = NSMakeRect(12, 3, MAX(40, transportRight - 24), statusH - 5);
+    _status.frame = NSMakeRect(12, 3, MAX(40, statusRight - 12), statusH - 5);
 }
 
 // Format a ms position as m:ss, or h:mm:ss once the media is an hour or longer.
@@ -2157,13 +2181,30 @@ static NSString* fmtPos(long long ms, long long lenMs) {
     [self commitSeekTo:(long long)_seek.doubleValue];
 }
 
+// Drop the post-seek latch. Its real scope is "this player, still showing the media the seek was
+// issued against" — NOT the pane SET, which is all _panesGeneration tracks. Anything that changes
+// WHAT the transport is looking at must call this, or the latch keeps painting the old target
+// over the new stream for the rest of its 3 s: a review found that clicking a second seekable
+// pane inside the window put pane A's target on pane B's thumb and produced readouts like
+// "1:20:00 / 45:00" (a position past the media's own duration).
+- (void)invalidateSeekLatch {
+    _seekLatchUntilMs = 0;
+    _seekLatchTarget  = 0;
+    _seekLatchPaneId  = 0;
+}
+
 // Ask the player to reposition, and latch the UI to the target briefly so the thumb does not
 // snap back while libVLC still reports the old time.
 - (void)commitSeekTo:(long long)ms {
     VlcPlayerMac* p = [self activePlayer];
     if (!p || !p->isSeekable()) return;
-    p->seekTo(ms);
-    _seekLatchTarget  = ms;
+    // Latch what the player ACTUALLY took, not what we asked for. seekTo clamps (it keeps a second
+    // off the end), so latching the raw request made ⏩ near the end display a current position
+    // PAST the total — "1:45:05 / 1:45:00" — and then jump back when the latch expired. Returning
+    // the applied position keeps the clamp rule in one place instead of duplicating it here.
+    const long long applied = p->seekTo(ms);
+    if (applied < 0) return;                // the player refused — nothing to latch
+    _seekLatchTarget  = applied;
     _seekLatchUntilMs = (long long)(NSDate.timeIntervalSinceReferenceDate * 1000.0) + 3000;
     _seekLatchPaneId  = _panesGeneration;   // scope it to THIS pane incarnation
 }
@@ -2280,6 +2321,7 @@ static NSString* fmtPos(long long ms, long long lenMs) {
 - (void)setActivePane:(int)idx {
     if (idx < 0 || idx >= (int)_panes.size()) idx = 0;
     _activePane = idx;
+    [self invalidateSeekLatch];   // the transport is about to look at a different player
     _player = _panes[(size_t)idx]->player.get();   // re-alias: stats/spectrum/volume follow active
     _videoView = _panes[(size_t)idx]->view;
     for (int i = 0; i < (int)_panes.size(); ++i)
@@ -3338,6 +3380,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // request is issued and nothing more is written.
     rabbitears::mac::cancelVodSync();
     MacVideoPane* p = _panes[(size_t)idx].get();
+    // New media in this pane: any pending seek target belongs to the OLD one. Unconditional —
+    // a background pane costs nothing to clear, and the alternative (comparing against
+    // _activePane) is one more place to get the scoping wrong.
+    [self invalidateSeekLatch];
     p->player->play(c.streamUrl, c.userAgent, c.referrer);
     p->player->setVolume((int)_volume.doubleValue);  // libVLC resets volume per media
     p->player->setMuted(idx != _activePane);         // single-audio: only the active pane

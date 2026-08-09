@@ -119,7 +119,13 @@ public:
     // immediate re-read would clear the UI's post-seek latch early and reproduce the thumb
     // snap-back the latch exists to hide. Seeking a network stream re-buffers — call it on drag
     // RELEASE, not per drag tick.
-    void seekTo(long long ms);
+    //
+    // RETURNS the position actually requested of libVLC after clamping, or -1 if it refused (no
+    // player, or the media is not seekable). The caller needs this: the UI latches the seek
+    // target to stop the thumb snapping back, and latching the UNCLAMPED request made a skip
+    // near the end display a position past the media's own duration ("1:45:05 / 1:45:00"). The
+    // clamp rule stays here, in one place, instead of being duplicated by every caller.
+    long long seekTo(long long ms);
 
     // Pause/resume. libVLC's set_pause is a no-op on a stream that cannot pause, so this is
     // safe to call on live TV; isPaused() reports libVLC's own state rather than a local flag,
