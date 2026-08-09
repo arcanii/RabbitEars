@@ -584,5 +584,6 @@
   "StatusVodSyncPartial": "電影同步未完成 — 停止前已新增或更新 {0} 部（{1}）。",
   "StatusGridTruncatedSuffix": "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍",
   "TooltipBtnSkipBack": "倒退 {0} 秒",
-  "TooltipBtnSkipFwd": "快轉 {0} 秒"
+  "TooltipBtnSkipFwd": "快轉 {0} 秒",
+  "MacDialogDeadLinkClearBody": "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。"
 }

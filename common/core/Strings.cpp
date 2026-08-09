@@ -638,6 +638,8 @@ constexpr std::array<const char*, N> kEn = {{
     // --- Transport ---
     "Back {0} seconds",  // TooltipBtnSkipBack
     "Forward {0} seconds",  // TooltipBtnSkipFwd
+    // --- Dialog ---
+    "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it.",  // MacDialogDeadLinkClearBody
 }};
 
 // 日本語
@@ -1266,6 +1268,8 @@ constexpr std::array<const char*, N> kJa = {{
     // --- Transport ---
     "{0} 秒戻る",  // TooltipBtnSkipBack
     "{0} 秒進む",  // TooltipBtnSkipFwd
+    // --- Dialog ---
+    "すべてのチャンネルを「未確認」に戻しますか？\r\n\r\n「利用できないチャンネルを非表示」で隠れていたチャンネルが再び表示されます。チャンネルを再生すると再度判定されます。",  // MacDialogDeadLinkClearBody
 }};
 
 // 繁體中文
@@ -1894,6 +1898,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     // --- Transport ---
     "倒退 {0} 秒",  // TooltipBtnSkipBack
     "快轉 {0} 秒",  // TooltipBtnSkipFwd
+    // --- Dialog ---
+    "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。",  // MacDialogDeadLinkClearBody
 }};
 
 // 繁體中文（香港）
@@ -2522,6 +2528,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     // --- Transport ---
     "倒退 {0} 秒",  // TooltipBtnSkipBack
     "快轉 {0} 秒",  // TooltipBtnSkipFwd
+    // --- Dialog ---
+    "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。",  // MacDialogDeadLinkClearBody
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

@@ -1026,8 +1026,22 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         // e.g. ★ Favourites + "news" shows favourites matching "news". The MEMBERSHIP set must be
         // UNCAPPED — capping it would drop a genuine hit merely for sitting past row 5,000 of the
         // filter view — so the cap is applied to the intersection afterwards, which is the only
-        // place it means "the first N results". Both queries still carry the view predicates, so
-        // the expensive half is bounded in SQL; these filter views are the narrow ones anyway.
+        // place it means "the first N results".
+        //
+        // ⚠ BOTH HALVES HERE ARE UNCAPPED, AND THIS IS THE ONE GRID PATH kMaxGridRows DOES NOT
+        // COVER. GridFilter carries only {limit, hideDead, categories} — it cannot express the
+        // favourites/group/country predicate — so `searchChannels` below is a GLOBAL triple-LIKE
+        // over the whole library, and gridLimit() emits nothing for limit 0 (Database.cpp:260, a
+        // deliberate choice: SQLite's "LIMIT 0" returns no rows). Measured ~1.6 s on a 411k-row
+        // library; harmless at 14k, bad at Xtream scale.
+        //
+        // DO NOT "fix" this by capping the search half: that yields the filter-matches among the
+        // first 5,000 GLOBAL hits — exactly the compose-the-wrong-way-round bug Database.h:28-36
+        // warns about (a verified example turned 8,000 correct rows into 100, with no truncation
+        // notice, because the intersection hides it). The real fix is to push the view predicate
+        // (and ideally the search term) INTO GridFilter so one capped statement does the whole
+        // job and this branch disappears. Left for the release that touches this area — it is
+        // pre-existing, not a regression of the pushdown.
         std::set<long long> keep;
         for (const auto& c : filteredSet([self gridFilterCapped:NO])) keep.insert(c.id);
         _channels.clear();
@@ -1168,7 +1182,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     if (!_db) return;
     NSAlert* a = [[[NSAlert alloc] init] autorelease];
     a.messageText = Tr(StringId::MenuDeadLinkClear);
-    a.informativeText = Tr(StringId::DialogDeadLinkClearBody);
+    // mac-only body: the SHARED DialogDeadLinkClearBody ends with "Run 'Check for dead links…'
+    // again to re-test them", which is true on Windows (it ships the sweep) and false here — mac
+    // has no sweep UI at all, and playback is the only thing that sets a dead status.
+    a.informativeText = Tr(StringId::MacDialogDeadLinkClearBody);
     [a addButtonWithTitle:Tr(StringId::ButtonOk)];
     [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     MainWindowController* __unsafe_unretained me = self;
@@ -1980,7 +1997,17 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
             // main view playing what it already was. Carrying there hijacked pane 0 with the
             // inset's channel whenever the user had clicked the inset active (Win32 parity —
             // same owner-reported bug, MainWindowCommands.cpp:774-781).
-            if (prev == ViewMode::Split) [self carryStreamFromPane:_activePane toPane:0];
+            //
+            // ...UNLESS pane 0 is idle. `carryStreamFromPane:` only guards its SOURCE
+            // (:1928 `if (src->channelId == 0) return;`), never its destination, so the old
+            // unconditional carry could not hijack an EMPTY pane 0 — which makes a bare
+            // `prev == Split` gate strictly broader than the bug it fixes. "Play in PiP" from a
+            // fresh launch (or after Stop, or from a saved layout whose pane 0 is empty) leaves
+            // the inset as the only thing playing; suppressing the carry there turns "exit PiP"
+            // into "stop playback", with a stale window title still naming the channel.
+            // _panes[0] is always valid here: this branch needs _panes.size() > count >= 1.
+            if (prev == ViewMode::Split || _panes[0]->channelId == 0)
+                [self carryStreamFromPane:_activePane toPane:0];
             // Reset UNCONDITIONALLY, carry or not: this pane is about to be torn down, and the
             // alias re-point below reads _activePane. Leaving it pointing at a dying pane would
             // dangle _player/_videoView — the one invariant this method exists to protect.
