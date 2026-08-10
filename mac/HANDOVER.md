@@ -89,13 +89,12 @@ traps that cost hours are listed under Working rules.**
 > of work that **no user has**. The live appcast still serves **0.2.15**, so every installed mac app
 > is on 0.2.15 and nothing below has reached anyone.
 >
-> **⚠ AND THE SEEK LAYER IS ON `main` UNVERIFIED.** PR #46 (merged @ `478ac16`) landed the scrub
-> bar, time readout, skip ±10 s and **pause** — merged by owner decision on a green CI, but it has
-> **NOT been adversarially reviewed and has NOT been driven on device.** That was acceptable only
-> because nothing is published: `main` ships to nobody while the appcast holds at 0.2.15.
-> **BOTH GATES ARE NOW A HARD PRECONDITION OF ANY RELEASE THAT CARRIES IT** — on this project that
-> pair has caught a real bug in every phase, including two regressions the author introduced.
-> See its own section below.
+> **✅ THE SEEK LAYER IS NOW VERIFIED (2026-08-10).** Both gates have run against PR #46: an
+> adversarial ObjC++ find→verify review (4 lenses × independent skeptics — 12 findings raised,
+> 9 survived, 3 refuted including the only HIGH) **and** a full on-device GUI pass against a real
+> seekable file *and* live TV. Five defects were found and fixed; the fixes are in
+> **PR #47** (`mac-seek-review-fixes`). The seek layer is **no longer a release blocker** — see
+> its own section below for what the gates found, and for the two measurement traps they exposed.
 
 **Windows leapt 0.2.11 → 0.2.17 while mac was on the 0.2.12–0.2.15 line** (their v0.2.16 = the Xtream
 VOD release, v0.2.17 = the "big library" release). `cmake/AppVersion.cmake` now reads Windows
@@ -172,12 +171,84 @@ trigger given the dual-instance trap.
 
 **Before it: `v0.2.12-mac`** (build 293, universal, notarized; release [`v0.2.12-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.12-mac), appcast @ `816e9f0`) **shipped the four Win32-gap parity features below** — the batch that was merged + on-device GUI-verified is now released. Version bumped 0.2.11→0.2.12 (APPLE override in `cmake/AppVersion.cmake`; Windows stays 0.2.11). Standard universal recipe (cached `vlc-3.0.23-universal.dmg` → `package-mac.sh --sign --vlc <universal>` → `hdiutil` dmg → sign → `notarytool --keychain-profile SQLTerminal-notarize --wait` Accepted → `stapler staple` → `sign_update --account SQLTerminal` [keychain prompt — user clicked Allow] → `gh release create --latest=false` → appcast via `gh api PUT`). Verified end-to-end: downloaded asset **sha256 byte-identical** to the signed dmg (edSignature `ezJsOy61…` valid), `length=85492936` matches, spctl "Notarized Developer ID", staple validates, embedded SUPublicEDKey matches, sparkle:version 293 > 276, live raw feed serves 0.2.12. `git push` hung for all three main writes (version bump, HANDOVER, appcast) → each landed via `gh api PUT contents`.
 
-### ⚠ ON `main` BUT UNVERIFIED — the seek layer (PR #46, merged @ `478ac16`, 2026-08-09)
+### ✅ VERIFIED — the seek layer (PR #46 @ `478ac16`; gates run + fixes in PR #47, 2026-08-10)
 
-**Status: merged, CI green on both platforms, and that is ALL.** No adversarial review has run
-against the code, and it has never been driven on device. Merged by owner decision because nothing
-is published — but **both gates must run before any release that carries it**, and on this project
-that pair has caught a real bug in *every* phase, including two the author introduced.
+**Status: both gates have run, five defects fixed, no longer release-blocking.**
+
+**Gate (a) — adversarial ObjC++ find→verify review.** Four lenses (MRC lifetime, threading/libVLC,
+state machine, layout/i18n), each finding then handed to an independent skeptic prompted to refute
+it. **12 raised → 9 survived → 3 refuted, including the only HIGH** ("pause left live with no
+control to resume it"). The 9 survivors deduplicated to **four distinct defects** — three of them
+found independently by 2–3 different lenses, which is the convergence signal worth trusting:
+
+1. **The post-seek latch was scoped to the pane SET, not the player.** `_panesGeneration` is bumped
+   only in `-applyViewMode:paneCount:`, but the ACTIVE pane changes via `-setActivePane:` and a
+   pane's media via `-playChannel:intoPane:`. So the latch stayed live across exactly the
+   transitions the commit message claimed it prevented: seek pane A to 1:20:00, click pane B
+   within 3 s, and B's thumb and readout paint A's target — readouts like `"1:20:00 / 45:00"`,
+   a position past the media's own duration. Display-only and self-clearing (a programmatic
+   `doubleValue` write does not fire the slider's action, so no stray seek was ever issued).
+   Fixed with `-invalidateSeekLatch` called from both sites.
+2. **The latch stored the UNCLAMPED request** — `seekTo` keeps a second off the end, so ⏩ near the
+   end displayed `"1:45:05 / 1:45:00"`. `seekTo` now **returns the applied position** (−1 if the
+   player refused) and the UI latches that, keeping the clamp rule in one place.
+3. **`-layoutBottomBar` reserved 150 pt for a cluster that starts at 162.** `_meterBtn` sits at
+   `w − 162`; the pre-existing `_status` formula only got away with 150 because it also subtracted
+   24, landing flush. The transport inherited the 150 without that compensation, so the
+   right-aligned readout was laid out **8 pt on top of the meter toggle at every window width** —
+   and being added to the content view later, it also won hit-testing and **swallowed clicks on the
+   button's leftmost third** whenever a seekable stream played. Both edges now derive from one
+   `kRightClusterW`. Verified by computing the real frames at 560/600/800/1200/1440/2560.
+4. **`-applyLanguageLive` never relabelled ⏪/⏩** — built once at setup, so they kept their
+   launch-language tooltip *and* VoiceOver description for the process's life. (`_pauseBtn` is
+   rebuilt every tick, so it re-localizes itself — noted in the code so nobody "fixes" it twice.)
+
+**Gate (b) — on-device GUI pass**, dev build as the sole instance against an isolated
+`RABBITEARS_DATA_DIR`, driven over local fixtures (ffmpeg-generated 40 s / 10 min / 61 min mp4s, a
+rolling live HLS, an EVENT playlist, a 404) *and* real network streams (Red Bull TV live, a
+network HLS VOD). It found **the one defect the review could not**:
+
+5. **The bar could never retire at end-of-film.** A finished film left the transport stranded with
+   a frozen readout. **Measured:** at `libvlc_Ended` libVLC KEEPS returning the full duration from
+   `get_length` and KEEPS returning true from `is_seekable`; only `get_time` freezes (39838 ms on a
+   40 s file — matching the observed "stops at 39 s"). The gate was `isSeekable() && length > 0`,
+   so `want` never went false. **Note what this corrects:** the original design believed placing
+   the update ABOVE the tick's `!fs.playing` early return handled end-of-film. That placement is
+   necessary but was never *sufficient* — the early return was not what kept the bar up, the GATE
+   was. Fixed with a new `VlcPlayerMac::hasActiveInput()` (Opening/Buffering/Playing/**Paused**),
+   required alongside seekable+length; Paused counts as active or pausing would retire its own
+   transport. `PlayState` was deliberately not reused — its `Other` lumps Paused in with Ended.
+
+**⚠ TWO MEASUREMENT TRAPS THIS PASS EXPOSED — both produced a confidently wrong answer:**
+- **A libVLC probe must use the APP'S instance arguments.** A probe built with
+  `--no-video --no-audio` reports `length=0` for a live HLS; the app's instance
+  (`--no-video-title-show` only, video+audio enabled) reports the **DVR window** — 10 s for a
+  5×2 s rolling fixture, **180 s for real live TV**. The same URL, the same libVLC, opposite
+  conclusions. This produced a wrong test expectation ("the bar should disappear on live") that
+  was only caught by re-measuring with the app's own arguments.
+- **A fixture can fail in a way that looks exactly like an app bug.** `python3 -m http.server`
+  does **not** implement HTTP Range, and seeking a local `.mp4` through it makes libVLC end the
+  media with the time frozen at the requested position — indistinguishable from "the thumb moved
+  but the video didn't". It reproduced with **zero RabbitEars code in the process**, which is what
+  exonerated the app; a range-capable server (and any real network stream) seeks cleanly. A ~25-line
+  Range-supporting handler is worth keeping in the fixture kit.
+
+**Confirmed on real hardware:** the scrub bar **legitimately appears on live channels** with a DVR
+window (Red Bull TV: `seekable=1`, `length=180000`, and it genuinely rewinds). This is Win32 commit
+`3660441`'s conclusion, now independently reproduced on mac — the gate must stay
+`isSeekable() && lengthMs() > 0` and must **never** key off `Channel::Kind`.
+
+**Also confirmed working on device:** pause/resume (and the bar correctly *survives* a pause),
+skip ±10 s, drag-seek with no snap-back, track-click seek, `h:mm:ss` formatting on a 61-minute
+file, the narrowest window with all controls functional, Video Only in/out, fullscreen in/out, and
+no bar on a dead link. **Two reported "failures" were not defects:** arrow-key seeking needs macOS
+Full Keyboard Access (`AppleKeyboardUIMode=0` here), and the live-TV bar is by design (above).
+
+**Accepted, not fixed:** the readout field is exactly 104 pt at every window width and
+`"10:00:00 / 10:00:00"` measures 107 pt, so a **≥10-hour** media clips the readout. Measured, and
+not worth stealing slider width for.
+
+**The original design notes below still stand** — do not "fix" the sampling back to Win32's atomics.
 
 **What it adds.** `VlcPlayerMac` gains `timeMs` / `lengthMs` / `isSeekable` / `seekTo` / `setPaused` /
 `isPaused` / `videoSize`; `MainWindowController` gains a bottom-bar transport cluster (⏸ ⏪ scrub ⏩

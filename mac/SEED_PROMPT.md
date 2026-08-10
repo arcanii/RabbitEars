@@ -17,14 +17,21 @@ TWO THINGS TO KNOW BEFORE ANYTHING ELSE:
    sign_update --account SQLTerminal (one keychain Allow) -> gh release create v0.2.16-mac --target
    main --latest=false -> appcast <item> on main (xmllint FIRST).
 
-2. THE SEEK LAYER IS ON main BUT UNVERIFIED. PR #46 (478ac16) landed the scrub bar, time readout,
-   skip +/-10s and PAUSE (mac had none at all). It was merged on a green CI by owner decision, but it
-   has NOT been adversarially reviewed and has NOT been driven on device. That was acceptable only
-   because nothing is published. BOTH GATES ARE A HARD PRECONDITION OF ANY RELEASE CARRYING IT:
-   (a) an adversarial ObjC++ find->verify Workflow (MRC/threading/logic lenses), applying only what
-   it CONFIRMS, and (b) a GUI pass against a real seekable file AND a live channel — the live case
-   is the one Win32 got wrong. The four design traps already fixed, and the measurements that settled
-   its sampling design, are in the HANDOVER's own section; do not "fix" it back to Win32's atomics.
+2. THE SEEK LAYER IS VERIFIED — both gates ran on 2026-08-10, so it is NO LONGER a release blocker.
+   PR #46 (478ac16) landed the scrub bar, time readout, skip +/-10s and PAUSE. The adversarial
+   review (12 findings -> 9 survived -> 3 refuted, incl. the only HIGH) plus a full on-device pass
+   found FIVE defects, all fixed in PR #47 (mac-seek-review-fixes): the post-seek latch was scoped
+   to the pane SET not the player; it latched the UNCLAMPED target; the bottom bar reserved 150pt
+   for a cluster that starts at 162 (the readout sat ON the meter button and ate its clicks);
+   -applyLanguageLive never relabelled the skip buttons; and the bar could never retire at
+   end-of-film (at libvlc_Ended, length and seekable BOTH persist — only get_time freezes).
+   Do not "fix" the sampling back to Win32's atomics; that was settled by measurement.
+   TWO TRAPS WORTH INHERITING, each of which produced a confidently WRONG answer:
+   (a) a libVLC probe MUST use the app's instance args — `--no-video --no-audio` reports length=0
+   on a live HLS while the app's instance reports the real DVR window (180s on real live TV),
+   which is why the scrub bar CORRECTLY appears on live channels; and (b) `python3 -m http.server`
+   implements no HTTP Range, which makes a local .mp4 seek look broken in a way indistinguishable
+   from an app bug (keep a Range-capable stub in the fixture kit).
 
 Already merged on main and NOT yet released: PR #43 (a Clang-vs-MSVC break that had mac unbuildable
 on main — GridFilter nested-struct default member initializers), PR #44 = 0.2.16 "safe to upgrade"
@@ -34,11 +41,12 @@ GridFilter/SQL grid pushdown + 5000-row cap + search debounce, an ATS exception,
 shipped bugs), and PR #45 = the Xtream VOD movie sync + a Movies nav root, VERIFIED end-to-end
 against a fake Xtream panel (a first for either platform — Windows shipped it unverified).
 
-NEXT: VERIFY the seek layer (see 2 above) — that is the top priority, because it is already on main
-and a release would carry it. Then the small tail: dead-link sweep (now unblocked
-by 0.2.16's ATS exception; the dangerous half is already compiled in), Settings > System log level
-(SKIP the beta switchboard — its enum has no enumerators), PiP menu/swap/always-on-top, the appcast
-host move off raw.githubusercontent.com, and PiP aspect-snap (videoSize() now exists for it).
+NEXT: land PR #47 (the seek fixes) if it is still open, then the small tail: dead-link sweep (now
+unblocked by 0.2.16's ATS exception; the dangerous half is already compiled in), Settings > System
+log level (SKIP the beta switchboard — its enum has no enumerators), PiP menu/swap/always-on-top,
+the appcast host move off raw.githubusercontent.com, and PiP aspect-snap (videoSize() now exists
+for it). With the seek layer verified, publishing 0.2.16 is unblocked whenever the owner says so
+(REBUILD — the held dmg is build 398 and main has moved well past it).
 mac is NOT behind on resume/watched or series/seasons — neither exists on either platform.
 
 HARD-WON RULES (each cost real time):
