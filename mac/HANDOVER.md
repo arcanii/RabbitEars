@@ -83,7 +83,35 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — mac 0.2.16 on `main`, BUILT + NOTARIZED but **deliberately NOT PUBLISHED** (2026-08-09)
+## Current state — **v0.2.17-mac SHIPPED (2026-08-10)**, and the functional gap to Windows is CLOSED
+
+> **Read this box first.** `v0.2.17-mac` (build **418**, arm64-only, notarized + stapled) is
+> **live**: release [`v0.2.17-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.17-mac),
+> appcast @ `46e3072`, feed serving 418 against the 318 users were on. The three releases' worth of
+> merged-but-unpublished work is now in users' hands, and the deliberately-held 0.2.16 dmg is
+> superseded — **delete it, do not ship it** (it is build 398 of a version that never existed
+> publicly).
+>
+> **mac and Windows are both 0.2.17, and the numbers match on purpose.** What is still unported is
+> **N/A by design, not outstanding**: the theme engine (mac uses the native appearance),
+> wake-to-record (a non-root app cannot arm a wake), **PIP always-on-top** (mac's PiP is a subview
+> of the single main window, not a separate top-level window — there is nothing for a z-order
+> policy to control), and the beta-feature switchboard (`FeatureFlags.h` declares its enum with no
+> enumerators). The remaining backlog is **cosmetics only** (meter glass + the VU needle, both
+> blocked on one `CGBitmapContext` restructure; look-aware knobs; tip buttons, which need a custom
+> About window) plus the **appcast host move** — and note that one is **not a gap**:
+> `Win32/platform/Updater.cpp` serves from `raw.githubusercontent.com` exactly like mac does, so it
+> is shared infrastructure work, not something mac is behind on.
+>
+> **⚠ WHAT 0.2.17 SHIPPED WITHOUT: an on-device pass on the four Win32-gap-tail features.** The
+> dead-link sweep, Settings ▸ Logging, the PiP menu/swap and the PiP aspect snap were merged on
+> green CI **and** a full adversarial review (which found and fixed four defects), and their
+> non-GUI halves were verified by running — but **nobody drove them in the GUI before release**.
+> That was the owner's call, the same one made for 0.2.7's recorder, and it is recorded here rather
+> than left to look verified. **If a bug surfaces in the wild, start there.** The checklist is in
+> the section below; the seek layer, by contrast, IS fully device-verified.
+
+## Before it — mac 0.2.16 on `main`, built + notarized but **never published** (2026-08-09, superseded)
 
 > **Read this box first.** `main` (`c5ac088`, build **403**) carries three merged mac releases' worth
 > of work that **no user has**. The live appcast still serves **0.2.15**, so every installed mac app
@@ -170,6 +198,76 @@ trigger given the dual-instance trap.
 **Before it: `v0.2.13-mac`** (build 297, universal, notarized; release [`v0.2.13-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.13-mac), appcast @ `6838da3`) — a **launch-hang hotfix**. The owner's installed app auto-updated to 0.2.12 and **beachballed on the Sparkle post-update relaunch**, recovering on a manual restart. **Root cause (confirmed via `showWindow`-phase timing instrumentation, not guessed):** the clean launch path is only ~290 ms, so heavy init was *not* it — the blocker was the **Terms-of-Use gate**, which re-fires on every version change and ran as an **app-modal (`[TermsDialog runModal]`) BEFORE the main window was built and before `[NSApp activateIgnoringOtherApps:]`**. On a Sparkle relaunch the app isn't auto-activated, so the modal came up **buried behind other windows with no visible main window** — reading as a beachball. A manual restart auto-activates the app, so the modal was visible and the user clicked Accept. **Fix (`2c1f9b8`):** build + show + activate the window FIRST, then present the ToU as a **document-modal SHEET** on it (a sheet cannot be buried independently of its window); the "usage" side effects (Spectrum tap, video attach, stats timer, resume auto-play, recording scheduler) moved into a new **`-finishStartup`** run only after Accept. Because a sheet blocks only its window (not the menu bar, unlike the old app-modal), **`AppDelegate -validateMenuItem:` now disables app commands until `-finishStartup` runs** (a `startupFinished` flag on the controller) so the gate still blocks the whole app. **Adversarially reviewed** (3 parallel lenses — MRC/ARC lifetime, threading/AppKit-async, logic/parity; the memory & threading mechanics were clean, and the review CAUGHT the one real regression: a document-modal sheet doesn't disable the menu bar → added the `validateMenuItem` gate). **On-device verified** (sole dev instance, isolated seeded DB): already-accepted → NO sheet, straight to play; version-change → window shown FIRST, ToU sheet descends from the title bar, **View menu commands greyed while pending**, Accept → channels load + resume auto-plays + meters, **menu re-enables**; the non-frontmost/Sparkle case is covered by construction (`makeKeyAndOrderFront` precedes the sheet unconditionally, so there is always a real window). Version 0.2.12→0.2.13 (APPLE override). Same universal recipe; verified end-to-end (downloaded asset sha256-identical, `length=85495168`, spctl Notarized, sparkle:version 297 > 293, feed serves 0.2.13). **`git push` WORKED this session** for all four writes (fix, bump, appcast, and this HANDOVER). Windows stays 0.2.11.
 
 **Before it: `v0.2.12-mac`** (build 293, universal, notarized; release [`v0.2.12-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.12-mac), appcast @ `816e9f0`) **shipped the four Win32-gap parity features below** — the batch that was merged + on-device GUI-verified is now released. Version bumped 0.2.11→0.2.12 (APPLE override in `cmake/AppVersion.cmake`; Windows stays 0.2.11). Standard universal recipe (cached `vlc-3.0.23-universal.dmg` → `package-mac.sh --sign --vlc <universal>` → `hdiutil` dmg → sign → `notarytool --keychain-profile SQLTerminal-notarize --wait` Accepted → `stapler staple` → `sign_update --account SQLTerminal` [keychain prompt — user clicked Allow] → `gh release create --latest=false` → appcast via `gh api PUT`). Verified end-to-end: downloaded asset **sha256 byte-identical** to the signed dmg (edSignature `ezJsOy61…` valid), `length=85492936` matches, spctl "Notarized Developer ID", staple validates, embedded SUPublicEDKey matches, sparkle:version 293 > 276, live raw feed serves 0.2.12. `git push` hung for all three main writes (version bump, HANDOVER, appcast) → each landed via `gh api PUT contents`.
+
+### 🧩 The Win32-gap tail — dead-link sweep, Logging, PiP menu/swap, aspect snap ([PR #48](https://github.com/arcanii/RabbitEars/pull/48) @ `e4645d1`, shipped in 0.2.17)
+
+The four actionable items left after the seek layer. **mac-only: zero `common/`, zero `Win32/`, and
+zero new catalog strings** — every string was already shared, in all four languages.
+
+**The dead-link sweep.** `httpProbe` was DECLARED in `common/core/Http.h` but never implemented on
+mac, so the shared decision core (`classifyProbe` / `sweepIsTrustworthy` / `needsProbe`) had been
+compiled in with no way to reach it. New `httpProbe` in `mac/platform/Http.mm` (NSURLSession +
+`RE_ProbeDelegate`: takes the status line and **cancels**, because a live stream's body never ends;
+**refuses redirects**, because a 3xx is itself a healthy answer and following one turns a cheap
+probe into a chain; `finishTasksAndInvalidate` is mandatory or every probe leaks a session, a queue
+and the delegate). New `mac/src/app/DeadLinkSweep.{h,mm}` — a `VodSync`-shaped GCD worker with its
+own `Database`, so like `VodSync` it is deliberately **absent from the `-fobjc-arc` list**.
+
+> **⚠ THE PROVIDER-BUSY GATE IS A MAC ADDITION — DO NOT "SIMPLIFY" IT TO MATCH WIN32.** Win32
+> refuses only while a VOD sync runs. But its own comment names the hazard: *"a probe refused for
+> capacity is classified and can persist dead_status=Dead on a perfectly good live channel."* On a
+> `max_connections:1` line, probing WHILE PLAYING is exactly that case, and it is worse than for
+> the sync — a sweep opens up to 250 connections and the provider answers the ones over budget with
+> 401/403, which `classifyProbe` reads as unambiguous rejections. **`sweepIsTrustworthy` does NOT
+> save us**: those probes reached a server, so the batch looks perfectly healthy. The user's whole
+> live list would be marked Dead and, with "Hide unavailable" on, would vanish. Flag to Win32.
+
+**Verified by RUNNING** (all headless, all before merge): `httpProbe` — 200→Alive, 404→Dead, **302
+reported without being followed**, refused→NoConnect, DNS failure→NoConnect, unroutable→Timeout, and
+a real live HLS returns in milliseconds instead of downloading forever. The worker against a seeded
+18-channel library — 18 probed, exactly the two 404 rows Dead, 18 written. **TTL resume** — an
+immediate re-run probes 0. **THE GUARD** — against a library where nothing resolves, 18/18
+Inconclusive → `trustworthy=0`, `written=0`, **zero rows marked Dead**: the offline-laptop-wipes-
+your-library case is empirically prevented, not merely argued.
+
+**Settings ▸ Logging** — `diag::setLevel` was header-only and linked with zero mac callers. A gear
+submenu of levels + "Open log folder", persisted in the SHARED `levelToString` spelling (so a
+`log_level` written on either platform is understood by the other) and restored **first** at
+startup. Verified across all four levels: the new `log level:` line appears under info/debug and is
+correctly suppressed under warn/error.
+
+**PiP menu + swap** — inset-only "Swap with main view" / "Close picture-in-picture". The swap
+carries Win32's hard-won ordering: **activate pane 0 BEFORE the re-opens**, or
+`-playChannel:intoPane:` persists `last_channel_id` for the pane being *demoted* and "Resume last
+channel" comes back wrong.
+
+**The review found four defects** (10 raised → 7 survived → 3 refuted, incl. the only HIGH; two
+found independently by two lenses each):
+1. **The sweep completion rebuilt the grid from an un-deferred main-queue block.**
+   `dispatch_async(main)` runs in EVERY run-loop mode including `NSEventTrackingRunLoopMode`, so a
+   completion landing while the row context menu is open re-ordered `_channels` **under the open
+   menu** — and with "Hide unavailable" on, the menu's action then hit whichever row slid into that
+   index. A 250-probe sweep runs for MINUTES, so this is the normal case, not a rare race. Fixed by
+   mirroring `-vodSyncDidFinish:`. **That NSTimer indirection in the VOD path is load-bearing, not
+   ceremony — this is why it exists.**
+2. **The aspect snap fed its own output back into the dominant-edge test**, so a near-vertical
+   resize drag froze after ~4 events and the grip detached from the cursor. Win32 never had it: it
+   rebuilds from `origin + (cursor − start)` every mouse-move. The port copied the test verbatim but
+   substituted its input. Now the same shape (`_pipResizeAccum`, cumulative RAW pull).
+3. **The new menu item ignored its own disabled state on non-Xtream libraries** —
+   `autoenablesItems = NO` was set INSIDE the Xtream branch, so on a plain `.m3u` the item
+   relabelled to "Checking…" but stayed clickable and silently no-opped. **The same trap had already
+   been found once, on the VOD item; the fix was just scoped too narrowly to protect the next item
+   added.** Now set once where the submenu is created.
+4. A sweep that could not open its DB reported *"couldn't clear… database is busy"* — an operation
+   the user did not run and a cause that cannot be it.
+
+**⚠ STILL UNVERIFIED ON DEVICE.** See the box at the top. The GUI checklist, if someone runs it:
+the menu item appears and greys while running; the grid must NOT re-order under an open row menu
+mid-sweep; the sweep refuses while playback holds the provider; a re-run probes 0; the Logging
+submenu persists across a relaunch; the PiP items appear on the inset but NOT on the backdrop; swap
+promotes the inset and "Resume last" comes back to the BIG view's channel; and a straight-**up**
+inset drag must keep following the cursor (that is finding 2 — it froze before the fix).
 
 ### ✅ VERIFIED — the seek layer (PR #46 @ `478ac16`; gates run + fixes in PR #47, 2026-08-10)
 

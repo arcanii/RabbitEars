@@ -1,21 +1,30 @@
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions in cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.17; an if(APPLE) override = mac 0.2.16) — that file is the recurring cross-team merge
+Windows 0.2.17; an if(APPLE) override = mac 0.2.17) — that file is the recurring cross-team merge
 conflict, keep both lines. App min macOS 26 (Apple-Silicon-only, so the x86_64 slice can never run;
 arm64-only builds are fine). Build: scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64.
 Release recipe + gotchas: the mac-release-deployment memory.
 
 TWO THINGS TO KNOW BEFORE ANYTHING ELSE:
 
-1. NOTHING RECENT HAS REACHED USERS. main (478ac16, build 409) carries three releases' worth of
-   merged work, but the live appcast still serves 0.2.15, so every installed mac app is on 0.2.15.
-   mac 0.2.16 is BUILT + NOTARIZED + STAPLED yet DELIBERATELY UNPUBLISHED at
-   ~/Downloads/RabbitEars-0.2.16.dmg (arm64, build 398, sha256 36b2f578..., 41,602,223 bytes) —
-   the owner asked to hold the appcast, which is the step that actually pushes a build to everyone.
-   The artifact is build 398 and main is 409, so a publish should REBUILD. To publish:
-   sign_update --account SQLTerminal (one keychain Allow) -> gh release create v0.2.16-mac --target
-   main --latest=false -> appcast <item> on main (xmllint FIRST).
+1. v0.2.17-mac IS SHIPPED AND LIVE (2026-08-10, build 418, arm64, notarized; appcast @ 46e3072,
+   feed serving 418 against the 318 users had). Everything merged is now in users' hands — the
+   backlog of three unpublished releases is cleared. The old held ~/Downloads/RabbitEars-0.2.16.dmg
+   is SUPERSEDED; delete it, never ship it. **THE FUNCTIONAL GAP TO WINDOWS IS CLOSED** — both
+   platforms are 0.2.17 and the numbers match on purpose. What is unported is N/A BY DESIGN, not
+   outstanding: theme engine, wake-to-record, PIP always-on-top (mac's PiP is a subview of the one
+   main window, not a separate top-level window) and the beta switchboard (enum has no enumerators).
+   What is genuinely left is COSMETICS ONLY (meter glass + VU needle — one CGBitmapContext
+   restructure or neither; look-aware knobs; tip buttons, which need a custom About window) plus the
+   appcast host move off raw.githubusercontent.com — and that one is NOT a gap, since
+   Win32/platform/Updater.cpp serves from the same host.
+
+   ⚠ WHAT 0.2.17 SHIPPED WITHOUT: an ON-DEVICE pass on the four gap-tail features (dead-link sweep,
+   Settings > Logging, PiP menu/swap, PiP aspect snap). They were merged on green CI AND a full
+   adversarial review that found and fixed four defects, and their non-GUI halves were verified by
+   running — but nobody drove them in the GUI. Owner's call, same as 0.2.7's recorder. IF A BUG
+   SURFACES IN THE WILD, START THERE. The seek layer, by contrast, IS fully device-verified.
 
 2. THE SEEK LAYER IS VERIFIED — both gates ran on 2026-08-10, so it is NO LONGER a release blocker.
    PR #46 (478ac16) landed the scrub bar, time readout, skip +/-10s and PAUSE. The adversarial
@@ -41,13 +50,15 @@ GridFilter/SQL grid pushdown + 5000-row cap + search debounce, an ATS exception,
 shipped bugs), and PR #45 = the Xtream VOD movie sync + a Movies nav root, VERIFIED end-to-end
 against a fake Xtream panel (a first for either platform — Windows shipped it unverified).
 
-NEXT: land PR #47 (the seek fixes) if it is still open, then the small tail: dead-link sweep (now
-unblocked by 0.2.16's ATS exception; the dangerous half is already compiled in), Settings > System
-log level (SKIP the beta switchboard — its enum has no enumerators), PiP menu/swap/always-on-top,
-the appcast host move off raw.githubusercontent.com, and PiP aspect-snap (videoSize() now exists
-for it). With the seek layer verified, publishing 0.2.16 is unblocked whenever the owner says so
-(REBUILD — the held dmg is build 398 and main has moved well past it).
-mac is NOT behind on resume/watched or series/seasons — neither exists on either platform.
+NEXT: there is no parity work left to do, so pick by value, not by gap. The highest-value item is
+the on-device pass 0.2.17 shipped without (see 1 above) — the checklist is in the HANDOVER's
+gap-tail section. After that: the appcast host move (BOTH platforms, not a mac gap), then cosmetics
+(meter glass + VU needle as ONE CGBitmapContext restructure or neither; look-aware knobs; tip
+buttons, which need a custom About window since the system panel cannot host them and
+NSHumanReadableCopyright is where the GPL-3.0 notice lives). New features are now genuinely new
+work rather than catching up — resume/watched and series/seasons/episodes exist on NEITHER platform,
+and mac is AHEAD on the groundwork for the latter (LogoLoader is already the async, disk-cached,
+bomb-safe poster loader it needs).
 
 HARD-WON RULES (each cost real time):
 - Win32 gui-build CI is pre-existing red and dies at CONFIGURE (needs fxc), so it compiles NOTHING.
