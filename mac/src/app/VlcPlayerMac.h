@@ -133,6 +133,19 @@ public:
     void setPaused(bool paused);
     bool isPaused() const;
 
+    // Whether there is still an input to control: Opening, Buffering, Playing or Paused. False on
+    // the terminal states (Ended / Stopped / Error) and before any media (NothingSpecial).
+    //
+    // ⚠ THE TRANSPORT MUST GATE ON THIS, not on isSeekable()/lengthMs() alone. Measured against
+    // the vendored libVLC 3.0.23: when a film reaches its end the state becomes libvlc_Ended but
+    // get_length KEEPS returning the duration and is_seekable KEEPS returning true — only
+    // get_time drops to 0. A gate built from length+seekable therefore never goes false, so the
+    // scrub bar can never retire at end-of-film; it strands on screen with a frozen 0:00 readout.
+    // (Placing the update above the tick's `!playing` early return is necessary but NOT
+    // sufficient — the early return was never what kept the bar up.) Paused deliberately counts
+    // as active, or pausing a film would retire its own transport.
+    bool hasActiveInput() const;
+
     // The decoded video's pixel size; false / 0×0 until the vout is up. Live-polled like the
     // rest, so it cannot go stale after a stop. Consumer: the PiP inset aspect snap.
     bool videoSize(unsigned& w, unsigned& h) const;

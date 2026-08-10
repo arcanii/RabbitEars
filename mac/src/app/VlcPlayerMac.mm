@@ -349,6 +349,23 @@ bool VlcPlayerMac::isPaused() const {
 #endif
 }
 
+bool VlcPlayerMac::hasActiveInput() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return false;
+    switch (libvlc_media_player_get_state(impl_->player)) {
+        case libvlc_Opening:
+        case libvlc_Buffering:
+        case libvlc_Playing:
+        case libvlc_Paused:    // a paused film still has an input — keep its transport up
+            return true;
+        default:               // NothingSpecial / Stopped / Ended / Error
+            return false;
+    }
+#else
+    return false;
+#endif
+}
+
 bool VlcPlayerMac::videoSize(unsigned& w, unsigned& h) const {
     w = h = 0;
 #if defined(RABBITEARS_HAVE_LIBVLC)

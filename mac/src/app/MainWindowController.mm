@@ -2109,7 +2109,13 @@ static NSString* fmtPos(long long ms, long long lenMs) {
 - (void)updateTransport {
     VlcPlayerMac* p = [self activePlayer];
     const long long len  = p ? p->lengthMs() : 0;
-    const BOOL want = (p && p->isSeekable() && len > 0) ? YES : NO;
+    // hasActiveInput() FIRST — see its header note. At libvlc_Ended the length and seekability
+    // both persist and only get_time drops to 0, so a length+seekable gate can never retire the
+    // bar: an on-device pass found a finished film leaving the transport stranded with a frozen
+    // 0:00 readout and no way back. The ~2 s hide hysteresis below now covers this condition too,
+    // which is what keeps an HLS mid-stream reopen (a brief Opening/NothingSpecial dip) from
+    // flapping the bar.
+    const BOOL want = (p && p->hasActiveInput() && p->isSeekable() && len > 0) ? YES : NO;
 
     // HYSTERESIS ON HIDE, immediate on show. A live HLS input that re-opens mid-stream
     // (segment discontinuity, rendition switch, reconnect) briefly has no input thread, so
