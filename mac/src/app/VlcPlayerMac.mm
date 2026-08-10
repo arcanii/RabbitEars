@@ -309,21 +309,23 @@ bool VlcPlayerMac::isSeekable() const {
 #endif
 }
 
-void VlcPlayerMac::seekTo(long long ms) {
+long long VlcPlayerMac::seekTo(long long ms) {
 #if defined(RABBITEARS_HAVE_LIBVLC)
-    if (!impl_->player) return;
+    if (!impl_->player) return -1;
     // Re-check against the LIVE player rather than trusting the caller's last sample: the UI
     // may have been showing a scrub bar for a stream that has since stopped or switched to a
     // non-seekable one, and asking a live stream to seek is how you wedge an input.
-    if (!libvlc_media_player_is_seekable(impl_->player)) return;
+    if (!libvlc_media_player_is_seekable(impl_->player)) return -1;
     const long long len = lengthMs();
     if (ms < 0) ms = 0;
     // Keep a second off the end: seeking exactly to the duration lands past the last frame on
     // some demuxers and ends the media instead of repositioning.
     if (len > 1000 && ms > len - 1000) ms = len - 1000;
     libvlc_media_player_set_time(impl_->player, (libvlc_time_t)ms);
+    return ms;   // the CLAMPED position — what the UI must latch, not the raw request
 #else
     (void)ms;
+    return -1;
 #endif
 }
 
@@ -342,6 +344,23 @@ bool VlcPlayerMac::isPaused() const {
     // libVLC's own state, not a local flag: a stream that refused to pause, or that ended while
     // paused, cannot leave a stale "paused" showing in the UI.
     return impl_->player && libvlc_media_player_get_state(impl_->player) == libvlc_Paused;
+#else
+    return false;
+#endif
+}
+
+bool VlcPlayerMac::hasActiveInput() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->player) return false;
+    switch (libvlc_media_player_get_state(impl_->player)) {
+        case libvlc_Opening:
+        case libvlc_Buffering:
+        case libvlc_Playing:
+        case libvlc_Paused:    // a paused film still has an input — keep its transport up
+            return true;
+        default:               // NothingSpecial / Stopped / Ended / Error
+            return false;
+    }
 #else
     return false;
 #endif

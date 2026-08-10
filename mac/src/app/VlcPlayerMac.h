@@ -119,13 +119,32 @@ public:
     // immediate re-read would clear the UI's post-seek latch early and reproduce the thumb
     // snap-back the latch exists to hide. Seeking a network stream re-buffers — call it on drag
     // RELEASE, not per drag tick.
-    void seekTo(long long ms);
+    //
+    // RETURNS the position actually requested of libVLC after clamping, or -1 if it refused (no
+    // player, or the media is not seekable). The caller needs this: the UI latches the seek
+    // target to stop the thumb snapping back, and latching the UNCLAMPED request made a skip
+    // near the end display a position past the media's own duration ("1:45:05 / 1:45:00"). The
+    // clamp rule stays here, in one place, instead of being duplicated by every caller.
+    long long seekTo(long long ms);
 
     // Pause/resume. libVLC's set_pause is a no-op on a stream that cannot pause, so this is
     // safe to call on live TV; isPaused() reports libVLC's own state rather than a local flag,
     // so it cannot drift from reality.
     void setPaused(bool paused);
     bool isPaused() const;
+
+    // Whether there is still an input to control: Opening, Buffering, Playing or Paused. False on
+    // the terminal states (Ended / Stopped / Error) and before any media (NothingSpecial).
+    //
+    // ⚠ THE TRANSPORT MUST GATE ON THIS, not on isSeekable()/lengthMs() alone. Measured against
+    // the vendored libVLC 3.0.23: when a film reaches its end the state becomes libvlc_Ended but
+    // get_length KEEPS returning the duration and is_seekable KEEPS returning true — only
+    // get_time drops to 0. A gate built from length+seekable therefore never goes false, so the
+    // scrub bar can never retire at end-of-film; it strands on screen with a frozen 0:00 readout.
+    // (Placing the update above the tick's `!playing` early return is necessary but NOT
+    // sufficient — the early return was never what kept the bar up.) Paused deliberately counts
+    // as active, or pausing a film would retire its own transport.
+    bool hasActiveInput() const;
 
     // The decoded video's pixel size; false / 0×0 until the vout is up. Live-polled like the
     // rest, so it cannot go stale after a stop. Consumer: the PiP inset aspect snap.
