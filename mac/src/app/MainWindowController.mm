@@ -214,6 +214,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     BOOL           _vodSyncRunning; // mirrors rabbitears::mac::vodSyncRunning() for menu labelling
     BOOL           _sweepRunning;   // mirrors deadLinkSweepRunning() for menu labelling
     rabbitears::mac::VodSyncReport _vodPendingReport;  // handed from the completion to the deferred apply
+    rabbitears::mac::DeadLinkReport _deadLinkPendingReport;  // same, for the dead-link sweep
     BOOL           _startupFinished;  // YES once -finishStartup ran (ToU accepted); gates the menu until then
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
     IOPMAssertionID _keepDisplayAwake;  // display-sleep/screen-saver assertion held while fullscreen or video-only
@@ -243,6 +244,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     CGFloat        _pipW, _pipH;            // PiP inset size in px (persisted); 0 == use the default
     BOOL           _pipResizing;            // latched at drag-start: this drag resizes (else moves)
     NSSize         _pipResizeOriginSize;    // inset size when this resize drag began (aspect snap)
+    NSPoint        _pipResizeAccum;         // cumulative RAW drag translation since that moment
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
@@ -1637,13 +1639,36 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     [self setStatus:Tr(StringId::StatusDeadLinkStarted)];
 }
 
-// Delivered on the main queue by the worker. Anything that CHANGED a dead_status has to be
-// reflected in the grid, which the sweep wrote behind the app's back through its own connection —
-// so the in-memory _channels list is stale by definition and a plain reloadData would not fix it.
+// Delivered on the main queue by the worker.
+//
+// ⚠ IT MUST NOT REBUILD THE GRID HERE, and that is why this looks like -vodSyncDidFinish: rather
+// than doing the obvious thing. dispatch_async(main) runs in EVERY run-loop mode, including
+// NSEventTrackingRunLoopMode — so a completion landing while the user has the row context menu open
+// (or is mid-drag) would re-query and re-order _channels UNDER the open menu. With "Hide
+// unavailable" on, the newly-Dead rows drop out and everything below shifts up, so the menu's
+// action then applies to whatever row slid into that index: favourite the wrong channel, renumber
+// the wrong channel. A 250-probe sweep runs for minutes, so "the user is doing something else when
+// it lands" is the NORMAL case, not a rare race. Deferring through an NSTimer in
+// NSDefaultRunLoopMode makes the rebuild wait for tracking to end. (The VOD sync was restructured
+// for this same hazard; an adversarial review caught this one repeating it.)
 - (void)deadLinkSweepDidFinish:(rabbitears::mac::DeadLinkReport)rep {
     _sweepRunning = NO;
+    _deadLinkPendingReport = rep;
+    [[NSRunLoop mainRunLoop] addTimer:[NSTimer timerWithTimeInterval:0
+                                                             target:self
+                                                           selector:@selector(applyDeadLinkResult:)
+                                                           userInfo:nil
+                                                            repeats:NO]
+                              forMode:NSDefaultRunLoopMode];
+}
+
+- (void)applyDeadLinkResult:(NSTimer*)__unused t {
+    const rabbitears::mac::DeadLinkReport rep = _deadLinkPendingReport;
     if (rep.dbFailed) {
-        [self setStatus:Tr(StringId::StatusDeadLinkClearFailed)];   // "database is busy. Try again."
+        // NOT the "clear failed" string: it names an operation the user did not run and a cause
+        // (a busy database) that cannot be the one — the worker failed to OPEN its own connection.
+        // "Inconclusive — nothing changed" is true for this case and points at the right place.
+        [self setStatus:Tr(StringId::StatusDeadLinkInconclusive)];
         return;
     }
     if (!rep.trustworthy) {
@@ -2566,11 +2591,12 @@ static NSString* fmtPos(long long ms, long long lenMs) {
         const NSPoint p = [g locationInView:v];
         const CGFloat grip = 24;
         _pipResizing = (p.x <= grip && p.y >= v.bounds.size.height - grip);
-        // Baseline for the aspect snap's dominant-edge test. Latched at drag START, like Win32's
-        // pipResizeOrigin: the handler below works in per-step deltas, and measuring "how far has
-        // the user pulled this edge" against a per-step delta would pick a new dominant edge on
-        // almost every mouse move.
+        // Baseline for the aspect snap. Latched at drag START, like Win32's pipResizeOrigin, and
+        // paired with _pipResizeAccum below: the resize branch rebuilds the size from
+        // origin + CUMULATIVE RAW PULL rather than stepping the live frame, so the snap's own
+        // output can never become the next step's input.
         _pipResizeOriginSize = v.frame.size;
+        _pipResizeAccum = NSZeroPoint;
         [g setTranslation:NSZeroPoint inView:_videoContainer];
         return;
     }
@@ -2591,8 +2617,17 @@ static NSString* fmtPos(long long ms, long long lenMs) {
         const CGFloat bottomY = f.origin.y;
         const CGFloat maxW = std::max<CGFloat>(kPipMinW, std::min<CGFloat>(cw * 0.6, rightX));
         const CGFloat maxH = std::max<CGFloat>(kPipMinH, std::min<CGFloat>(ch * 0.6, ch - bottomY));
-        CGFloat newW = std::clamp<CGFloat>(f.size.width  - d.x, kPipMinW, maxW);
-        CGFloat newH = std::clamp<CGFloat>(f.size.height + d.y, kPipMinH, maxH);
+        // Rebuild the size from the LATCHED origin plus the cumulative raw pull, never by stepping
+        // the live frame. Stepping the frame fed the snap's own output back in below, and because
+        // the width branch sets newH = newW/aspect it then satisfied its own dw >= dh test on the
+        // next event and latched there: a near-vertical drag froze after ~4 events and the grip
+        // detached from the cursor (reproduced numerically by two independent reviewers, at every
+        // drag speed). Win32 never had this because it recomputes nw/nh from
+        // pipResizeOrigin + (cursor - pipResizeStart) every mouse-move; this is that shape.
+        _pipResizeAccum.x += d.x;
+        _pipResizeAccum.y += d.y;
+        CGFloat newW = std::clamp<CGFloat>(_pipResizeOriginSize.width  - _pipResizeAccum.x, kPipMinW, maxW);
+        CGFloat newH = std::clamp<CGFloat>(_pipResizeOriginSize.height + _pipResizeAccum.y, kPipMinH, maxH);
 
         // SNAP TO THE STREAM'S ASPECT RATIO. A free-form inset letterboxes itself: libVLC fits the
         // picture inside the view preserving aspect, so any mismatch shows up as black bars down
@@ -2609,8 +2644,10 @@ static NSString* fmtPos(long long ms, long long lenMs) {
         _panes[(size_t)idx]->player->videoSize(vw, vh);
         const double aspect = (vw && vh) ? (double)vw / (double)vh : 16.0 / 9.0;
         if (aspect > 0.01) {
-            const CGFloat dw = std::abs(newW - _pipResizeOriginSize.width);
-            const CGFloat dh = std::abs(newH - _pipResizeOriginSize.height);
+            // Dominance measured on the USER'S PULL, not on the frame — the frame is what the snap
+            // already distorted, and testing it against itself is what caused the freeze.
+            const CGFloat dw = std::abs(_pipResizeAccum.x);
+            const CGFloat dh = std::abs(_pipResizeAccum.y);
             if (dw >= dh) newH = (CGFloat)(newW / aspect + 0.5);
             else          newW = (CGFloat)(newH * aspect + 0.5);
             newW = std::clamp<CGFloat>(newW, kPipMinW, maxW);
@@ -3063,6 +3100,14 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem* chanItem = [m addItemWithTitle:Tr(StringId::MenuChannels) action:nil keyEquivalent:@""];
     NSMenu* chan = [[NSMenu alloc] init];
+    // ⚠ autoenablesItems defaults to YES, and under it AppKit RECOMPUTES every item's enabled state
+    // from NSMenuValidation just before display — silently discarding any explicit `enabled` set
+    // below. This USED to live inside the Xtream branch further down, which meant the explicit flag
+    // only survived for users whose playlist carried credentials: on a plain .m3u library the
+    // dead-link item relabelled to "Checking for dead links…" but stayed clickable and silently
+    // no-opped. Set it once for the whole submenu. Every other item here has a live target and
+    // NSMenuItem.enabled defaults to YES, so none of them change behaviour.
+    chan.autoenablesItems = NO;
     [[chan addItemWithTitle:Tr(StringId::MenuImportFavourites) action:@selector(importFavourites:) keyEquivalent:@""] setTarget:self];
     [[chan addItemWithTitle:Tr(StringId::MenuExportFavourites) action:@selector(exportFavourites:) keyEquivalent:@""] setTarget:self];
     [chan addItem:[NSMenuItem separatorItem]];
@@ -3089,13 +3134,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // but fail, and an action that only ever fails is worse than an absent one. (The gear menu is
     // rebuilt on every open, so this tracks a playlist being added or removed with no extra work.)
     if (_db && !rabbitears::mac::xtreamTargets(*_db).empty()) {
-        // ⚠ autoenablesItems defaults to YES, and under it AppKit RECOMPUTES every item's enabled
-        // state from NSMenuValidation just before display — silently discarding the explicit
-        // `enabled` set below. The controller implements no -validateMenuItem:, so the item came
-        // back enabled and "Syncing movies…" was still clickable mid-sync. Turning auto-enabling
-        // off makes the explicit flag authoritative; every other item in this submenu has a live
-        // target and NSMenuItem.enabled defaults to YES, so none of them change behaviour.
-        chan.autoenablesItems = NO;
+        // (autoenablesItems is now turned off once for the whole submenu where `chan` is created —
+        // it was here, which left every non-Xtream library with auto-enabling still on.)
         NSMenuItem* vod = [chan addItemWithTitle:Tr(_vodSyncRunning ? StringId::MenuVodSyncing
                                                                     : StringId::MenuVodSync)
                                           action:@selector(syncMovies:)
