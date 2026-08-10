@@ -88,9 +88,14 @@ traps that cost hours are listed under Working rules.**
 > **Read this box first.** `v0.2.17-mac` (build **418**, arm64-only, notarized + stapled) is
 > **live**: release [`v0.2.17-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.17-mac),
 > appcast @ `46e3072`, feed serving 418 against the 318 users were on. The three releases' worth of
-> merged-but-unpublished work is now in users' hands, and the deliberately-held 0.2.16 dmg is
-> superseded — **delete it, do not ship it** (it is build 398 of a version that never existed
-> publicly).
+> merged-but-unpublished work is now in users' hands, and the deliberately-held 0.2.16 dmg was
+> superseded and **deleted** (it was build 398 of a version that never existed publicly).
+>
+> **The 0.2.15 → 0.2.17 auto-update was CONFIRMED ON DEVICE by the owner**, which proves the whole
+> Sparkle path for this release end to end from a real client: the feed parsed, the EdDSA signature
+> was accepted against the app's embedded `SUPublicEDKey`, and the notarized artifact installed and
+> launched. Note this is a jump across a version change, so it also exercised the Terms-of-Use
+> re-gate that caused the 0.2.12 launch beachball — the 0.2.13 window-first + sheet fix held.
 >
 > **mac and Windows are both 0.2.17, and the numbers match on purpose.** What is still unported is
 > **N/A by design, not outstanding**: the theme engine (mac uses the native appearance),
