@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cwchar>
 #include <ctime>
+#include <filesystem>  // -openLogFolder: derives the log path from the DB path
 #include <map>
 #include <memory>
 #include <optional>
@@ -50,6 +51,7 @@
 #import "PlaylistsDialog.h"
 #import "CategoriesDialog.h"
 #import "LogoLoader.h"
+#import "DeadLinkSweep.h"
 #import "VodSync.h"
 #import "RecordingsWindowController.h"
 #import "SpectrumTap.h"
@@ -210,6 +212,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     BOOL           _hideDead;    // Settings ⚙ ▸ Channels ▸ Hide unavailable channels ("hide_dead")
     BOOL           _gridTruncated;  // last grid fill hit kMaxGridRows and the library holds more
     BOOL           _vodSyncRunning; // mirrors rabbitears::mac::vodSyncRunning() for menu labelling
+    BOOL           _sweepRunning;   // mirrors deadLinkSweepRunning() for menu labelling
     rabbitears::mac::VodSyncReport _vodPendingReport;  // handed from the completion to the deferred apply
     BOOL           _startupFinished;  // YES once -finishStartup ran (ToU accepted); gates the menu until then
     unsigned int   _keepAwake;   // IOPMAssertion id held while any recording runs (0 == none)
@@ -239,6 +242,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     CGFloat        _pipPosX, _pipPosY;      // PiP inset position, as a 0..1 fraction of the free travel
     CGFloat        _pipW, _pipH;            // PiP inset size in px (persisted); 0 == use the default
     BOOL           _pipResizing;            // latched at drag-start: this drag resizes (else moves)
+    NSSize         _pipResizeOriginSize;    // inset size when this resize drag began (aspect snap)
     id             _escMonitor;    // local key monitor for Esc while video-only (nil otherwise)
 
     std::unique_ptr<Database>     _db;
@@ -350,6 +354,20 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (!_db->open(Database::defaultDbPath(), &err)) {
         diag::error(L"DB open failed: " + err);
         _db.reset();  // make the unusable state explicit; the guards below surface it
+    }
+
+    // Log level FIRST, ahead of every other restore: a tester who set Detailed/Everything to chase
+    // a startup problem must have it in force before the interesting logging happens. It is a
+    // plain atomic, so this is just seeding state. Win32 restores it at the same point, and the
+    // stored form is the shared levelToString/levelFromString spelling so a log_level written by
+    // either platform is understood by the other.
+    if (_db) {
+        if (auto lv = _db->getSetting(L"log_level"); lv && !lv->empty())
+            diag::setLevel(diag::levelFromString(utf8FromWide(*lv), diag::Level::Info));
+        // Logged AFTER the level is applied, so it is itself subject to it: a tester reading the
+        // log can tell at a glance what threshold produced the file, and its absence is the honest
+        // signal that the level is below Info.
+        diag::info(L"log level: " + wideFromUtf8(diag::levelToString(diag::level())));
     }
 
     // The Terms-of-Use gate used to run here (blocking, before the window was built). It now
@@ -817,6 +835,26 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)menuNeedsUpdate:(NSMenu*)menu {
     if (menu != _videoMenu) return;
     [menu removeAllItems];
+
+    // PiP-specific items FIRST, and only when the right-click actually landed on the inset. One
+    // NSMenu is shared by every pane (each pane view's .menu points at it), so the pane has to be
+    // recovered from the event that opened the menu — see -paneIndexForCurrentEvent.
+    //
+    // ⚠ Win32's third PiP item, "Keep PIP above other apps", is deliberately NOT here. It is a
+    // z-order policy for a separate top-level PiP WINDOW, and mac's PiP is not one: the inset is an
+    // ordinary subview of _videoContainer inside the single main window (this controller creates
+    // exactly one NSWindow), so it is already above the backdrop by z-order and there is nothing
+    // for the setting to control. The literal analogue would be floating the WHOLE main window
+    // above other apps, which is a different feature under a misleading name. N/A by design, like
+    // the theme engine and wake-to-record.
+    if (_viewMode == ViewMode::Pip && _panes.size() >= 2 && [self paneIndexForCurrentEvent] > 0) {
+        [[menu addItemWithTitle:Tr(StringId::MenuPipSwapWithMain)
+                         action:@selector(swapPipWithMain:) keyEquivalent:@""] setTarget:self];
+        [[menu addItemWithTitle:Tr(StringId::MenuPipClose)
+                         action:@selector(closePip:) keyEquivalent:@""] setTarget:self];
+        [menu addItem:[NSMenuItem separatorItem]];
+    }
+
     NSMenuItem* vo = [menu addItemWithTitle:Tr(StringId::MenuVideoOnlyPlain)
                                      action:@selector(toggleVideoOnly:) keyEquivalent:@""];
     vo.target = NSApp.delegate;  // the AppDelegate owns Video Only (also the View menu-bar item)
@@ -841,6 +879,63 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)videoDoubleClicked:(id)__unused g {
     if (_videoOnly) [self toggleVideoOnly];  // double-click exits video-only (Win32 parity)
 }
+
+// Which pane did the event that opened the context menu land on? Returns -1 when it cannot be
+// determined. Topmost-first, because the PiP inset overlaps pane 0 and NSView subview order puts
+// later siblings on top — scanning forwards would always answer "pane 0".
+- (int)paneIndexForCurrentEvent {
+    NSEvent* e = NSApp.currentEvent;
+    if (!e || !_videoContainer || _panes.empty()) return -1;
+    const NSPoint p = [_videoContainer convertPoint:e.locationInWindow fromView:nil];
+    for (int i = (int)_panes.size() - 1; i >= 0; --i) {
+        NSView* v = _panes[(size_t)i]->view;
+        if (v && NSPointInRect(p, v.frame)) return i;
+    }
+    return -1;
+}
+
+// Promote the inset to the main view and demote the main view into the inset.
+//
+// ⚠ ACTIVATE PANE 0 BEFORE THE RE-OPENS, not after. -playChannel:intoPane: persists
+// `last_channel_id` only for the pane that is active AT THE TIME, and clicking the inset makes it
+// active — so doing this afterwards records the channel being DEMOTED, and "Resume last channel"
+// then comes back to the wrong one on the next launch. Win32 hit exactly this and fixed it the
+// same way (Win32/ui/MainWindowCommands.cpp swapPipWithMain). Audio follows the main view either
+// way: promoting the inset means the thing you now watch big is the thing you hear.
+- (void)swapPipWithMain:(id)__unused sender {
+    if (_viewMode != ViewMode::Pip || _panes.size() < 2) return;
+    // VALUE copies taken up front: the re-opens below assign through _panes[…]->channel, so a
+    // reference into the vector would be read after it had already been overwritten.
+    const Channel mainCh = _panes[0]->channel;
+    const Channel pipCh  = _panes[1]->channel;
+    const long long mainId = _panes[0]->channelId, pipId = _panes[1]->channelId;
+    if (mainId == 0 && pipId == 0) return;   // both empty — nothing to swap
+
+    [self setActivePane:0];
+
+    // An empty side must be STOPPED, not "played": handing -playChannel:intoPane: a default
+    // Channel would hand libVLC an empty URL. Clearing the bookkeeping too is what stops the grid
+    // highlight — and a later swap — from believing a channel still lives there.
+    if (pipId != 0) {
+        [self playChannel:pipCh intoPane:0];
+    } else {
+        _panes[0]->player->stop(); _panes[0]->channel = Channel{}; _panes[0]->channelId = 0;
+    }
+    if (mainId != 0) {
+        [self playChannel:mainCh intoPane:1];
+    } else {
+        _panes[1]->player->stop(); _panes[1]->channel = Channel{}; _panes[1]->channelId = 0;
+    }
+
+    [self updateEmptyHint];   // whichever side just went empty has to show its hint again
+    [self setStatus:Tr(StringId::StatusPipSwapped)];
+    diag::info(L"PIP swap: main #" + std::to_wstring(mainId) + L" <-> pip #" +
+               std::to_wstring(pipId));
+}
+
+// Close the inset by collapsing to Single. -setViewSingle: already carries the pane-collapse rules
+// (which pane survives, cancelling the provider-facing workers), so this must not reimplement them.
+- (void)closePip:(id)sender { [self setViewSingle:sender]; }
 
 // Esc exits video-only. A local monitor is installed only while video-only is active,
 // so Esc behaves normally otherwise.
@@ -1367,6 +1462,12 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 - (void)syncMovies:(id)__unused sender {
     if (!_db) return;
     if (rabbitears::mac::vodSyncRunning()) return;                 // already going
+    // The reverse of the interlock in -checkDeadLinks:. Both workers talk to the same provider, so
+    // whichever starts second stands down rather than contending for the connection budget.
+    if (rabbitears::mac::deadLinkSweepRunning()) {
+        [self setStatus:Tr(StringId::StatusVodSyncPlaying)];
+        return;
+    }
     if ([self isProviderConnectionBusy]) {
         [self setStatus:Tr(StringId::StatusVodSyncPlaying)];
         return;
@@ -1467,6 +1568,96 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 
 // Reset every channel to "not checked" — the undo for a wrong dead-status (Win32 parity).
 // Confirmed, because it throws away results and there is no undo for the undo.
+// Settings ▸ Logging ▸ <level>. Applies immediately (the threshold is a plain atomic, so the very
+// next log line obeys it) and persists in the SHARED spelling, so a log_level written on Windows is
+// understood here and vice versa.
+- (void)selectLogLevel:(NSMenuItem*)sender {
+    const diag::Level lv = static_cast<diag::Level>(sender.tag);
+    diag::setLevel(lv);
+    if (_db) _db->setSetting(L"log_level", wideFromUtf8(diag::levelToString(lv)));
+    diag::info(L"log level set to " + wideFromUtf8(diag::levelToString(lv)));
+}
+
+// Reveal the log in Finder. The log sits next to the database, so it follows RABBITEARS_DATA_DIR —
+// selecting the FILE rather than opening the folder means a tester lands on the right one even
+// though the rotated rabbitears.log.1 is sitting beside it.
+- (void)openLogFolder:(id)__unused sender {
+    const std::filesystem::path db{rabbitears::Database::defaultDbPath()};
+    const std::filesystem::path log = db.parent_path() / "rabbitears.log";
+    NSString* p = [NSString stringWithUTF8String:log.string().c_str()];
+    if (!p) return;
+    if ([NSFileManager.defaultManager fileExistsAtPath:p]) {
+        [NSWorkspace.sharedWorkspace selectFile:p inFileViewerRootedAtPath:@""];
+    } else {
+        // No log yet (or it was deleted) — open the folder itself rather than doing nothing.
+        NSString* dir = [NSString stringWithUTF8String:db.parent_path().string().c_str()];
+        if (dir) [NSWorkspace.sharedWorkspace selectFile:nil inFileViewerRootedAtPath:dir];
+    }
+}
+
+// Start the background dead-link sweep. The REFUSAL LADDER runs here, in the controller, because
+// only the controller knows the app state; DeadLinkSweep claims its running flag last.
+//
+// ⚠ THE PROVIDER-BUSY GATE IS A MAC ADDITION, and it is deliberate. Win32's startDeadLinkSweep
+// refuses only while a VOD sync runs — but its own comment names the hazard this closes: "a probe
+// refused for capacity is classified and can persist dead_status=Dead on a perfectly good live
+// channel". On a max_connections:1 line, probing WHILE PLAYING is exactly that case, and it is
+// worse here than for the sync: a sweep issues up to 250 connections, and the provider answers the
+// ones over budget with 401/403 — which classifyProbe reads as an unambiguous refusal, i.e. Dead.
+// The sweep would then mark the user's whole live list dead, and with "Hide unavailable" on, their
+// library would vanish. sweepIsTrustworthy does NOT save us: those probes reached a server, so the
+// batch looks perfectly healthy. Reuses the VOD sync's own gate and its wording. Flagged to Win32.
+- (void)checkDeadLinks:(id)__unused sender {
+    if (!_db) return;
+    if (rabbitears::mac::deadLinkSweepRunning()) return;            // already going
+    if (rabbitears::mac::vodSyncRunning()) {
+        // The other worker that talks to the same provider. Contending is worse than either
+        // waiting, for the misclassification reason above.
+        [self setStatus:Tr(StringId::StatusVodSyncPlaying)];
+        return;
+    }
+    if ([self isProviderConnectionBusy]) {
+        [self setStatus:Tr(StringId::StatusVodSyncPlaying)];
+        return;
+    }
+
+    rabbitears::mac::DeadLinkRequest req;
+    req.dbPath = rabbitears::Database::defaultDbPath();
+    MainWindowController* __unsafe_unretained me = self;
+    req.onProgress = [me](int done, int total) {
+        [me setStatus:TrF(StringId::StatusDeadLinkProgress,
+                          {[NSString stringWithFormat:@"%d", done],
+                           [NSString stringWithFormat:@"%d", total]})];
+    };
+    req.onDone = [me](rabbitears::mac::DeadLinkReport rep) { [me deadLinkSweepDidFinish:rep]; };
+
+    if (rabbitears::mac::startDeadLinkSweep(std::move(req)) != rabbitears::mac::DeadLinkStart::Started)
+        return;
+    _sweepRunning = YES;
+    [self setStatus:Tr(StringId::StatusDeadLinkStarted)];
+}
+
+// Delivered on the main queue by the worker. Anything that CHANGED a dead_status has to be
+// reflected in the grid, which the sweep wrote behind the app's back through its own connection —
+// so the in-memory _channels list is stale by definition and a plain reloadData would not fix it.
+- (void)deadLinkSweepDidFinish:(rabbitears::mac::DeadLinkReport)rep {
+    _sweepRunning = NO;
+    if (rep.dbFailed) {
+        [self setStatus:Tr(StringId::StatusDeadLinkClearFailed)];   // "database is busy. Try again."
+        return;
+    }
+    if (!rep.trustworthy) {
+        // The whole sweep was discarded. Say so plainly: nothing changed, and the likely cause is
+        // this machine's connection, not the channels.
+        [self setStatus:Tr(StringId::StatusDeadLinkInconclusive)];
+        return;
+    }
+    if (rep.written > 0) [self refreshChannels];   // re-read: the worker wrote via its OWN handle
+    [self setStatus:TrF(StringId::StatusDeadLinkDone,
+                        {[NSString stringWithFormat:@"%d", rep.dead],
+                         [NSString stringWithFormat:@"%d", rep.written]})];
+}
+
 - (void)clearDeadStatuses:(id)__unused sender {
     if (!_db) return;
     NSAlert* a = [[[NSAlert alloc] init] autorelease];
@@ -1592,6 +1783,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // socket), so it claims connection budget exactly like playback does — stand the sync down.
     // Harmless on the stop branch below. Win32 gates the same handler (onToggleRecord).
     rabbitears::mac::cancelVodSync();
+    // Same rule, same reason: the sweep is the OTHER provider-facing worker, and its probes are
+    // worse to leave running than the sync's downloads — a probe refused for connection capacity
+    // reads as an unambiguous rejection and persists dead_status=Dead on a working channel.
+    rabbitears::mac::cancelDeadLinkSweep();
     if (p->player->isRecording()) {
         const std::wstring file = p->player->recordingFile();
         p->player->stopRecordingAsync();  // off-main: a stalled feed can't hang the UI on stop
@@ -1698,6 +1893,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         // issued and, critically, no further DB write is attempted, so the writer lock is released
         // at the current transaction boundary rather than held for the rest of the catalogue.
         rabbitears::mac::cancelVodSync();
+    // Same rule, same reason: the sweep is the OTHER provider-facing worker, and its probes are
+    // worse to leave running than the sync's downloads — a probe refused for connection capacity
+    // reads as an unambiguous rejection and persists dead_status=Dead on a working channel.
+    rabbitears::mac::cancelDeadLinkSweep();
         NSString* ext; std::string mux;
         [MainWindowController extForFormat:s->mux ext:&ext mux:&mux];
         NSString* path = [self recordingPathFor:ns(s->channelName) ext:ext];
@@ -2367,6 +2566,11 @@ static NSString* fmtPos(long long ms, long long lenMs) {
         const NSPoint p = [g locationInView:v];
         const CGFloat grip = 24;
         _pipResizing = (p.x <= grip && p.y >= v.bounds.size.height - grip);
+        // Baseline for the aspect snap's dominant-edge test. Latched at drag START, like Win32's
+        // pipResizeOrigin: the handler below works in per-step deltas, and measuring "how far has
+        // the user pulled this edge" against a per-step delta would pick a new dominant edge on
+        // almost every mouse move.
+        _pipResizeOriginSize = v.frame.size;
         [g setTranslation:NSZeroPoint inView:_videoContainer];
         return;
     }
@@ -2389,6 +2593,29 @@ static NSString* fmtPos(long long ms, long long lenMs) {
         const CGFloat maxH = std::max<CGFloat>(kPipMinH, std::min<CGFloat>(ch * 0.6, ch - bottomY));
         CGFloat newW = std::clamp<CGFloat>(f.size.width  - d.x, kPipMinW, maxW);
         CGFloat newH = std::clamp<CGFloat>(f.size.height + d.y, kPipMinH, maxH);
+
+        // SNAP TO THE STREAM'S ASPECT RATIO. A free-form inset letterboxes itself: libVLC fits the
+        // picture inside the view preserving aspect, so any mismatch shows up as black bars down
+        // one side (owner-reported against Win32 in 0.2.14). Drive off the DOMINANT EDGE — whichever
+        // dimension the user has pulled further from the size this drag started at — so the drag
+        // still feels like it follows the cursor instead of fighting it.
+        //
+        // videoSize() is the getter the seek layer added; this is its first consumer. It reports
+        // 0x0 until the vout is up, and for an audio-only stream it never reports anything — both
+        // fall back to 16:9 rather than to free-form, so the inset has a sane shape before the
+        // first frame decodes. Re-clamped after snapping: the snap can push the driven dimension
+        // past its bound, and letting that through would walk the inset off the container edge.
+        unsigned vw = 0, vh = 0;
+        _panes[(size_t)idx]->player->videoSize(vw, vh);
+        const double aspect = (vw && vh) ? (double)vw / (double)vh : 16.0 / 9.0;
+        if (aspect > 0.01) {
+            const CGFloat dw = std::abs(newW - _pipResizeOriginSize.width);
+            const CGFloat dh = std::abs(newH - _pipResizeOriginSize.height);
+            if (dw >= dh) newH = (CGFloat)(newW / aspect + 0.5);
+            else          newW = (CGFloat)(newH * aspect + 0.5);
+            newW = std::clamp<CGFloat>(newW, kPipMinW, maxW);
+            newH = std::clamp<CGFloat>(newH, kPipMinH, maxH);
+        }
         f.size.width = newW; f.size.height = newH;
         // Bottom-right pinned. newW<=rightX and newH<=ch-bottomY already keep both edges
         // on-screen for any container >= the min inset; the max(0,...) floors make that hold
@@ -2440,6 +2667,10 @@ static NSString* fmtPos(long long ms, long long lenMs) {
     // does — and a view-mode collapse is a common way to reach it without ever going through
     // -playChannel:. Cancel here too, or the sync survives a carry and kicks the carried stream.
     rabbitears::mac::cancelVodSync();
+    // Same rule, same reason: the sweep is the OTHER provider-facing worker, and its probes are
+    // worse to leave running than the sync's downloads — a probe refused for connection capacity
+    // reads as an unambiguous rejection and persists dead_status=Dead on a working channel.
+    rabbitears::mac::cancelDeadLinkSweep();
     MacVideoPane* src = _panes[(size_t)from].get();
     MacVideoPane* dst = _panes[(size_t)to].get();
     if (src->channelId == 0) return;                 // nothing playing to carry
@@ -2843,6 +3074,15 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // The way BACK from a wrong dead-status. mac demotes a channel to Dead purely from playback
     // failure, and with "Hide unavailable" on those rows leave the grid — so without this the user
     // has no route to a channel the app misjudged (a provider blip, a geo-block, a flaky open).
+    // The sweep itself, above the way back from it. Labelled with its own running state (the gear
+    // menu is rebuilt on every open, so this needs no separate refresh) and disabled while EITHER
+    // provider-facing worker holds the line.
+    NSMenuItem* sweep = [chan addItemWithTitle:Tr(_sweepRunning ? StringId::MenuDeadLinkChecking
+                                                               : StringId::MenuDeadLinkCheck)
+                                        action:@selector(checkDeadLinks:)
+                                 keyEquivalent:@""];
+    sweep.target = self;
+    sweep.enabled = !_sweepRunning && !_vodSyncRunning;
     [[chan addItemWithTitle:Tr(StringId::MenuDeadLinkClear) action:@selector(clearDeadStatuses:) keyEquivalent:@""] setTarget:self];
     // 🎬 Sync movies — present ONLY when a playlist actually carries Xtream credentials. A plain
     // .m3u has no player_api.php behind it, so for those users this item could never do anything
@@ -2861,7 +3101,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
                                           action:@selector(syncMovies:)
                                    keyEquivalent:@""];
         vod.target = self;
-        vod.enabled = !_vodSyncRunning;
+        vod.enabled = !_vodSyncRunning && !_sweepRunning;   // one provider-facing worker at a time
     }
     // Resume last channel (checkbox) — auto-play the last-watched channel on launch (Win32 parity).
     // Built fresh on each gear open, so the ✓ tracks _resumeLast without an explicit rebuild.
@@ -2955,6 +3195,34 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         it.state = [curLang isEqualToString:L.code] ? NSControlStateValueOn : NSControlStateValueOff;
     }
     langItem.submenu = langMenu;
+
+    // Logging ▸ — the mac peer of Win32's Settings ▸ System page. Only the LOG LEVEL is carried
+    // over: the other half of that page is the beta-feature switchboard, and FeatureFlags.h
+    // declares its enum with NO enumerators, so porting it would render an empty box.
+    //
+    // A submenu of radio items rather than a dialog, because mac has no settings-with-pages window
+    // and this is exactly how Language already works here. Zero new catalog strings — the level
+    // names, the section title and "Open log folder" are all shared ids Win32 already ships.
+    [m addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* logItem = [m addItemWithTitle:Tr(StringId::SystemLoggingSection) action:nil keyEquivalent:@""];
+    // Autoreleased, unlike its siblings above: the gear tree is a known pre-existing leak that the
+    // handover deliberately leaves alone (a wrong release there is an over-release CRASH, not a
+    // leak), so this fixes nothing around it but does not add to it either.
+    NSMenu* logMenu = [[[NSMenu alloc] init] autorelease];
+    const struct { diag::Level lv; StringId sid; } levels[] = {
+        { diag::Level::Error, StringId::LogLevelError }, { diag::Level::Warn,  StringId::LogLevelWarn },
+        { diag::Level::Info,  StringId::LogLevelInfo },  { diag::Level::Debug, StringId::LogLevelDebug },
+        { diag::Level::Trace, StringId::LogLevelTrace } };
+    const diag::Level curLevel = diag::level();
+    for (auto& L : levels) {
+        NSMenuItem* it = [logMenu addItemWithTitle:Tr(L.sid) action:@selector(selectLogLevel:) keyEquivalent:@""];
+        it.target = self;
+        it.tag = static_cast<NSInteger>(L.lv);   // scalar, so nothing to own (cf. the language menu)
+        it.state = (L.lv == curLevel) ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    [logMenu addItem:[NSMenuItem separatorItem]];
+    [[logMenu addItemWithTitle:Tr(StringId::SystemOpenLogFolder) action:@selector(openLogFolder:) keyEquivalent:@""] setTarget:self];
+    logItem.submenu = logMenu;
 
     [m addItem:[NSMenuItem separatorItem]];
     [[m addItemWithTitle:Tr(StringId::AboutCheckForUpdatesButton) action:@selector(checkForUpdates:) keyEquivalent:@""] setTarget:self];
@@ -3385,6 +3653,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     // in-flight HTTP body still finishes (httpGet has no cancellation handle), but no further
     // request is issued and nothing more is written.
     rabbitears::mac::cancelVodSync();
+    // Same rule, same reason: the sweep is the OTHER provider-facing worker, and its probes are
+    // worse to leave running than the sync's downloads — a probe refused for connection capacity
+    // reads as an unambiguous rejection and persists dead_status=Dead on a working channel.
+    rabbitears::mac::cancelDeadLinkSweep();
     MacVideoPane* p = _panes[(size_t)idx].get();
     // New media in this pane: any pending seek target belongs to the OLD one. Unconditional —
     // a background pane costs nothing to clear, and the alternative (comparing against
