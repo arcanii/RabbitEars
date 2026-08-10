@@ -43,6 +43,18 @@ set(APP_VERSION "0.2.17")
 # from a wrong dead-status, three shipped bug fixes (swapped meter Look popup, PiP-exit pane
 # hijack, Skipped-vs-Cancelled), the GridFilter/SQL grid pushdown + search debounce, and an ATS
 # exception so cleartext IPTV URLs stop failing invisibly (PR #44).
+#
+# 0.2.17 is the release where the mac line CATCHES UP WITH WINDOWS — the version numbers match
+# because the functional gap is closed, not by coincidence. It carries everything merged since
+# 0.2.15 shipped: the schema-v8/v9 "safe to upgrade" work (PR #44), the Xtream VOD sync + Movies
+# nav root (PR #45), the seek layer — scrub bar, time readout, skip +/-10s and pause (PR #46) with
+# the five defects its two verification gates found (PR #47), and the Win32-gap tail (PR #48):
+# the background dead-link sweep (mac gains the httpProbe that common/core/Http.h had always
+# declared), Settings > Logging, the PiP right-click menu + swap, and the PiP aspect snap.
+# What remains unported is N/A BY DESIGN, not outstanding: the theme engine (mac uses the native
+# appearance), wake-to-record (a non-root app cannot arm a wake), PIP always-on-top (mac's PiP is
+# a subview of the single main window, not a separate top-level window), and the beta-feature
+# switchboard (its enum declares no enumerators).
 if(APPLE)
-  set(APP_VERSION "0.2.16")
+  set(APP_VERSION "0.2.17")
 endif()
