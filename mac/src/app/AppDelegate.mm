@@ -4,6 +4,7 @@
 // Win32/WinMain.cpp / Win32/ui/MainWindow.cpp). Owns app lifecycle: logging,
 // auto-update, and the MainWindowController (the actual UI).
 #import "AppDelegate.h"
+#import "AboutWindowController.h"
 #import "MainWindowController.h"
 #import "Tr.h"
 
@@ -232,18 +233,12 @@ using namespace rabbitears::i18n;  // StringId
     return YES;
 }
 
-// Custom About panel — the mac peer of the Win32 About box: libVLC attribution +
-// the educational-use disclaimer (name/version come from the bundle Info.plist).
-- (void)showAboutPanel:(id)__unused sender {
-    NSMutableParagraphStyle* ps = [[NSMutableParagraphStyle alloc] init];
-    ps.alignment = NSTextAlignmentCenter;
-    NSString* credits = Tr(StringId::AboutMacCredits);
-    NSAttributedString* attr = [[NSAttributedString alloc] initWithString:credits attributes:@{
-        NSFontAttributeName: [NSFont systemFontOfSize:11],
-        NSParagraphStyleAttributeName: ps,
-    }];
-    [NSApp orderFrontStandardAboutPanelWithOptions:@{NSAboutPanelOptionCredits: attr}];
-}
+// About — now a CUSTOM window (AboutWindowController) rather than
+// +orderFrontStandardAboutPanelWithOptions:. The system panel accepts a credits string but cannot
+// host controls, so it had nowhere to put the two tip buttons Win32 has. The custom window carries
+// over everything the system panel used to render for free — including the libVLC LGPL attribution
+// and the Info.plist GPL-3.0 notice, both of which are licence obligations, not decoration.
+- (void)showAboutPanel:(id)__unused sender { [AboutWindowController showAbout]; }
 
 - (void)applicationWillTerminate:(NSNotification*)__unused note {
     [_mainController finalizeRecordingsForQuit];  // flush + index any open recording before exit

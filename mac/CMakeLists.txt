@@ -82,6 +82,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/CategoriesDialog.mm
     src/app/LogoLoader.mm
     src/app/TermsDialog.mm
+    src/app/AboutWindowController.mm
     src/app/EpgGuideView.mm
     src/app/TvGuideWindowController.mm
     src/app/RecordingsWindowController.mm
@@ -108,6 +109,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
     src/app/RecordingsWindowController.mm src/app/LogoLoader.mm src/app/MeterBridgeWindowController.mm
     src/app/TankView.mm
+    src/app/AboutWindowController.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
