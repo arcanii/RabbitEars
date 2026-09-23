@@ -31,7 +31,20 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.17 SHIPPED (2026-07-28)** · macOS 0.2.15 · `main` clean
+## Current state — **v0.2.17 is the last Windows release** · macOS **0.2.17** · three unreleased changes on `main`
+
+### ▶️ Since v0.2.17 — UNRELEASED, none of it seen running by the owner (2026-07-29 → 2026-09-23)
+
+| change | status | owner check |
+|---|---|---|
+| 🔎 **Search debounce** (`b5c016f`) | pushed | typing in search feels smooth; a nav click right after typing shows the node |
+| 🔴→✅ **Lost schedule-status writes** (`b4b3e4c`) — flagged by the mac team; can truncate a recording or silently mark it Missed | pushed | the six checks in the "Lost schedule-status writes" block below — the ordinary scheduled-recording path FIRST, because the start order changed |
+| 🖼️ **Photoreal Phase 0 — `RabbitEarsRender`**, a headless render tool | see git | none needed (dev tool; the app is unchanged) — but the **six photoreal decisions** in `docs/PHOTOREAL.md` are yours |
+
+**The biggest change to how this project works:** visual work no longer has to go to the owner blind.
+`build\Win32\RabbitEarsRender.exe <outdir>` renders every meter look, the buffer tank and every skinned
+transport strip to PNG from the REAL paint code, byte-reproducibly, and the assistant can read those
+PNGs. Details, limits and the photoreal proposal: **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)**.
 
 ### ✅ 0.2.17 — SHIPPED (2026-07-28) — the big-library release
 
@@ -320,6 +333,8 @@ RabbitEarsCore        common/core, db,     platform-neutral engine: M3uParser, D
 RabbitEarsPlatformWin Win32/platform/      Windows platform layer: Http (WinHTTP) + Paths
                                            (%LOCALAPPDATA% db path). Linked by CLI + GUI.
 RabbitEarsCli         Win32/cli/           headless core tool (--selftest/--fetch/--import).
+RabbitEarsRender      Win32/render/        headless render tool (GUI-gated): meters + skinned
+                                           strip -> PNG from the real paint code. docs/PHOTOREAL.md.
 RabbitEars            Win32/ (ui, WinMain, Win32 GUI (gated: RABBITEARS_BUILD_GUI).
  (GUI)                audio, platform/)    MainWindow (chrome+layout+wiring), ChannelGrid-
                                            Control (D2D grid), BufferMeter (LED), VlcPlayer
@@ -342,19 +357,25 @@ RabbitEars            Win32/ (ui, WinMain, Win32 GUI (gated: RABBITEARS_BUILD_GU
   `& "G:\RabbitEars\scripts\build.cmd" …` (a bare `scripts\build.cmd` after `;` can
   be mis-parsed as a module).
 - **RelWithDebInfo, not Debug** (Debug CRT heap lock stalls the UI thread).
-- **`LINK1168: cannot open RabbitEars.exe`** = an instance is running →
-  `Stop-Process -Name RabbitEars -Force`, rebuild.
+- **`LINK1168: cannot open RabbitEars.exe`** = an instance is running (usually the owner's) → close it
+  with `WM_CLOSE` (`(Get-Process RabbitEars).CloseMainWindow()`), then rebuild. **Never force-kill it**:
+  a normal close is the only path that finalises an in-progress recording (an mp4 without its moov atom
+  is unplayable).
 - Static CRT (`/MT`) — the exe needs no VC++ redist.
 
 ## Build, test, verify
 
 ```
-scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON      :: GUI (provisions libVLC once)
-build\RabbitEarsCli.exe --selftest               :: 30 parser + DB assertions
-build\RabbitEarsCli.exe --import <url|file>       :: exercise fetch+parse+store headlessly
-build\RabbitEars.exe                              :: the app (owner runs; sandbox can't)
+scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_THEME_ENGINE=ON   :: GUI + tools (libVLC once)
+build\Win32\RabbitEarsCli.exe --selftest          :: the full core selftest (~6 s; must print ALL PASS)
+build\Win32\RabbitEarsCli.exe --import <url|file> :: exercise fetch+parse+store headlessly
+build\Win32\RabbitEarsRender.exe <outdir>         :: meters + skinned strip -> 56 PNGs (~10 s)
+build\Win32\RabbitEars.exe                        :: the app (owner runs; the sandbox can't)
 scripts\build-installer.cmd                       :: -> build\installer\RabbitEars-<ver>-setup.exe
 ```
+Always build BOTH theme flags before committing (`-DRABBITEARS_THEME_ENGINE=OFF`, then `=ON`, leaving
+the cache at ON). The render tool is how a visual change gets looked at before the owner sees it:
+render before, change, render after, compare — see `docs/PHOTOREAL.md` for what it can and cannot show.
 
 ## Gotchas to carry forward
 
@@ -446,10 +467,10 @@ branch was **merged to `main` + deleted** (only
 `main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
 **`git fetch` + rebase before a release** — the 0.2.0 push integrated a concurrent mac commit mid-flight
 (the first push was rejected until re-fetched).
-**As of 2026-09-23** `main` was level with `origin/main` at `7b5060c` — the search debounce
-(`b5c016f`) is pushed, and the mac team has since landed 30 commits (their VOD, seek layer and
-**v0.2.17-mac**). The lost-status-write fix below was then committed on top, **unpushed** at the time
-of writing (the owner pushes). Whatever
+**As of 2026-09-23** the search debounce (`b5c016f`) and the lost-status-write fix (`b4b3e4c`, on top
+of the mac team's 30 commits — their VOD, seek layer and **v0.2.17-mac**) are both **pushed**; the
+photoreal Phase 0 render tool came after and may not be committed yet — **run `git status` and
+`git log origin/main..` to see.** Whatever
 this paragraph says, it goes stale the moment anyone pushes — the repo has two writers — so **re-verify
 `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for a release**,
 because the build number is the commit count. That check has caught a real blocker on two consecutive
@@ -796,6 +817,37 @@ for **`stale Recording row could not be reset`**: while it keeps repeating, the 
 landed and no schedule can start. `recording rule delete DEFERRED` is a refusal this change introduced
 (not a formerly silent failure): the rule is held back until an airing's status lands.
 
+### 🖼️ Photoreal skins & meters — Phase 0 DONE, the rest waits on six owner decisions (2026-09-23)
+
+The owner asked to make the skins and meters "more photorealistic". Research (five investigations and
+a completeness critic) and the proposal are in **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)** — read its
+constraints section first: a tray meter's dial is **26 px tall at 100 %**, so realism has to come from
+light, colour and crisp 1-px detail, and the biggest lever is making the meters bigger (an owner call).
+
+**Phase 0 — `RabbitEarsRender` — is built and verified:** `Win32/render/RabbitEarsRender.cpp`, a
+GUI-gated console tool. It renders every meter look x kind, the tank and every skinned strip to PNG
+by driving the meters' real WndProc on hidden windows. Its three production seams are read-only or
+test-only (`miniMeterSnapshot`, `bufferMeterSnapshot`, `skin::setStripClockForTest`) and the app never
+calls them. Output: 56 PNGs, byte-identical to the scratch proof of concept (itself pixel-identical to
+the app's compiled objects) and across runs. Both theme flags build clean; the classic build renders 12.
+**Adversarially reviewed** (2 lenses, 25 findings, 24 upheld on verification, 1 refuted): none touched
+the production seams; all were doc overstatements in PHOTOREAL.md and tool hardening (`--strip-only`
+dropped the VU strip, `--time` unvalidated, unchecked GDI+ startup, a crop guard, `.gitignore` for
+`render-out/`), all applied — the render output stayed byte-identical. Two were answered with
+documentation instead of changed output, to keep that byte-identity: the `default` strip shows all four
+meters (not the default install's two), and the tray-sheet title prints `windowBg` as a raw COLORREF
+(`0x00BBGGRR`). Either is a one-line change if a future sheet needs it — then re-baseline the PNGs.
+**Not committed at the time of writing** — the owner commits.
+
+**It found six existing visual defects** — Phase 1 candidates, listed in PHOTOREAL.md: the VU "red
+zone" is near-white, the VU needle's shadow reads as a second needle, the tank's readout covers half
+the tank, the Light skin's unlit LEDs are near-black, the Light skin's underglow is invisible, and
+Tube/Scope glows bleed over the border.
+
+**Next:** the owner answers the six decisions at the bottom of PHOTOREAL.md (the size question matters
+most) and ideally sends the Phase Linear 400 photo, the mockups, and one real screenshot. Then Phase 1
+— render before/after sheets for every change and hand the owner the pair, not the live app.
+
 ### What still needs the owner
 
 **0.2.17 shipped better verified than anything before it** — all four changes were confirmed on the
@@ -919,30 +971,34 @@ Paste this verbatim to start a fresh session with working context restored:
 > vendored/NuGet. Repo `G:\RabbitEars`.
 >
 > **Read `Win32/HANDOVER.md` first** — the top "Current state" block and "What still needs the
-> owner" — plus `Win32/BACKLOG.md`. The Xtream VOD epic's design doc is `Win32/docs/XTREAM_VOD.md`
-> (written off a REAL provider's measured numbers). Older per-release history is in
-> `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea, several have been tried and
-> reverted.
+> owner" — plus `Win32/BACKLOG.md`. Design docs: `Win32/docs/PHOTOREAL.md` (the ACTIVE epic — skins
+> and meters made more photorealistic) and `Win32/docs/XTREAM_VOD.md` (written off a REAL provider's
+> measured numbers). Older per-release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before
+> re-trying an idea, several have been tried and reverted.
 >
 > **State:** last SHIPPED = **`v0.2.17`** (2026-07-28, `0.2.17.388`, tag @ `3660441`, both appcasts
-> LIVE @ `fe3d872`) — the big-library release: canonical `stream_url` + **schema v9** (merged away
-> 43,599 duplicate films), the grid row cap (All Channels 1485 → 108 ms, search 1626 → ~134 ms per
-> keystroke), skip back/forward, and a v8-migration fix. `main` is the ONLY branch. The repo has TWO
-> writers (the mac team pushes to `main` too), so never trust a doc's claim about push state —
-> **run `git fetch` and verify `git ls-remote origin refs/heads/main` == HEAD immediately before you
-> build anything**, because the build number is the commit count. `APP_VERSION` is `0.2.17`; the next
-> release bumps it. **Bumping ≠ releasing** — the tag and the two appcasts gate the rollout.
+> LIVE @ `fe3d872`); macOS is also at **0.2.17**. `main` is the ONLY branch. The repo has TWO writers
+> (the mac team pushes to `main` too), so never trust a doc's claim about push state — **run
+> `git fetch`, `git status` and `git log origin/main..` first, and verify `git ls-remote origin
+> refs/heads/main` == HEAD immediately before you build anything for a release**, because the build
+> number is the commit count. `APP_VERSION` is `0.2.17`; the next release bumps it. **Bumping ≠
+> releasing** — the tag and the two appcasts gate the rollout.
 >
-> **Unreleased Windows work on `main`, none of it seen running:**
-> * the **search debounce** (`b5c016f`) — `EN_CHANGE` arms a 200 ms one-shot timer instead of
->   querying per keystroke. GUI-only code with zero automated coverage. Owner check in BACKLOG.
-> * the **lost schedule-status-write fix** (flagged by the mac team) — `updateScheduleStatus` → `bool`,
->   persist-before-start via the shared `beginScheduledStart`, a reconcile that retries, and
->   write-behind for terminal statuses pinned to row identity, a transactional `deleteRule`. Only
->   `updateScheduleStatus` via `beginScheduledStart` is selftested under REAL lock contention; the
->   other DAO lost-paths and the Win32 glue are not. **Owner checks in HANDOVER's "Lost schedule-status writes" block — the
->   ordinary scheduled-recording path comes first, because the start order changed.** A mac follow-up
->   (the same bug at their start site) is written up at the top of BACKLOG.
+> **Unreleased Windows work on `main`, none of it seen running by the owner:**
+> * the **search debounce** (`b5c016f`, pushed) — GUI-only, zero automated coverage.
+> * the **lost schedule-status-write fix** (`b4b3e4c`, pushed; flagged by the mac team) — a lost status
+>   write could truncate a recording or silently mark it Missed. Persist-before-start via the shared
+>   `beginScheduledStart`, a retrying reconcile, write-behind for terminal statuses pinned to row
+>   IDENTITY (SQLite reuses rowids), transactional `deleteRule`, and a pre-existing Delete bug fixed.
+>   Six adversarial review rounds; the Win32 glue is untested. **Owner checks: HANDOVER's "Lost
+>   schedule-status writes" block — the ordinary scheduled-recording path FIRST.** The mac start site
+>   has the same bug; the follow-up is written up for the mac team at the top of BACKLOG.
+> * **photoreal Phase 0 — `RabbitEarsRender`** (may still be uncommitted — check `git status`): a
+>   headless tool that renders every meter look, the tank and every skinned strip to PNG from the REAL
+>   paint code, byte-reproducibly. **Use it for every visual change** (render before/after, read the
+>   PNGs yourself, hand the owner the pair). Phase 1 (six existing defects it found) can start; the
+>   rest of the epic waits on the owner's six decisions at the bottom of `docs/PHOTOREAL.md` — the
+>   size question matters most.
 >
 > **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
 > design assumed. `--benchdb`'s DEFAULTS still model the small shape and have misrepresented this
@@ -963,10 +1019,17 @@ Paste this verbatim to start a fresh session with working context restored:
 >   where the test did not execute the code it claimed to cover. **If a comment asserts behaviour,
 >   verify it or weaken it.**
 > * **`common/` is shared with mac, and mac keeps its own copies of some of it.** `Log.h` is
->   implemented by BOTH platforms; `mac/src/app/MeterModel.cpp` parses `MeterTuning`/`MeterPalette`
->   with **exact arity**; a new `ScheduleStatus` needs a mac `switch` case in the SAME commit
->   (`-Wswitch -Werror`). **Always grep `mac/` before changing anything under `common/`** — and
->   remember you cannot COMPILE mac here, so prefer flagging over editing their tree.
+>   implemented by BOTH platforms; a new `ScheduleStatus` (or any enum mac switches on) needs a mac
+>   `switch` case in the SAME commit (`-Wswitch -Werror`); `mac/src/app/MeterModel.cpp` parses its own
+>   meter settings with exact arity (under different keys and in a different DB from Win32's, so it
+>   binds only if MeterModel is ever promoted into `common/`). **Always grep `mac/` before changing
+>   anything under `common/`** — you cannot COMPILE mac here, so keep shared changes additive and
+>   source-compatible, and prefer flagging over editing their tree. The mac team says the theme engine
+>   is N/A by design there, so skin work is Windows-only.
+> * **A fix's neighbours are where the review findings keep coming from.** The lost-write fix's core
+>   held from its second review round; the adjacent Scheduled Recordings **Delete** path produced new
+>   edge cases for four more rounds, each fix exposing a neighbouring pre-existing assumption. Before
+>   touching that path, read the long comment in `onManageSchedules`' `cb.remove`.
 > * **Command ids: pick from a genuine gap.** The computed ranges (`ID_DOCK_BASE` 2051–2062,
 >   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+) have no literal to grep — one
 >   collision already shipped as a bug. 2010–2033 and 2044–2050 are largely taken; `WM_APP+1..+10`
@@ -984,11 +1047,15 @@ Paste this verbatim to start a fresh session with working context restored:
 >   committing. `LNK1168` means the owner is running the app — close it with `WM_CLOSE`
 >   (`CloseMainWindow`), never a force-kill, or an in-progress recording loses its moov atom.
 > * **i18n:** `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*`
->   (never hand-edit). ~586 keys × 4 languages; `zh-HK` is an override layer over `zh-Hant`. CJK is
->   a machine draft.
+>   (never hand-edit; `--check` must pass). 588 keys × 4 languages; `zh-HK` is an override layer over
+>   `zh-Hant` (it uses 劇集 where zh-Hant says 影集). Append new keys at the END of `keys.json` so no
+>   `StringId` value moves. CJK is a machine draft.
 >
 > **Working rules:** every change adversarially reviewed (background agent/workflow) + build-verified
-> BOTH theme flags + `--selftest` before committing. **This sandbox cannot launch the GUI** — hand
-> every visual/runtime pass to the owner, and do not conclude anything about a class of streams from
-> a single channel. Commit only when asked; stage specific paths (never `git add -A`); end commit
-> messages with the Co-Authored-By trailer.
+> BOTH theme flags + `--selftest` before committing. **This sandbox cannot launch the GUI** — but it
+> CAN render the meters and the skinned strip with `build\Win32\RabbitEarsRender.exe <outdir>`, and
+> you can read those PNGs: check pixels yourself, then hand the owner before/after sheets for the
+> taste call and for everything the renders cannot show (their own settings, live streams, the rest
+> of the window). Hand every runtime pass to the owner, and do not conclude anything about a class of
+> streams from a single channel. Commit only when asked; stage specific paths (never `git add -A`);
+> end commit messages with the Co-Authored-By trailer.

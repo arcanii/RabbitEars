@@ -10,7 +10,9 @@
 // Each is drawn as small square LEDs (lit/dim cells) to match the family look.
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
@@ -120,5 +122,13 @@ MeterTuning  meterTuningFromString(const std::wstring& s, const MeterTuning& fal
 // only stores the value — the caller repaints. Persisted under glassStrengthSettingKey().
 void  miniMeterSetGlass(float strength);
 float miniMeterGlass();
+
+// ---- Tooling (RabbitEarsRender) --------------------------------------------
+// Copy the frame this meter last painted — its cached 32bpp back-buffer, which onPaint BitBlts 1:1
+// (SRCCOPY) to the screen — as 0x00RRGGBB per pixel, row-major, top-down. READ-ONLY: it never paints
+// and never calls into the paint path, so it cannot change what the app draws. False before the first
+// paint. Used by Win32/render/RabbitEarsRender.cpp, which drives the meter's REAL WndProc (WM_TIMER,
+// WM_PAINT) on a hidden window; the app itself never calls it.
+bool miniMeterSnapshot(HWND meter, std::vector<uint32_t>& pixels, int& w, int& h);
 
 }  // namespace rabbitears

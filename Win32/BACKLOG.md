@@ -7,6 +7,18 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
+## 🖼️ Photoreal skins & meters — the active epic (Phase 0 done, 2026-09-23)
+
+Design notes, research and the phased proposal: **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)**. Phase 0
+(`RabbitEarsRender`, a headless PNG renderer for the meters and the skinned strip) is built and verified.
+**Phase 1 — six existing visual defects the renders exposed — is ready to start**, with before/after
+sheets for the owner (VU red zone near-white; VU needle shadow reads as a second needle; tank readout
+covers half the tank; Light-skin unlit LEDs near-black; Light-skin underglow invisible; Tube/Scope glow
+not clipped). **Phases 2–4 wait on six owner decisions** listed at the bottom of PHOTOREAL.md — the
+biggest being whether the 26-px meters may get bigger.
+
+---
+
 ## ✅ FIXED ON WINDOWS (UNRELEASED) — `updateScheduleStatus` is unverifiable, and a VOD sync can turn a recording into a silent `Missed` · flagged by the macOS team, 2026-08-09
 
 > ### What Windows did (2026-09-23), and the 🍎 follow-up it leaves for the macOS team

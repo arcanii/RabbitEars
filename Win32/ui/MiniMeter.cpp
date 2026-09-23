@@ -127,7 +127,7 @@ struct MiniMeterState {
 // Global "glass cover" strength for every meter (0 = off). A single app-wide value rather than a
 // per-meter MeterTuning knob, deliberately: the buffer meter has no MeterConfig at all, the Meters
 // dialog's knob band is already full at 4 sliders, and a 6th MeterTuning field would break mac's
-// exact-arity parser. Read by MiniMeter; BufferMeter does not consume it yet (see BACKLOG).
+// exact-arity parser. Read by MiniMeter and, since 0.2.16, by BufferMeter (its ensureGlass()).
 std::atomic<float>& meterGlassRef() {
     static std::atomic<float> g{0.0f};
     return g;
@@ -1092,5 +1092,18 @@ void miniMeterSetGlass(float strength) {
 }
 
 float miniMeterGlass() { return meterGlassRef().load(std::memory_order_relaxed); }
+
+bool miniMeterSnapshot(HWND meter, std::vector<uint32_t>& pixels, int& w, int& h) {
+    MiniMeterState* st = stateOf(meter);
+    if (!st || !st->backBits || st->backW <= 0 || st->backH <= 0) return false;
+    GdiFlush();  // GDI/GDI+ may still be batching drawing into the DIB
+    const size_t n = static_cast<size_t>(st->backW) * static_cast<size_t>(st->backH);
+    const auto* src = static_cast<const uint32_t*>(st->backBits);  // BGRA read as LE uint32
+    pixels.resize(n);
+    for (size_t i = 0; i < n; ++i) pixels[i] = src[i] & 0x00FFFFFFu;
+    w = st->backW;
+    h = st->backH;
+    return true;
+}
 
 }  // namespace rabbitears

@@ -8,7 +8,9 @@
 // motion can be distracting.
 #pragma once
 
+#include <cstdint>
 #include <functional>
+#include <vector>
 
 #include <windows.h>
 
@@ -74,5 +76,16 @@ constexpr COLORREF kDefaultFluidColor = RGB(190, 158, 244);
 void     bufferMeterSetFluidColor(COLORREF c);
 COLORREF bufferMeterFluidColor();
 inline const char* bufferFluidColorSettingKey() { return "buffer_fluid_color"; }
+
+// ---- Tooling (RabbitEarsRender) --------------------------------------------
+// Copy the frame this meter last painted — its cached DIB, which render() BitBlts 1:1 to the screen —
+// as 0x00RRGGBB per pixel, row-major, top-down. `withReadout` also draws the throughput readout: the
+// real render() draws it on the WINDOW DC after the blit, so it is not in the DIB; here the same
+// drawMetrics() draws it onto a COPY, never onto the live DIB. READ-ONLY with respect to painting (the
+// one side effect: the readout font is created and cached if no paint has needed it yet — exactly
+// what the app does on its first readout). False before the first paint; on a HIDDEN meter (right-click
+// hide) render() skips the DIB, so this returns the last frame painted before it was hidden. The app
+// never calls it.
+bool bufferMeterSnapshot(HWND meter, std::vector<uint32_t>& pixels, int& w, int& h, bool withReadout);
 
 }  // namespace rabbitears

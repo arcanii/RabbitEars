@@ -39,4 +39,11 @@ bool paintSkinEdge(HDC dst, const RECT& r, UINT dpi);
 // Release all GPU resources. Call at shutdown.
 void shutdownSkinStrip();
 
+// Tooling only (RabbitEarsRender): pin the animation clock so underglow renders are reproducible.
+// From the first call on, the strip reads `ms` instead of GetTickCount64() — both when
+// initSkinStrip() latches its start time and on every paint — until the process exits. Call it with
+// 0 before initSkinStrip(), then with the desired time: uTime is then exactly that time in seconds.
+// The app never calls it, so its clock is unchanged.
+void setStripClockForTest(ULONGLONG ms);
+
 }  // namespace rabbitears::skin

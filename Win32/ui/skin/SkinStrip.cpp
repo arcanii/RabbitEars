@@ -42,10 +42,16 @@ struct StripState {
     ComPtr<ID3D11PixelShader>      ps;
     ComPtr<ID3D11Buffer>           cbuf;
     UINT       width = 0, height = 0;          // current tex size
-    ULONGLONG  t0 = 0;                          // GetTickCount64 at init (animation clock)
+    ULONGLONG  t0 = 0;                          // stripClock() at init (animation clock)
 };
 
 StripState* g_strip = nullptr;
+
+// The animation clock. The app always reads GetTickCount64(); only setStripClockForTest() (tooling)
+// pins it, so renders of the underglow are reproducible.
+bool      g_clockPinned = false;
+ULONGLONG g_clockMs = 0;
+ULONGLONG stripClock() { return g_clockPinned ? g_clockMs : GetTickCount64(); }
 
 // Phase 4b-2: the dock-gutter edge glow. Its own gutter-sized offscreen texture + the
 // edge pixel shader, sharing the one SkinDevice and the fullscreen-triangle VS. No D2D
@@ -180,7 +186,7 @@ bool renderOffscreen(StripState* st, UINT w, UINT h) {
     StripConstants cb{};
     cb.resolution[0] = static_cast<float>(w);
     cb.resolution[1] = static_cast<float>(h);
-    cb.time = static_cast<float>((GetTickCount64() - st->t0) / 1000.0);
+    cb.time = static_cast<float>((stripClock() - st->t0) / 1000.0);
     const SkinGpu& gpu = currentSkin().gpu;
     cb.intensity = gpu.stripGlow;                // per-skin underglow strength (SkinGpu manifest)
     cb.params[0] = gpu.heatHaze;                 // per-skin heat-haze shimmer (Steampunk; 0 elsewhere)
@@ -309,7 +315,7 @@ bool initSkinStrip() {
     if (!SkinDevice::instance().ensure()) return false;
     if (!g_strip) {
         g_strip = new StripState();
-        g_strip->t0 = GetTickCount64();
+        g_strip->t0 = stripClock();
     }
     if (!g_edge) g_edge = new EdgeState();  // Phase 4b-2 gutter glow (shares the device)
     return true;
@@ -355,6 +361,11 @@ void shutdownSkinStrip() {
     }
     delete g_edge;  // ComPtr members release themselves; no D2D target to unbind
     g_edge = nullptr;
+}
+
+void setStripClockForTest(ULONGLONG ms) {
+    g_clockPinned = true;
+    g_clockMs = ms;
 }
 
 }  // namespace rabbitears::skin

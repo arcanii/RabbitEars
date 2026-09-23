@@ -111,6 +111,24 @@ if(RABBITEARS_BUILD_GUI)
   endif()
 
   # -------------------------------------------------------------------------
+  # RabbitEarsRender — headless render tool for visual work (photoreal Phase 0). Renders every
+  # meter look x kind, the buffer tank and (theme engine ON) the skinned transport strip to PNG by
+  # driving the meters' REAL WndProc/paint code on hidden windows; never shows a window and never
+  # touches the user's library. It compiles MiniMeter.cpp / BufferMeter.cpp (and, below, the skin
+  # sources) a second time — they are GUI translation units, not a library. No libVLC, no .rc.
+  # Usage + what it cannot show: Win32/render/RabbitEarsRender.cpp and Win32/docs/PHOTOREAL.md.
+  # -------------------------------------------------------------------------
+  add_executable(RabbitEarsRender
+    render/RabbitEarsRender.cpp
+    ui/MiniMeter.cpp
+    ui/BufferMeter.cpp)
+  target_include_directories(RabbitEarsRender PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_BINARY_DIR}/generated")
+  target_link_libraries(RabbitEarsRender PRIVATE
+    RabbitEarsCore miniz user32 gdi32 gdiplus dwmapi uxtheme ole32 shell32 advapi32 d2d1 dwrite)
+
+  # -------------------------------------------------------------------------
   # Theme-engine (0.2.x) — the Direct2D-on-D3D11 + HLSL skin renderer, gated
   # behind RABBITEARS_THEME_ENGINE (nested here: it needs the GUI). Phase-1
   # spike = the transport-strip underglow surface. HLSL is compiled OFFLINE by
@@ -152,6 +170,12 @@ if(RABBITEARS_BUILD_GUI)
     target_compile_definitions(RabbitEars PRIVATE RABBITEARS_THEME_ENGINE)
     target_include_directories(RabbitEars PRIVATE "${_skin_gen}")  # generated shader headers
     target_link_libraries(RabbitEars PRIVATE d3d11 dxgi dxguid)
+    # The render tool draws the same GPU strip, so it needs the same sources + shader headers.
+    add_dependencies(RabbitEarsRender RabbitEarsShaders)
+    target_sources(RabbitEarsRender PRIVATE ui/skin/SkinDevice.cpp ui/skin/SkinStrip.cpp)
+    target_compile_definitions(RabbitEarsRender PRIVATE RABBITEARS_THEME_ENGINE)
+    target_include_directories(RabbitEarsRender PRIVATE "${_skin_gen}")
+    target_link_libraries(RabbitEarsRender PRIVATE d3d11 dxgi dxguid)
     message(STATUS "RabbitEars: theme-engine spike ENABLED (Direct2D-on-D3D11 + HLSL underglow).")
   endif()
 

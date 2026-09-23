@@ -1007,4 +1007,46 @@ COLORREF bufferMeterFluidColor() {
     return static_cast<COLORREF>(fluidColorRef().load(std::memory_order_relaxed));
 }
 
+bool bufferMeterSnapshot(HWND meter, std::vector<uint32_t>& pixels, int& w, int& h, bool withReadout) {
+    MeterState* st = stateOf(meter);
+    if (!st || !st->bits || st->dibW <= 0 || st->dibH <= 0) return false;
+    GdiFlush();
+    const int W = st->dibW, H = st->dibH;
+    const size_t n = static_cast<size_t>(W) * static_cast<size_t>(H);
+    const auto* live = static_cast<const uint32_t*>(st->bits);
+    pixels.assign(live, live + n);
+    if (withReadout && st->metrics[0]) {
+        // A scratch DIB holding a copy of the frame, so the live DIB is never drawn on.
+        HDC dc = CreateCompatibleDC(st->dibDC);
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = W;
+        bi.bmiHeader.biHeight = -H;  // top-down, same layout as the live DIB
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HBITMAP bmp = dc ? CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+        if (bmp && bits) {
+            HGDIOBJ old = SelectObject(dc, bmp);
+            std::copy(pixels.begin(), pixels.end(), static_cast<uint32_t*>(bits));
+            // The inset of the frame actually painted — what render() passed to drawMetrics. After a
+            // paint glassBuilt/glassChrome hold exactly what ensureGlass() used (it returns
+            // glassChromePx(W, H, chrome) when the strength is > 0, else 0).
+            const int inset = st->glassBuilt > 0.0f ? glassChromePx(W, H, st->glassChrome) : 0;
+            drawMetrics(dc, st, currentTheme(), W, H, inset);
+            GdiFlush();
+            const auto* drawn = static_cast<const uint32_t*>(bits);
+            pixels.assign(drawn, drawn + n);
+            SelectObject(dc, old);
+        }
+        if (bmp) DeleteObject(bmp);
+        if (dc) DeleteDC(dc);
+    }
+    for (uint32_t& p : pixels) p &= 0x00FFFFFFu;
+    w = W;
+    h = H;
+    return true;
+}
+
 }  // namespace rabbitears
