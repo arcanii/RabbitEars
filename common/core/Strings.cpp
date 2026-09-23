@@ -640,6 +640,8 @@ constexpr std::array<const char*, N> kEn = {{
     "Forward {0} seconds",  // TooltipBtnSkipFwd
     // --- Dialog ---
     "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it.",  // MacDialogDeadLinkClearBody
+    // --- Status ---
+    "This airing came from a series rule and can’t be removed until its scheduled recording time is over — removing it sooner could let a series rule queue it again.",  // StatusAiringKeptRule
 }};
 
 // 日本語
@@ -1270,6 +1272,8 @@ constexpr std::array<const char*, N> kJa = {{
     "{0} 秒進む",  // TooltipBtnSkipFwd
     // --- Dialog ---
     "すべてのチャンネルを「未確認」に戻しますか？\r\n\r\n「利用できないチャンネルを非表示」で隠れていたチャンネルが再び表示されます。チャンネルを再生すると再度判定されます。",  // MacDialogDeadLinkClearBody
+    // --- Status ---
+    "この放送はシリーズルールによるもので、録画予定時刻が終わるまで削除できません。それより前に削除すると、シリーズルールが同じ放送を再度予約する可能性があります。",  // StatusAiringKeptRule
 }};
 
 // 繁體中文
@@ -1900,6 +1904,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "快轉 {0} 秒",  // TooltipBtnSkipFwd
     // --- Dialog ---
     "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。",  // MacDialogDeadLinkClearBody
+    // --- Status ---
+    "此播出項目來自影集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓影集規則再次將同一播出項目排入佇列。",  // StatusAiringKeptRule
 }};
 
 // 繁體中文（香港）
@@ -2530,6 +2536,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     "快轉 {0} 秒",  // TooltipBtnSkipFwd
     // --- Dialog ---
     "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。",  // MacDialogDeadLinkClearBody
+    // --- Status ---
+    "此播出項目來自劇集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓劇集規則再次將同一播出項目排入佇列。",  // StatusAiringKeptRule
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

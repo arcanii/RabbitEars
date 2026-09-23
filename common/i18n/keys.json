@@ -3790,5 +3790,11 @@
     "cluster": "Dialog",
     "placeholders": [],
     "comment": "mac-only variant of DialogDeadLinkClearBody. mac has no \"Check for dead links\" command (no sweep UI), so it must not tell the user to run one; on mac playback is the only thing that sets a dead status."
+  },
+  {
+    "id": "StatusAiringKeptRule",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Status line when Delete is pressed on a series-rule airing (its rule still exists) that is already decided while the row's own window (programme stop + trail, as queued) has not ended - a tombstone (Cancelled/Skipped/Failed, or Done after a stop), or a row whose decision has not reached the database yet, which the list may still show as Pending or Recording. The row is KEPT and nothing removes it automatically: once the time is over, Delete removes it. Must not name a status, and must not promise the row disappears on its own."
   }
 ]

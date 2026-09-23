@@ -9,5 +9,6 @@
   "RecordSeriesAlreadyHeading": "已在錄製此劇集",
   "MacRecordingsTabSeriesRules": "劇集規則",
   "MacMainWindowSeriesRuleAdded": "已加入劇集規則：「{0}」（已將 {1} 個即將播出項目排入佇列）",
-  "StatusAiringCancelledRule": "已取消此播出 — 它來自劇集規則，因此仍會列為已取消。刪除該規則以停止整部劇集。"
+  "StatusAiringCancelledRule": "已取消此播出 — 它來自劇集規則，因此仍會列為已取消。刪除該規則以停止整部劇集。",
+  "StatusAiringKeptRule": "此播出項目來自劇集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓劇集規則再次將同一播出項目排入佇列。"
 }

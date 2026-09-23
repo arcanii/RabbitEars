@@ -431,7 +431,8 @@ colour, look-aware meter knobs, About tip section, PIP menu + swap, dead-link ch
 Prior: **v0.2.14 @ `aa8580f`** (`0.2.14.349`, appcasts @ `d594fd0`) — System settings, beta flags, the
 beta dead-link checker, VU + glass meters, two PIP fixes. Prior: **v0.2.13 @ `93dea6f`** (`0.2.13.329`, appcasts @ `d57997f`) — Ko-fi; **v0.2.12 @
 `76c6a46`** (`0.2.12.325`) — Buy Me a Coffee + CJK QA + Xtream countries + schema v7. The **mac line is
-decoupled** (`if(APPLE)` in `cmake/AppVersion.cmake`, currently **0.2.15**) and the mac team pushes to
+decoupled** (`if(APPLE)` in `cmake/AppVersion.cmake`, currently **0.2.17** — the mac line caught up in
+Aug 2026, and declares the theme engine *N/A by design*) and the mac team pushes to
 `main` too, so **`git fetch` + rebase before every release** — the 0.2.0 cut had a push rejected mid-flight
 by a concurrent mac commit. **Release-tooling note (0.2.2):** this machine now
 has **`gh` CLI (2.96) AND Inno Setup**, so the whole release ran locally: commit → push → build →
@@ -445,11 +446,14 @@ branch was **merged to `main` + deleted** (only
 `main` remains; PR #16 superseded + closed). **The macOS team pushes to `main` too** (mac Phase-1), so
 **`git fetch` + rebase before a release** — the 0.2.0 push integrated a concurrent mac commit mid-flight
 (the first push was rejected until re-fetched).
-⚠️ **`main` is AHEAD of `origin/main` by ONE commit** (2026-07-29): the search-debounce commit.
-`origin/main` is at `4ec0e27` (the v0.2.17 HANDOVER update). Post-release, so nothing about the
-shipped v0.2.17 is affected — but the build number is the commit count, so **push and re-verify
-`git ls-remote origin refs/heads/main` == HEAD before building anything for a release.** That check
-has already caught a real blocker on two consecutive cuts. Working tree otherwise clean.
+**As of 2026-09-23** `main` was level with `origin/main` at `7b5060c` — the search debounce
+(`b5c016f`) is pushed, and the mac team has since landed 30 commits (their VOD, seek layer and
+**v0.2.17-mac**). The lost-status-write fix below was then committed on top, **unpushed** at the time
+of writing (the owner pushes). Whatever
+this paragraph says, it goes stale the moment anyone pushes — the repo has two writers — so **re-verify
+`git ls-remote origin refs/heads/main` == HEAD immediately before building anything for a release**,
+because the build number is the commit count. That check has caught a real blocker on two consecutive
+cuts.
 Build number = git commit count, baked at CMake configure time
 **after** the commit — so a build must follow the release commit to stamp the matching `0.2.0.<count>`. Commit/push only when the
 owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — never `git add -A`); end
@@ -648,7 +652,7 @@ same queries cost **0.6–1.4 SECONDS**. ✅ **FIXED in 0.2.17** by the grid row
 108 ms; search 1626 → ~134 ms). **Read the numbers and the analysis in BACKLOG before doing any more
 perf work on this table — `--benchdb`'s DEFAULTS still model the 44k shape, not the real one.**
 
-### 🔎 Search debounce — DONE, UNCOMMITTED, needs the owner's keyboard (2026-07-28)
+### 🔎 Search debounce — DONE, committed + pushed as `b5c016f`, needs the owner's keyboard (2026-07-28)
 
 The first work after v0.2.17, and the "cheap next step" BACKLOG named after the grid cap. The search
 box's `EN_CHANGE` used to run `searchChannels()` synchronously on the UI thread **on every
@@ -675,6 +679,122 @@ plainly caps it. *Same trap as ever: a comment asserting behaviour is a claim, n
 the change has **zero automated coverage** and the sandbox cannot launch the GUI. The owner's checks
 are listed in BACKLOG — in short: typing feels smooth, results land after you stop, clearing returns
 to the nav view, and a nav click right after typing shows the NODE rather than the search results.
+
+### 🔴→✅ Lost schedule-status writes — FIXED and committed (unreleased), needs an on-device pass (2026-09-23)
+
+The macOS team's 2026-08-09 finding (top of BACKLOG): `updateScheduleStatus` returned `void`, and
+`planScheduler` learns that a *schedule* holds the recorder only from the row status. A `Recording`
+write lost to contention (a VOD sync holding the writer lock past `busy_timeout`) left the row Pending
+while the recorder ran, so the next tick re-started it over the file in progress, **leaving a
+truncated fragment** — and again on every further lost write. If the retries kept losing, the row
+ended `Missed` while the recorder ran on past the window. **The lost write itself was never logged.**
+Windows was the more exposed platform because wake-to-record fires unattended.
+
+**The fix, in one line each** (full rationale in BACKLOG):
+- `updateScheduleStatus` → **`bool`** (shared; source-compatible for mac, which ignores it everywhere).
+- **Persist `Recording` first, start the recorder only if it landed** — the new shared
+  `beginScheduledStart`. This **departs from the proposed fix** (start, then stop on failure) because
+  `startRecording` only enqueues; stopping afterwards would open a provider connection and leave a
+  near-empty file for every lost write.
+- The **startup reconcile retries** instead of latching after one attempt (a lost reset used to block
+  every schedule until that row's stop time).
+- **Lost terminal statuses are write-behind**: remembered, replayed each tick, overlaid on the rows the
+  planner sees, and flushed once more at exit (best-effort). ⚠️ Each decision is pinned to its row's
+  **identity**, not its id — SQLite reuses a deleted top rowid, and the first draft, keyed by id, would
+  have stamped a stale "Cancelled" onto the next new schedule. **The adversarial review caught that,
+  independently from all four of its lenses.**
+- `deleteSchedule`, `deleteRule` and `clearPendingForRule` also return `bool`. A lost delete of a
+  one-off Pending/Recording row falls back to an inert Cancelled. `deleteRule` is now **one
+  transaction** (false = nothing changed; it used to be two DELETEs that could orphan rows). A rule edit
+  **spares**, and a rule delete **defers**, any queued airing whose Skip/Cancel/Missed has not landed,
+  so no re-expansion can re-create it. `addRule`'s failure is now checked.
+- **Pre-existing fix, found by the review — a deleted series-rule airing could come back.** Deleting one
+  *while it was recording* let the rule re-create it and restart the programme you had just deleted;
+  and deleting its Cancelled/Skipped entry a *second* time did the same for any airing not yet over. A
+  row whose series rule **still exists** is now never hard-deleted until its own window has ended: a live
+  one becomes Cancelled; an already-decided one is kept and not relabelled, with a new status line (new
+  i18n key `StatusAiringKeptRule`) saying it can't be removed until its scheduled recording time is over
+  (nothing removes it automatically — Delete works after that). Rows of a *deleted* rule, and one-offs,
+  delete as before; a row the Delete's listing misses is skipped, never deleted blind. The mac app
+  already had this guard. Residual, pre-existing and shared with mac: another rule matching the same
+  airing, or a guide refresh that extends the programme, can still re-queue it after the row is deleted.
+- The wake task reads through the overlay, so **within the session** an un-landed cancel does not arm
+  a wake. That lasts only as long as the in-memory overlay: after a relaunch that followed a pre-empted
+  exit flush, the DB alone decides again.
+
+**Verified:** both theme flags clean; `--selftest` ALL PASS with two new blocks (28 assertions). The
+core of the first runs the **real** `beginScheduledStart` while a second connection holds
+`BEGIN IMMEDIATE`, and checks the write genuinely waited ~5.4 s on the lock (so it cannot pass on an
+unrelated failure), returned `NotPersisted`, never started the recorder, and left the row Pending for
+a clean retry; the rest of that block covers the uncontended DAO results, `Started`, `RecorderFailed`
+and a pure ordering pin. The second drives **real SQLite rowid reuse** through the real overlay/flush
+functions and proves a new schedule that inherits a dead row's id is still **started by the planner**,
+and that a flush stops writing after its first loss.
+**Adversarially reviewed in rounds, each on the code as it then stood.** Round 1 (18 agents): 12
+confirmed — 1 code defect found by all four lenses (rowid reuse), 1 further lost-write site, 1
+wake-task gap, 9 over-claiming comments. Round 2, on the fixed version (13 agents): the core confirmed
+sound, plus 9 low-severity findings (rule-edit gap, `deleteRule` orphaning, read-back fragility, a
+selftest false-green, UI-thread stall amplification, 4 over-claims) and 4 doc residues. Round 3, on
+the round-2 fixes (19 agents): 15 findings — the same gap on rule *delete*, `deleteRule`'s split case
+(→ made transactional), a real **pre-existing** ordinary-path bug (the recording-rule-row restart
+above), misleading log text, and doc/count fixes. Round 4, on the round-3 fixes (17 agents): 15
+findings, 2 medium — both the SAME hole: round 3's restart fix covered only the first Delete, and a
+second Delete on the resulting tombstone re-opened it. Also a finished recording being mislabelled
+Cancelled, a rule edit that could silently skip its clear (a regression round 3 introduced), an owner
+check that could not tell old from new, and doc gaps. All addressed. Round 5, on the rewritten delete
+decision (14 agents): 12 findings, 2 medium — both the same misleading status line on a kept row (→ a
+new i18n string); also relabelling of already-decided rows, a silenced "stale row" log line, the
+active row's saved copy not used as a fallback, and residual gaps now documented. All addressed.
+Round 6, on the round-5 fixes (14 agents): 12 findings, 2 medium — both the new string's wording (it
+implied the row disappears on its own, and blamed "the rule" even when the rule was deleted); also a
+regression (rows of a deleted rule could not be removed for up to 14 days → keep only while the rule
+exists), a row the listing missed still being deleted blind (→ skipped), a stale-reset id dropped on
+one missed read (→ kept), and comment/doc wording. **All applied; by the owner's call the change was
+committed after round 6's fixes WITHOUT a seventh round** — so the round-6 fixes themselves are
+reviewed only by construction (each is the reviewers' own suggested correction), not re-reviewed.
+**The pattern worth knowing:** the change's own lost-write core has held since round 2; what kept
+producing findings was the adjacent manager glue, where each fix exposed a neighbouring pre-existing
+assumption. If a problem turns up in the Scheduled Recordings **Delete** path, start there.
+**Not verified, and not verifiable here:** only `updateScheduleStatus` via `beginScheduledStart` is
+tested under real contention. Not tested: the lost paths of `deleteRule` / `deleteSchedule` /
+`clearPendingForRule`; the Win32 glue in `onSchedulerTick`, `applyViewMode`, `syncWakeFromSchedules`,
+the `WM_DESTROY` flush and the two managers (GUI code the CLI does not link); and any real recording.
+
+**What the owner must check on device**, in value order (Settings ▸ System… → log level **Debug**
+first, so the scheduler's lines reach the log):
+1. **The ordinary path is unchanged — this matters most, because the start order changed.** Schedule a
+   short recording (Settings ▸ Scheduled Recordings… ▸ New…) starting a minute or two out. It should
+   start on time, show `Recording` in the manager, finish as `Done`, and the file should play to the end.
+   The log should read `scheduled recording started` then `scheduled recording finished`.
+2. **Cancel one mid-recording** from the manager: the recorder stops, the row reads `Cancelled` (or
+   `Skipped` for a series-rule airing), and the partial file plays.
+3. **The contention path, if a live Xtream line is available:** start a movie sync (Settings ▸ Channels
+   ▸ Sync movies) so that a scheduled recording falls due mid-sync. The scheduler cancels the sync; the
+   write should simply land (mac measured the contention at ~0.2 s). If the log instead shows
+   `Recording status write was lost … will retry next tick`, the next tick (~30 s later) must start it,
+   and there must be **exactly ONE** file for that airing — two short files is the old bug.
+4. **Close mid-recording, relaunch inside the window:** a normal close finalises the file; on relaunch
+   the stale `Recording` row is reset and the airing resumes into a new file (or is marked Missed if the
+   window has passed).
+5. **Edit a series rule** (Settings ▸ Recording Rules… ▸ Edit, change the padding): its upcoming airings
+   are re-queued with the new padding, an airing you had **Skipped** stays skipped, and deleting a rule
+   still removes its queued airings but keeps recordings that already ran.
+6. **Delete a series-rule airing while it is recording** (Scheduled Recordings… ▸ Delete) — pick a
+   programme with well over a minute left. The recorder stops and the row stays listed as `Cancelled`.
+   **Press Delete on it again:** it must stay listed, and the status line must say it can't be removed
+   until its scheduled recording time is over. Then FORCE a rule
+   expansion — deleting does not trigger one, and on its own it runs only every 15 minutes: close the
+   manager, open Settings ▸ Recording Rules…, and turn any enabled rule off and back on. Within one tick
+   (~30 s) the airing must **not** start recording again. (Before this change, that expansion re-created
+   the row and restarted the programme.) Without forcing an expansion you would have to watch for 16+
+   minutes, on a programme with more than that left.
+
+Any log line containing **`database busy`** or **`still unlanded`** is worth sending (search
+case-insensitively — the start-write line says `was lost` in lowercase). Before this fix a lost
+scheduler write was completely silent, so nobody knows yet how often it happens. Watch in particular
+for **`stale Recording row could not be reset`**: while it keeps repeating, the startup reset has not
+landed and no schedule can start. `recording rule delete DEFERRED` is a refusal this change introduced
+(not a formerly silent failure): the rule is held back until an airing's status lands.
 
 ### What still needs the owner
 
@@ -807,16 +927,22 @@ Paste this verbatim to start a fresh session with working context restored:
 > **State:** last SHIPPED = **`v0.2.17`** (2026-07-28, `0.2.17.388`, tag @ `3660441`, both appcasts
 > LIVE @ `fe3d872`) — the big-library release: canonical `stream_url` + **schema v9** (merged away
 > 43,599 duplicate films), the grid row cap (All Channels 1485 → 108 ms, search 1626 → ~134 ms per
-> keystroke), skip back/forward, and a v8-migration fix. `main` is the ONLY branch and the working
-> tree is clean, but ⚠️ **one commit is UNPUSHED** (the search debounce) — post-release, so v0.2.17
-> is unaffected, but **push before you build anything**, because the build number is the commit
-> count. `APP_VERSION` is `0.2.17`; the next release bumps it. **Bumping ≠ releasing** — the tag and
-> the two appcasts gate the rollout.
+> keystroke), skip back/forward, and a v8-migration fix. `main` is the ONLY branch. The repo has TWO
+> writers (the mac team pushes to `main` too), so never trust a doc's claim about push state —
+> **run `git fetch` and verify `git ls-remote origin refs/heads/main` == HEAD immediately before you
+> build anything**, because the build number is the commit count. `APP_VERSION` is `0.2.17`; the next
+> release bumps it. **Bumping ≠ releasing** — the tag and the two appcasts gate the rollout.
 >
-> **Unreleased work sitting on `main`:** the **search debounce** — `EN_CHANGE` arms a 200 ms
-> one-shot timer instead of querying per keystroke. Reviewed (15 findings, 0 survived), both theme
-> flags clean, `--selftest` ALL PASS — but it lives in a GUI TU the CLI cannot link, so it has
-> **zero automated coverage and has never run**. Owner check listed in BACKLOG.
+> **Unreleased Windows work on `main`, none of it seen running:**
+> * the **search debounce** (`b5c016f`) — `EN_CHANGE` arms a 200 ms one-shot timer instead of
+>   querying per keystroke. GUI-only code with zero automated coverage. Owner check in BACKLOG.
+> * the **lost schedule-status-write fix** (flagged by the mac team) — `updateScheduleStatus` → `bool`,
+>   persist-before-start via the shared `beginScheduledStart`, a reconcile that retries, and
+>   write-behind for terminal statuses pinned to row identity, a transactional `deleteRule`. Only
+>   `updateScheduleStatus` via `beginScheduledStart` is selftested under REAL lock contention; the
+>   other DAO lost-paths and the Win32 glue are not. **Owner checks in HANDOVER's "Lost schedule-status writes" block — the
+>   ordinary scheduled-recording path comes first, because the start order changed.** A mac follow-up
+>   (the same bug at their start site) is written up at the top of BACKLOG.
 >
 > **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
 > design assumed. `--benchdb`'s DEFAULTS still model the small shape and have misrepresented this

@@ -188,8 +188,18 @@ public:
     // ---- Scheduled recordings ----------------------------------------------
     long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
     std::vector<ScheduledRecording> listSchedules();     // ordered by start_utc
-    void updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath = {});
-    void deleteSchedule(long long id);
+    // True only when the row now carries `status`: the UPDATE completed AND matched a row. False
+    // means nothing was written — SQLITE_BUSY past busy_timeout, a failed prepare, or no such id (the
+    // bool cannot tell those apart; read the row back if it matters). ⚠ planScheduler learns that a
+    // SCHEDULE holds the recorder only from this column (its manualRecordingActive input covers
+    // recordings no schedule owns), so a caller that changes recorder state on the assumption the
+    // write landed MUST check it — see beginScheduledStart / PendingStatusWrite in
+    // core/RecordingScheduler. Was void until 2026-09; callers that ignore the result compile
+    // unchanged, mac's included.
+    bool updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath = {});
+    // True when the DELETE completed (the row is gone, or never existed). False = LOST, and the row
+    // survives with whatever status it had. Was void until 2026-09; ignoring it compiles unchanged.
+    bool deleteSchedule(long long id);
 
     // ---- Recording rules (EPG-driven series recording, schema v5) -----------
     // A rule is a recipe; core/RecordingRules expands it against the stored EPG into ordinary
@@ -199,12 +209,15 @@ public:
     std::vector<RecordingRule> listRules();     // ordered by created_at
     void setRuleEnabled(long long id, bool enabled);
     // Deletes the rule and its still-Pending schedules; recordings that already ran (or were
-    // cancelled/missed) are kept as history.
-    void deleteRule(long long id);
+    // cancelled/missed) are kept as history. Both deletes run in ONE transaction: false = LOST, and
+    // NEITHER table changed (nothing orphaned, nothing unqueued). Was void until 2026-09
+    // (source-compatible). ⚠ Opens its own BEGIN IMMEDIATE — do not call it inside a transaction.
+    bool deleteRule(long long id);
     // Drop a rule's still-Pending schedules without touching the rule (used when a rule is edited:
     // its old predictions no longer match, so they are cleared and the rule re-expanded). History
-    // (Done/Recording/Cancelled/…) is kept.
-    void clearPendingForRule(long long ruleId);
+    // (Done/Recording/Cancelled/…) is kept. False = LOST, and the old predictions are still queued.
+    // Was void until 2026-09 (source-compatible).
+    bool clearPendingForRule(long long ruleId);
 
     // ---- Settings (key/value blob) ----------------------------------------
     std::optional<std::wstring> getSetting(const std::wstring& key);

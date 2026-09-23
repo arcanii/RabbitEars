@@ -1676,6 +1676,24 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // handle (atomic across process death) and post to a window that is already gone.
             shutdownDeadLinkSweep();
             shutdownVodSync();
+            // Last chance for a schedule decision whose write was lost (AppState::
+            // unsyncedScheduleStatus). The overlay that protected it lives in memory, so a
+            // "cancelled" airing that never reached the DB would otherwise still be Pending on the
+            // next launch. Placed after both worker joins — they were the contention. BEST-EFFORT:
+            // the watchdog armed above does not bound those joins, and if it fires first this line
+            // is simply never reached.
+            if (st->db.isOpen() && !st->unsyncedScheduleStatus.empty()) {
+                flushUnsyncedScheduleStatus(st);
+                // Count only decisions whose row still exists as the SAME row — an entry for a
+                // deleted row has nothing to land, and reporting it would be a false alarm.
+                const std::vector<ScheduledRecording> rows = st->db.listSchedules();
+                size_t live = 0;
+                for (const auto& [id, w] : st->unsyncedScheduleStatus)
+                    if (pendingWriteTarget(rows, id, w) == PendingWriteTarget::SameRow) ++live;
+                if (live > 0)
+                    diag::error(L"exiting with " + std::to_wstring(live) +
+                                L" schedule status write(s) still unlanded");
+            }
             if (st->uiFont) DeleteObject(st->uiFont);
             if (st->titleFont) DeleteObject(st->titleFont);
             if (st->glyphFont) DeleteObject(st->glyphFont);

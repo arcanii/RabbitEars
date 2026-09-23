@@ -641,6 +641,8 @@ enum class StringId {
     TooltipBtnSkipFwd,
     // --- Dialog ---
     MacDialogDeadLinkClearBody,
+    // --- Status ---
+    StatusAiringKeptRule,
     Count  // sentinel — MUST stay last
 };
 

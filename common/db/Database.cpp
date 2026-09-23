@@ -1505,35 +1505,46 @@ void Database::setRuleEnabled(long long id, bool enabled) {
     q.stepDone();
 }
 
-void Database::deleteRule(long long id) {
+bool Database::deleteRule(long long id) {
     // Drop the rule's still-PENDING rows (they were only ever a materialised prediction), but
     // keep anything Recording/Done/Missed/Failed/Cancelled — that history is a record of what
     // actually happened and must survive the recipe that produced it. Not an FK cascade for
     // exactly this reason; rule_id on the surviving rows becomes a dangling id, which is fine
     // (nothing joins on it — it exists only for dedup + this cleanup).
+    //
+    // ⚠ ONE transaction, so false means NEITHER table changed. As two autocommit DELETEs it could
+    // split either way under contention: a lost pending-drop followed by a landed rule delete orphans
+    // Pending rows nothing ever sweeps (they record, and arm unattended wakes, for a rule the user
+    // removed); a landed drop followed by a lost rule delete silently unqueues the rule's airings
+    // until its next expansion, and loses any not-yet-landed Skip on them. BEGIN IMMEDIATE takes the
+    // writer lock up front, so the two statements cannot be separated by another connection.
+    Tx tx(db_);
+    if (!tx) return false;  // writer lock not obtained: nothing ran
     {
         Stmt q(db_, "DELETE FROM scheduled_recordings WHERE rule_id=? AND status=?");
-        if (q) {
-            q.bindInt(1, id);
-            q.bindInt(2, static_cast<int>(ScheduleStatus::Pending));
-            q.stepDone();
-        }
+        if (!q) return false;  // ~Tx rolls back
+        q.bindInt(1, id);
+        q.bindInt(2, static_cast<int>(ScheduleStatus::Pending));
+        if (q.stepDone() != SQLITE_DONE) return false;
     }
-    Stmt q(db_, "DELETE FROM recording_rules WHERE id=?");
-    if (!q) return;
-    q.bindInt(1, id);
-    q.stepDone();
+    {
+        Stmt q(db_, "DELETE FROM recording_rules WHERE id=?");
+        if (!q) return false;
+        q.bindInt(1, id);
+        if (q.stepDone() != SQLITE_DONE) return false;
+    }
+    return tx.commit();  // a failed COMMIT leaves done=false, so ~Tx rolls back
 }
 
-void Database::clearPendingForRule(long long ruleId) {
+bool Database::clearPendingForRule(long long ruleId) {
     // Same rationale as deleteRule's pending-drop, but the rule stays: when a rule is edited its
     // old predictions no longer match the new criteria, so clear the still-Pending rows and let
     // the caller re-expand. History (Recording/Done/Missed/Failed/Cancelled) is untouched.
     Stmt q(db_, "DELETE FROM scheduled_recordings WHERE rule_id=? AND status=?");
-    if (!q) return;
+    if (!q) return false;
     q.bindInt(1, ruleId);
     q.bindInt(2, static_cast<int>(ScheduleStatus::Pending));
-    q.stepDone();
+    return q.stepDone() == SQLITE_DONE;
 }
 
 std::vector<ScheduledRecording> Database::listSchedules() {
@@ -1547,30 +1558,35 @@ std::vector<ScheduledRecording> Database::listSchedules() {
     return out;
 }
 
-void Database::updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath) {
+bool Database::updateScheduleStatus(long long id, ScheduleStatus status, const std::wstring& filePath) {
     // Set file_path only when a non-empty one is given, so a later status change (Done,
     // Failed…) doesn't clobber the path captured when recording started.
+    //
+    // changes() is read ONLY after a confirmed SQLITE_DONE: on a failed step it still holds the
+    // count from this connection's previous successful statement, so an unchecked read would report
+    // a lost write as landed (same trap retireMissingChannels documents).
     if (filePath.empty()) {
         Stmt q(db_, "UPDATE scheduled_recordings SET status=? WHERE id=?");
-        if (!q) return;
+        if (!q) return false;
         q.bindInt(1, static_cast<int>(status));
         q.bindInt(2, id);
-        q.stepDone();
+        if (q.stepDone() != SQLITE_DONE) return false;
     } else {
         Stmt q(db_, "UPDATE scheduled_recordings SET status=?, file_path=? WHERE id=?");
-        if (!q) return;
+        if (!q) return false;
         q.bindInt(1, static_cast<int>(status));
         q.bindText(2, filePath);
         q.bindInt(3, id);
-        q.stepDone();
+        if (q.stepDone() != SQLITE_DONE) return false;
     }
+    return sqlite3_changes(db_) > 0;
 }
 
-void Database::deleteSchedule(long long id) {
+bool Database::deleteSchedule(long long id) {
     Stmt q(db_, "DELETE FROM scheduled_recordings WHERE id=?");
-    if (!q) return;
+    if (!q) return false;
     q.bindInt(1, id);
-    q.stepDone();
+    return q.stepDone() == SQLITE_DONE;  // a row that was already gone is still "gone": success
 }
 
 // ---- Settings --------------------------------------------------------------

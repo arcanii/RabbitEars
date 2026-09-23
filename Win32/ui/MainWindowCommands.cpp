@@ -744,6 +744,80 @@ void reapDyingPanes(AppState* st, bool force) {
     }
 }
 
+static const ScheduledRecording* findScheduleRow(const std::vector<ScheduledRecording>& rows,
+                                                 long long id) {
+    for (const ScheduledRecording& r : rows)
+        if (r.id == id) return &r;
+    return nullptr;
+}
+
+// Queue a TERMINAL decision for `row` WITHOUT attempting the write now — for a caller that has just
+// lost a write on the same lock (a status UPDATE, or a DELETE) and must not stall the UI thread for a
+// second busy_timeout. Every tick's flush retries it until it lands; the overlay applies it to the
+// planner and the wake task meanwhile. `lostOp` names the operation that was actually lost, for the log.
+static void rememberTerminalScheduleStatus(AppState* st, const ScheduledRecording& row,
+                                           ScheduleStatus status, const wchar_t* lostOp) {
+    st->unsyncedScheduleStatus[row.id] = pendingWriteFor(row, status);
+    diag::error(L"schedule " + std::wstring(lostOp) + L" LOST (id " + std::to_wstring(row.id) +
+                L") — database busy; status " + std::to_wstring(static_cast<int>(status)) +
+                L" queued, retried on every scheduler tick while the row remains");
+}
+
+// Record a TERMINAL schedule status the app has decided (Done/Missed/Failed/Cancelled/Skipped).
+// updateScheduleStatus can LOSE a write under contention (it waits busy_timeout, then gives up), and
+// planScheduler learns that a schedule holds the recorder only from the status column (its one
+// recorder-derived input is about recordings no schedule owns) — so a lost terminal write is not a
+// cosmetic stale label, it changes what the scheduler does next. Remember it instead: the next tick
+// replays it and, until it lands, overlays it on the listed rows. Returns whether it landed now.
+//
+// `row` is the caller's own copy of the row, from a listing taken BEFORE the write. Identity is pinned
+// from it rather than from a read-back after the loss, because listSchedules() reports a failed read
+// as an empty list — indistinguishable from "row gone" — and a decision dropped on that basis is
+// never re-made by the one-shot callers (cancel, remove, view switch, RecorderFailed). If the row
+// really was deleted meanwhile, the entry resolves Absent (never written) or Reused (dropped).
+static bool setTerminalScheduleStatus(AppState* st, long long id, const ScheduledRecording* row,
+                                      ScheduleStatus status) {
+    if (st->db.updateScheduleStatus(id, status)) {
+        st->unsyncedScheduleStatus.erase(id);
+        return true;
+    }
+    if (row)
+        rememberTerminalScheduleStatus(st, *row, status, L"status write");
+    else
+        diag::error(L"schedule status write LOST (id " + std::to_wstring(id) +
+                    L") — database busy, and it cannot be remembered: the caller had no listed row "
+                    L"for it");
+    return false;
+}
+
+bool flushUnsyncedScheduleStatus(AppState* st) {
+    if (st->unsyncedScheduleStatus.empty()) return false;
+    const size_t before = st->unsyncedScheduleStatus.size();
+    bool lost = false;
+    const int landed = flushPendingWrites(
+        st->db.listSchedules(), st->unsyncedScheduleStatus, [st, &lost](long long id, ScheduleStatus s) {
+            const bool ok = st->db.updateScheduleStatus(id, s);
+            if (!ok) lost = true;
+            return ok;
+        });
+    const size_t dropped = before - static_cast<size_t>(landed) - st->unsyncedScheduleStatus.size();
+    if (landed > 0)
+        diag::info(L"schedule status write(s) landed on retry: " + std::to_wstring(landed));
+    if (dropped > 0)
+        diag::info(L"schedule status decision(s) discarded, their row is gone and its id reused: " +
+                   std::to_wstring(dropped));
+    return lost;
+}
+
+// listSchedules() with every un-landed terminal decision applied on top, so the planner acts on
+// what the app decided rather than on a row a lost write left behind. Only decisions whose row is
+// still the SAME row apply — a reused id inherits nothing.
+static std::vector<ScheduledRecording> listSchedulesAsDecided(AppState* st) {
+    std::vector<ScheduledRecording> rows = st->db.listSchedules();
+    overlayPendingWrites(rows, st->unsyncedScheduleStatus);
+    return rows;
+}
+
 void applyViewMode(AppState* st, ViewMode mode) {
     reapDyingPanes(st, /*force=*/false);  // clear any finished leftovers from a previous switch
     // A mode switch tears down every pane except pane 0 — including their RECORDERS (the async
@@ -762,7 +836,14 @@ void applyViewMode(AppState* st, ViewMode mode) {
                             MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
                 return;
             if (st->activeScheduleId != 0 && st->schedulePane >= 1) {
-                st->db.updateScheduleStatus(st->activeScheduleId, ScheduleStatus::Done);
+                // Ownership is released below regardless, so a lost Done here would orphan the row
+                // at Recording and block every other schedule until its stop time. The owning row
+                // was captured when the recording started (AppState::activeScheduleRow).
+                setTerminalScheduleStatus(st, st->activeScheduleId,
+                                          st->activeScheduleRow.id == st->activeScheduleId
+                                              ? &st->activeScheduleRow
+                                              : nullptr,
+                                          ScheduleStatus::Done);
                 diag::info(L"scheduled recording closed by view switch (id " +
                            std::to_wstring(st->activeScheduleId) + L")");
                 st->activeScheduleId = 0;
@@ -924,24 +1005,69 @@ void stopScheduledRecorder(AppState* st) {
 // Missed on the next tick). Guards against the manual Record button via activeScheduleId.
 void onSchedulerTick(AppState* st) {
     reapDyingPanes(st, /*force=*/false);  // backstop: reap finished mode-switch panes (~30s tick)
-    auto schedules = st->db.listSchedules();
+    // Land any terminal status an earlier write lost BEFORE listing, then list with whatever is
+    // still un-landed overlaid — see AppState::unsyncedScheduleStatus.
+    const bool flushLost = flushUnsyncedScheduleStatus(st);
+    auto schedules = listSchedulesAsDecided(st);
     // NB: there is deliberately NO early return on an empty queue. The tail of this function
     // (rule expansion, keep-awake, wake-task upkeep) must run even with nothing queued —
     // otherwise a still-enabled series rule whose rows were all deleted would never re-queue,
     // and a stale wake task would never be cleared (both review-caught). planScheduler() over an
     // empty vector simply yields empty plans, so the loops below are no-ops.
-    // One-time startup reconcile: a schedule still marked Recording is stale (a prior
-    // session was closed mid-record — nothing is actually recording now), so reset it to
-    // Pending and let planScheduler resume it (if still in window) or miss it.
+    // Startup reconcile: a schedule still marked Recording on the FIRST tick is stale (a prior
+    // session was closed mid-record — nothing is actually recording now), so reset it to Pending
+    // and let planScheduler resume it (if still in window) or miss it.
+    //
+    // The stale set is captured once, and each id leaves it only when its reset LANDS (or the row
+    // stops reading Recording). This used to latch after a single attempt: a reset lost to
+    // contention left the stale row at Recording until its stop time — and because planScheduler
+    // counts any Recording row as "recorder busy", it silently blocked EVERY schedule for that long,
+    // after which plan.stop closed it out as Done ("saved") although nothing had recorded.
     if (!st->schedulerReconciled) {
         st->schedulerReconciled = true;
-        bool changed = false;
         for (const auto& s : schedules)
-            if (s.status == ScheduleStatus::Recording) {
-                st->db.updateScheduleStatus(s.id, ScheduleStatus::Pending);
-                changed = true;
+            if (s.status == ScheduleStatus::Recording) st->staleRecordingIds.push_back(s.id);
+    }
+    if (!st->staleRecordingIds.empty()) {
+        bool changed = false;
+        // One writer lock: after the first loss — including one the flush above just took — don't
+        // stall on the rest. A skipped reset simply retries next tick. (The plan.start persist below
+        // is deliberately NOT skipped this way: that would trade a stall for a delayed recording.)
+        bool contended = flushLost;
+        // Logged once per tick while any listed stale row stays unreset — whether its own write was lost
+        // or it was skipped because the flush just lost one. That repeating line is the only sign that no
+        // schedule can start, so it must not go quiet under sustained contention.
+        bool loggedStuck = false;
+        for (auto it = st->staleRecordingIds.begin(); it != st->staleRecordingIds.end();) {
+            const ScheduledRecording* row = findScheduleRow(schedules, *it);
+            // Missing from THIS listing: kept, not dropped — a failed or partial read looks exactly like
+            // "gone", and dropping the id would abandon the reset silently while the row keeps blocking
+            // every schedule. If the row really was deleted, the id is merely skipped each tick.
+            if (!row) {
+                ++it;
+                continue;
             }
-        if (changed) schedules = st->db.listSchedules();
+            // No longer Recording (e.g. plan.stop closed it out at its stop time): nothing left to
+            // reconcile. The activeScheduleId test is belt-and-braces — a stale row keeps the recorder
+            // "busy" so nothing can have started — but it is the one row a reset must never touch,
+            // because resetting it would make planScheduler restart a live recording.
+            if (row->status != ScheduleStatus::Recording || *it == st->activeScheduleId) {
+                it = st->staleRecordingIds.erase(it);
+            } else if (!contended && st->db.updateScheduleStatus(*it, ScheduleStatus::Pending)) {
+                changed = true;
+                it = st->staleRecordingIds.erase(it);
+            } else {
+                if (!loggedStuck) {
+                    diag::error(L"stale Recording row could not be reset (id " + std::to_wstring(*it) +
+                                L") — database busy; retrying next tick (no schedule can start while "
+                                L"this repeats — until it lands, or this row's stop time closes it out)");
+                    loggedStuck = true;
+                }
+                contended = true;
+                ++it;
+            }
+        }
+        if (changed) schedules = listSchedulesAsDecided(st);
     }
     const long long now = static_cast<long long>(time(nullptr));
     // "Manual" recording = the ACTIVE pane's recorder is busy but no schedule owns it. The
@@ -963,12 +1089,13 @@ void onSchedulerTick(AppState* st) {
         // Only the schedule that actually OWNS a recorder gets one stopped; a foreign
         // Recording row (shouldn't happen) is just closed out in the DB.
         if (id == st->activeScheduleId) stopScheduledRecorder(st);
-        st->db.updateScheduleStatus(id, ScheduleStatus::Done);
+        // `schedules` carries the overlay's STATUS only; the identity fields are the DB's own.
+        setTerminalScheduleStatus(st, id, findScheduleRow(schedules, id), ScheduleStatus::Done);
         diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
         setStatus(st, tr(i18n::StringId::StatusScheduledRecordingSaved));
     }
     for (long long id : plan.miss) {
-        st->db.updateScheduleStatus(id, ScheduleStatus::Missed);
+        setTerminalScheduleStatus(st, id, findScheduleRow(schedules, id), ScheduleStatus::Missed);
         diag::warn(L"scheduled recording missed (id " + std::to_wstring(id) + L")");
     }
     for (long long id : plan.start) {  // planScheduler yields at most one
@@ -984,16 +1111,37 @@ void onSchedulerTick(AppState* st) {
         // added for, and it is the one the user is least able to intervene in: it fires on a timer
         // (or a wake task) with nothing playing. The sync stands down for it.
         cancelVodSync();
-        if (st->ap().player.startRecording(s->streamUrl, s->userAgent, s->referrer, path, mux)) {
-            st->activeScheduleId = id;
-            st->schedulePane = st->active;  // pin the schedule to the pane it records on
-            st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path);
-            SetWindowTextW(st->btnRec, kGlyphStop);  // the active pane's recorder just engaged
-            diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
-            setStatus(st, trf(i18n::StringId::StatusRecordingScheduledNow, { s->channelName }));
-        } else {
-            st->db.updateScheduleStatus(id, ScheduleStatus::Failed);
-            diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
+        // Persist Recording FIRST and start only if it landed — beginScheduledStart holds the why.
+        // Starting first (the old order) turned one lost write into a truncated recording: the row
+        // stayed Pending, so the next tick re-started it over the file in progress.
+        const ScheduledStart outcome = beginScheduledStart(
+            [&] { return st->db.updateScheduleStatus(id, ScheduleStatus::Recording, path); },
+            [&] {
+                return st->ap().player.startRecording(s->streamUrl, s->userAgent, s->referrer, path,
+                                                      mux);
+            });
+        switch (outcome) {
+            case ScheduledStart::Started:
+                st->activeScheduleId = id;
+                st->activeScheduleRow = *s;     // identity for a later terminal decision about it
+                st->schedulePane = st->active;  // pin the schedule to the pane it records on
+                SetWindowTextW(st->btnRec, kGlyphStop);  // the active pane's recorder just engaged
+                diag::info(L"scheduled recording started: " + s->channelName + L" -> " + path);
+                setStatus(st, trf(i18n::StringId::StatusRecordingScheduledNow, { s->channelName }));
+                break;
+            case ScheduledStart::NotPersisted:
+                // Nothing was started and nothing is owned; the row is still Pending, so the next
+                // tick's plan re-emits it. Each lost attempt delays the start by a tick (~30 s);
+                // the old order instead truncated the file already being written.
+                diag::error(L"scheduled recording NOT started: its Recording status write was lost "
+                            L"(database busy) — will retry next tick (id " + std::to_wstring(id) + L")");
+                break;
+            case ScheduledStart::RecorderFailed:
+                // The row already says Recording, so Failed must land (or be remembered), or it
+                // would read as busy with nothing recording.
+                setTerminalScheduleStatus(st, id, s, ScheduleStatus::Failed);
+                diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
+                break;
         }
     }
 
@@ -1014,10 +1162,13 @@ void syncKeepAwake(AppState* st) {
 }
 
 void syncWakeFromSchedules(AppState* st) {
-    // The schedule start the task SHOULD target: the earliest still-pending one (0 = none).
+    // The schedule start the task SHOULD target: the earliest still-pending one (0 = none). Read
+    // through the write-behind overlay, so an airing whose Cancel/Skip has not landed yet does not
+    // arm an unattended wake — the overlay is in memory only, so after a relaunch the DB alone
+    // would decide, and it would still say Pending.
     long long earliest = 0;
     if (st->wakeToRecord)
-        for (const ScheduledRecording& s : st->db.listSchedules())
+        for (const ScheduledRecording& s : listSchedulesAsDecided(st))
             if (s.status == ScheduleStatus::Pending && (earliest == 0 || s.startUtc < earliest))
                 earliest = s.startUtc;
 
@@ -1180,6 +1331,61 @@ void recordSeriesFromGuide(AppState* st, const std::wstring& channelId,
                        { title, r.channelName, std::to_wstring(added) }));
 }
 
+// Does `r` still carry a decision that has not reached the DB (one that applies to THIS row)?
+static bool hasLiveDecision(AppState* st, const std::vector<ScheduledRecording>& rows,
+                            const ScheduledRecording& r) {
+    const auto it = st->unsyncedScheduleStatus.find(r.id);
+    return it != st->unsyncedScheduleStatus.end() &&
+           pendingWriteTarget(rows, r.id, it->second) == PendingWriteTarget::SameRow;
+}
+
+// A rule edit clears the rule's still-Pending predictions so it can re-expand against the new
+// criteria. But a row whose Skip/Cancel has not LANDED is still raw-Pending, and clearPendingForRule
+// would delete it — after which the re-expansion sees a free slot and re-creates the very airing the
+// user skipped (the remembered decision then resolves Absent/Reused and never applies). So: land what
+// can land first, then spare every raw-Pending rule row that still has an un-landed decision. It stays
+// behind as a slot claim the expander respects, and the next flush turns it into a real tombstone.
+// (Sparing only happens when the flush could not land that decision — i.e. under contention — so the
+// per-row deletes that follow are then likely to be lost too; the log reports exactly how many.)
+static void clearRulePredictions(AppState* st, long long ruleId) {
+    // The clear is ALWAYS attempted, even if the flush just lost a write. Unlike a rule delete, a lost
+    // clear is invisible (the manager shows the rule's NEW values) and nothing retries it — the old
+    // predictions would simply record — so one more busy_timeout on this rare interactive action is
+    // the right price. Within the per-row loop, though, the first loss does stop further attempts.
+    flushUnsyncedScheduleStatus(st);
+    const std::vector<ScheduledRecording> rows = st->db.listSchedules();
+    bool spare = false;
+    for (const ScheduledRecording& r : rows)
+        if (r.ruleId == ruleId && r.status == ScheduleStatus::Pending && hasLiveDecision(st, rows, r)) {
+            spare = true;
+            break;
+        }
+    if (!spare) {  // the ordinary case: one statement, exactly as before
+        if (!st->db.clearPendingForRule(ruleId))
+            diag::error(L"clearing rule " + std::to_wstring(ruleId) +
+                        L"'s queued airings was LOST — database busy; the old ones stay queued and "
+                        L"will record until the rule is edited again");
+        return;
+    }
+    int removed = 0, left = 0;
+    bool contended = false;
+    for (const ScheduledRecording& r : rows) {
+        if (r.ruleId != ruleId || r.status != ScheduleStatus::Pending || hasLiveDecision(st, rows, r))
+            continue;
+        if (!contended && st->db.deleteSchedule(r.id)) {
+            ++removed;
+        } else {
+            contended = true;
+            ++left;
+        }
+    }
+    if (left > 0)
+        diag::error(L"clearing rule " + std::to_wstring(ruleId) + L"'s queued airings was " +
+                    (removed == 0 ? L"LOST" : L"partly LOST") + L" — database busy; " +
+                    std::to_wstring(left) + L" old one(s) stay queued and will record until the rule "
+                    L"is edited again");
+}
+
 // Settings → Recording Rules…: list the standing series rules, with enable/disable + delete.
 // Deleting a rule drops its still-pending schedules but keeps recordings that already ran.
 void onManageRules(AppState* st) {
@@ -1192,8 +1398,29 @@ void onManageRules(AppState* st) {
         syncWakeFromSchedules(st);
     };
     cb.remove = [st](long long id) {
-        st->db.deleteRule(id);
-        syncWakeFromSchedules(st);  // its pending rows are gone; the wake time may have moved
+        // deleteRule drops the rule's rows by RAW status (Pending). A raw-Pending row may carry a
+        // decision that has not landed — a Skip or Cancel (deleting it lets ANOTHER rule matching the
+        // same airing re-create it) or a Missed (deleting it loses history deleteRule promises to
+        // keep). So land what can land, and while any such row remains, REFUSE — the rule stays
+        // listed and the delete can simply be retried. Rows deleteRule would not touch (anything not
+        // raw-Pending) cannot be affected, so they do not block it.
+        // A lost write in the flush means the writer lock is held: deleteRule's BEGIN IMMEDIATE would
+        // only wait out busy_timeout again for the same result, so skip it. Skipping is safe HERE
+        // because the outcome is visible (the rule is still listed) and retryable.
+        const bool contended = flushUnsyncedScheduleStatus(st);
+        const std::vector<ScheduledRecording> rows = st->db.listSchedules();
+        for (const ScheduledRecording& r : rows)
+            if (r.ruleId == id && r.status == ScheduleStatus::Pending && hasLiveDecision(st, rows, r)) {
+                diag::error(L"recording rule delete DEFERRED (id " + std::to_wstring(id) +
+                            L") — an airing's un-landed status (Skip/Cancel/Missed) would be deleted "
+                            L"with it (database busy); the rule is unchanged");
+                return;
+            }
+        // One transaction: false means NEITHER the rule nor its queued airings changed.
+        if (contended || !st->db.deleteRule(id))
+            diag::error(L"recording rule delete LOST (id " + std::to_wstring(id) +
+                        L") — database busy; the rule and its queued airings are unchanged");
+        syncWakeFromSchedules(st);  // on success its pending rows are gone; the wake may have moved
     };
     cb.edit = [st](HWND owner, long long editId) {
         HINSTANCE hi = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
@@ -1209,10 +1436,13 @@ void onManageRules(AppState* st) {
         if (!ruleDialog(owner, hi, st->dpi, st->db.allChannels(), r)) return;
         if (editId != 0) {
             st->db.updateRule(r);
-            st->db.clearPendingForRule(editId);  // old predictions no longer match the new criteria
+            clearRulePredictions(st, editId);  // old predictions no longer match the new criteria
         } else {
             r.createdAt = static_cast<long long>(time(nullptr));
-            st->db.addRule(r);
+            if (st->db.addRule(r) == 0) {  // nothing saved — the manager's list will show it absent
+                diag::error(L"recording rule add LOST — database busy; the rule was not saved");
+                return;
+            }
         }
         if (r.enabled) expandRecordingRules(st, /*force=*/true);  // re-queue against the new criteria
         syncWakeFromSchedules(st);
@@ -1240,35 +1470,108 @@ void onManageSchedules(AppState* st) {
         // identically to the expander, but the word matters: "Cancelled" on one episode reads as
         // if the whole series was stopped, and users then go hunting for how to undo it. Skipping
         // is the honest description — the rule is untouched and still queues future episodes.
-        bool fromRule = false;
+        std::optional<ScheduledRecording> row;  // listed BEFORE the write — see setTerminalScheduleStatus
         for (const ScheduledRecording& s : st->db.listSchedules())
             if (s.id == id) {
-                fromRule = s.ruleId != 0;
+                row = s;
                 break;
             }
-        st->db.updateScheduleStatus(id, fromRule ? ScheduleStatus::Skipped
-                                                 : ScheduleStatus::Cancelled);
+        const bool fromRule = row && row->ruleId != 0;
+        // Remembered if the write is lost: a Pending row that never learns it was cancelled goes on
+        // to record the very airing the user just cancelled.
+        setTerminalScheduleStatus(st, id, row ? &*row : nullptr,
+                                  fromRule ? ScheduleStatus::Skipped : ScheduleStatus::Cancelled);
         if (fromRule) setStatus(st, tr(i18n::StringId::StatusAiringSkippedRule));
         syncWakeFromSchedules(st);  // the earliest pending start may have just moved
     };
     cb.remove = [st](long long id) {
+        // Captured BEFORE the stop zeroes ownership: if the listing below misses the active row, the
+        // copy taken when it started still pins its identity.
+        const bool wasActive = st->activeScheduleId == id && st->activeScheduleRow.id == id;
         if (st->activeScheduleId == id) stopScheduledRecorder(st);
-        // A still-PENDING row that a series rule generated is a materialised prediction: hard
-        // deleting it leaves no dedup anchor, so the very next expansion would recreate it and
-        // the user's delete would silently undo itself. Cancel it instead — the Cancelled
-        // tombstone is precisely what tells the rule "skip this airing". One-off rows, and rows
-        // that already ran, delete for real.
-        bool ruleTombstone = false;
-        for (const ScheduledRecording& s : st->db.listSchedules())
+        // Deleting a row that belongs to a SERIES RULE THAT STILL EXISTS is only safe once its airing can
+        // no longer be re-expanded: expandRules re-creates any programme that has not ended (stop > now)
+        // and is not claimed by an existing row. So while its window has not ended, the row must STAY as
+        // the claim:
+        //  - live (Pending or Recording, window not yet ended — upcoming or on air — with no decision
+        //    already queued for it): turn it into a Cancelled tombstone. For a row being recorded this
+        //    is what stops the rule restarting the programme the user just deleted — the re-created row
+        //    would start in the past, and the recorder is free.
+        //  - already decided (Cancelled/Skipped/Failed, Done after a view-switch stop, or a decision
+        //    still queued in the write-behind): it IS the claim — keep it and say why. The mac
+        //    Recordings window has the same guard; without it a SECOND Delete undid the first.
+        // The row's window is stopUtc = the programme's stop + trail AS THE GUIDE STOOD when it was
+        // queued; during the trail the rule would not actually re-queue, so keeping it then is merely
+        // conservative. Once the window has ended the row deletes for real — including a Recording row
+        // past its window, which is finished even if its Done has not landed.
+        // A row whose rule has been DELETED (deleteRule keeps a rule's non-Pending history, leaving a
+        // dangling rule_id) has no rule to re-queue it and deletes as it always did — as does a one-off.
+        // Residual gaps, all pre-existing and shared with mac: another enabled rule matching the same
+        // airing can still re-queue it; a later guide refresh (or a second enabled feed) that moves the
+        // programme's stop past stopUtc lets the rule re-queue the remainder; and deleting a finished
+        // row with an episode key releases its claim on that EPISODE, so a later repeat inside the
+        // horizon may queue (expandRules seeds episode dedup from every row). A failed listRules() read
+        // counts the rule as gone, which degrades to exactly that pre-existing behaviour.
+        std::optional<ScheduledRecording> row;
+        const std::vector<ScheduledRecording> rows = st->db.listSchedules();
+        for (const ScheduledRecording& s : rows)
             if (s.id == id) {
-                ruleTombstone = (s.ruleId != 0 && s.status == ScheduleStatus::Pending);
+                row = s;
                 break;
             }
-        if (ruleTombstone) {
-            st->db.updateScheduleStatus(id, ScheduleStatus::Cancelled);
+        if (!row && wasActive) {  // the listing missed it (a failed/partial read)
+            row = st->activeScheduleRow;
+            row->status = ScheduleStatus::Recording;  // beginScheduledStart persisted this before starting
+        }
+        if (!row) {
+            // Not listed, and not the active recording: a failed or partial read (listSchedules cannot
+            // say which), or already gone. Without the row there is no telling a rule airing (which must
+            // stay as its claim) from a one-off, so do NOT delete blind — leave it; the manager re-lists
+            // it and Delete can be retried.
+            diag::error(L"schedule DELETE SKIPPED (id " + std::to_wstring(id) +
+                        L") — the row was not in the listing (a failed read, or already gone); left as is");
+            syncWakeFromSchedules(st);
+            return;
+        }
+        bool ruleListed = false;
+        if (row->ruleId != 0)
+            for (const RecordingRule& r : st->db.listRules())
+                if (r.id == row->ruleId) {
+                    ruleListed = true;
+                    break;
+                }
+        const long long now = static_cast<long long>(time(nullptr));
+        // A row that already carries a queued (un-landed) terminal decision is DECIDED, whatever the raw
+        // column still says: relabelling it Cancelled would overwrite a queued Skip/Failed or a
+        // view-switch Done (a queued Missed, or plan.stop's Done, is already past stopUtc and never live
+        // anyway), and deleting a rule row for it would lose the claim before the decision lands.
+        const bool decided = hasLiveDecision(st, rows, *row);
+        const bool live = !decided && now < row->stopUtc &&
+                          (row->status == ScheduleStatus::Pending ||
+                           row->status == ScheduleStatus::Recording);
+        if (ruleListed && live) {
+            setTerminalScheduleStatus(st, id, &*row, ScheduleStatus::Cancelled);
             setStatus(st, tr(i18n::StringId::StatusAiringCancelledRule));
+        } else if (ruleListed && row->stopUtc > now) {
+            setStatus(st, tr(i18n::StringId::StatusAiringKeptRule));  // kept as the rule's claim
+        } else if (st->db.deleteSchedule(id)) {
+            st->unsyncedScheduleStatus.erase(id);  // the row is gone; no decision left to land
+        } else if (live) {
+            // (Only a one-off, or a row whose rule is gone, reaches here — a live row of a listed rule
+            // took the first branch.) The DELETE was lost, so the row survives — a surviving Pending row
+            // records the airing the user just deleted, and a Recording one (its recorder was stopped
+            // above) blocks every schedule until its stop time. Fall back to an inert Cancelled. QUEUED,
+            // not written: the lock that just defeated the DELETE is evidently held, and a second attempt
+            // would freeze the UI for another busy_timeout. The overlay applies it at once; every tick's
+            // flush retries it until it lands (and once more at exit, best-effort).
+            rememberTerminalScheduleStatus(st, *row, ScheduleStatus::Cancelled, L"DELETE");
         } else {
-            st->db.deleteSchedule(id);
+            // A finished row, or one whose terminal decision is already queued (that decision stays
+            // queued, retried each tick, and still overlays the planner): a lost delete changes nothing
+            // the planner acts on, so no fallback and no retry — the row stays listed until Delete is
+            // pressed again, and the log says why.
+            diag::error(L"schedule DELETE LOST (id " + std::to_wstring(id) +
+                        L") — database busy; the row (finished or already decided) is still listed");
         }
         syncWakeFromSchedules(st);
     };

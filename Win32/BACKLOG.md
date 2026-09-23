@@ -7,7 +7,163 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
-## 🔴 `updateScheduleStatus` is unverifiable, and a VOD sync can turn a recording into a silent `Missed` · flagged by the macOS team, 2026-08-09
+## ✅ FIXED ON WINDOWS (UNRELEASED) — `updateScheduleStatus` is unverifiable, and a VOD sync can turn a recording into a silent `Missed` · flagged by the macOS team, 2026-08-09
+
+> ### What Windows did (2026-09-23), and the 🍎 follow-up it leaves for the macOS team
+>
+> **Shared (`common/`) — mac inherits on the next merge, source-compatible:**
+> - `Database::updateScheduleStatus` now returns **`bool`**: true only when the UPDATE completed
+>   **and** matched a row. Every mac caller uses it as a bare statement (`MainWindowController.mm`
+>   1885/1897/1901/1931/1934, `RecordingsWindowController.mm` 313), so ignoring the result compiles
+>   unchanged. No `[[nodiscard]]`, deliberately, so it cannot trip a `-Werror` build.
+> - New **`beginScheduledStart(persistRecording, startRecorder)`** in `core/RecordingScheduler`,
+>   returning `ScheduledStart::{Started, NotPersisted, RecorderFailed}`. It **persists `Recording`
+>   FIRST and starts the recorder only if that write landed.**
+>
+> ⚠️ **This deliberately differs from the fix proposed below** ("start, and if the write is lost, stop
+> the recorder"). `VlcPlayer::startRecording` only *enqueues* — it fails synchronously only when
+> there is no libVLC instance (`Win32/ui/VlcPlayer.cpp:729`) — so start-then-stop would open a
+> provider connection (against a `max_connections: 1` line) and leave a near-empty file on disk for
+> every lost write. Reordering reaches the same end state — row still Pending, no ownership committed,
+> clean retry on the next tick — without ever starting a recorder that is thrown away.
+>
+> **Beyond the proposal — the same pattern at the OTHER call sites** (the audit):
+> - **Startup reconcile no longer latches after one attempt** (Win32). A reset lost to contention used
+>   to leave the stale `Recording` row in place until its stop time — and since any `Recording` row
+>   means "recorder busy", it silently blocked **every** schedule for that long, after which `plan.stop`
+>   closed it out as a false `Done`. The stale ids are now captured once and retried each tick until
+>   the reset lands (`AppState::staleRecordingIds`) — an id is kept even when one listing misses its row,
+>   since a failed read looks like "gone". Only those ids are ever reset, so a retry can never demote
+>   the row this session is genuinely recording.
+> - **Terminal statuses are write-behind.** The pure core is shared — `PendingStatusWrite`,
+>   `overlayPendingWrites`, `flushPendingWrites` in `core/RecordingScheduler` — and Win32 keeps the queue
+>   (`AppState::unsyncedScheduleStatus`): a lost Done/Missed/Failed/Cancelled/Skipped is replayed at the
+>   top of every tick, **overlaid on the listed rows until it lands**, and flushed once more at
+>   `WM_DESTROY` (best-effort — the exit watchdog can pre-empt it). Without it: a lost view-switch `Done`
+>   orphans the row at `Recording` (blocking other schedules until its stop time), and a lost manager
+>   **cancel** leaves the row `Pending`, so the airing the user just cancelled is recorded anyway.
+> - ⚠️ **Each remembered decision is pinned to the row's IDENTITY** (start/stop/created/stream URL), not
+>   its id. `scheduled_recordings.id` is a plain `INTEGER PRIMARY KEY` — no `AUTOINCREMENT` — so SQLite
+>   hands a deleted top id to the next insert. The first draft keyed decisions by id and would have
+>   stamped a stale `Cancelled` onto an unrelated NEW schedule; **adversarial review caught it from all
+>   four of its lenses independently.** No statement ever updates those four columns in place
+>   (`updateScheduleStatus` touches only `status` and `file_path`), which is what makes them a stable
+>   identity — a future feature that edits one of them must flush or re-pin first. Identity is pinned
+>   from the caller's own listed row, never from a read-back after the loss (a failed read looks like
+>   "row gone" and would silently drop the decision).
+> - `deleteSchedule`, `deleteRule` and `clearPendingForRule` → **`bool`** as well (shared,
+>   source-compatible — mac calls all three as bare statements). A lost delete of a one-off Pending or
+>   Recording row falls back to an inert `Cancelled` (queued, not re-attempted — see latency below);
+>   otherwise the row would record (Pending) or block every schedule (Recording). **`deleteRule` is now
+>   ONE transaction** (it was two autocommit DELETEs that could split either way: a lost drop plus a
+>   landed rule delete orphaned rows that record and arm wakes; the reverse unqueued the rule's airings).
+>   False now means neither table changed. ⚠ It opens its own `BEGIN IMMEDIATE`, so mac must not call it
+>   inside a transaction (no current caller does).
+> - **Rule edit and rule delete respect un-landed decisions.** Both remove rows by RAW status
+>   (Pending), so they would delete an airing whose Skip/Cancel had not landed — and a re-expansion (this
+>   rule's, after an edit; another matching rule's, after a delete) would re-create the very airing the
+>   user skipped. Both now flush first. The edit then spares any raw-Pending row with such a decision (it
+>   stays as a slot claim until the next flush turns it into a real tombstone). The delete **refuses**
+>   instead, logging `recording rule delete DEFERRED`: the rule stays listed and the delete can simply be
+>   retried, which also avoids losing an un-landed `Missed` that `deleteRule` would otherwise delete.
+> - **Pre-existing, fixed alongside — deleting a series-rule airing could bring it back.** A row whose
+>   series rule **still exists** is now never hard-deleted while its own window (programme stop + trail,
+>   **as the guide stood when it was queued**) has not ended — `expandRules` re-creates any programme that
+>   has not ended and is not claimed by a row:
+>   - a **live** row (Pending or Recording, window not yet ended) becomes a `Cancelled` tombstone.
+>     Before, deleting one *mid-recording* hard-deleted it, the next expansion re-created it with a start
+>     in the past, and the recorder **restarted the programme the user had just deleted**;
+>   - an **already-decided** row — a tombstone (Cancelled / Skipped / Failed, or Done after a view-switch
+>     stop), or a row whose decision is still queued in the write-behind — is kept (not relabelled), with
+>     a new status line, `StatusAiringKeptRule`, saying it can't be removed until its scheduled recording
+>     time is over. Nothing removes it automatically; after that time, Delete removes it. Before, a
+>     *second* Delete removed it and re-opened the same hole. (The mac Recordings window already had this
+>     guard; its comment says Win32 "guards the same case" — that is now true.)
+>   A row whose rule has been **deleted** (`deleteRule` keeps a rule's history with a dangling
+>   `rule_id`), and a one-off, delete as they always did. A row the Delete's own listing **misses** (a
+>   failed read, or already gone) is left as is and logged `schedule DELETE SKIPPED`, never deleted blind.
+>   **Residual gaps, pre-existing and shared with mac:** another enabled rule that matches the same airing
+>   can still re-queue it; a later guide refresh or a second enabled feed that moves the programme's stop
+>   past the row's window lets the rule re-queue the remainder; and deleting a finished row that has an
+>   episode key releases its claim on that *episode*, so a later repeat inside the 14-day horizon may
+>   queue.
+> - 🌐 **One new shared i18n key, `StatusAiringKeptRule`** (en / ja / zh-Hant, plus a zh-HK override
+>   using 劇集), appended so no existing `StringId` value moved; `gen_i18n --check` passes. It names no
+>   status and promises no automatic removal. Win32 uses it; mac is free to (its own sheet text opens
+>   "It's cancelled", which is wrong for a Skipped or Done row). CJK is a machine draft, like the rest of
+>   the catalog.
+> - **Wake task:** `syncWakeFromSchedules` reads through the overlay, so **within the session** —
+>   including the task registered at exit, which runs before the exit flush — an un-landed cancel does
+>   not arm a wake. That protection is in memory only: after a relaunch that followed a pre-empted exit
+>   flush, the DB alone decides and still says Pending.
+> - **Latency:** SQLite has one writer lock, so once a write is lost the rest would each wait out
+>   `busy_timeout` too. A flush, the reconcile retry and a rule edit's per-row clear stop writing after
+>   their first loss; the reconcile retry and a rule delete also skip their write when the leading flush
+>   just lost (both retryable: the reset next tick, the delete by the user, who still sees the rule
+>   listed); a lost schedule delete queues its fallback instead of a second attempt. **A rule edit's clear
+>   is deliberately always attempted once** — a lost clear is invisible (the manager shows the new
+>   values) and nothing retries it, so the old predictions would silently record. A single action can
+>   therefore still cost more than one wait — e.g. an edit's unchecked `updateRule` plus its clear.
+>
+> ⚠️ **The audit covered the scheduler's own status and delete writes, plus `addRule` (now checked:
+> a lost add is logged and nothing is expanded). Two unchecked rule writers remain** — `updateRule` and
+> `setRuleEnabled` (both `void`) — whose loss is visible (the rules manager still shows the old values)
+> rather than a silent wrong recording decision; left as they are.
+>
+> **Verified:** both theme flags clean at /W4; `--selftest` ALL PASS with two new blocks (28
+> assertions). *"Schedule status writes that can be LOST"* drives **real contention** — a second
+> connection holding `BEGIN IMMEDIATE` — through the **real** `beginScheduledStart` and asserts the call
+> genuinely waited out `busy_timeout` (~5.4 s measured) before reporting the loss, so it cannot pass on
+> some unrelated instant failure. *"Lost-status write-behind vs rowid reuse"* reproduces SQLite's rowid
+> reuse for real and proves the new row is still **started by the planner**, and that a flush stops
+> writing after its first loss. **Cost:** the deliberate wait takes the whole selftest from ~0.5 s to
+> ~6 s.
+> **NOT verified:** only `updateScheduleStatus` through `beginScheduledStart` is tested under real
+> contention. The lost (`false`) paths of `deleteRule`, `deleteSchedule` and `clearPendingForRule` would
+> each need a further ~5 s contended wait and are not tested. Nor is any of the Win32 glue, all of it in
+> GUI translation units the CLI does not link (`MainWindowCommands.cpp`, `MainWindow.cpp`): the
+> `onSchedulerTick` outcome switch and reconcile retry, the view-switch `Done` in `applyViewMode`, the
+> overlay read in `syncWakeFromSchedules`, the `WM_DESTROY` exit flush, the rules manager's edit
+> sparing, delete deferral and `addRule` check, and the schedule manager's tombstone/keep/delete
+> decision and lost-delete fallback. Reviewed, not tested.
+>
+> **Known limitations, left as follow-ups** (each needs a >5 s write lock to occur at all):
+> - a rule delete that is `DEFERRED` or `LOST`, a lost `addRule`, and a lost rule-edit clear give the
+>   user **no on-screen message** — the rule is simply still listed (or absent, or keeps its old
+>   airings), and only the log says why. Fixing it means `bool` returns on the rules-manager callbacks
+>   and new i18n strings;
+> - the **schedule manager's list reads the raw DB**, so after a lost Cancel/Skip, or a lost Delete that
+>   queued a Cancelled fallback, the row still shows its old status until the queued write lands. The
+>   queued decision drives the planner and the wake task, not the list. (Deliberate: the list shows what
+>   is actually on disk, which is what a restart would act on.) Only series-rule rows get a status line
+>   at all (Skipped / Cancelled / kept) — and that line reports the action even when its write was lost.
+>   A lost Delete of a finished or already-decided row queues nothing and is not retried: the row stays
+>   listed until Delete is pressed again, and only the log says why.
+>
+> A real lost write needs a real recording under real contention; see HANDOVER for the owner's checks.
+>
+> **Still open, pre-existing, NOT addressed here:** `ScheduledStart::Started` means only that the start
+> was *queued* — `VlcPlayer::startRecording` enqueues, and a libVLC failure inside the worker's
+> `doRecordStart` (`media_new`/`player_new`/`play`) is only logged. The row then reads `Recording` with
+> nothing recording until its stop time, blocking other schedules, and ends as a false `Done`. The fix
+> wants a completion signal from the worker (or an `isRecording()` check on the next tick).
+>
+> 🍎 **For the macOS team — three places with the same shape, not edited here (cannot compile mac):**
+> 1. **The start site, `MainWindowController.mm:1928-1935`** has the exact bug: it starts the
+>    recorder, sets `_activeScheduleId`, then writes `Recording`. Swap in `beginScheduledStart` and
+>    commit `_activeScheduleId` only on `Started` (Win32's switch in `onSchedulerTick` is the template).
+> 2. **The reconcile, `MainWindowController.mm:1880-1889`** latches `_schedulerReconciled = YES` before
+>    it knows a single reset landed — the same failure as above: every schedule blocked until that
+>    row's stop time, then a false `Done`.
+> 3. **Terminal writes** (1897/1901/1934, the Recordings window's cancel at
+>    `RecordingsWindowController.mm:313`, and its `deleteSchedule` at :327) ignore the result. The
+>    write-behind's core is already shared (`overlayPendingWrites`/`flushPendingWrites`), so adopting
+>    it is only the queue + the call sites. **If you do, key it by `pendingWriteFor(row, …)`, never by
+>    the bare id** — see the rowid-reuse note above.
+> 4. **`deleteRule` is now one `BEGIN IMMEDIATE` transaction** — you inherit that on merge. Your caller
+>    (`RecordingsWindowController.mm:353`) is not inside a transaction, so nothing changes for it; just
+>    never call it from inside one. (The Recording-rule-row tombstone fix above does not apply to mac:
+>    your Recordings window already refuses to act on a Recording row.)
 
 Found while porting the VOD sync to mac. **This is a Windows bug too** — the mechanism is entirely
 in `common/`, and Windows is *more* exposed because it ships wake-to-record, so its scheduled
@@ -31,6 +187,16 @@ recordings fire unattended.
 Net: two truncated files, the DB says `Missed`, nothing logged, and `_activeScheduleId` (Win32:
 `st->activeScheduleId`) disagrees with the row, so the `plan.stop` branch never cleanly stops the
 recorder either.
+
+> *Windows note on the account above (the mac team's text is kept as written):* two points are
+> narrower on Win32. **(2)** `planScheduler` also takes `manualRecordingActive`, which Win32 derives
+> from the recorder (`isRecording() && activeScheduleId == 0`); the "never from the recorder" claim
+> holds for recordings a **schedule** owns, which is the case that matters here. **The net** depends on
+> how many retries lose: one lost write followed by one that lands leaves one truncated fragment plus a
+> near-complete file and ends `Done`; the row ends `Missed` only if every retry loses until the window
+> closes, leaving one fragment per lost tick while the last recorder runs on past the window. On Win32
+> each re-start also logged `scheduled recording started`, so the log was not silent — only the lost
+> write itself was.
 
 **The fix we think belongs in shared code (not taken by us — it changes a shared signature):**
 make `updateScheduleStatus` return `bool`, and at the scheduler start site only commit

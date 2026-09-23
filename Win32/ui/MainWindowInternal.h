@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <commctrl.h>  // HTREEITEM (navInsert)
 
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -17,6 +18,7 @@
 
 #include "audio/SpectrumTap.h"   // SpectrumTap (AppState)
 #include "core/M3uParser.h"      // M3uDocument (PlaylistResult)
+#include "core/RecordingScheduler.h"  // PendingStatusWrites (AppState)
 #include "core/Strings.h"        // i18n::StringId (CmdBtn labels)
 #include "core/XmltvParser.h"    // Programme (EpgFetch)
 #include "db/Database.h"         // Database, Channel
@@ -342,9 +344,26 @@ struct AppState {
     bool       busy = false;
     HWND       loadingDlg = nullptr;    // modeless "please wait" box during an EPG fetch (null = idle)
     long long  activeScheduleId = 0;   // id of the schedule currently owning a recorder (0 = none)
+    // A copy of that schedule's row, taken when it started — its identity pins a terminal decision
+    // made about it later (see setTerminalScheduleStatus). Only meaningful while its id equals
+    // activeScheduleId; never cleared, so always check the id before trusting it.
+    ScheduledRecording activeScheduleRow;
     int        schedulePane = -1;      // pane index the active schedule records on (recording is
                                        // per-pane; the user may switch panes mid-record) — -1 = none
     bool       schedulerReconciled = false;  // one-time startup reset of stale "Recording" rows
+    // Rows the startup reconcile found stale (Recording, left by a previous session) whose reset to
+    // Pending has NOT landed yet. Retried every tick until it does. Only these ids are ever reset:
+    // a blanket "reset every Recording row" retry could demote the row this session is genuinely
+    // recording, and planScheduler would then restart it and truncate the file.
+    std::vector<long long> staleRecordingIds;
+    // TERMINAL statuses (Done/Missed/Failed/Cancelled/Skipped) the app has decided but whose DB
+    // write was LOST. Replayed at the top of every scheduler tick, and overlaid on the listed rows
+    // until they land — planScheduler reads the status column, so an un-landed decision otherwise
+    // leaves a stale Recording row that blocks every other schedule for the rest of its window, or a
+    // stale Pending row that goes on to record an airing the user cancelled. Each entry is pinned to
+    // its row's IDENTITY, not just its id, because SQLite reuses a deleted top rowid — see
+    // PendingStatusWrite in core/RecordingScheduler.h. Nothing here survives a restart.
+    PendingStatusWrites unsyncedScheduleStatus;
     bool       wakeToRecord = true;   // register a Windows task to wake this PC for a recording
                                       // (setting "wake_to_record"; see platform/WakeScheduler)
     long long  wakeTaskFor = -1;      // the schedule start the wake task currently targets
@@ -496,6 +515,20 @@ std::wstring recordingsDir();
 std::wstring recordingPath(const std::wstring& channelName, const std::wstring& ext);
 void onToggleRecord(AppState* st);
 void onSchedulerTick(AppState* st);
+// Write every lost terminal schedule status once more (see AppState::unsyncedScheduleStatus).
+// Returns true when a write was attempted and LOST — the writer lock is evidently held, so a caller
+// about to write again should not stall on it a second time. Called at the top of each tick, by a
+// rule edit or rule delete before it touches the rule's rows (so it acts on landed tombstones), and
+// at WM_DESTROY after the DB-writing workers are joined.
+// ⚠ The exit call is BEST-EFFORT: the 4 s exit watchdog is armed before those joins and does not
+// bound them, so it can ExitProcess first. The decision is then lost with the process, and on the
+// next launch the row reads as it did BEFORE the decision — Pending, or Recording for a decision
+// about a running recording (a stop, a view-switch close, a cancel of the active one, RecorderFailed),
+// which the startup reconcile then resets to Pending. Either way an airing still inside its window is
+// recorded again. The overlay's protection of the wake task is IN-SESSION only: the task registered
+// at WM_DESTROY (which runs before this flush) skips an un-landed cancel, but any later launch reads
+// the DB alone and can arm a wake for it.
+bool flushUnsyncedScheduleStatus(AppState* st);
 // Stop ever scheduling the "support RabbitEars" prompt — call after the user has opened the tip
 // page (the About box's "Buy me a coffee" button reports this via showAbout's out-param).
 void markSupportTipOpened(AppState* st);

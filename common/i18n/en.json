@@ -585,5 +585,6 @@
   "StatusGridTruncatedSuffix": "  ·  showing the first {0} — search or pick a group to narrow",
   "TooltipBtnSkipBack": "Back {0} seconds",
   "TooltipBtnSkipFwd": "Forward {0} seconds",
-  "MacDialogDeadLinkClearBody": "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it."
+  "MacDialogDeadLinkClearBody": "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it.",
+  "StatusAiringKeptRule": "This airing came from a series rule and can’t be removed until its scheduled recording time is over — removing it sooner could let a series rule queue it again."
 }

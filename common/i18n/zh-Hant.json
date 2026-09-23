@@ -585,5 +585,6 @@
   "StatusGridTruncatedSuffix": "  ·  僅顯示前 {0} 筆 — 請搜尋或選擇群組以縮小範圍",
   "TooltipBtnSkipBack": "倒退 {0} 秒",
   "TooltipBtnSkipFwd": "快轉 {0} 秒",
-  "MacDialogDeadLinkClearBody": "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。"
+  "MacDialogDeadLinkClearBody": "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。",
+  "StatusAiringKeptRule": "此播出項目來自影集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓影集規則再次將同一播出項目排入佇列。"
 }
