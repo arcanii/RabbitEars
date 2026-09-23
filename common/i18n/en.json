@@ -586,5 +586,6 @@
   "TooltipBtnSkipBack": "Back {0} seconds",
   "TooltipBtnSkipFwd": "Forward {0} seconds",
   "MacDialogDeadLinkClearBody": "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it.",
-  "StatusAiringKeptRule": "This airing came from a series rule and can’t be removed until its scheduled recording time is over — removing it sooner could let a series rule queue it again."
+  "StatusAiringKeptRule": "This airing came from a series rule and can’t be removed until its scheduled recording time is over — removing it sooner could let a series rule queue it again.",
+  "MeterLookVuSilver": "Silver VU"
 }

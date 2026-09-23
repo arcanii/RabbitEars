@@ -33,14 +33,17 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ## Current state — **v0.2.17 is the last Windows release** · macOS **0.2.17** · unreleased changes on `main` + in the working tree
 
-### ▶️ Since v0.2.17 — UNRELEASED, none of it seen running by the owner (2026-07-29 → 2026-09-23)
+### ▶️ Since v0.2.17 — UNRELEASED (2026-07-29 → 2026-09-23) · `APP_VERSION` is now **0.2.18** (bumped, NOT released)
 
 | change | status | owner check |
 |---|---|---|
 | 🔎 **Search debounce** (`b5c016f`) | pushed | typing in search feels smooth; a nav click right after typing shows the node |
 | 🔴→✅ **Lost schedule-status writes** (`b4b3e4c`) — flagged by the mac team; can truncate a recording or silently mark it Missed | pushed | the six checks in the "Lost schedule-status writes" block below — the ordinary scheduled-recording path FIRST, because the start order changed |
 | 🖼️ **Photoreal Phase 0 — `RabbitEarsRender`**, a headless render tool | see git | none needed (dev tool; the app is unchanged) — but the **six photoreal decisions** in `docs/PHOTOREAL.md` are yours |
-| 🖼️ **Photoreal Phase 1 — the six meter defects fixed** (red zone, VU shadow, tank readout, Light-skin LEDs + underglow, glow clipping) | working tree, **uncommitted** | the before/after sheet, then the tray on your own skin + settings — **VU and the tank readout change for every user**; switch to Light once |
+| 🖼️ **Photoreal Phase 1 — the six meter defects fixed** (red zone, VU shadow, tank readout, Light-skin LEDs + underglow, glow clipping) | working tree, **uncommitted** | ✅ owner, live: *"tank readout is good — looks nice"*, *"the VU meter is nicer"* (its VU parts were then superseded, below). Still unseen: the Light skin |
+| 🎛️ **The VU instruments** — "VU needle" rebuilt as the owner's backlit reference meter; NEW "Silver VU" after their cassette-deck photo (`Win32/ui/VuDial`) | working tree, **uncommitted** | ✅ owner, live: *"the VU meters look amazing"*. Then, on request: the PEAK lamp lights red whenever the needle is in the red zone (every kind) — not yet seen live. See PHOTOREAL.md "The VU instruments" |
+| 🧪 **Dev side profile** — `scripts\run-profile.ps1` runs a build BESIDE the installed app on a snapshot of the library (`Win32/platform/Profile.h`) | working tree, **uncommitted** | ✅ used for the checks above. Never touches the wake task or WinSparkle |
+| 🔢 **`APP_VERSION` 0.2.17 → 0.2.18** (`cmake/AppVersion.cmake:11`; the mac override untouched) | working tree, **uncommitted** | bumping is not releasing — the tag + two appcasts still gate it |
 
 **The biggest change to how this project works:** visual work no longer has to go to the owner blind.
 `build\Win32\RabbitEarsRender.exe <outdir>` renders every meter look, the buffer tank and every skinned
@@ -867,6 +870,31 @@ decisions at the bottom of PHOTOREAL.md (the size question matters most) — ide
 Linear 400 photo, the mockups, and one real screenshot. Keep rendering before/after sheets for every
 visual change and hand the owner the pair, not the live app.
 
+### 🧪 Dev side profile — run a build beside the installed app (2026-09-23, uncommitted)
+
+```
+powershell -File scripts\run-profile.ps1            # build\Win32\RabbitEars.exe as profile "dev"
+powershell -File scripts\run-profile.ps1 -Refresh   # re-take the library snapshot first (dev copy closed)
+```
+`RABBITEARS_DATA_DIR` pointed at `%LOCALAPPDATA%\RabbitEarsProfiles\<name>` makes an instance a
+**side profile** (`Win32/platform/Profile.h`): its own single-instance mutex (hash of the data dir),
+"RabbitEars · <name>" in the title bar, and it **never** touches the per-user wake-to-record task (the
+toggle is greyed) or WinSparkle (per-user registry state; an update from a profile would run the
+installer and close the installed app). A data dir that IS the default one is the normal install.
+The script snapshots the real DB read-only (SQLite online backup, 0.5 s for 411k rows), strips
+`scheduled_recordings` + `recording_rules` from the COPY, refuses an exe that predates profiles (it
+would take the normal mutex and clear the real wake task), and validates `-Name`.
+⚠️ **Gotcha that cost 25 minutes:** the dev tree is on `G:`, an SMB share, and launching an exe from
+there through the SHELL (`Start-Process`, Explorer) raises an "Open File – Security Warning" that
+blocks until someone answers it — it looked like the script hanging. The script now uses
+CreateProcess (`UseShellExecute = false`). Still shared by both instances: the logo cache, the
+recordings folder, and the provider's connection limit.
+**Adversarially reviewed** (1 pass): 1 medium (an old exe would clear the real wake task — now
+refused) + 3 low (unvalidated `-Name`; WinSparkle shared; the wake toggle promising a wake that could
+not happen) + 2 nits — all fixed. **Snapshots of the reviewed trees** for splitting commits: Phase 0 =
+`228ddb5`; Phase 0 + Phase 1 + this profile + the 0.2.18 bump = `de8eece` (unreferenced tree objects —
+`git gc` may prune them after ~2 weeks; `git restore --source=<tree> --staged -- <paths>`).
+
 ### What still needs the owner
 
 **0.2.17 shipped better verified than anything before it** — all four changes were confirmed on the
@@ -1000,8 +1028,8 @@ Paste this verbatim to start a fresh session with working context restored:
 > (the mac team pushes to `main` too), so never trust a doc's claim about push state — **run
 > `git fetch`, `git status` and `git log origin/main..` first, and verify `git ls-remote origin
 > refs/heads/main` == HEAD immediately before you build anything for a release**, because the build
-> number is the commit count. `APP_VERSION` is `0.2.17`; the next release bumps it. **Bumping ≠
-> releasing** — the tag and the two appcasts gate the rollout.
+> number is the commit count. `APP_VERSION` is **`0.2.18`** (bumped 2026-09-23, not yet released).
+> **Bumping ≠ releasing** — the tag and the two appcasts gate the rollout.
 >
 > **Unreleased Windows work on `main`, none of it seen running by the owner:**
 > * the **search debounce** (`b5c016f`, pushed) — GUI-only, zero automated coverage.
@@ -1016,11 +1044,16 @@ Paste this verbatim to start a fresh session with working context restored:
 >   headless tool that renders every meter look, the tank and every skinned strip to PNG from the REAL
 >   paint code, byte-reproducibly. **Use it for every visual change** (render before/after, read the
 >   PNGs yourself, hand the owner the pair).
-> * **photoreal Phase 1 — the six meter defects the tool found, FIXED** (may still be uncommitted —
->   Phase 0's exact state is saved as git tree `228ddb5` so the two can be committed separately; see
->   HANDOVER's photoreal block). Owner's eye pending — VU and the tank readout change for every user.
->   The rest of the epic waits on the owner's six decisions at the bottom of `docs/PHOTOREAL.md` — the
->   size question matters most.
+> * **photoreal Phase 1 — the six meter defects the tool found, FIXED**, and **the VU instruments** —
+>   "VU needle" rebuilt as the owner's backlit reference meter plus a NEW "Silver VU" (`Win32/ui/VuDial`;
+>   owner, live: *"the VU meters look amazing"*). May still be uncommitted — the reviewed trees are
+>   saved as `228ddb5` (Phase 0) and `de8eece` (+ Phase 1, dev profile, 0.2.18 bump) so they can be
+>   committed separately; see HANDOVER's photoreal and dev-profile blocks. The rest of the epic waits
+>   on the owner's decisions at the bottom of `docs/PHOTOREAL.md` — the size question matters most:
+>   the dials' numerals need ~50 px and the tray gives 26–39.
+> * **A dev side profile**: `scripts\run-profile.ps1` runs `build\Win32\RabbitEars.exe` BESIDE the
+>   installed app on a snapshot of the real library (`Win32/platform/Profile.h`). Use it for every
+>   owner check — it never touches the wake task or WinSparkle.
 >
 > **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
 > design assumed. `--benchdb`'s DEFAULTS still model the small shape and have misrepresented this

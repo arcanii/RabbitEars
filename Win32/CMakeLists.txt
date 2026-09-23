@@ -69,6 +69,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/EpgGuideControl.cpp
     ui/BufferMeter.cpp
     ui/MiniMeter.cpp
+    ui/VuDial.cpp
     ui/DeadLinkSweep.cpp
     ui/VodSync.cpp
     ui/Dialogs.cpp
@@ -121,6 +122,7 @@ if(RABBITEARS_BUILD_GUI)
   add_executable(RabbitEarsRender
     render/RabbitEarsRender.cpp
     ui/MiniMeter.cpp
+    ui/VuDial.cpp
     ui/BufferMeter.cpp)
   target_include_directories(RabbitEarsRender PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"

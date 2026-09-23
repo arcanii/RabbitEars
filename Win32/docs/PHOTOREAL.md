@@ -3,7 +3,9 @@
 > **Status (2026-09-23):** **Phase 0 is DONE** — the headless render tool `RabbitEarsRender` exists and
 > is verified. **Phase 1 is DONE in the working tree, NOT committed, and not yet seen by the owner** —
 > the six defects below are fixed, with a before/after sheet for the owner's eye (see "Phase 1" below).
-> **Phases 2–4 are a PROPOSAL awaiting six owner decisions** (bottom of this file).
+> **The VU instruments** — the owner's two reference photos built as the Backlit "VU needle" and
+> the new "Silver VU" — are DONE in the working tree too (see "The VU instruments").
+> **The rest of Phases 2–4 is a PROPOSAL awaiting six owner decisions** (bottom of this file).
 >
 > The owner's ask: *"for our next version, can we improve the UI? Make the skins and meters more
 > photorealistic?"*
@@ -176,6 +178,65 @@ skin, scaling and settings — especially **VU** (red zone, and the shadow if yo
 the **tank readout**, which change for every user — and switch to **Light** once. In Settings ▸
 Meters on Light, open the Dim swatch and press OK without changing it, then switch to Dark: the unlit
 cells must still be dark.
+
+## The VU instruments — built to the owner's two reference photos (2026-09-23, uncommitted, owner: "amazing")
+
+The owner sent two photos and asked to *"match this realistic VU meter"* and *"add a Marantz VU meter
+like the second"*: a modern backlit desktop VU meter, and a 1970s silver cassette-deck meter. Both
+now exist, in a new renderer **`Win32/ui/VuDial.{h,cpp}`**:
+
+- **Vu ("VU needle") is REPLACED** by the backlit instrument: black brushed faceplate, recessed cream
+  card, an amber bulb glowing up round a brass shroud at the bottom centre, a -20..+5 scale whose red
+  zone thickens toward +5, "VU", a PEAK lamp. The pre-0.2.18 full-width Phase-Linear-style dial (and
+  its Phase 1 shadow fix) is gone; `common/ui/VuLamp` is now used only for `vuLampIsUnset`.
+- **VuSilver ("Silver VU") is NEW** — the sixth look, token `vu_silver`: brushed-silver faceplate, a
+  deep window with a chrome inner wall, an evenly lit ivory card, blue scale to -1, red 0..+6 with
+  its ticks hanging below the arc, a 0-100 % scale. **No maker's name or logo on the dial** — a
+  trademark in a GPL app is not ours to draw; the look is named generically.
+
+**How they are built** (read VuDial.h first):
+- **Measured, not guessed.** Colours are medians sampled off the photos; the arcs are fitted to three
+  points each (the Backlit pivot turned out to sit ~0.6 card-heights BELOW the window — the brass boss
+  is the lamp's shroud); the dB marks sit where the photos print them (a textbook voltage-linear scale
+  crowded -20..-3 into the left third and looked wrong beside them). To compare
+  them again: crop the photo to the card, render the preview, put them side by side.
+- **Real proportions.** The instrument keeps its own aspect (1.62:1 / 2.45:1), centred, with
+  faceplate either side on the wide tray meters — a card stretched to 4:1 stops reading as a VU.
+- **Detail by size.** Numerals and legends draw only where they would be >= 5 px (VU >= 7 px, the
+  % row >= 7 px): the Settings preview shows everything; the tray (26-39 px dials) shows the light,
+  arc, red zone, ticks, needle and PEAK lamp, and no numerals.
+- **Cached.** Everything but the needle is rendered once per (face, size, DPI, lamp, red) and
+  blitted each frame — cheaper per frame than the old look.
+- **What the needle reads, per kind.** Only SOUND reads in dB: the Spectrum kind's level is already
+  logarithmic (SpectrumTap sends (dBFS+72)/60), so it maps linearly onto the printed scale (full input
+  = the top mark, 30 dB of input below it). Signal / Bitrate / Frames are not dB quantities: they
+  keep the old look's linear law, red zone = the top fifth. **The PEAK lamp lights whenever the
+  needle is in the red zone, on every kind** (owner's call, 2026-09-23), fading over ~1/4 s after.
+- **The palette** still drives what it did: Bg = the lamp's hue (black = the stock bulb), High = the
+  red zone, Accent = the needle — the STOCK accent now means the face's own black needle, and the
+  Meters dialog's swatch shows that.
+
+**Verified:** both theme flags build clean; `--selftest` ALL PASS; `gen_i18n --check` (589 keys — new
+`MeterLookVuSilver`, appended); renders byte-reproducible; **every other look (LED/Tube/LCD/Scope)
+and the tank are pixel-identical** to before across all 4 skins x 2 DPIs x glass 0/60 + previews; the
+classic build's dark sheets still equal the engine's. **Adversarially reviewed** (1 pass): 2 medium —
+the non-audio kinds read through the dB law, so PEAK and the red zone sat lit for most streams (a
+60 fps channel, any healthy HD stream); and a saved "nan" tuning could crash any VU meter every paint
+(`meterTuningFromString` now rejects non-finite values, and the needle is NaN-proof) — plus the Accent
+swatch not matching the needle, the Silver shadow reading as a second bar at preview size, legend
+collisions and comment slips. All fixed and re-verified.
+
+✅ **OWNER-SEEN LIVE (2026-09-23, dev profile, 150 % scaling): *"the VU meters look amazing"*.**
+
+**Not verified / open:** no selftest covers VuDial's scale math (it is a GUI translation unit the CLI
+does not link — split the pure tables out if it grows); `VuLamp`'s mask/colour code is now dead in
+the app but still selftested and still in `common/` (mac compiles it; flagged in BACKLOG rather than
+deleted). **The owner's live look was the real check** (above) — their Frame-rate VU has a cyan lamp,
+which the Backlit face honours as a cyan-lit card.
+
+**The size question is now concrete:** the tray dial is 26 px tall at 100 % and 39 px at 150 %. The
+numerals that make the reference photos read as instruments need ~50 px. Making the meter tray taller
+(decision 2 below) is what would put them in the tray.
 
 ## History — what must not be repeated
 

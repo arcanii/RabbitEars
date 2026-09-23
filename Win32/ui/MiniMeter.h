@@ -22,11 +22,17 @@ enum class MeterKind { Spectrum, Signal, Bitrate, Frames };
 
 // The visual "look" of a meter (Settings → Meters…). LED is the classic dot-matrix;
 // the others are added incrementally — an unimplemented look renders as LED.
-// Vu is the classic analog needle gauge (the Phase Linear 400 look): a swept scale with a damped
-// needle behind the glass. Appended LAST — the codec is token-based so order is not persisted, but
+// Vu is the classic analog needle gauge — since 0.2.18 a backlit desktop VU meter (ui/VuDial.h;
+// it was a Phase Linear 400-style full-width dial before): a lamp-lit card, a damped needle. Appended LAST — the codec is token-based so order is not persisted, but
 // mac carries its own copy of this enum (mac/src/app/MeterModel.h) WITHOUT Vu, and its parser falls
 // back on the unknown "vu" token. Adding it there is a mac-team change, flagged in BACKLOG.md.
-enum class MeterStyle { Led, Tube, Lcd, Scope, Vu };
+// VuSilver is the second analog instrument (a silver cassette-deck meter; ui/VuDial.h) — appended
+// LAST for the same reason, and mac's parser falls back on its "vu_silver" token the same way.
+enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver };
+
+// The two needle looks share everything but their face: `bg` is their lamp, they have no cells, and
+// the Meters dialog gives them the same knobs.
+inline bool isVuLook(MeterStyle s) { return s == MeterStyle::Vu || s == MeterStyle::VuSilver; }
 
 // Fully customizable per-meter colour palette. The roles map onto the "how much is
 // lit" math so every look can honour them. `bg == CLR_INVALID` means "follow the theme's
@@ -108,7 +114,8 @@ MeterTuning  miniMeterTuning(HWND meter);
 // meterPanelColor: the panel behind the cells (`bg`, or the theme's window when it is CLR_INVALID;
 // always the theme's on the Vu look, where `bg` is the lamp). meterDrawnPalette: the palette
 // verbatim, except that the STOCK `off` and `peak` — dark-panel colours — are re-derived from the
-// panel when that panel is light. Paint-time only: never write a resolved colour back to settings
+// panel when that panel is light, and on a needle look the stock `accent` is the face's own needle
+// (ui/VuDial.h). Paint-time only: never write a resolved colour back to settings
 // (a stock value saved as its light-panel resolution would stop adapting, and be wrong on a dark skin).
 struct Theme;
 COLORREF     meterPanelColor(const MeterPalette& p, MeterStyle style, const Theme& th);

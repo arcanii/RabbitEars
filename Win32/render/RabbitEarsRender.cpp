@@ -272,8 +272,9 @@ Img renderBuffer(int w, int h, UINT dpi, int ticks, bool troubled, const wchar_t
 }
 
 const MeterStyle kStyles[] = {MeterStyle::Led, MeterStyle::Tube, MeterStyle::Lcd, MeterStyle::Scope,
-                              MeterStyle::Vu};
-const wchar_t* kStyleNames[] = {L"LED", L"Tube", L"LCD", L"Scope", L"VU"};
+                              MeterStyle::Vu, MeterStyle::VuSilver};
+const wchar_t* kStyleNames[] = {L"LED", L"Tube", L"LCD", L"Scope", L"VU", L"Silver"};
+constexpr int kStyleCount = static_cast<int>(sizeof(kStyles) / sizeof(kStyles[0]));
 const MeterKind kKinds[] = {MeterKind::Spectrum, MeterKind::Signal, MeterKind::Bitrate,
                             MeterKind::Frames};
 const wchar_t* kKindNames[] = {L"Spectrum", L"Signal", L"Bitrate", L"Frames"};
@@ -298,14 +299,14 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
     const int bufW = dp(115, dpi);
     totalW = std::max(totalW, labelW + 2 * (bufW * zoom + gap));
     const int rowH = mh * zoom + rowLabelH + gap;
-    const int H = top + 5 * rowH + rowH + 10;
+    const int H = top + kStyleCount * rowH + rowH + 10;
     const Theme& th = currentTheme();
     Canvas cv(totalW + 10, H, 0x00101012u);
     wchar_t title[200];
     swprintf_s(title, L"skin=%ls  dpi=%u  glass=%.2f  tray meter %dpx tall  zoom x%d (nearest)  windowBg=%06X",
                wid(skin).c_str(), dpi, glass, mh, zoom, th.windowBg);
     cv.text(6, 6, title, RGB(230, 230, 230), 15, true);
-    for (int s = 0; s < 5; ++s) {
+    for (int s = 0; s < kStyleCount; ++s) {
         const int y = top + s * rowH;
         cv.text(6, y + rowLabelH + mh * zoom / 2 - 8, kStyleNames[s], RGB(230, 230, 230), 15, true);
         int x = labelW;
@@ -322,7 +323,7 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
         }
     }
     {
-        const int y = top + 5 * rowH;
+        const int y = top + kStyleCount * rowH;
         cv.text(6, y + rowLabelH + mh * zoom / 2 - 8, L"Buffer", RGB(230, 230, 230), 15, true);
         Img a = renderBuffer(bufW, mh, dpi, 360, false, L"12.4 Mb/s");
         Img b = renderBuffer(bufW, mh, dpi, 360, true, L"1.8 Mb/s");
@@ -346,12 +347,12 @@ void previewSheet(const std::string& skin, float glass) {
     const UINT dpi = 96;
     const int pw = dp(150, dpi), ph = dp(86, dpi), zoom = 2, gap = 10, labelW = 70, top = 30;
     const int rowH = ph * zoom + gap;
-    Canvas cv(labelW + 4 * (pw * zoom + gap) + 10, top + 6 * rowH + 10, 0x00101012u);
+    Canvas cv(labelW + 4 * (pw * zoom + gap) + 10, top + (kStyleCount + 1) * rowH + 10, 0x00101012u);
     wchar_t title[160];
     swprintf_s(title, L"Settings preview size %dx%d  skin=%ls  glass=%.2f  zoom x%d", pw, ph,
                wid(skin).c_str(), glass, zoom);
     cv.text(6, 6, title, RGB(230, 230, 230), 15, true);
-    for (int s = 0; s < 5; ++s) {
+    for (int s = 0; s < kStyleCount; ++s) {
         const int y = top + s * rowH;
         cv.text(6, y + ph * zoom / 2 - 8, kStyleNames[s], RGB(230, 230, 230), 15, true);
         for (int k = 0; k < 4; ++k) {
@@ -359,7 +360,7 @@ void previewSheet(const std::string& skin, float glass) {
             cv.put(im, labelW + k * (pw * zoom + gap), y, zoom);
         }
     }
-    const int y = top + 5 * rowH;
+    const int y = top + kStyleCount * rowH;
     cv.text(6, y + dp(76, dpi) * zoom / 2 - 8, L"Buffer", RGB(230, 230, 230), 15, true);
     cv.put(renderBuffer(dp(170, dpi), dp(76, dpi), dpi, 360, false, L"12.4 Mb/s"), labelW, y, zoom);
     wchar_t name[128];

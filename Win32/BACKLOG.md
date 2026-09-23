@@ -15,8 +15,19 @@ Design notes, research and the phased proposal: **[`docs/PHOTOREAL.md`](docs/PHO
 (uncommitted), awaiting the owner's eye** (VU red zone near-white; VU needle shadow reads as a second
 needle; tank readout covers half the tank; Light-skin unlit LEDs near-black; Light-skin underglow
 invisible; Tube/Scope glow not clipped). What changed, what was measured byte-identical, and four taste
-calls it leaves open: PHOTOREAL.md "Phase 1". **Phases 2–4 wait on six owner decisions** listed at the
-bottom of PHOTOREAL.md — the biggest being whether the 26-px meters may get bigger.
+calls it leaves open: PHOTOREAL.md "Phase 1". **The VU instruments** (the owner's two reference photos:
+the Backlit "VU needle" + a new "Silver VU") are built too — owner: *"look amazing"*. **Phases 2–4 wait
+on six owner decisions** listed at the bottom of PHOTOREAL.md — the biggest being whether the 26-px
+meters may get bigger (the new dials' numerals need ~50 px).
+
+Follow-ups the VU work left, none urgent:
+- **`common/ui/VuLamp` is dead in the app** — only `vuLampIsUnset` is still called; the mask/colour code
+  and its `--selftest` block remain. It lives in `common/` (mac compiles it), so remove it with the mac
+  team rather than unilaterally.
+- **No selftest covers `Win32/ui/VuDial`'s scale tables** — a GUI translation unit the CLI does not
+  link. Split the pure tables + `vuDialPositionOfDb` into a small TU the CLI links if they grow.
+- **Signal meter, 144+ dpi:** the tallest bar's top cell pokes 2 px into the chrome gutter (pre-existing;
+  hidden when glass is on) — `paintSignal` walks down from `B` in whole cell pitches.
 
 ---
 

@@ -1752,7 +1752,7 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
 // ---- Meters… setup dialog (Settings → Meters…) -----------------------------
 namespace {
 
-constexpr int  kMtrLookCount = 5;    // MeterStyle: Led, Tube, Lcd, Scope, Vu (combo index == enum)
+constexpr int  kMtrLookCount = 6;    // MeterStyle: Led, Tube, Lcd, Scope, Vu, VuSilver (index == enum)
 constexpr int  ID_MTR_GLASS = 1597;  // the single GLOBAL "glass cover" strength slider
 constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j, slider j +10+j
 constexpr int  ID_MTR_RESET = 1596;
@@ -1786,7 +1786,7 @@ bool knobApplies(int f, int kind, MeterStyle style) {
             // peakHold only moves st->peak[], and only paintSpectrum draws that. So it is dead on
             // the Spectrum row under Scope or VU, and on every other kind (the per-kind table
             // already withholds it there).
-            return kind == 0 && style != MeterStyle::Scope && style != MeterStyle::Vu;
+            return kind == 0 && style != MeterStyle::Scope && !isVuLook(style);
         default:
             // smoothing  — on a cell look it is attack/decay easing; on VU it IS the ballistics
             //              (vuCoef), and that is kind-independent.
@@ -1802,7 +1802,7 @@ bool knobApplies(int f, int kind, MeterStyle style) {
 // field its kind feeds.
 void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
     KnobDesc src[kMtrKnobs];
-    if (style == MeterStyle::Vu) {
+    if (isVuLook(style)) {
         // A needle has no cells to bloom and no peak cap, so it starts from its own pair rather
         // than from the kind's. NB `smoothing` is renamed only in the UI — MeterTuning's arity is
         // frozen by mac's exact-arity parser (MeterModel.cpp, `!= 5`), so no field can be added.
@@ -1836,7 +1836,7 @@ void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
 // reads values that onTick has already eased (decay / sigEase), so the two lags compose and the
 // movement is nearer a second. That is pre-existing behaviour, not something this caption changed.
 std::wstring knobLabelFor(const KnobDesc& kd, MeterStyle style) {
-    if (style == MeterStyle::Vu && kd.field == 1) return tr(i18n::StringId::MeterKnobDamping);
+    if (isVuLook(style) && kd.field == 1) return tr(i18n::StringId::MeterKnobDamping);
     switch (kd.field) {
         case 0: return tr(i18n::StringId::MeterKnobGlow);
         case 1: return tr(i18n::StringId::MeterKnobSmooth);
@@ -1891,7 +1891,8 @@ struct MetersDlgState {
 // Resolve a palette role index (0..6) to a displayable colour: bg follows the theme, and the stock
 // Dim/Peak show what the meter really draws on this theme's panel (see meterDrawnPalette — for Peak
 // that is its MARKER colour, the peak caps and the Scope trace; the Tube core and the Bitrate ramp
-// keep leaning toward the stored value).
+// keep leaning toward the stored value), and on a needle look the stock Accent shows the face's own
+// needle colour.
 COLORREF meterRoleColor(const MeterPalette& p, MeterStyle style, int j) {
     const MeterPalette d = meterDrawnPalette(p, style, currentTheme());
     switch (j) {
@@ -1900,7 +1901,7 @@ COLORREF meterRoleColor(const MeterPalette& p, MeterStyle style, int j) {
         case 2: return p.low;
         case 3: return p.mid;
         case 4: return p.high;
-        case 5: return p.accent;
+        case 5: return d.accent;
         case 6: return d.peak;
     }
     return d.off;
@@ -2254,12 +2255,13 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
                                     tr(i18n::StringId::MeterNameBitrate),
                                     tr(i18n::StringId::MeterNameFrameRate)};
     // ORDER IS LOAD-BEARING: the combo index is cast straight to MeterStyle (see CBN_SELCHANGE),
-    // so this must stay in enum order — Led, Tube, Lcd, Scope, Vu.
+    // so this must stay in enum order — Led, Tube, Lcd, Scope, Vu, VuSilver.
     const std::wstring kLooks[kMtrLookCount] = {tr(i18n::StringId::MeterLookLed),
                                                 tr(i18n::StringId::MeterLookVacuumTube),
                                                 tr(i18n::StringId::MeterLookLcd),
                                                 tr(i18n::StringId::MeterLookOscilloscope),
-                                                tr(i18n::StringId::MeterLookVu)};
+                                                tr(i18n::StringId::MeterLookVu),
+                                                tr(i18n::StringId::MeterLookVuSilver)};
     const std::wstring kRoles[kMtrRoles] = {tr(i18n::StringId::MeterRoleBg),
                                             tr(i18n::StringId::MeterRoleDim),
                                             tr(i18n::StringId::MeterRoleLow),

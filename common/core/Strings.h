@@ -643,6 +643,8 @@ enum class StringId {
     MacDialogDeadLinkClearBody,
     // --- Status ---
     StatusAiringKeptRule,
+    // --- DialogMeters ---
+    MeterLookVuSilver,
     Count  // sentinel — MUST stay last
 };
 

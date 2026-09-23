@@ -3796,5 +3796,11 @@
     "cluster": "Status",
     "placeholders": [],
     "comment": "Status line when Delete is pressed on a series-rule airing (its rule still exists) that is already decided while the row's own window (programme stop + trail, as queued) has not ended - a tombstone (Cancelled/Skipped/Failed, or Done after a stop), or a row whose decision has not reached the database yet, which the list may still show as Pending or Recording. The row is KEPT and nothing removes it automatically: once the time is over, Delete removes it. Must not name a status, and must not promise the row disappears on its own."
+  },
+  {
+    "id": "MeterLookVuSilver",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Meter look: a second analog VU needle gauge, styled after a silver 1970s cassette-deck meter (brushed-silver faceplate, blue and red scale). 'VU' is the standard audio abbreviation (volume unit) — keep it as VU. Do not name a manufacturer."
   }
 ]
