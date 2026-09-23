@@ -298,6 +298,7 @@ struct MeterState {
     int     dibW = 0, dibH = 0;  // current DIB size (client px); recreated on resize
     wchar_t metrics[40] = L"";   // compact throughput/delay readout drawn over the grid
     HFONT   metricsFont = nullptr;
+    int     metricsPx96 = 0;     // the 96-dpi size metricsFont was made at (it follows the height)
     // Glass overlay LUTs, cached exactly as MiniMeter caches its own: the mask is
     // frame-INVARIANT, so it is rebuilt only when the size, the DPI-derived chrome width,
     // or the global strength changes — never per frame.
@@ -805,10 +806,23 @@ void applyGlass(MeterState* st, int W, int H) {
 }
 
 // Overlay a small throughput readout (e.g. "12.4 Mb/s") in the top-right, with a
-// 1px shadow so it stays legible over lit LEDs. Font is cached (DPI-scaled).
+// 1px shadow so it stays legible over lit LEDs. Font is cached (DPI- and height-scaled).
 void drawMetrics(HDC hdc, MeterState* st, const Theme& th, int W, int H, int inset) {
-    if (!st->metricsFont)
-        st->metricsFont = themeFont(FontRole::Body, st->dpi, 11, FW_SEMIBOLD);
+    // Sized from the tank's HEIGHT as well as the DPI. A flat 11px was chosen against the Settings
+    // preview's 76px tank; on the 30px tray tank the same text spanned half the tank's width and a
+    // third of its height, so the readout, not the water, was what the meter showed (found by the
+    // RabbitEarsRender sheets). 0.3 of the height, within 9..11: the tray gets 9, the preview keeps
+    // its 11. Measured in 96-dpi units so a DPI change alone does not move it.
+    const int h96 = MulDiv(H, 96, static_cast<int>(st->dpi));
+    const int px96 = std::clamp((h96 * 3 + 5) / 10, 9, 11);
+    if (st->metricsFont && st->metricsPx96 != px96) {
+        DeleteObject(st->metricsFont);
+        st->metricsFont = nullptr;
+    }
+    if (!st->metricsFont) {
+        st->metricsFont = themeFont(FontRole::Body, st->dpi, px96, FW_SEMIBOLD);
+        st->metricsPx96 = px96;
+    }
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, st->metricsFont));
     const int oldMode = SetBkMode(hdc, TRANSPARENT);
     // The readout is drawn AFTER the blit, so it sits on top of the bezel. At the original
@@ -817,7 +831,12 @@ void drawMetrics(HDC hdc, MeterState* st, const Theme& th, int W, int H, int ins
     RECT tr{0, dpx(st->dpi, 1) + inset, W - std::max(dpx(st->dpi, 4), inset + dpx(st->dpi, 2)), H};
     RECT sh = tr;
     OffsetRect(&sh, dpx(st->dpi, 1), dpx(st->dpi, 1));
-    SetTextColor(hdc, RGB(0, 0, 0));
+    // The drop shadow is the OPPOSITE of the text: black under light text (every dark skin, exactly
+    // as before), white under dark text. A black shadow under the Light skin's black text merely
+    // doubled every stroke into a smear.
+    const COLORREF txt = th.textPrimary;
+    const int txtLuma = (299 * GetRValue(txt) + 587 * GetGValue(txt) + 114 * GetBValue(txt)) / 1000;
+    SetTextColor(hdc, txtLuma >= 128 ? RGB(0, 0, 0) : RGB(255, 255, 255));
     DrawTextW(hdc, st->metrics, -1, &sh, DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOCLIP);
     SetTextColor(hdc, th.textPrimary);
     DrawTextW(hdc, st->metrics, -1, &tr, DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOCLIP);

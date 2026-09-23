@@ -11,11 +11,12 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 Design notes, research and the phased proposal: **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)**. Phase 0
 (`RabbitEarsRender`, a headless PNG renderer for the meters and the skinned strip) is built and verified.
-**Phase 1 — six existing visual defects the renders exposed — is ready to start**, with before/after
-sheets for the owner (VU red zone near-white; VU needle shadow reads as a second needle; tank readout
-covers half the tank; Light-skin unlit LEDs near-black; Light-skin underglow invisible; Tube/Scope glow
-not clipped). **Phases 2–4 wait on six owner decisions** listed at the bottom of PHOTOREAL.md — the
-biggest being whether the 26-px meters may get bigger.
+**Phase 1 — the six existing visual defects the renders exposed — is FIXED in the working tree
+(uncommitted), awaiting the owner's eye** (VU red zone near-white; VU needle shadow reads as a second
+needle; tank readout covers half the tank; Light-skin unlit LEDs near-black; Light-skin underglow
+invisible; Tube/Scope glow not clipped). What changed, what was measured byte-identical, and four taste
+calls it leaves open: PHOTOREAL.md "Phase 1". **Phases 2–4 wait on six owner decisions** listed at the
+bottom of PHOTOREAL.md — the biggest being whether the 26-px meters may get bigger.
 
 ---
 

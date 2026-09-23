@@ -1,8 +1,9 @@
 # Photorealistic skins & meters — design notes (DRAFT)
 
 > **Status (2026-09-23):** **Phase 0 is DONE** — the headless render tool `RabbitEarsRender` exists and
-> is verified. **Everything after Phase 0 is a PROPOSAL awaiting six owner decisions** (bottom of this
-> file). Nothing visual has changed in the app yet.
+> is verified. **Phase 1 is DONE in the working tree, NOT committed, and not yet seen by the owner** —
+> the six defects below are fixed, with a before/after sheet for the owner's eye (see "Phase 1" below).
+> **Phases 2–4 are a PROPOSAL awaiting six owner decisions** (bottom of this file).
 >
 > The owner's ask: *"for our next version, can we improve the UI? Make the skins and meters more
 > photorealistic?"*
@@ -123,6 +124,59 @@ live app.
 5. **Light skin: the strip underglow is invisible** — added onto white, then clamped (`underglow.hlsl`).
 6. **Tube and Scope glows are not clipped** — they bleed over the themed 1-px border.
 
+## Phase 1 — the six defects FIXED (2026-09-23, uncommitted, owner's eye pending)
+
+All Win32-only (`Win32/ui/MiniMeter.{h,cpp}`, `BufferMeter.cpp`, `Dialogs.cpp`, the strip shader
+`Win32/ui/skin/shaders/underglow.hlsl`); **nothing under `common/`, so mac is untouched.** Rendered
+before and after with `RabbitEarsRender` and compared pixel by pixel, per meter — the "unchanged"
+claims below are measured, not assumed. (The tool's "150dpi" sheets are 156 % scaling, not 150 %:
+a 41-px dial where a real 150 % tray has 39.)
+
+| # | fix | what changes for an existing user |
+|---|---|---|
+| 1 | VU red zone drawn with the palette's **`high`** (default red) instead of `peak` (near-white) | every VU user; 21 px per meter at 100 % scaling. Someone who had recoloured the red zone through Peak (it was documented that way from 0.2.14) now gets High — no migration |
+| 2 | VU needle shadow: above a 26-px dial its angle and widths grow by **√(h/26)** and its alphas are divided by it, instead of everything scaling linearly | **byte-identical at 100 % scaling**; fainter and closer at 125 %+ (32 px and up) and in the Settings preview |
+| 3 | Tank readout font sized from the tank's height — `clamp(round(0.3·h96), 9, 11)`: **9 px in the tray at every scaling, 11 in Settings** (Settings byte-identical); drop shadow black under light text, **white under dark text** | every user with the tank on (default on). It still overlaps the water's surface row slightly (43 % of the width, was 51 %); on Light the smear is gone |
+| 4 | On a **light panel** the STOCK `off` and the MARKER use of the stock `peak` are re-derived (`meterDrawnPalette`): `off` = the tank's own unlit dot (231,231,233 on Light — identical to the tank's), peak caps + the Scope trace = (39,39,39). The Tube core and the Bitrate ramp keep the raw near-white peak — "the hottest light" brightens on any panel. User-picked colours are never touched; the Meters dialog shows the resolved Dim/Peak and never saves them back | the Light skin, or any skin where a meter was given a light Bg. **On a dark panel LED/LCD/Tube are byte-identical** |
+| 5 | Underglow: when a channel exceeds 1.0 the pixel is scaled by its brightest channel (exposure) instead of clipped | Light skin: a faint warm wash (bottom row ≈ RGB 255,243,239) where there was pure white. **Dark/Cyberpunk/Steampunk strips byte-identical outside the meters** (their worst-case channel is 0.42, so the new branch never runs) |
+| 6 | Tube halo and Scope bloom clipped (GDI+ `SetClip`) to the dial, as the VU already was; a Scope trace at zero is lifted to the lowest row where it fits whole | Tube: pixels in the 2-px chrome band only. Scope: the chrome band, plus the trace's floor segments (it used to sit half below the dial) |
+
+**Why #4 had to touch `peak` at all:** fixing `off` alone made the Spectrum's near-white peak caps
+vanish on Light — they had only ever been visible because near-black unlit cells framed them. **Why
+only the marker use:** resolving every use made the Light Tube's cores dark and ran the Bitrate ramp
+backwards (toward brown); adversarial review caught it and it was split.
+
+**Reviewed adversarially** — two lenses (code; every behavioural claim against the pixels). Code
+found 1 medium + 3 low, all addressed: the colour picker seeded with the RESOLVED colour saved it on
+an unchanged OK, pinning a Light-skin Dim/Peak that then breaks on a dark skin (fixed: an unchanged
+pick is a no-op — which also stops Bg from being pinned to the theme's window colour); an idle Scope
+trace half-clipped by the new clip (fixed: floor lift); an overstated "every dark skin" (reworded:
+dark PANEL); the red-zone re-role (documented above). Claims found the peak "mirror" arithmetic wrong,
+three loose comment numbers, and the dark Tube cores / brown Bitrate ramp — all fixed. Final state:
+both theme flags build clean, `--selftest` ALL PASS, the classic build's dark sheets byte-identical to
+the engine's, two consecutive renders byte-identical.
+
+**Taste calls this leaves for the owner (the renders cannot decide them):**
+- **Tube on Light** keeps its pale glow but its peak caps are grey smudges (a dark marker under a
+  pale core). A glow cannot really read on white.
+- **The Light underglow is faint by design** — the Light skin's `stripGlow` is 0.35 ("a neon underglow
+  reads wrong on a light surface"). Stronger means changing that value in `common/ui/Skin.cpp`, which
+  mac compiles.
+- **The readout at 9 px** is still semibold and still grazes the water's surface row; normal weight
+  would recede further, at some legibility.
+- The stock green and amber are ~2:1 contrast on white — legible, but a Phase 2 question.
+
+**Found while checking, NOT fixed (pre-existing, tiny):** at 144+ dpi the Signal meter's tallest bar
+has a top cell that pokes 2 px into the chrome gutter (`paintSignal` walks down from `B` in whole cell
+pitches). Invisible with glass on (the bezel covers the gutter).
+
+**Owner check:** the before/after sheet handed over with this change (six labelled pairs; not in the
+repo — rerun `RabbitEarsRender` on both trees to reproduce it); then, in the app, the tray on your own
+skin, scaling and settings — especially **VU** (red zone, and the shadow if you run above 100 %) and
+the **tank readout**, which change for every user — and switch to **Light** once. In Settings ▸
+Meters on Light, open the Dim swatch and press OK without changing it, then switch to Dark: the unlit
+cells must still be dark.
+
 ## History — what must not be repeated
 
 - **Broad gradients across a meter face read as blur.** The one recorded owner verdict of "too blurry"
@@ -145,8 +199,8 @@ live app.
 biggest single lever is making the meters bigger, which only the owner can decide.
 
 - **Phase 0 — render tool.** ✅ DONE (above).
-- **Phase 1 — fix what is already wrong** (the six defects above). Highest realism per hour; bugs, so
-  low taste risk — but items 2–4 change the *default* look for existing users, so the owner verifies.
+- **Phase 1 — fix what is already wrong** (the six defects above). ✅ DONE in the working tree (see
+  "Phase 1" above) — items 1, 3 and 4 change the look for existing users, so the owner verifies.
 - **Phase 2 — physical light and colour** (the core of realism at 26 px):
   gamma-correct glows (GDI+ `CompositingQualityGammaCorrected`, alphas retuned); LED lens cues (dark
   tinted "off" lenses, 1-px highlight + bright core on lit cells); **one written light rig** (key light

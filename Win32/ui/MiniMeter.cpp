@@ -71,6 +71,13 @@ struct MiniMeterState {
     MeterKind    kind = MeterKind::Spectrum;
     MeterStyle   style = MeterStyle::Led;
     MeterPalette palette = defaultMeterPalette(MeterKind::Spectrum);
+    // The palette THIS FRAME is drawn with: `palette` with its roles resolved against the panel the
+    // meter sits on (the stock off/peak on a light panel — see meterDrawnPalette). Set at the top
+    // of every onPaint; the painters read this, so what is drawn and what the Meters dialog's
+    // swatches show come from the same resolver. The ONE deliberate exception is `palette.peak`
+    // where peak means "the hottest light" rather than "a marker" (the Tube core, the Bitrate
+    // ramp) — see meterDrawnPalette for why those two stay unresolved. UI thread only.
+    MeterPalette drawPal = defaultMeterPalette(MeterKind::Spectrum);
     MeterTuning  tuning = defaultMeterTuning();
     UINT      dpi = 96;
     bool      timerOn = false;
@@ -215,11 +222,16 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
     };
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    // Clipped to the dial, as drawVu is. The bloom is up to 3.2x the trace's width and the trace
+    // spans the dial's full height, so unclipped it painted out across the chrome gutter and over
+    // the theme's 1px border. A CRT's glow stops at the bezel. The clip lives on this stack-local
+    // Graphics, never on the cached backDC, so it cannot outlive this call.
+    g.SetClip(Gdiplus::Rect(L, T, R - L, B - T), Gdiplus::CombineModeIntersect);
 
     // Faint graticule.
     const Gdiplus::REAL Lf = static_cast<Gdiplus::REAL>(L), Rf = static_cast<Gdiplus::REAL>(R);
     const Gdiplus::REAL Tf = static_cast<Gdiplus::REAL>(T), Bf = static_cast<Gdiplus::REAL>(B);
-    Gdiplus::Pen gridPen(gcol(st->palette.off, 150), 1.0f);
+    Gdiplus::Pen gridPen(gcol(st->drawPal.off, 150), 1.0f);
     for (int gi = 1; gi < 4; ++gi) {
         const Gdiplus::REAL gy = Tf + (Bf - Tf) * gi / 4.0f;
         g.DrawLine(&gridPen, Lf, gy, Rf, gy);
@@ -227,12 +239,19 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
 
     // The trace, antialiased, with a phosphor bloom: wide low-alpha accent underlays
     // then a crisp bright core.
+    const Gdiplus::REAL pw = static_cast<Gdiplus::REAL>(std::max(1, dpx(2, st->dpi)));
+    // The trace's floor. A value of 0 maps to Bf — the first row BELOW the dial — and with the clip
+    // above, a resting trace (silence, no stream, 0 fps: the state an idle Scope shows most) kept
+    // only a half-covered row. So the core never sinks below the row where it still fits whole
+    // inside the dial (GDI+ pixel centres are on integers, so the last row spans Bf-1.5..Bf-0.5).
+    // Only values within about a pixel and a half of zero move (~6% of the range on the 100% tray,
+    // less on bigger dials); the rest of the trace is exactly where it was.
+    const Gdiplus::REAL floorY = Bf - 0.5f - pw * 0.5f;
     Gdiplus::PointF pts[kHist];
     for (int i = 0; i < n; ++i) {
         pts[i].X = Lf + (Rf - Lf) * i / static_cast<Gdiplus::REAL>(n - 1);
-        pts[i].Y = Bf - vals[i] * (Bf - Tf - 1.0f);
+        pts[i].Y = std::min(floorY, Bf - vals[i] * (Bf - Tf - 1.0f));
     }
-    const Gdiplus::REAL pw = static_cast<Gdiplus::REAL>(std::max(1, dpx(2, st->dpi)));
     auto stroke = [&](COLORREF c, BYTE a, Gdiplus::REAL w) {
         Gdiplus::Pen p(gcol(c, a), w);
         p.SetLineJoin(Gdiplus::LineJoinRound);
@@ -241,9 +260,10 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
         g.DrawLines(&p, pts, n);
     };
     const float gs = st->tuning.glow * 2.0f;  // glow knob scales the phosphor bloom (0.5 = default)
-    stroke(st->palette.accent, static_cast<BYTE>(std::clamp(45.0f * gs, 0.0f, 255.0f)), pw * 3.2f);
-    stroke(st->palette.accent, static_cast<BYTE>(std::clamp(95.0f * gs, 0.0f, 255.0f)), pw * 1.8f);
-    stroke(st->palette.peak, 255, pw);
+    stroke(st->drawPal.accent, static_cast<BYTE>(std::clamp(45.0f * gs, 0.0f, 255.0f)), pw * 3.2f);
+    stroke(st->drawPal.accent, static_cast<BYTE>(std::clamp(95.0f * gs, 0.0f, 255.0f)), pw * 1.8f);
+    stroke(st->drawPal.peak, 255, pw);
+    g.ResetClip();
 }
 
 // Second pass for the Tube look: soft phosphor halos over the lit cells (collected in
@@ -299,7 +319,7 @@ Gdiplus::Color vuArgb(const VuLampRgb& c) {
 //
 // Unlike the other looks this one owns its face colours: a VU that isn't cream-on-black stops
 // reading as a VU, the same way the Tube look owns its phosphor glow. The palette still drives what
-// it sensibly can — `peak` tints the red zone, `accent` the needle, and `bg` IS THE LAMP (see
+// it sensibly can — `high` tints the red zone, `accent` the needle, and `bg` IS THE LAMP (see
 // MiniMeter.h; its CLR_INVALID default means the stock warm bulb) — so a user keeps meaningful
 // control without being able to break the idiom.
 //
@@ -322,10 +342,10 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     // ---- The lamp ---------------------------------------------------------------------------
     // CLR_INVALID is 0xFFFFFFFF, so GetRValue/GetGValue/GetBValue would unpack the "follow the
     // theme" sentinel as pure WHITE. Test for it before touching the channels.
-    const VuLampRgb lamp = (st->palette.bg == CLR_INVALID)
+    const VuLampRgb lamp = (st->drawPal.bg == CLR_INVALID)
                                ? vuStockLamp()
-                               : vuLampFrom(GetRValue(st->palette.bg), GetGValue(st->palette.bg),
-                                            GetBValue(st->palette.bg));
+                               : vuLampFrom(GetRValue(st->drawPal.bg), GetGValue(st->drawPal.bg),
+                                            GetBValue(st->drawPal.bg));
     const VuDial dial = vuDialColours(lamp);
 
     // ---- The face ---------------------------------------------------------------------------
@@ -406,10 +426,13 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     // survives the glass at any strength too.
     const Gdiplus::Color ink = vuArgb(dial.ink);
     Gdiplus::Pen arcPen(ink, std::max(1.0f, h * 0.035f));
-    // `peak` stays raw: the red zone is a translucent filter laid over the dial, a real hardware
-    // pattern, so it reads at its own colour whatever the lamp behind it is doing.
-    Gdiplus::Pen redPen(Gdiplus::Color(255, GetRValue(st->palette.peak), GetGValue(st->palette.peak),
-                                       GetBValue(st->palette.peak)),
+    // The red zone is the palette's `high` — the role that already means "the top of the range /
+    // alert" on every other look, and whose default is the red this zone is named for. It used to
+    // be `peak`, whose default is near-white RGB(236,236,240), so out of the box the "red" zone was
+    // drawn as a white stripe (found by the RabbitEarsRender sheets). It is painted flat and opaque,
+    // not lit by the lamp like the ink is: it reads at its own colour whatever the lamp is doing.
+    Gdiplus::Pen redPen(Gdiplus::Color(255, GetRValue(st->drawPal.high), GetGValue(st->drawPal.high),
+                                       GetBValue(st->drawPal.high)),
                         std::max(1.5f, h * 0.055f));
     Gdiplus::RectF arcBox(cx - rad, cy - rad, rad * 2.0f, rad * 2.0f);
     g.DrawArc(&arcPen, arcBox, a0, span * 0.80f);
@@ -447,10 +470,22 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     // 2.6 degrees, CLOCKWISE — toward higher readings — because the bulb is left of centre, so the
     // light crosses the needle from the left at every deflection and the shadow always falls to the
     // right. That is the handedness the old fixed (+0.8,+0.8) had, so this reads as "better lit"
-    // rather than as "something moved". And being an ANGLE it is size- and DPI-invariant for free:
-    // the shadow holds the same proportion to the needle in the tray and in the settings preview,
-    // which is not true of anything measured in pixels.
-    const float shRad = 2.6f * 3.14159265f / 180.0f;
+    // rather than as "something moved".
+    //
+    // ABOVE 26px the shadow does NOT keep the same proportion to the dial. It used to — an angle is
+    // size-invariant, and that was counted as a virtue — but everything in this block was tuned on a
+    // 26px dial, and
+    // scaled linearly it reads as a SECOND NEEDLE on anything bigger (the Settings preview's 82px
+    // dial; 32px at 125% scaling, 39px at 150%): a hard-edged band wider than the needle, darker
+    // than it (the coral needle is luma ~145 on a face of ~210; the shadow's 43% took that face to
+    // ~120), and 7px away from it at the tip on the preview. What makes a shadow read as one is being
+    // softer and fainter than the thing casting it, and at 26px the antialiasing supplied that for
+    // free. So past 26px the separation and both widths grow only with the SQUARE ROOT of the size
+    // (relatively smaller), and both alphas are DIVIDED by it (absolutely fainter). `grow` is exactly
+    // 1 at h<=26, where every value below is the one that shipped — so the tray at 100% scaling is
+    // untouched, and every larger scaling changes.
+    const float grow = std::sqrt(std::max(1.0f, h / 26.0f));
+    const float shRad = (2.6f / grow) * 3.14159265f / 180.0f;
     const float sc = std::cos(shRad), ss = std::sin(shRad);
     auto spin = [&](const Gdiplus::PointF& p) {  // about the pivot; +y is down, so this is clockwise
         const float dx = p.X - cx, dy = p.Y - cy;
@@ -470,22 +505,28 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     // tinted shadow would have to be re-derived for every lamp colour and would be wrong for all
     // but one of them.
     //
-    // The widths are fractions of h that meet their floors at exactly h=26 — the real tray size —
-    // so nothing thins below a pixel on the meters that actually ship.
-    Gdiplus::Pen penumbra(Gdiplus::Color(36, 0, 0, 0), std::max(2.0f, h * 0.078f));
+    // At and below h=26 the widths are fractions of h that sit just above their floors at h=26 (the
+    // floors take over below ~25.6px), so nothing thins below a pixel on the 100% tray; above it
+    // they continue from their h=26 values by `grow` (see above).
+    const bool tuned = h <= 26.0f;
+    const float penW = tuned ? std::max(2.0f, h * 0.078f) : 26.0f * 0.078f * grow;
+    const float umbW = tuned ? std::max(1.15f, h * 0.045f) : 26.0f * 0.045f * grow;
+    const BYTE penA = static_cast<BYTE>(std::lround(36.0f / grow));
+    const BYTE umbA = static_cast<BYTE>(std::lround(86.0f / grow));
+    Gdiplus::Pen penumbra(Gdiplus::Color(penA, 0, 0, 0), penW);
     penumbra.SetStartCap(Gdiplus::LineCapRound);
     penumbra.SetEndCap(Gdiplus::LineCapRound);
     g.DrawLine(&penumbra, sRoot, sTip);
-    Gdiplus::Pen umbra(Gdiplus::Color(86, 0, 0, 0), std::max(1.15f, h * 0.045f));
+    Gdiplus::Pen umbra(Gdiplus::Color(umbA, 0, 0, 0), umbW);
     umbra.SetStartCap(Gdiplus::LineCapRound);
     umbra.SetEndCap(Gdiplus::LineCapRound);
     g.DrawLine(&umbra, sRoot, sTip);
 
     // Thin on purpose (owner call): a real VU needle is a hairline, and a fat one at this size
     // reads as a bar rather than a pointer. Unchanged — only its shadow moved.
-    Gdiplus::Pen needle(Gdiplus::Color(255, GetRValue(st->palette.accent),
-                                       GetGValue(st->palette.accent),
-                                       GetBValue(st->palette.accent)),
+    Gdiplus::Pen needle(Gdiplus::Color(255, GetRValue(st->drawPal.accent),
+                                       GetGValue(st->drawPal.accent),
+                                       GetBValue(st->drawPal.accent)),
                         std::max(0.9f, h * 0.028f));
     needle.SetStartCap(Gdiplus::LineCapRound);
     needle.SetEndCap(Gdiplus::LineCapRound);
@@ -494,11 +535,18 @@ void drawVu(HDC dc, const RECT& in, MiniMeterState* st) {
     g.ResetClip();
 }
 
-void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette& pal, float glow) {
+// `hot` is the colour the bright core leans toward — the palette's raw `peak`, deliberately NOT the
+// light-panel-resolved one (see meterDrawnPalette): a phosphor is brightest at its core on any panel.
+void drawTubeGlow(HDC dc, const RECT& in, const std::vector<GlowCell>& cells, COLORREF hot,
+                  float glow) {
     if (cells.empty()) return;
     const float gs = glow * 2.0f;  // glow knob: 0.5 (default) -> 1.0 = current intensity
     Gdiplus::Graphics g(dc);
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    // Clipped to the dial (see drawScope): the wide halo reaches a full cell beyond a cell's top and
+    // bottom edges, so the top and bottom rows' halos bled over the chrome gutter and the 1px border.
+    g.SetClip(Gdiplus::Rect(in.left, in.top, in.right - in.left, in.bottom - in.top),
+              Gdiplus::CombineModeIntersect);
     for (const GlowCell& gc : cells) {
         const float cw = static_cast<float>(gc.r.right - gc.r.left);
         const float ch = static_cast<float>(gc.r.bottom - gc.r.top);
@@ -511,7 +559,7 @@ void drawTubeGlow(HDC dc, const std::vector<GlowCell>& cells, const MeterPalette
         };
         ell(cw * 0.72f, ch * 1.5f, gc.c, 48.0f);                            // wide soft halo (merges the column)
         ell(cw * 0.50f, ch * 0.85f, gc.c, 120.0f);                          // inner glow
-        ell(cw * 0.38f, ch * 0.50f, lerpCol(gc.c, pal.peak, 0.6f), 235.0f); // bright core
+        ell(cw * 0.38f, ch * 0.50f, lerpCol(gc.c, hot, 0.6f), 235.0f);      // bright core
     }
 }
 
@@ -538,12 +586,12 @@ void paintSpectrum(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowC
             RECT cell{x0, yb - cellP + gap, x1, yb};
             const float frac = static_cast<float>(r) / rows;
             bool on = (r < litN);
-            COLORREF lit = rampColor(st->palette, frac);
+            COLORREF lit = rampColor(st->drawPal, frac);
             if (peakRow > 0 && r == peakRow) {
                 on = true;
-                lit = st->palette.peak;
+                lit = st->drawPal.peak;
             }
-            drawCell(dc, cell, lit, on, st->palette, st->style, glow);
+            drawCell(dc, cell, lit, on, st->drawPal, st->style, glow);
         }
     }
 }
@@ -558,8 +606,8 @@ void paintSignal(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
     const int gap = dpx(1, dpi);
     const float sl = std::clamp(st->sigLevel * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
     const int litBars = static_cast<int>(std::ceil(sl * bars - 0.001f));
-    COLORREF base = sl > 0.6f ? st->palette.low : (sl > 0.3f ? st->palette.mid : st->palette.high);
-    base = lerpCol(base, st->palette.high, st->sigTrouble * 0.6f);
+    COLORREF base = sl > 0.6f ? st->drawPal.low : (sl > 0.3f ? st->drawPal.mid : st->drawPal.high);
+    base = lerpCol(base, st->drawPal.high, st->sigTrouble * 0.6f);
     for (int j = 0; j < bars; ++j) {
         const int x0 = L + j * colW;
         const int x1 = x0 + colW - gap;
@@ -567,7 +615,7 @@ void paintSignal(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
         const bool on = (j < litBars);
         for (int y = B; y > barTop; y -= cellP) {
             RECT cell{x0, y - cellP + gap, x1, y};
-            drawCell(dc, cell, base, on, st->palette, st->style, glow);
+            drawCell(dc, cell, base, on, st->drawPal, st->style, glow);
         }
     }
 }
@@ -594,9 +642,11 @@ void paintBitrate(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCe
             const int yb = B - r * cellP;
             RECT cell{x0, yb - cellP + gap, x1, yb};
             const bool on = (r < litN);
-            const COLORREF lit = lerpCol(st->palette.accent, st->palette.peak,
+            // The ramp heats toward the RAW peak — "hottest light", not a marker; see
+            // meterDrawnPalette for why this one role stays unresolved on a light panel.
+            const COLORREF lit = lerpCol(st->drawPal.accent, st->palette.peak,
                                          static_cast<float>(r) / rows * 0.5f);
-            drawCell(dc, cell, lit, on, st->palette, st->style, glow);
+            drawCell(dc, cell, lit, on, st->drawPal, st->style, glow);
         }
     }
 }
@@ -612,9 +662,9 @@ void paintFrames(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
     const int cols = std::max(1, (R - L) / colW);
     const float frac = std::clamp(st->fps / 60.0f * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
     const int lit = static_cast<int>(std::lround(frac * cols));
-    COLORREF base = st->fps >= 24 ? st->palette.low
-                                  : (st->fps >= 15 ? st->palette.mid : st->palette.high);
-    base = lerpCol(base, st->palette.high, st->flare);  // flash toward the alert (high) colour
+    COLORREF base = st->fps >= 24 ? st->drawPal.low
+                                  : (st->fps >= 15 ? st->drawPal.mid : st->drawPal.high);
+    base = lerpCol(base, st->drawPal.high, st->flare);  // flash toward the alert (high) colour
     for (int c = 0; c < cols; ++c) {
         const int x0 = L + c * colW;
         const int x1 = x0 + colW - gap;
@@ -622,7 +672,7 @@ void paintFrames(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
         for (int r = 0; r < rows; ++r) {
             const int yb = B - r * cellP;
             RECT cell{x0, yb - cellP + gap, x1, yb};
-            drawCell(dc, cell, base, on, st->palette, st->style, glow);
+            drawCell(dc, cell, base, on, st->drawPal, st->style, glow);
         }
     }
 }
@@ -693,13 +743,8 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
     HDC mem = st->backDC;
 
     const Theme& th = currentTheme();
-    // For the Vu look `bg` is the LAMP behind the dial, not the panel colour (see drawVu), so the
-    // hairline matte around the dial stays the theme's — an electric-blue lamp must not also put a
-    // bright outline round the bezel. Both reference instruments have a dark surround doing much of
-    // the work of looking like an instrument.
-    const COLORREF bg = (st->style == MeterStyle::Vu || st->palette.bg == CLR_INVALID)
-                            ? th.windowBg
-                            : st->palette.bg;
+    const COLORREF bg = meterPanelColor(st->palette, st->style, th);
+    st->drawPal = meterDrawnPalette(st->palette, st->style, th);
     fillCell(mem, rc, bg);
     SetDCBrushColor(mem, th.border);
     FrameRect(mem, &rc, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
@@ -722,7 +767,7 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
                 case MeterKind::Bitrate: paintBitrate(mem, in, st, glowPtr); break;
                 case MeterKind::Frames: paintFrames(mem, in, st, glowPtr); break;
             }
-            if (glowPtr) drawTubeGlow(mem, glow, st->palette, st->tuning.glow);
+            if (glowPtr) drawTubeGlow(mem, in, glow, st->palette.peak, st->tuning.glow);
         }
     }
     // Glass goes on LAST, over the finished dials — including the tube halo and the scope trace,
@@ -965,6 +1010,55 @@ void miniMeterSetPalette(HWND meter, const MeterPalette& palette) {
     if (!st) return;
     st->palette = palette;
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+}
+
+COLORREF meterPanelColor(const MeterPalette& p, MeterStyle style, const Theme& th) {
+    // For the Vu look `bg` is the LAMP behind the dial, not the panel colour (see drawVu), so the
+    // hairline matte around the dial stays the theme's — an electric-blue lamp must not also put a
+    // bright outline round the bezel. Both reference instruments have a dark surround doing much of
+    // the work of looking like an instrument.
+    return (style == MeterStyle::Vu || p.bg == CLR_INVALID) ? th.windowBg : p.bg;
+}
+
+MeterPalette meterDrawnPalette(const MeterPalette& p, MeterStyle style, const Theme& th) {
+    // Two stock colours are DARK-PANEL colours, and on a light panel both failed (found by the
+    // RabbitEarsRender sheets):
+    //   * `off`, a hair lighter than the dark skin's window so the unlit matrix is a faint texture
+    //     behind the lit cells, became near-black cells on white — louder than the lit ones;
+    //   * `peak`, near-white so a MARKER — the Spectrum's peak-hold cap, the Scope's trace — stands
+    //     out on a dark dial, became white on white: the peak caps vanished outright once `off` was
+    //     fixed and stopped framing them.
+    // On a light panel each is re-derived to play the same part: `off` a faint step off the panel,
+    // `peak` near-black, so a marker is again the highest-contrast thing on the dial. `peak` has a
+    // second meaning this does NOT cover: "the hottest light" — the Tube's bright core and the
+    // Bitrate ramp's top. Those read the palette's RAW peak (drawTubeGlow, paintBitrate), because a
+    // light source is brightest at its hottest on any panel; a dark "hot" end runs the ramp
+    // backwards. A colour the user picked is always drawn verbatim — only the stock values are
+    // resolved, and only on a LIGHT PANEL: the Light skin, or any skin where the user gave the meter
+    // a light Bg. A meter on a dark panel draws exactly what it did. The other roles are mid-tone
+    // hues (green/amber/red/coral) that keep their colour on either panel — at lower contrast on
+    // white, which is a Phase 2 question, not a defect. Nothing is persisted: this runs at paint
+    // time, and the Meters dialog takes care not to save a resolved colour back (meterEditSwatch).
+    MeterPalette d = p;
+    const MeterPalette stock = defaultMeterPalette(MeterKind::Spectrum);
+    const COLORREF panel = meterPanelColor(p, style, th);
+    const int luma =
+        (299 * GetRValue(panel) + 587 * GetGValue(panel) + 114 * GetBValue(panel)) / 1000;
+    if (luma < 128) return d;
+    const bool themed = style == MeterStyle::Vu || p.bg == CLR_INVALID;
+    if (p.off == stock.off) {
+        // On the theme's own panel, the SAME unlit dot the buffer tank draws (renderLedBits: the
+        // panel nudged 6/10 of the way to the border), so the tray reads as one row of instruments.
+        // A panel colour the user picked has no border to aim at, so it is shaded 10% toward black.
+        d.off = themed ? lerpCol(panel, th.border, 0.6f)
+                       : lerpCol(panel, RGB(0, 0, 0), 0.10f);
+    }
+    if (p.peak == stock.peak) {
+        // 85% of the way from the panel to black: (39,39,39) on white. A touch softer than a literal
+        // mirror of the stock peak, which would be ~(19,19,15).
+        d.peak = lerpCol(panel, RGB(0, 0, 0), 0.85f);
+    }
+    return d;
 }
 
 MeterStyle miniMeterStyle(HWND meter) {

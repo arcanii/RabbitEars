@@ -71,6 +71,18 @@ float4 PSMain(VSOut i) : SV_Target
         float boil  = 0.55 + 0.45 * sin(i.uv.x * 33.0 - uTime * 5.0);
         col += uAccent.rgb * plume * boil * hz * 0.12;
     }
+
+    // Exposure, not clipping. Light ADDED to a white surface cannot be displayed — saturate() used to
+    // clip every channel back to 1, so on the Light skin the underglow was computed and then thrown
+    // away in full (found by the RabbitEarsRender strip sheets). Scaling the pixel down by its
+    // brightest channel instead keeps the RATIO between the channels, which is what the eye reads as
+    // coloured light on a white surface: the accent survives as a warm tint. It is a strict no-op
+    // wherever no channel exceeds 1 — every dark skin, by a wide margin (the glow peaks well under
+    // 0.5 on all three). A branch rather than col /= max(peak, 1.0): D3D allows division ~2.5 ULP of
+    // slack, so even dividing by exactly 1.0 is not promised to leave the dark skins' bytes alone.
+    float peak = max(col.r, max(col.g, col.b));
+    if (peak > 1.0)
+        col /= peak;
     return float4(saturate(col), 1.0);
 }
 

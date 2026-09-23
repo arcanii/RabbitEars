@@ -35,12 +35,12 @@ struct MeterPalette {
     COLORREF bg;      // panel background (CLR_INVALID = theme windowBg); on the Vu look this is
                       // instead the LAMP behind the dial — hue only, CLR_INVALID (or any colour
                       // too dark to be a lamp, so: pick black to get back here) = the stock bulb
-    COLORREF off;     // unlit / dim cell
+    COLORREF off;     // unlit / dim cell (stock value adapts to a light panel — meterDrawnPalette)
     COLORREF low;     // low band of the lit ramp        (default green)
     COLORREF mid;     // mid band                         (default amber)
-    COLORREF high;    // high band + alert/trouble tint   (default red)
+    COLORREF high;    // high band + alert/trouble tint + the Vu red zone (default red)
     COLORREF accent;  // bitrate history fill / scope trace (default coral)
-    COLORREF peak;    // peak-hold cap / trace head        (default near-white)
+    COLORREF peak;    // peak-hold cap / trace head        (default near-white; adapts, like `off`)
 };
 
 inline MeterPalette defaultMeterPalette(MeterKind /*kind*/) {
@@ -102,6 +102,17 @@ void miniMeterSetTuning(HWND meter, const MeterTuning& tuning);
 MeterStyle   miniMeterStyle(HWND meter);
 MeterPalette miniMeterPalette(HWND meter);
 MeterTuning  miniMeterTuning(HWND meter);
+
+// What a meter with this palette + look ACTUALLY draws on theme `th` — the same resolution onPaint
+// uses, so the Meters dialog's swatches can show the colour on screen rather than the stored one.
+// meterPanelColor: the panel behind the cells (`bg`, or the theme's window when it is CLR_INVALID;
+// always the theme's on the Vu look, where `bg` is the lamp). meterDrawnPalette: the palette
+// verbatim, except that the STOCK `off` and `peak` — dark-panel colours — are re-derived from the
+// panel when that panel is light. Paint-time only: never write a resolved colour back to settings
+// (a stock value saved as its light-panel resolution would stop adapting, and be wrong on a dark skin).
+struct Theme;
+COLORREF     meterPanelColor(const MeterPalette& p, MeterStyle style, const Theme& th);
+MeterPalette meterDrawnPalette(const MeterPalette& p, MeterStyle style, const Theme& th);
 
 // Serialize a style/palette for the settings K/V store (persisted per meter). The
 // palette is 7 comma-joined tokens (bg first — "theme" for CLR_INVALID, else RRGGBB);

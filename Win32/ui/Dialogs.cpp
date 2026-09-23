@@ -1888,18 +1888,22 @@ struct MetersDlgState {
     bool  ok = false, done = false;
 };
 
-// Resolve a palette role index (0..6) to a displayable colour (bg follows the theme).
-COLORREF meterRoleColor(const MeterPalette& p, int j) {
+// Resolve a palette role index (0..6) to a displayable colour: bg follows the theme, and the stock
+// Dim/Peak show what the meter really draws on this theme's panel (see meterDrawnPalette — for Peak
+// that is its MARKER colour, the peak caps and the Scope trace; the Tube core and the Bitrate ramp
+// keep leaning toward the stored value).
+COLORREF meterRoleColor(const MeterPalette& p, MeterStyle style, int j) {
+    const MeterPalette d = meterDrawnPalette(p, style, currentTheme());
     switch (j) {
         case 0: return (p.bg == CLR_INVALID) ? currentTheme().windowBg : p.bg;
-        case 1: return p.off;
+        case 1: return d.off;
         case 2: return p.low;
         case 3: return p.mid;
         case 4: return p.high;
         case 5: return p.accent;
-        case 6: return p.peak;
+        case 6: return d.peak;
     }
-    return p.off;
+    return d.off;
 }
 void meterSetRole(MeterPalette& p, int j, COLORREF c) {
     switch (j) {
@@ -1942,13 +1946,24 @@ void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
     CHOOSECOLORW cc{};
     cc.lStructSize = sizeof(cc);
     cc.hwndOwner = dlg;  // disables the meters dialog (not the main window) while open
-    cc.rgbResult = meterRoleColor(st->cfg[r].palette, j);
+    // The picker opens on the colour the swatch SHOWS, which for Bg ("follow the theme") and for the
+    // stock Dim/Peak is a resolved colour, not the stored one. So OK with the colour unchanged must
+    // change nothing: saving the resolution would pin it — a Light-skin Dim of (231,231,233) saved as
+    // an explicit colour stops adapting and paints near-white cells on a dark skin the day the user
+    // (or "system" at nightfall) switches.
+    const COLORREF seed = meterRoleColor(st->cfg[r].palette, st->cfg[r].style, j);
+    cc.rgbResult = seed;
     cc.lpCustColors = custom;
     cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-    if (ChooseColorW(&cc)) {
+    if (ChooseColorW(&cc) && cc.rgbResult != seed) {
         meterSetRole(st->cfg[r].palette, j, cc.rgbResult);
         miniMeterSetPalette(st->preview[r], st->cfg[r].palette);
         InvalidateRect(st->swatch[r][j], nullptr, FALSE);
+        // A new panel colour can change what the stock Dim/Peak resolve to (meterDrawnPalette).
+        if (j == 0) {
+            InvalidateRect(st->swatch[r][1], nullptr, FALSE);
+            InvalidateRect(st->swatch[r][6], nullptr, FALSE);
+        }
     }
 }
 
@@ -2036,7 +2051,8 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             for (int r = 0; r < 4; ++r)
                 for (int j = 0; j < kMtrRoles; ++j)
                     if (di->hwndItem == st->swatch[r][j]) {
-                        SetDCBrushColor(di->hDC, meterRoleColor(st->cfg[r].palette, j));
+                        SetDCBrushColor(di->hDC,
+                                        meterRoleColor(st->cfg[r].palette, st->cfg[r].style, j));
                         FillRect(di->hDC, &di->rcItem, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
                         const bool hot = (di->itemState & (ODS_FOCUS | ODS_SELECTED)) != 0;
                         SetDCBrushColor(di->hDC,
@@ -2107,6 +2123,10 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     if (sel >= 0) {
                         st->cfg[r].style = static_cast<MeterStyle>(sel);
                         miniMeterSetStyle(st->preview[r], st->cfg[r].style);
+                        // The Dim and Peak swatches show RESOLVED colours, which depend on the look
+                        // (a Vu's `bg` is its lamp, not its panel) — see meterDrawnPalette.
+                        InvalidateRect(st->swatch[r][1], nullptr, FALSE);
+                        InvalidateRect(st->swatch[r][6], nullptr, FALSE);
                         // Different look, different knobs — a VU exposes Damping/Sens where a cell
                         // look exposes Glow/Smooth/Sens/Peak.
                         meterSyncKnobs(st, r);

@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.17 is the last Windows release** · macOS **0.2.17** · three unreleased changes on `main`
+## Current state — **v0.2.17 is the last Windows release** · macOS **0.2.17** · unreleased changes on `main` + in the working tree
 
 ### ▶️ Since v0.2.17 — UNRELEASED, none of it seen running by the owner (2026-07-29 → 2026-09-23)
 
@@ -40,6 +40,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | 🔎 **Search debounce** (`b5c016f`) | pushed | typing in search feels smooth; a nav click right after typing shows the node |
 | 🔴→✅ **Lost schedule-status writes** (`b4b3e4c`) — flagged by the mac team; can truncate a recording or silently mark it Missed | pushed | the six checks in the "Lost schedule-status writes" block below — the ordinary scheduled-recording path FIRST, because the start order changed |
 | 🖼️ **Photoreal Phase 0 — `RabbitEarsRender`**, a headless render tool | see git | none needed (dev tool; the app is unchanged) — but the **six photoreal decisions** in `docs/PHOTOREAL.md` are yours |
+| 🖼️ **Photoreal Phase 1 — the six meter defects fixed** (red zone, VU shadow, tank readout, Light-skin LEDs + underglow, glow clipping) | working tree, **uncommitted** | the before/after sheet, then the tray on your own skin + settings — **VU and the tank readout change for every user**; switch to Light once |
 
 **The biggest change to how this project works:** visual work no longer has to go to the owner blind.
 `build\Win32\RabbitEarsRender.exe <outdir>` renders every meter look, the buffer tank and every skinned
@@ -817,7 +818,7 @@ for **`stale Recording row could not be reset`**: while it keeps repeating, the 
 landed and no schedule can start. `recording rule delete DEFERRED` is a refusal this change introduced
 (not a formerly silent failure): the rule is held back until an airing's status lands.
 
-### 🖼️ Photoreal skins & meters — Phase 0 DONE, the rest waits on six owner decisions (2026-09-23)
+### 🖼️ Photoreal skins & meters — Phase 0 DONE, Phase 1 fixed (uncommitted), the rest waits on six owner decisions (2026-09-23)
 
 The owner asked to make the skins and meters "more photorealistic". Research (five investigations and
 a completeness critic) and the proposal are in **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)** — read its
@@ -844,9 +845,27 @@ zone" is near-white, the VU needle's shadow reads as a second needle, the tank's
 the tank, the Light skin's unlit LEDs are near-black, the Light skin's underglow is invisible, and
 Tube/Scope glows bleed over the border.
 
-**Next:** the owner answers the six decisions at the bottom of PHOTOREAL.md (the size question matters
-most) and ideally sends the Phase Linear 400 photo, the mockups, and one real screenshot. Then Phase 1
-— render before/after sheets for every change and hand the owner the pair, not the live app.
+**Phase 1 — the six defects — is FIXED in the working tree (2026-09-23), not committed.** Win32-only
+(`MiniMeter`, `BufferMeter`, `Dialogs`, `underglow.hlsl`; nothing under `common/`). Each was rendered
+before/after and compared pixel by pixel, per meter: on a dark panel LED/LCD/Tube are byte-identical
+inside every dial, the dark skins' strips are byte-identical outside the meters, and the VU at 100 %
+scaling differs only at the red zone. **Adversarially reviewed** (code + every claim against the
+pixels): 1 medium — the Meters colour picker, seeded with a RESOLVED Light-skin colour, would have saved
+it on an unchanged OK and broken the meters on the next dark skin — plus an idle Scope trace
+half-clipped, a peak role that ran the Light Bitrate ramp backwards, and several over-claiming comments;
+all fixed and re-verified. Both theme flags build clean, `--selftest` ALL PASS, the classic build's dark
+sheets are still byte-identical to the engine's. Full table, the taste calls it leaves and one tiny
+pre-existing gutter overlap it found: **PHOTOREAL.md "Phase 1"**.
+⚠️ Phase 0 and Phase 1 touch the same files (`MiniMeter.*`, `BufferMeter.cpp`). To commit Phase 0 on
+its own first, its exact state was saved as git tree **`228ddb5`** (all twelve Phase 0 paths, including
+the untracked `render/` and `PHOTOREAL.md`) — `git restore --source=228ddb5 --staged -- <paths>` stages
+Phase 0 without touching the working tree. (An unreferenced tree object: `git gc` may prune it after
+~2 weeks.)
+
+**Next:** the owner looks at the Phase 1 before/after sheet and the live tray, and answers the six
+decisions at the bottom of PHOTOREAL.md (the size question matters most) — ideally with the Phase
+Linear 400 photo, the mockups, and one real screenshot. Keep rendering before/after sheets for every
+visual change and hand the owner the pair, not the live app.
 
 ### What still needs the owner
 
@@ -996,8 +1015,11 @@ Paste this verbatim to start a fresh session with working context restored:
 > * **photoreal Phase 0 — `RabbitEarsRender`** (may still be uncommitted — check `git status`): a
 >   headless tool that renders every meter look, the tank and every skinned strip to PNG from the REAL
 >   paint code, byte-reproducibly. **Use it for every visual change** (render before/after, read the
->   PNGs yourself, hand the owner the pair). Phase 1 (six existing defects it found) can start; the
->   rest of the epic waits on the owner's six decisions at the bottom of `docs/PHOTOREAL.md` — the
+>   PNGs yourself, hand the owner the pair).
+> * **photoreal Phase 1 — the six meter defects the tool found, FIXED** (may still be uncommitted —
+>   Phase 0's exact state is saved as git tree `228ddb5` so the two can be committed separately; see
+>   HANDOVER's photoreal block). Owner's eye pending — VU and the tank readout change for every user.
+>   The rest of the epic waits on the owner's six decisions at the bottom of `docs/PHOTOREAL.md` — the
 >   size question matters most.
 >
 > **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
