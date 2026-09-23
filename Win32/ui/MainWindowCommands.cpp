@@ -39,6 +39,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/PowerPolicy.h"
+#include "platform/Profile.h"
 #include "platform/Updater.h"
 #include "platform/WakeScheduler.h"
 #include "resource.h"
@@ -1162,6 +1163,12 @@ void syncKeepAwake(AppState* st) {
 }
 
 void syncWakeFromSchedules(AppState* st) {
+    // A profile (RABBITEARS_DATA_DIR) never touches the wake task: there is ONE per user, named the
+    // same for every instance, so a profile syncing it would re-point the installed app's task at
+    // this exe — or, with an empty queue of its own, delete it. Its recordings still run while it is
+    // open; only the unattended wake is the normal install's alone. wakeTaskFor stays -1, which
+    // also keeps the "run wake task now" menu item greyed. See platform/Profile.h.
+    if (isSideProfile()) return;
     // The schedule start the task SHOULD target: the earliest still-pending one (0 = none). Read
     // through the write-behind overlay, so an airing whose Cancel/Skip has not landed yet does not
     // arm an unattended wake — the overlay is in memory only, so after a relaunch the DB alone
@@ -1951,8 +1958,10 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(rec, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(rec, MF_POPUP, reinterpret_cast<UINT_PTR>(fmt), tr(StringId::MenuRecordingFormat).c_str());
     AppendMenuW(rec, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(rec, MF_STRING | (st->wakeToRecord ? chk : 0u), ID_WAKE_RECORD,
-                tr(StringId::MenuWakeToRecord).c_str());
+    // Greyed in a side profile: the wake task belongs to the normal install (platform/Profile.h), so
+    // toggling it here would only report a wake that can never happen.
+    AppendMenuW(rec, MF_STRING | (st->wakeToRecord ? chk : 0u) | (isSideProfile() ? MF_GRAYED : 0u),
+                ID_WAKE_RECORD, tr(StringId::MenuWakeToRecord).c_str());
     // Greyed with the feature off, or nothing queued: no task is registered, nothing to demand-start.
     AppendMenuW(rec, MF_STRING | ((st->wakeToRecord && st->wakeTaskFor > 0) ? 0u : MF_GRAYED),
                 ID_WAKE_RUN_NOW, tr(StringId::MenuRunWakeTaskNow).c_str());
@@ -2150,8 +2159,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
         }
         case ID_WAKE_RUN_NOW:
             // The honest end-to-end test on a machine you can't put to sleep (a VM, a remote box):
-            // this runs the registered task for real, --scheduled-wake and all.
-            setStatus(st, runWakeTaskNow()
+            // this runs the registered task for real, --scheduled-wake and all. Never from a
+            // profile: the registered task is the normal install's (see syncWakeFromSchedules).
+            setStatus(st, !isSideProfile() && runWakeTaskNow()
                               ? tr(i18n::StringId::StatusWakeTaskStarted)
                               : tr(i18n::StringId::StatusWakeTaskFailed));
             break;

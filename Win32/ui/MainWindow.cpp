@@ -36,6 +36,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
+#include "platform/Profile.h"
 #include "platform/Updater.h"
 #include "platform/WakeScheduler.h"
 #include "resource.h"
@@ -2118,8 +2119,14 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
     // running instance's log). The mutex name matches the installer's AppMutex, so the
     // auto-update installer can also detect/close a stray instance. Held for the process
     // lifetime (released on exit); a second launch just focuses the existing window.
-    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"RabbitEars.SingleInstance");
-    if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+    // A profile (RABBITEARS_DATA_DIR) is single-instance PER DATA DIR, so a dev build can run
+    // beside the installed app — see platform/Profile.h.
+    // A named local, not a temporary: nothing may run between CreateMutexW and GetLastError() —
+    // freeing a temporary string in between is not promised to leave the last-error alone.
+    const std::wstring mutexName = profileMutexName();
+    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, mutexName.c_str());
+    const DWORD mutexErr = GetLastError();
+    if (instanceMutex && mutexErr == ERROR_ALREADY_EXISTS) {
         // A self-relaunch (--restart) arrives while the outgoing instance is still tearing down. Wait
         // for it to release the mutex (it exits within the WM_DESTROY watchdog's 4 s), then fall
         // through to a normal, single-owner startup. (No feature triggers this today — the language
@@ -2131,7 +2138,9 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
             // scheduler tick will start the recording. Yanking its window to the foreground (and
             // over whatever the user is doing) would be the opposite of unattended.
             if (!scheduledWake) {
-                if (HWND existing = FindWindowW(kMainClass, nullptr)) {
+                // By title as well as class: with a profile running beside the normal install,
+                // the class alone could find — and raise — the OTHER instance's window.
+                if (HWND existing = FindWindowW(kMainClass, appTitle().c_str())) {
                     if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
                     SetForegroundWindow(existing);
                 }
@@ -2165,9 +2174,9 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
     registerClasses(hInst);
 
     auto* st = new AppState();
-    HWND hwnd = CreateWindowExW(0, kMainClass, L"RabbitEars", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-                                CW_USEDEFAULT, CW_USEDEFAULT, dp(1180, 96), dp(760, 96), nullptr,
-                                nullptr, hInst, st);
+    HWND hwnd = CreateWindowExW(0, kMainClass, appTitle().c_str(),
+                                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
+                                dp(1180, 96), dp(760, 96), nullptr, nullptr, hInst, st);
     if (!hwnd) {
         closeSplash(splash);
         delete st;

@@ -10,6 +10,7 @@
 
 #include <winsparkle.h>
 
+#include "platform/Profile.h"
 #include "version.h"
 
 namespace rabbitears {
@@ -112,6 +113,11 @@ int chooseUpdateArch(HWND owner) {
 
 void initUpdater(HWND mainWnd) {
     g_mainWnd = mainWnd;
+    // Not in a side profile (platform/Profile.h). WinSparkle keeps its state per USER in the registry
+    // (HKCU\Software\RabbitEars\RabbitEars\WinSparkle), so a profile's checks would move the
+    // installed app's next check, a "skip this version" would apply to both, and accepting an update
+    // would run the installer — which closes the installed app, possibly mid-recording.
+    if (isSideProfile()) return;
     // Start on this build's own architecture feed (see kDefaultAppcast); on ARM64 the
     // "Check for Updates" chooser can re-point it to the other arch before each check.
     win_sparkle_set_appcast_url(kDefaultAppcast);
@@ -135,6 +141,7 @@ void initUpdater(HWND mainWnd) {
 }
 
 void checkForUpdates() {
+    if (isSideProfile()) return;  // WinSparkle was never initialised (see initUpdater)
     // On Windows-on-ARM the user can pick which build to update to (native ARM64 or emulated
     // x64); point WinSparkle at that architecture's feed first. On x64 hardware there is only
     // one runnable architecture, so check directly. NB: WinSparkle compares by VERSION, so a
@@ -150,7 +157,9 @@ void checkForUpdates() {
     win_sparkle_check_update_with_ui();
 }
 
-void shutdownUpdater() { win_sparkle_cleanup(); }
+void shutdownUpdater() {
+    if (!isSideProfile()) win_sparkle_cleanup();
+}
 
 }  // namespace rabbitears
 

@@ -34,6 +34,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
+#include "platform/Profile.h"
 #include "platform/Updater.h"
 #include "resource.h"
 #include "version.h"
@@ -83,7 +84,7 @@ std::vector<BtnRect> cmdButtonRects(HWND hwnd, AppState* st) {
     const int h = cmdBarH(st->dpi);
     const int btnH = dp(30, st->dpi);
     const int y = (h - btnH) / 2;
-    int x = dp(14, st->dpi) + measureText(hwnd, st->titleFont, L"RabbitEars") + dp(20, st->dpi);
+    int x = dp(14, st->dpi) + measureText(hwnd, st->titleFont, appTitle().c_str()) + dp(20, st->dpi);
     for (const CmdBtn& b : kCmdBtns) {
         // Glyph (icon) buttons are square; text buttons size to the localized label.
         const int w = b.glyph ? btnH
@@ -135,7 +136,9 @@ void drawCmdBar(HWND hwnd, AppState* st, HDC target) {
     HGDIOBJ oldFont = SelectObject(dc, st->titleFont);
     SetTextColor(dc, th.accent);
     RECT titleRc{dp(14, st->dpi), 0, W, H};
-    DrawTextW(dc, L"RabbitEars", -1, &titleRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    // appTitle(): "RabbitEars", or "RabbitEars · dev" for a profile (platform/Profile.h) — the
+    // button row above measures the same string, so a longer title pushes the buttons along.
+    DrawTextW(dc, appTitle().c_str(), -1, &titleRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     // toolbar buttons — the Settings button is a gear glyph (drawn in the MDL2 font), Add Playlist
     // is a localized text label.
