@@ -31,9 +31,53 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.17 is the last Windows release** · macOS **0.2.17** · unreleased changes on `main` + in the working tree
+## Current state — **v0.2.18 is PUBLISHED on GitHub, auto-update NOT yet live** · macOS **0.2.17**
 
-### ▶️ Since v0.2.17 — UNRELEASED (2026-07-29 → 2026-09-23) · `APP_VERSION` is now **0.2.18** (bumped, NOT released)
+### 🚀 0.2.18 — GitHub release LIVE (2026-09-24), appcasts PENDING the owner's Mac signatures
+
+**Released:** tag **`v0.2.18`** @ `3c14828` (verified: `git ls-remote origin refs/heads/main` == HEAD
+before building AND before tagging), full version **`0.2.18.426`**, GitHub release "RabbitEars
+0.2.18" with three installers — sizes and SHA-256 (the uploaded sizes were checked against these):
+
+| installer | bytes | SHA-256 |
+|---|---|---|
+| `RabbitEars-0.2.18-setup.exe` (x64) | 35,418,641 | `151087AA85325B2E7A32ABA85E3F05EF69355C6306C5FD3CEEE61CDC52AE3C30` |
+| `RabbitEars-0.2.18-arm64-setup.exe` | 30,261,202 | `29949469F6E743E461981FFB19BC33D3EED4F4E95C5ADCE9D587BE6113D103B8` |
+| `RabbitEars-0.2.18-universal-setup.exe` | 63,373,548 | `A32D396096994B72CB8D011AB8E2C0982329A6B6117654230D464AC9B49310A9` |
+
+Both theme flags built and `--selftest` ALL PASS on the release commit; the ARM64 exe's PE machine is
+`0xAA64`; both build dirs cached at THEME_ENGINE=ON / BUILD_GUI=ON.
+
+🔴 **NOT DONE — existing users will not auto-update until this is:**
+1. **Owner, on the Mac:** download the x64 and arm64 installers from the release, check the SHA-256
+   above, and sign each: `scripts/sign-release.sh RabbitEars-0.2.18-setup.exe` and
+   `scripts/sign-release.sh RabbitEars-0.2.18-arm64-setup.exe` (the universal one is not in any
+   appcast and needs no signature).
+2. **Then, on Windows** (the assistant can do this given the two signatures):
+   ```
+   pwsh scripts\make-appcast.ps1 -Version 0.2.18.426 -Tag v0.2.18 -SetupExe build\installer\RabbitEars-0.2.18-setup.exe -Signature <sig-x64>
+   pwsh scripts\make-appcast.ps1 -Arch arm64 -Version 0.2.18.426 -Tag v0.2.18 -SetupExe build\installer\RabbitEars-0.2.18-arm64-setup.exe -Signature <sig-arm64>
+   ```
+   ALWAYS `-Tag v0.2.18` (the default `v0.2.18.426` 404s). Check each printed `url=`; commit + push
+   `appcast.xml` and `appcast-arm64.xml`; then verify both feeds AND both enclosure URLs return HTTP
+   200 and download to the signed length. Cross-check the two appcasts so the x64/arm64 signatures
+   cannot be swapped. (Past releases: the `raw.githubusercontent.com` feed caches ~5 min.)
+3. **If the installers must be rebuilt for any reason**, the build number must still be 426 — i.e.
+   build from `3c14828` exactly, or re-cut the release.
+
+**What 0.2.18 contains** (four commits on top of `b4b3e4c`, plus the two already pushed before):
+`b5c016f` search debounce · `b4b3e4c` lost schedule-status writes · `e8886cb` RabbitEarsRender
+(photoreal Phase 0) · `ad5f315` Phase 1 — the six meter defects · `aefadf2` dev side profile +
+`APP_VERSION` 0.2.18 · `3c14828` the VU instruments (backlit "VU needle" + new "Silver VU", PEAK lamp
+lights red in the red zone). The rows below are the pre-release record of each.
+
+⚠️ **Shipped without an owner run:** the search debounce and the lost-status-write fix (its six owner
+checks are in the "Lost schedule-status writes" block — the ordinary scheduled-recording path first);
+the Light-skin meter fixes; and the final PEAK-follows-the-needle rule (no separate review pass).
+**Owner-seen live before the cut:** the tank readout ("good — looks nice"), the VU dials ("look
+amazing").
+
+### ▶️ The 0.2.18 changes, as recorded before the cut (2026-07-29 → 2026-09-24)
 
 | change | status | owner check |
 |---|---|---|
@@ -444,7 +488,8 @@ Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** �
 merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
 only branch local and remote. (All five were verified fully merged with zero unmerged commits and no
 open PRs before deletion; four of them belonged to already-merged macOS PRs #33/#34/#35/#42.)
-Tags `v0.1.0`…**`v0.2.17`**; **the next tag is `v0.2.18`** (or `v0.3.0` if series lands first).
+Tags `v0.1.0`…**`v0.2.18`** (0.2.18 @ `3c14828`, `0.2.18.426`, published 2026-09-24 — appcasts
+pending, see "Current state"); **the next tag is `v0.2.19`** (or `v0.3.0` if series lands first).
 **v0.2.17 released @ `3660441`** (full `0.2.17.388`; both appcasts @ `fe3d872`) — the big-library
 release: canonical `stream_url` + **schema v9** (the duplicate-films merge), the grid row cap, skip
 back/forward, and the v8-migration fix. Prior: **v0.2.16 released @ `d83b002`** (full `0.2.16.377`;
@@ -1015,102 +1060,81 @@ Paste this verbatim to start a fresh session with working context restored:
 > You are continuing **RabbitEars**, a native **Windows Win32 / C++20** IPTV player on **libVLC
 > 3.0.23** with a shared **`common/`** core (also feeds the macOS app), dark "Claude-desktop" chrome
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
-> vendored/NuGet. Repo `G:\RabbitEars`.
+> vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first** — the top "Current state" block and "What still needs the
-> owner" — plus `Win32/BACKLOG.md`. Design docs: `Win32/docs/PHOTOREAL.md` (the ACTIVE epic — skins
-> and meters made more photorealistic) and `Win32/docs/XTREAM_VOD.md` (written off a REAL provider's
-> measured numbers). Older per-release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before
-> re-trying an idea, several have been tried and reverted.
+> **Read `Win32/HANDOVER.md` first** — the top "Current state" block — plus `Win32/BACKLOG.md` and
+> `Win32/docs/PHOTOREAL.md` (the active epic: photoreal skins and meters). Older release history is in
+> `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
 >
-> **State:** last SHIPPED = **`v0.2.17`** (2026-07-28, `0.2.17.388`, tag @ `3660441`, both appcasts
-> LIVE @ `fe3d872`); macOS is also at **0.2.17**. `main` is the ONLY branch. The repo has TWO writers
-> (the mac team pushes to `main` too), so never trust a doc's claim about push state — **run
-> `git fetch`, `git status` and `git log origin/main..` first, and verify `git ls-remote origin
-> refs/heads/main` == HEAD immediately before you build anything for a release**, because the build
-> number is the commit count. `APP_VERSION` is **`0.2.18`** (bumped 2026-09-23, not yet released).
-> **Bumping ≠ releasing** — the tag and the two appcasts gate the rollout.
+> **State:** **0.2.18 is PUBLISHED on GitHub** (2026-09-24, full `0.2.18.426`, tag `v0.2.18` @
+> `3c14828`, three installers) but **auto-update is NOT live yet**: the two appcasts wait on the
+> owner's EdDSA signatures from their Mac. **First job:** when the owner gives you the x64 and arm64
+> signatures, run the two `make-appcast.ps1` commands in HANDOVER's 0.2.18 block (always
+> `-Tag v0.2.18`), commit + push `appcast.xml` / `appcast-arm64.xml`, and verify both feeds and both
+> enclosure URLs return HTTP 200 at the signed length. Do not rebuild the installers (the build number
+> is the commit count; the release is 426). macOS is at 0.2.17. `APP_VERSION` is `0.2.18`; the next
+> release bumps it. The repo has TWO writers (the mac team pushes to `main`), so run `git fetch`,
+> `git status` and `git log origin/main..` first, and verify `git ls-remote origin refs/heads/main`
+> == HEAD immediately before building anything for a release.
 >
-> **Unreleased Windows work on `main`, none of it seen running by the owner:**
-> * the **search debounce** (`b5c016f`, pushed) — GUI-only, zero automated coverage.
-> * the **lost schedule-status-write fix** (`b4b3e4c`, pushed; flagged by the mac team) — a lost status
->   write could truncate a recording or silently mark it Missed. Persist-before-start via the shared
->   `beginScheduledStart`, a retrying reconcile, write-behind for terminal statuses pinned to row
->   IDENTITY (SQLite reuses rowids), transactional `deleteRule`, and a pre-existing Delete bug fixed.
->   Six adversarial review rounds; the Win32 glue is untested. **Owner checks: HANDOVER's "Lost
->   schedule-status writes" block — the ordinary scheduled-recording path FIRST.** The mac start site
->   has the same bug; the follow-up is written up for the mac team at the top of BACKLOG.
-> * **photoreal Phase 0 — `RabbitEarsRender`** (may still be uncommitted — check `git status`): a
->   headless tool that renders every meter look, the tank and every skinned strip to PNG from the REAL
->   paint code, byte-reproducibly. **Use it for every visual change** (render before/after, read the
->   PNGs yourself, hand the owner the pair).
-> * **photoreal Phase 1 — the six meter defects the tool found, FIXED**, and **the VU instruments** —
->   "VU needle" rebuilt as the owner's backlit reference meter plus a NEW "Silver VU" (`Win32/ui/VuDial`;
->   owner, live: *"the VU meters look amazing"*). May still be uncommitted — the reviewed trees are
->   saved as `228ddb5` (Phase 0) and `de8eece` (+ Phase 1, dev profile, 0.2.18 bump) so they can be
->   committed separately; see HANDOVER's photoreal and dev-profile blocks. The rest of the epic waits
->   on the owner's decisions at the bottom of `docs/PHOTOREAL.md` — the size question matters most:
->   the dials' numerals need ~50 px and the tray gives 26–39.
-> * **A dev side profile**: `scripts\run-profile.ps1` runs `build\Win32\RabbitEars.exe` BESIDE the
->   installed app on a snapshot of the real library (`Win32/platform/Profile.h`). Use it for every
->   owner check — it never touches the wake task or WinSparkle.
+> **What shipped in 0.2.18 that the owner has NOT run:** the search debounce; the lost
+> schedule-status-write fix (HANDOVER's "Lost schedule-status writes" block has six owner checks —
+> the ordinary scheduled-recording path first); the Light-skin meter fixes; the final
+> "PEAK lamp lights whenever the needle is in the red" rule (no separate review pass). Owner-seen
+> and liked: the tank readout and the new VU dials ("look amazing").
 >
-> **The one number that matters:** the owner's real library is **411,149 rows**, not the ~44k the
-> design assumed. `--benchdb`'s DEFAULTS still model the small shape and have misrepresented this
-> library twice. Measure against the real one before believing any perf claim.
+> **Tools that change how visual work is done:**
+> * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip]` renders every meter look, the
+>   tank and every skinned strip to PNG from the REAL paint code, byte-reproducibly. Render before
+>   and after every visual change, compare with a pixel diff, read the PNGs yourself, and hand the
+>   owner a labelled before/after sheet. The "150dpi" sheets are 156 % scaling.
+> * `powershell -File scripts\run-profile.ps1 [-Refresh]` runs the dev build BESIDE the installed app
+>   as profile "dev" (`Win32/platform/Profile.h`) on a snapshot of the real library — it never touches
+>   the wake task or WinSparkle. The owner checks things live this way. **This sandbox cannot drive
+>   the GUI (computer-use for RabbitEars was declined): the owner drives the screen — tell them where
+>   to look.** The owner runs at 150 % scaling; their tray is LED Spectrum, Tube Signal, LCD Bitrate
+>   and a VU Frame-rate meter with a cyan lamp, glass 69 %.
 >
-> **Two things shipped unexercised — check these before adding features:**
-> * **Schema v9 rewrites `stream_url` and merges rows on first launch.** It ran cleanly on the
->   owner's DB and is a no-op on a live-TV-only one, but that is the only real library it has met.
->   First suspect if anyone reports a wrong/empty channel list after upgrading.
-> * **The VOD sync's DELETE path has never run live.** A first sync only inserts; the SECOND calls
->   `retireMissingChannels` in anger. "0 removed" is the healthy answer.
+> **The photoreal epic, next:** Phase 0 (the render tool), Phase 1 (six defects) and the VU
+> instruments (`Win32/ui/VuDial` — backlit "VU needle" + "Silver VU", built to the owner's reference
+> photos) have shipped. The rest waits on the owner's decisions at the bottom of PHOTOREAL.md — **the
+> size question matters most**: the tray dials are 26–39 px tall, and their numerals need ~50 px, so
+> a taller meter tray is what would put the scale's numbers in the tray.
 >
-> **Traps that have already cost real time, in order of cost:**
-> * **A confident claim in a comment is not a verified fact.** `bulkInsertChannels` documented that
->   the m3u and sync URLs "collide BY DESIGN" — a real provider falsified it with one `:80` and
->   doubled a 43,599-film library. Same shape twice more in that line: "macOS needs no source
->   change" (it did not compile — `_wtoll` is MSVC-only in shared code), and "pinned by a selftest"
->   where the test did not execute the code it claimed to cover. **If a comment asserts behaviour,
->   verify it or weaken it.**
-> * **`common/` is shared with mac, and mac keeps its own copies of some of it.** `Log.h` is
->   implemented by BOTH platforms; a new `ScheduleStatus` (or any enum mac switches on) needs a mac
->   `switch` case in the SAME commit (`-Wswitch -Werror`); `mac/src/app/MeterModel.cpp` parses its own
->   meter settings with exact arity (under different keys and in a different DB from Win32's, so it
->   binds only if MeterModel is ever promoted into `common/`). **Always grep `mac/` before changing
->   anything under `common/`** — you cannot COMPILE mac here, so keep shared changes additive and
->   source-compatible, and prefer flagging over editing their tree. The mac team says the theme engine
->   is N/A by design there, so skin work is Windows-only.
-> * **A fix's neighbours are where the review findings keep coming from.** The lost-write fix's core
->   held from its second review round; the adjacent Scheduled Recordings **Delete** path produced new
->   edge cases for four more rounds, each fix exposing a neighbouring pre-existing assumption. Before
->   touching that path, read the long comment in `onManageSchedules`' `cb.remove`.
-> * **Command ids: pick from a genuine gap.** The computed ranges (`ID_DOCK_BASE` 2051–2062,
->   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+) have no literal to grep — one
->   collision already shipped as a bug. 2010–2033 and 2044–2050 are largely taken; `WM_APP+1..+10`
->   are all used.
+> **The one number that matters for perf:** the owner's real library is **411,149 rows**, not the
+> ~44k the design assumed; `--benchdb`'s defaults still model the small shape. Measure against the
+> real one. **Still unexercised:** schema v9's row merge on anyone else's library, and the VOD sync's
+> DELETE path (the SECOND sync; "0 removed" is healthy).
+>
+> **Traps that have cost real time:**
+> * **A confident comment is not a verified fact.** Verify or weaken it — every adversarial review
+>   this session still found over-claiming comments.
+> * **`common/` is shared with mac** (Apple clang, which you cannot compile here): keep shared changes
+>   additive; a new enum value mac switches on needs its mac `switch` case in the same commit; grep
+>   `mac/` first; prefer flagging over editing their tree. Meter looks and skins are Win32-only.
+> * **Launching an exe from `G:` through the SHELL** (`Start-Process`, Explorer) raises a blocking
+>   "Open File – Security Warning" — it looks like a hang. Use CreateProcess (`run-profile.ps1` does).
+> * **`LNK1168`** = RabbitEars is running. Close it with `WM_CLOSE` (`CloseMainWindow`), never a
+>   force-kill (an in-progress recording loses its moov atom). If it will not close, a dialog is
+>   probably open in it — ask the owner to close it.
+> * **Splitting uncommitted work into several commits:** snapshot the working state as a git tree with
+>   a temporary index (`GIT_INDEX_FILE=… git read-tree HEAD; git add <paths>; git write-tree`) before
+>   the next change touches the same files; later `git read-tree <tree>` + `git commit`.
+> * **Editing files via inline Python in bash heredocs** mangled `\r` once (a `\\r` became a CR) and
+>   stray brackets twice — write the script to a file, and scan edited files for control characters.
+> * **Command ids:** pick from a genuine gap (the computed ranges `ID_DOCK_BASE` 2051–2062,
+>   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+ have no literal to grep).
 > * **Release:** bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` line 11 (leave the `if(APPLE)`
->   mac override alone). Three installers, two appcasts; always pass `-Tag v<ver>` to
->   `make-appcast.ps1` — it defaults to `v<full.version>`, which 404s. Only EdDSA signing happens on
->   the owner's Mac. **PUSH BEFORE TAGGING and verify `git ls-remote origin refs/heads/main` equals
->   HEAD BEFORE you build** — the build number is the commit count and is baked at configure time,
->   so discovering a mismatch afterwards means rebuilding everything. This check has now caught a
->   real blocker on two consecutive cuts. Verify the enclosure URLs resolve HTTP 200, not just the
->   feeds.
-> * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** — the default is ON but build dirs
->   cache it, and a stale OFF cache once shipped a Theme-menu-less exe. Verify BOTH flags before
->   committing. `LNK1168` means the owner is running the app — close it with `WM_CLOSE`
->   (`CloseMainWindow`), never a force-kill, or an in-progress recording loses its moov atom.
-> * **i18n:** `common/i18n/*.json` → `tools/i18n/gen_i18n.py` generates `common/core/Strings.*`
->   (never hand-edit; `--check` must pass). 588 keys × 4 languages; `zh-HK` is an override layer over
->   `zh-Hant` (it uses 劇集 where zh-Hant says 影集). Append new keys at the END of `keys.json` so no
->   `StringId` value moves. CJK is a machine draft.
+>   override). Three installers (`build-installer.cmd`, `… arm64`, `… universal`), two appcasts, always
+>   `-Tag v<ver>`. Push before tagging; verify `ls-remote` == HEAD before building.
+> * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** and verify BOTH flags before committing
+>   (build dirs cache the flag; leave the cache at ON).
+> * **i18n:** `common/i18n/*.json` → `python tools/i18n/gen_i18n.py` (never hand-edit
+>   `common/core/Strings.*`; `--check` must pass). 589 keys × 4 languages; `zh-HK` is an override
+>   layer; append new keys at the END of `keys.json`. CJK is a machine draft.
 >
-> **Working rules:** every change adversarially reviewed (background agent/workflow) + build-verified
-> BOTH theme flags + `--selftest` before committing. **This sandbox cannot launch the GUI** — but it
-> CAN render the meters and the skinned strip with `build\Win32\RabbitEarsRender.exe <outdir>`, and
-> you can read those PNGs: check pixels yourself, then hand the owner before/after sheets for the
-> taste call and for everything the renders cannot show (their own settings, live streams, the rest
-> of the window). Hand every runtime pass to the owner, and do not conclude anything about a class of
-> streams from a single channel. Commit only when asked; stage specific paths (never `git add -A`);
-> end commit messages with the Co-Authored-By trailer.
+> **Working rules:** every change adversarially reviewed (background agents) + build-verified with
+> BOTH theme flags + `--selftest` ALL PASS before committing; render before/after for anything
+> visual. Commit only when asked; stage specific paths (never `git add -A`); end commit messages with
+> the Co-Authored-By trailer. Hand every runtime check to the owner, and never conclude anything about
+> a class of streams from one channel.
