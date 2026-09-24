@@ -31,9 +31,40 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.18 SHIPPED, auto-update LIVE** · **0.2.19-dev** ready to cut (`APP_VERSION` 0.2.19) · macOS **0.2.17**
+## Current state — **v0.2.19 SHIPPED, auto-update LIVE** (`APP_VERSION` 0.2.19 — bump before the next cut) · macOS **0.2.17**
 
-### 🛠️ 0.2.19-dev — the owner's two EPG requests (2026-09-24)
+### ✅ 0.2.19 — SHIPPED (2026-09-24), both appcasts LIVE @ `d2401b5`
+
+**Released:** tag **`v0.2.19`** @ `5a2378d` (verified: `git ls-remote origin refs/heads/main` == HEAD
+before building AND before tagging), full version **`0.2.19.434`**, GitHub release "RabbitEars 0.2.19"
+with three installers — the uploaded sizes match, and the two per-arch assets downloaded back from the
+release are byte-identical to the local builds:
+
+| installer | bytes | SHA-256 |
+|---|---|---|
+| `RabbitEars-0.2.19-setup.exe` (x64) | 35,539,018 | `B74C01ADCBC32F1757C7AFEC7272452941A653EEC1F467D3CA644C83D8EE05ED` |
+| `RabbitEars-0.2.19-arm64-setup.exe` | 30,374,457 | `A16F1D6A198CDD7428B9032AE8561151524F36ECCBBA96133BE4FD3C364FA6E0` |
+| `RabbitEars-0.2.19-universal-setup.exe` | 63,614,899 | `A2EF1BB6A8A434C4D95E68E55D15AB9B259AE96B9623A2FBA99682AA562F9F26` |
+
+Both theme flags built and `--selftest` ALL PASS (709) on the release commit (x64); both build dirs
+cached at THEME_ENGINE=ON / BUILD_GUI=ON; the ARM64 exe's PE machine is `0xAA64` (cross-compiled — this
+x64 box cannot run the ARM64 selftest). Signed by the owner on the Mac with the 0.2.18 recipe below
+(`SIGN_UPDATE=… SIGN_UPDATE_ARGS="--account SQLTerminal" scripts/sign-release.sh`, first try); both
+signatures verified on Windows against the app's EdDSA key over the DOWNLOADED bytes (valid on their
+own installer, INVALID swapped); `make-appcast.ps1 -Tag v0.2.19` for both arches.
+
+**What 0.2.19 contains:** `609b31b` guide-refresh progress + Set Guide URL address extraction + log
+credential masking (step 1) · `0892cf4` the TV Guide's one search box — channels + FTS5 programme
+search, schema v10 (step 2) · `35b8826` Greek/Romanian case folding in recording rules · docs
+(`50af36c`, `7325974`, `5a2378d`). The release notes are user-facing, in the 0.2.18 style.
+
+**Shipped with less than a full owner run:** the search's filter chip, the jump from a result and
+typing over the grid (in the owner's test list, nothing reported against them — the screenshots
+covered the results list); the recording-rules fold (selftest only — no Greek series rule has run).
+**To watch after release:** schema v10 on other people's libraries (a table-creation migration, far
+milder than v9's rewrite), and the mac team's first compile of the new `common/db` code.
+
+### 🛠️ 0.2.19 — the owner's two EPG requests (2026-09-24)
 
 The owner asked for **(1) full-text search in the EPG** and **(2) a calendar in the EPG** to see when a
 show airs in the future. Agreed order (owner, 2026-09-24): step 1 refresh feedback + log hygiene →
@@ -144,8 +175,8 @@ like a playlist link; the topmost loading box staying above other apps during th
   first compile of the new `common/db` code on their side; flagged in BACKLOG. A mac build on it
   migrates its database to v10 (empty FTS tables; nothing on mac searches yet).
 
-**Next: 0.2.19 is ready to cut** (step 1 + step 2 + the rules fix). **Step 3 (the calendar) stays
-parked** — see "What the investigation found".
+**Shipped in 0.2.19** (step 1 + step 2 + the rules fix — see the block above). **Step 3 (the
+calendar) stays parked** — see "What the investigation found".
 
 ### ✅ 0.2.18 — SHIPPED (2026-09-24), both appcasts LIVE @ `2df99ea`
 
@@ -1178,28 +1209,31 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first** — the top "Current state" block (the 0.2.19-dev EPG work) — plus
+> **Read `Win32/HANDOVER.md` first** — the top "Current state" block (0.2.19 and the EPG work) — plus
 > `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic, parked on owner decisions).
 > Older release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
 >
-> **State:** **0.2.18 is SHIPPED and auto-update is LIVE** (full `0.2.18.426`, tag `v0.2.18` @ `3c14828`,
-> appcasts @ `2df99ea`). `APP_VERSION` is **0.2.19** (bumped, not released). macOS is at 0.2.17.
-> **Active work: the owner's two EPG requests** — full-text search in the guide and a calendar of
-> future airings. **Steps 1 and 2 are done, committed and owner-tested:** step 1 = guide-refresh
-> progress + timings, Set Guide URL extracting the address from pasted text, provider logins masked in
-> the diagnostic log; step 2 (`0892cf4`) = ONE search box in the TV Guide for channels and programmes,
-> FTS5 + schema v10 in `common/` (`docs/EPG_SEARCH.md` is the design and as-built record), plus
-> `35b8826` (Greek/Romanian case folding in recording rules). **0.2.19 is ready to cut.** **Step 3,
-> the calendar, is parked**: the owner's provider publishes only ~6 h of future guide and its Xtream
-> API none — HANDOVER's "What the investigation found" has every measurement. The repo has TWO writers (the mac team pushes to `main`), so run
-> `git fetch`, `git status` and `git log origin/main..` first, and verify
-> `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for a release.
+> **State:** **0.2.19 is SHIPPED and auto-update is LIVE** (full `0.2.19.434`, tag `v0.2.19` @ `5a2378d`,
+> appcasts @ `d2401b5`). `APP_VERSION` is still **0.2.19** — bump it (`cmake/AppVersion.cmake:11`, ask
+> the owner) before the next cut. macOS is at 0.2.17.
+> **The owner's two EPG requests** — full-text search in the guide and a calendar of future airings:
+> **steps 1 and 2 SHIPPED in 0.2.19** — step 1 = guide-refresh progress + timings, Set Guide URL
+> extracting the address from pasted text, provider logins masked in the diagnostic log; step 2
+> (`0892cf4`) = ONE search box in the TV Guide for channels and programmes, FTS5 + schema v10 in
+> `common/` (`docs/EPG_SEARCH.md` is the design and as-built record), plus `35b8826` (Greek/Romanian
+> case folding in recording rules). **Step 3, the calendar, is parked**: the owner's provider
+> publishes only ~6 h of future guide and its Xtream API none — HANDOVER's "What the investigation
+> found" has every measurement. BACKLOG's EPG section lists the follow-ups. The repo has TWO writers
+> (the mac team pushes to `main`), so run `git fetch`, `git status` and `git log origin/main..` first,
+> and verify `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for
+> a release.
 >
-> **What shipped in 0.2.18 that the owner has NOT run:** the search debounce; the lost
-> schedule-status-write fix (HANDOVER's "Lost schedule-status writes" block has six owner checks —
-> the ordinary scheduled-recording path first); the Light-skin meter fixes; the final
-> "PEAK lamp lights whenever the needle is in the red" rule (no separate review pass). Owner-seen
-> and liked: the tank readout and the new VU dials ("look amazing").
+> **Shipped without a full owner run:** in 0.2.19 the search's filter chip, the jump from a result and
+> typing over the grid (nothing reported against them), and the recording-rules fold (selftest only);
+> in 0.2.18 the search debounce, the lost schedule-status-write fix (HANDOVER's "Lost schedule-status
+> writes" block has six owner checks — the ordinary scheduled-recording path first), the Light-skin
+> meter fixes, and the "PEAK lamp lights whenever the needle is in the red" rule. Owner-seen and
+> liked: the tank readout and the VU dials ("look amazing"), the guide search results.
 >
 > **Tools that change how visual work is done:**
 > * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip]` renders every meter look, the

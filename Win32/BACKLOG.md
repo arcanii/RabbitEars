@@ -12,7 +12,7 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 The plan, what step 1 shipped, and every measurement behind it: **`Win32/HANDOVER.md` → "0.2.19-dev —
 the owner's two EPG requests"**. In short: step 1 (refresh progress, Set Guide URL, log masking) and
 **step 2** (ONE guide search box for channels + programmes, FTS5 + schema v10 — `0892cf4`, design and
-as-built record in `docs/EPG_SEARCH.md`) are done and owner-tested; **step 3 (calendar) is parked** —
+as-built record in `docs/EPG_SEARCH.md`) SHIPPED in 0.2.19; **step 3 (calendar) is parked** —
 the owner's provider publishes ~6 h of future guide and its Xtream API none.
 
 Open items this work left or found (none blocking):
