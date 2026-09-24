@@ -7,7 +7,41 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 
 ---
 
-## 🖼️ Photoreal skins & meters — the active epic (Phase 0 done, 2026-09-23)
+## 🔎 EPG search + calendar — the active work (owner request, 2026-09-24)
+
+The plan, what step 1 shipped, and every measurement behind it: **`Win32/HANDOVER.md` → "0.2.19-dev —
+the owner's two EPG requests"**. In short: step 1 (refresh progress, Set Guide URL, log masking) is
+done; **step 2** = `docs/EPG_SEARCH.md` first, then a real guide search box + FTS5 programme search
+(titles + descriptions); **step 3 (calendar) is parked** — the owner's provider publishes ~6 h of future
+guide and its Xtream API none.
+
+Open items this work left or found (none blocking):
+- **Set Guide URL: warn when the link looks like a PLAYLIST** (`get.php`, `type=m3u`, `.m3u`) rather
+  than a guide — the single-line prompt keeps only the first line of a pasted email block, and if that
+  is the M3U link the refresh silently stores 0 programmes. Needs a Yes/No prompt + i18n strings.
+- **The loading box is TOPMOST** and now stays up through the ~1 s UI-thread store, so if the owner
+  switches apps during that second it floats over them until the store ends. Cosmetic; the real fix is
+  storing off the UI thread (own connection — see "TV Guide off-thread" below).
+- **A second guide source** is what the calendar needs. Today: one `epg_url` per playlist, and
+  `bulkInsertProgrammes` wipes the whole playlist's programmes on every refresh — a second source would
+  need per-source rows (or merging) and a channel-id mapping (a third-party XMLTV rarely uses the
+  provider's tvg-ids).
+- **Catch-up:** 298 of the owner's 15,345 live channels expose `tv_archive` (1–3 days) — past search
+  results could be made playable there. Not scoped.
+- **Multi-URL `x-tvg-url`:** an M3U header may list several guide URLs comma-separated; stored as one
+  `epg_url` it fails with "Invalid URL.". Not seen on the owner's playlists — unverified how common.
+- **libVLC noise:** an HLS FAST channel (`*.wurl.com`) logs `local stream N error: Cancellation (0x8)`
+  every ~6 s while playing normally — ~150 lines in 15 minutes of the owner's test. Harmless; a filter
+  candidate if the log gets hard to read.
+- 🍎 **For the mac team (flag, not an edit of their tree):** (1) `mac/platform/Log.mm` masks nothing, so
+  the mac log still records Xtream logins in clear — `Win32/platform/UrlRedact.{h,cpp}` is pure C++ and
+  could move to `common/` if they want it; (2) `common/core/XtreamClient.h`'s `XtreamCreds` comment says
+  "'+' is … a literal '+' in a path", but `encodeComponent` writes a `+` into a path as `%2B` (the code
+  is fine — the comment overstates).
+
+---
+
+## 🖼️ Photoreal skins & meters — parked on owner decisions (Phase 0 done, 2026-09-23)
 
 Design notes, research and the phased proposal: **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)**. Phase 0
 (`RabbitEarsRender`, a headless PNG renderer for the meters and the skinned strip) is built and verified.
@@ -511,6 +545,12 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
      `"TV guide first-open: DB+build … ms"` has never once fired. Optimising an unmeasured path —
      by adding a second sqlite connection and an async rewrite of `onEpgGuide`, in the same area
      where a review already caught one regression — is how you buy risk with no return.
+  **📏 NOW MEASURED (2026-09-24), on the owner's real guide:** the diag line read
+  **`TV guide first-open: DB+build 1221 ms, window 26 ms (2410 channels)`** — 46,776 programmes in the
+  −6 h..+72 h window of a 192,595-programme guide. 1.2 s on the UI thread behind the loading box: under
+  DWM's ~5 s "Not Responding" ghosting, but a noticeable stall on every first open. Not yet profiled
+  (query vs per-row materialisation). Note step 2 of the EPG work adds a search path that must not
+  repeat this — search should query on demand, not load the window.
   **To revisit:** set a guide URL (Settings ▸ Set Guide URL…), run Settings ▸ Refresh Guide, open the
   TV Guide once, and read that diag line. Only if the number is genuinely bad is the threading work
   justified — and it must then use its OWN sqlite3 connection (never `st->db`, which is FULLMUTEX

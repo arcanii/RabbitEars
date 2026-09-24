@@ -31,9 +31,94 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.18 is PUBLISHED on GitHub, auto-update NOT yet live** · macOS **0.2.17**
+## Current state — **v0.2.18 SHIPPED, auto-update LIVE** · **0.2.19-dev** in progress (`APP_VERSION` 0.2.19) · macOS **0.2.17**
 
-### 🚀 0.2.18 — GitHub release LIVE (2026-09-24), appcasts PENDING the owner's Mac signatures
+### 🛠️ 0.2.19-dev — the owner's two EPG requests (2026-09-24)
+
+The owner asked for **(1) full-text search in the EPG** and **(2) a calendar in the EPG** to see when a
+show airs in the future. Agreed order (owner, 2026-09-24): step 1 refresh feedback + log hygiene →
+step 2 a real guide search box + FTS5 programme search (descriptions INCLUDED, owner's call) → step 3
+the calendar, only once there is guide data that reaches far enough ahead to fill one.
+
+**Step 1 — DONE, owner-verified live (dev profile, 2026-09-24): "can see progress - good", Set Guide
+URL "works", VOD played with its line masked.** Win32-only except one additive `common/` overload:
+- **Guide refresh progress.** A running MB count while the XMLTV downloads (Win32-only
+  `httpGetWithProgress`, `Win32/platform/HttpProgress.h`), a running programme count while it parses
+  (new overload `parseXmltv(bytes, onProgress)` in `common/core/XmltvParser` — the one-argument form
+  keeps its signature and results; mac calls only that), and the loading box now STAYS UP through the
+  UI-thread store and the series-rule pass ("Saving N programmes…", "Checking your recording rules…")
+  — before, it closed first and a 190k-programme store left a window that did not respond with
+  nothing on screen. `updateLoadingDialog` now paints its line before returning.
+- **Per-step timings in the log** (`EPG timings for "<playlist>": download … gunzip … parse … store`).
+- **Set Guide URL keeps just the address** out of pasted text (`extractHttpUrl`,
+  `Win32/platform/UrlRedact`): the owner had pasted `EPG Link : http://…` from the provider's email,
+  which was saved as-is and failed every refresh with "Invalid URL.". A lone address is kept EXACTLY as
+  typed (a password may end in `.`/`!`/`)`); text with no http(s) address gets a notice and the prompt
+  reopens with the text kept. Two new i18n pairs (595 keys now).
+- **🔒 The diagnostic log no longer records provider logins.** It did, in clear: an Xtream login is in
+  every playlist/guide URL (query) and every stream URL (path, `/USER/PASS/123`) — all 410,154 of the
+  owner's stream URLs carry it, and `play:` lines, playlist/guide lines and libVLC messages logged them.
+  Now `Win32/platform/Log.cpp` masks EVERY line (`redactUrls`): user-info, credential-named query
+  values and Xtream stream-path logins by shape, plus registered secrets anywhere as whole tokens
+  (registered from each playlist's URLs at startup, on download/add/Set Guide URL, and a known
+  account's path spelling on play/record — `Win32/platform/LogSecrets.h`). **The previous session's
+  log is scrubbed at startup** (`scrubPreviousLog`, temp-file + swap, 64 MB cap, WARN on any failure)
+  so the pre-fix log does not survive the upgrade. libVLC lines are no longer cut at 1,023 bytes (a cut
+  could leave half a password). **Verified:** the REAL `UrlRedact.cpp`, run over all 410,154 real stream
+  URLs by a throwaway harness: 0 still carry the login — by shape alone, with startup registration, and
+  quoted without a scheme; the owner's own logs after the test: 0 occurrences in either file, and the
+  10:57 log's three clear lines now read `username=***&password=***`. ⚠️ **The mac log sink
+  (`mac/platform/Log.mm`) masks nothing** — flagged for the mac team in BACKLOG, their tree untouched.
+
+**Verified:** both theme flags build clean at /W4, `--selftest` ALL PASS (632 checks; new blocks for
+the parser progress, the masking and the URL extraction — including a pin of the path-encoding mirror
+against XtreamClient's real encoder), `gen_i18n --check` OK. **Adversarially reviewed in three
+rounds:** R1 (code+security, claims) 11 claims findings + 3 medium code findings (a new playlist's
+guide URL not registered until the next launch; a clean guide URL losing a trailing `!`; masking
+garbling unrelated words) → fixed; R2: 2 medium (lookalike URLs registering ordinary words as secrets
+for the whole session; the old-log scrub was quadratic — 79 s on 16 MB) → fixed (gated registration,
+single-pass replace); R3: no high/medium, 4 low + 4 nits → all fixed. Reviewed state snapshot:
+tree `c0b12fe` (pre-R3 fixes). **Deferred to BACKLOG:** a warning when the pasted guide link looks
+like a playlist link; the topmost loading box staying above other apps during the ~1 s store.
+
+**What the investigation found — read before steps 2 and 3** (all measured on the owner's real data):
+- **The owner's provider publishes only ~6 hours of future guide.** 192,595 programmes over 2,881
+  channels; median channel horizon **5.8 h** after a refresh (p90 7.2 h; 13 channels ≥ 24 h), plus
+  ~1.8 days of past. A calendar cannot show airings the provider never sends.
+- **Its Xtream API publishes NO guide at all:** `get_simple_data_table` and `get_short_epg` returned
+  empty lists for 18 channels across 6 regions (USA/FR/DE/CA/UK/PL) with the account authenticated
+  (Active) and `get_live_streams` returning 15,345 streams. `xmltv.php` is the only source. So the
+  calendar needs a SECOND guide source (today: one URL per playlist, and a refresh wipes the whole
+  playlist's programmes) — or stays parked.
+- **298 of 15,345 live channels have catch-up** (`tv_archive`, 1–3 days): past search results could
+  be playable on those — a possible later feature, not scoped.
+- **Refresh timings (two runs):** download of 61 MB **7.4–9.9 s** (75–85 % of the refresh), gunzip
+  5 ms, parse 0.72 s, store **0.78–1.28 s on the UI thread**, rule pass 0 ms (no rules). The guide's
+  first open: **1,221 ms** on the UI thread for 2,410 channels (46,776 programmes in its window) — the
+  first measurement ever of BACKLOG's deferred "TV Guide off-thread" item.
+- **Search, benchmarked on the real 192,595 programmes** (Python's SQLite 3.50, same engine): today's
+  kind of scan (`LIKE`, NOCASE is ASCII-only) 29–35 ms titles / 46–70 ms with descriptions, and it
+  MISSES accents and non-Latin case ("quebec" 10 titles vs 59; a Greek query 0 vs 20). FTS5: <1 ms for
+  typical queries, 8–22 ms for "news". Index: titles trigram 12.6 MB (rebuild 0.34 s), titles
+  unicode61 4.5 MB (0.17 s), + descriptions unicode61 +30 MB (1.21 s), + descriptions trigram 145 MB
+  (4.55 s — too big). The feed has NO sub-titles, categories or episode numbers; titles 17 % non-ASCII
+  (Latin accented, Greek, Cyrillic, Arabic; no CJK). **FTS5 is NOT compiled into our SQLite** on
+  either platform (`CMakeLists.txt:81` — the amalgamation's `SQLITE_CORE` compiles FTS5 out unless
+  `SQLITE_ENABLE_FTS5`); enabling it is one define that reaches the mac build too.
+- **The guide's corner search box has no caret** (owner): it is painted, not an EDIT — step 2 replaces it.
+
+**Next: step 2** — write `docs/EPG_SEARCH.md` first (shared-core boundary + a mac section: the FTS5
+define, a schema-v10 FTS table rebuilt inside `bulkInsertProgrammes`' transaction with no triggers),
+then build. Recommended index: titles trigram + descriptions unicode61.
+
+### ✅ 0.2.18 — SHIPPED (2026-09-24), both appcasts LIVE @ `2df99ea`
+
+**Auto-update LIVE (2026-09-24):** both appcasts `0.2.18.426` committed + pushed @ `2df99ea`. Owner-signed
+on the Mac (`sign_update --account SQLTerminal` — see the signing note under "Release / auto-update");
+**both signatures verified on Windows against the app's EdDSA public key before publishing** (each valid
+on its own installer, INVALID when swapped), both feeds HTTP 200 serving `0.2.18.426` byte-identical to
+the committed blobs, and both enclosure URLs downloaded end-to-end: HTTP 200, the signed length, the
+recorded SHA-256, and the signature valid on the downloaded bytes.
 
 **Released:** tag **`v0.2.18`** @ `3c14828` (verified: `git ls-remote origin refs/heads/main` == HEAD
 before building AND before tagging), full version **`0.2.18.426`**, GitHub release "RabbitEars
@@ -48,22 +133,15 @@ before building AND before tagging), full version **`0.2.18.426`**, GitHub relea
 Both theme flags built and `--selftest` ALL PASS on the release commit; the ARM64 exe's PE machine is
 `0xAA64`; both build dirs cached at THEME_ENGINE=ON / BUILD_GUI=ON.
 
-🔴 **NOT DONE — existing users will not auto-update until this is:**
-1. **Owner, on the Mac:** download the x64 and arm64 installers from the release, check the SHA-256
-   above, and sign each: `scripts/sign-release.sh RabbitEars-0.2.18-setup.exe` and
-   `scripts/sign-release.sh RabbitEars-0.2.18-arm64-setup.exe` (the universal one is not in any
-   appcast and needs no signature).
-2. **Then, on Windows** (the assistant can do this given the two signatures):
-   ```
-   pwsh scripts\make-appcast.ps1 -Version 0.2.18.426 -Tag v0.2.18 -SetupExe build\installer\RabbitEars-0.2.18-setup.exe -Signature <sig-x64>
-   pwsh scripts\make-appcast.ps1 -Arch arm64 -Version 0.2.18.426 -Tag v0.2.18 -SetupExe build\installer\RabbitEars-0.2.18-arm64-setup.exe -Signature <sig-arm64>
-   ```
-   ALWAYS `-Tag v0.2.18` (the default `v0.2.18.426` 404s). Check each printed `url=`; commit + push
-   `appcast.xml` and `appcast-arm64.xml`; then verify both feeds AND both enclosure URLs return HTTP
-   200 and download to the signed length. Cross-check the two appcasts so the x64/arm64 signatures
-   cannot be swapped. (Past releases: the `raw.githubusercontent.com` feed caches ~5 min.)
-3. **If the installers must be rebuilt for any reason**, the build number must still be 426 — i.e.
-   build from `3c14828` exactly, or re-cut the release.
+✅ **The appcast step, as it actually ran** (the recipe for the next release): the owner signed on the
+Mac — the first attempt failed with `sign_update not found`, because `scripts/sign-release.sh` looks
+only in `./bin` and on PATH, while `sign_update` lives in the mac build dir, and because the family key
+needs `--account SQLTerminal`, which the script does not pass by default. What worked, from the repo
+root on the Mac:
+`SIGN_UPDATE="$(ls build-mac*/sparkle/bin/sign_update | head -1)" SIGN_UPDATE_ARGS="--account SQLTerminal" scripts/sign-release.sh <installer>`.
+Then `make-appcast.ps1` twice with `-Tag v0.2.18`, each signature checked on Windows against the public
+key in `Win32/platform/Updater.cpp` (Python `cryptography`, Ed25519 over the file's raw bytes), commit +
+push, and both feeds + both enclosures verified.
 
 **What 0.2.18 contains** (four commits on top of `b4b3e4c`, plus the two already pushed before):
 `b5c016f` search debounce · `b4b3e4c` lost schedule-status writes · `e8886cb` RabbitEarsRender
@@ -361,9 +439,11 @@ already have been reverted. Everything needed to work on the app *today* is in t
   `packaging/installer.iss`, VERSIONINFO in `packaging/RabbitEars.rc`,
   `assemblyIdentity` in `packaging/app.manifest`) → commit → `scripts\build.cmd
   -DRABBITEARS_BUILD_GUI=ON` → `scripts\build-installer.cmd` (Inno at
-  `%LOCALAPPDATA%\Programs\Inno Setup 6`) → **sign on the Mac** (`./bin/sign_update
-  --account SQLTerminal RabbitEars-<ver>-setup.exe`, wrapped by
-  `scripts/sign-release.sh`) → `scripts\make-appcast.ps1 -Version A.B.C.<build>
+  `%LOCALAPPDATA%\Programs\Inno Setup 6`) → **sign on the Mac**, from the repo root there:
+  `SIGN_UPDATE="$(ls build-mac*/sparkle/bin/sign_update | head -1)" SIGN_UPDATE_ARGS="--account
+  SQLTerminal" scripts/sign-release.sh RabbitEars-<ver>-setup.exe` (the script finds neither the tool
+  nor the account on its own — 0.2.18) → verify each signature on Windows against `Updater.cpp`'s
+  public key → `scripts\make-appcast.ps1 -Version A.B.C.<build>
   -SetupExe … -Signature <sig> -Tag v<ver>` → `gh release create` with the installer
   → commit/push `appcast.xml` (repo root). Build number = git commit count (baked
   after the commit).
@@ -1062,20 +1142,22 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first** — the top "Current state" block — plus `Win32/BACKLOG.md` and
-> `Win32/docs/PHOTOREAL.md` (the active epic: photoreal skins and meters). Older release history is in
-> `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
+> **Read `Win32/HANDOVER.md` first** — the top "Current state" block (the 0.2.19-dev EPG work) — plus
+> `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic, parked on owner decisions).
+> Older release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
 >
-> **State:** **0.2.18 is PUBLISHED on GitHub** (2026-09-24, full `0.2.18.426`, tag `v0.2.18` @
-> `3c14828`, three installers) but **auto-update is NOT live yet**: the two appcasts wait on the
-> owner's EdDSA signatures from their Mac. **First job:** when the owner gives you the x64 and arm64
-> signatures, run the two `make-appcast.ps1` commands in HANDOVER's 0.2.18 block (always
-> `-Tag v0.2.18`), commit + push `appcast.xml` / `appcast-arm64.xml`, and verify both feeds and both
-> enclosure URLs return HTTP 200 at the signed length. Do not rebuild the installers (the build number
-> is the commit count; the release is 426). macOS is at 0.2.17. `APP_VERSION` is `0.2.18`; the next
-> release bumps it. The repo has TWO writers (the mac team pushes to `main`), so run `git fetch`,
-> `git status` and `git log origin/main..` first, and verify `git ls-remote origin refs/heads/main`
-> == HEAD immediately before building anything for a release.
+> **State:** **0.2.18 is SHIPPED and auto-update is LIVE** (full `0.2.18.426`, tag `v0.2.18` @ `3c14828`,
+> appcasts @ `2df99ea`). `APP_VERSION` is **0.2.19** (bumped, not released). macOS is at 0.2.17.
+> **Active work: the owner's two EPG requests** — full-text search in the guide and a calendar of
+> future airings. **Step 1 is done and owner-verified** (guide-refresh progress + timings, Set Guide URL
+> extracting the address from pasted text, and provider logins masked in the diagnostic log).
+> **Next is step 2:** write `docs/EPG_SEARCH.md` FIRST (FTS5 is not compiled in on either platform;
+> the define and a schema-v10 table reach the mac build), then a real search box in the guide + FTS5
+> programme search, descriptions included. **Step 3, the calendar, is parked**: the owner's provider
+> publishes only ~6 h of future guide and its Xtream API none — HANDOVER's "What the investigation
+> found" has every measurement. The repo has TWO writers (the mac team pushes to `main`), so run
+> `git fetch`, `git status` and `git log origin/main..` first, and verify
+> `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for a release.
 >
 > **What shipped in 0.2.18 that the owner has NOT run:** the search debounce; the lost
 > schedule-status-write fix (HANDOVER's "Lost schedule-status writes" block has six owner checks —
@@ -1126,11 +1208,17 @@ Paste this verbatim to start a fresh session with working context restored:
 >   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+ have no literal to grep).
 > * **Release:** bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` line 11 (leave the `if(APPLE)`
 >   override). Three installers (`build-installer.cmd`, `… arm64`, `… universal`), two appcasts, always
->   `-Tag v<ver>`. Push before tagging; verify `ls-remote` == HEAD before building.
+>   `-Tag v<ver>`. Push before tagging; verify `ls-remote` == HEAD before building. **Signing on the
+>   Mac** needs `SIGN_UPDATE` pointed at `build-mac*/sparkle/bin/sign_update` and
+>   `SIGN_UPDATE_ARGS="--account SQLTerminal"` (HANDOVER's release recipe); verify each signature on
+>   Windows against `Updater.cpp`'s public key before publishing.
+> * **Provider logins are secrets.** Every Xtream URL carries one (query or path). The Win32 log now
+>   masks them (`Win32/platform/UrlRedact`, `LogSecrets.h`); never print a URL from the DB or a log
+>   in a tool result without masking it first, and never put one in a doc or commit.
 > * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** and verify BOTH flags before committing
 >   (build dirs cache the flag; leave the cache at ON).
 > * **i18n:** `common/i18n/*.json` → `python tools/i18n/gen_i18n.py` (never hand-edit
->   `common/core/Strings.*`; `--check` must pass). 589 keys × 4 languages; `zh-HK` is an override
+>   `common/core/Strings.*`; `--check` must pass). 595 keys × 4 languages; `zh-HK` is an override
 >   layer; append new keys at the END of `keys.json`. CJK is a machine draft.
 >
 > **Working rules:** every change adversarially reviewed (background agents) + build-verified with
