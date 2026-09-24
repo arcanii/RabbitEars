@@ -652,6 +652,20 @@ enum class StringId {
     LoadingCheckingRules,
     SetGuideUrlNoUrlHeading,
     SetGuideUrlNoUrlBody,
+    GuideSearchCue,
+    GuideNowButton,
+    GuideSearchPreparing,
+    GuideSearchNone,
+    GuideSearchCount,
+    GuideSearchShowingFirst,
+    GuideSearchOnNow,
+    GuideSearchToday,
+    GuideSearchTomorrow,
+    GuideSearchShowInGuide,
+    LoadingIndexingGuide,
+    GuideSearchInDescriptions,
+    GuideSearchChannelsHeading,
+    GuideSearchFilterChannels,
     Count  // sentinel — MUST stay last
 };
 

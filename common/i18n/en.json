@@ -593,5 +593,19 @@
   "LoadingSavingProgrammes": "Saving {0} programmes from {1}…",
   "LoadingCheckingRules": "Checking your recording rules against the new guide…",
   "SetGuideUrlNoUrlHeading": "No web address found",
-  "SetGuideUrlNoUrlBody": "Paste the guide link that starts with http:// or https://.\r\n\r\nNothing was saved. The box opens again with your text so you can fix it."
+  "SetGuideUrlNoUrlBody": "Paste the guide link that starts with http:// or https://.\r\n\r\nNothing was saved. The box opens again with your text so you can fix it.",
+  "GuideSearchCue": "Search channels and programmes…",
+  "GuideNowButton": "Now",
+  "GuideSearchPreparing": "Preparing search…",
+  "GuideSearchNone": "No upcoming programmes match “{0}”",
+  "GuideSearchCount": "Upcoming programmes found: {0}",
+  "GuideSearchShowingFirst": "Showing the first {0} — type more to narrow it",
+  "GuideSearchOnNow": "On now",
+  "GuideSearchToday": "Today",
+  "GuideSearchTomorrow": "Tomorrow",
+  "GuideSearchShowInGuide": "Show in guide",
+  "LoadingIndexingGuide": "Indexing the guide for search…",
+  "GuideSearchInDescriptions": "Found in the description",
+  "GuideSearchChannelsHeading": "Matching channels: {0}",
+  "GuideSearchFilterChannels": "Show only channels matching “{0}”"
 }

@@ -651,6 +651,20 @@ constexpr std::array<const char*, N> kEn = {{
     "Checking your recording rules against the new guide…",  // LoadingCheckingRules
     "No web address found",  // SetGuideUrlNoUrlHeading
     "Paste the guide link that starts with http:// or https://.\r\n\r\nNothing was saved. The box opens again with your text so you can fix it.",  // SetGuideUrlNoUrlBody
+    "Search channels and programmes…",  // GuideSearchCue
+    "Now",  // GuideNowButton
+    "Preparing search…",  // GuideSearchPreparing
+    "No upcoming programmes match “{0}”",  // GuideSearchNone
+    "Upcoming programmes found: {0}",  // GuideSearchCount
+    "Showing the first {0} — type more to narrow it",  // GuideSearchShowingFirst
+    "On now",  // GuideSearchOnNow
+    "Today",  // GuideSearchToday
+    "Tomorrow",  // GuideSearchTomorrow
+    "Show in guide",  // GuideSearchShowInGuide
+    "Indexing the guide for search…",  // LoadingIndexingGuide
+    "Found in the description",  // GuideSearchInDescriptions
+    "Matching channels: {0}",  // GuideSearchChannelsHeading
+    "Show only channels matching “{0}”",  // GuideSearchFilterChannels
 }};
 
 // 日本語
@@ -1292,6 +1306,20 @@ constexpr std::array<const char*, N> kJa = {{
     "新しい番組表で録画ルールを確認中…",  // LoadingCheckingRules
     "Web アドレスが見つかりません",  // SetGuideUrlNoUrlHeading
     "http:// または https:// で始まる番組表のリンクを貼り付けてください。\r\n\r\n何も保存されていません。入力した内容のまま再び開くので、修正してください。",  // SetGuideUrlNoUrlBody
+    "チャンネルと番組を検索…",  // GuideSearchCue
+    "現在",  // GuideNowButton
+    "検索を準備中…",  // GuideSearchPreparing
+    "「{0}」に一致する今後の番組はありません",  // GuideSearchNone
+    "見つかった今後の番組: {0}",  // GuideSearchCount
+    "最初の {0} 件を表示中 — さらに入力して絞り込んでください",  // GuideSearchShowingFirst
+    "放送中",  // GuideSearchOnNow
+    "今日",  // GuideSearchToday
+    "明日",  // GuideSearchTomorrow
+    "番組表で表示",  // GuideSearchShowInGuide
+    "検索用に番組表のインデックスを作成中…",  // LoadingIndexingGuide
+    "説明文に一致",  // GuideSearchInDescriptions
+    "一致するチャンネル: {0}",  // GuideSearchChannelsHeading
+    "「{0}」に一致するチャンネルだけを表示",  // GuideSearchFilterChannels
 }};
 
 // 繁體中文
@@ -1933,6 +1961,20 @@ constexpr std::array<const char*, N> kZhHant = {{
     "正在以新的節目表檢查錄影規則…",  // LoadingCheckingRules
     "找不到網址",  // SetGuideUrlNoUrlHeading
     "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。",  // SetGuideUrlNoUrlBody
+    "搜尋頻道和節目…",  // GuideSearchCue
+    "現在",  // GuideNowButton
+    "正在準備搜尋…",  // GuideSearchPreparing
+    "沒有符合「{0}」的待播節目",  // GuideSearchNone
+    "找到的待播節目：{0}",  // GuideSearchCount
+    "顯示前 {0} 筆 — 輸入更多字以縮小範圍",  // GuideSearchShowingFirst
+    "播出中",  // GuideSearchOnNow
+    "今天",  // GuideSearchToday
+    "明天",  // GuideSearchTomorrow
+    "在節目表中顯示",  // GuideSearchShowInGuide
+    "正在為搜尋建立節目表索引…",  // LoadingIndexingGuide
+    "在節目說明中找到",  // GuideSearchInDescriptions
+    "符合的頻道：{0}",  // GuideSearchChannelsHeading
+    "只顯示符合「{0}」的頻道",  // GuideSearchFilterChannels
 }};
 
 // 繁體中文（香港）
@@ -2574,6 +2616,20 @@ constexpr std::array<const char*, N> kZhHK = {{
     "正在以新的節目表檢查錄影規則…",  // LoadingCheckingRules
     "找不到網址",  // SetGuideUrlNoUrlHeading
     "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。",  // SetGuideUrlNoUrlBody
+    "搜尋頻道和節目…",  // GuideSearchCue
+    "現在",  // GuideNowButton
+    "正在準備搜尋…",  // GuideSearchPreparing
+    "沒有符合「{0}」的待播節目",  // GuideSearchNone
+    "找到的待播節目：{0}",  // GuideSearchCount
+    "顯示前 {0} 筆 — 輸入更多字以縮小範圍",  // GuideSearchShowingFirst
+    "播出中",  // GuideSearchOnNow
+    "今天",  // GuideSearchToday
+    "明天",  // GuideSearchTomorrow
+    "在節目表中顯示",  // GuideSearchShowInGuide
+    "正在為搜尋建立節目表索引…",  // LoadingIndexingGuide
+    "在節目說明中找到",  // GuideSearchInDescriptions
+    "符合的頻道：{0}",  // GuideSearchChannelsHeading
+    "只顯示符合「{0}」的頻道",  // GuideSearchFilterChannels
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

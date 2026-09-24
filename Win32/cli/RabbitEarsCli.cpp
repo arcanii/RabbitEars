@@ -27,6 +27,7 @@
 #include "core/M3uWriter.h"
 #include "core/PowerPolicy.h"
 #include "core/RecordingRules.h"
+#include "core/SearchFold.h"
 #include "core/UrlCanon.h"
 #include "core/Strings.h"
 #include "core/RecordingScheduler.h"
@@ -514,6 +515,300 @@ int selftest() {
         db.deletePlaylist(epgPid);
         expect(db.programmesInWindow(epgPid, 0, 100000).empty(),
                "ON DELETE CASCADE removes the playlist's programmes");
+    }
+
+    out("== Programme search (schema v10, FTS5) ==\n");
+    {
+        using State = Database::ProgrammeSearchState;
+        const std::wstring spath = dir + L"\\search_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((spath + sfx).c_str());
+        const long long now = 1'800'000'000;  // a fixed "now": everything below is relative to it
+        auto mk = [](const wchar_t* ch, long long s, long long e, const wchar_t* t, const wchar_t* d) {
+            Programme p;
+            p.channelId = ch;
+            p.startUtc = s;
+            p.stopUtc = e;
+            p.title = t;
+            p.descr = d;
+            return p;
+        };
+        auto titles = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + h.programme.title;
+            return s;
+        };
+        auto chan = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            return c;
+        };
+        long long p1 = 0, p2 = 0;
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: a fresh DB opens");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: a fresh DB reaches v10 (tables exist, index not built yet)");
+            p1 = sdb.addPlaylist(L"P1", L"http://p1", true, 1000, L"http://p1/epg");
+            p2 = sdb.addPlaylist(L"P2", L"http://p2", true, 1000, L"http://p2/epg");
+            sdb.bulkInsertChannels(p1, {chan(L"CBC Toronto", L"CBCToronto.ca@HD", L"http://s/1"),
+                                        chan(L"Global", L"Global.ca", L"http://s/2"),
+                                        chan(L"ERT", L"Ert.gr", L"http://s/3"),
+                                        chan(L"BBC", L"bbc.uk", L"http://s/4")},
+                                   1000);
+            sdb.bulkInsertChannels(p2, {chan(L"Disabled Chan", L"dis.xx", L"http://s/5")}, 1000);
+            std::vector<Programme> g1 = {
+                mk(L"cbctoronto.ca", now + 100, now + 200, L"Toronto Tonight", L"local news"),
+                mk(L"global.ca", now + 300, now + 400, L"The Québec Hour", L"a tour of Montréal"),
+                mk(L"ert.gr", now + 500, now + 600, L"ΕΛΛΑΔΑ Σήμερα", L""),
+                mk(L"ert.gr", now + 610, now + 620, L"ΣΉΜΕΡΑ", L""),    // a capital with a tonos
+                mk(L"ert.gr", now + 630, now + 640, L"Ο κόσμος", L""),  // a final sigma
+                mk(L"cbctoronto.ca", now - 900, now - 100, L"Past Toronto Show", L"already over"),
+                mk(L"unknown.xx", now + 100, now + 200, L"Hidden Toronto", L"no such channel"),
+                mk(L"bbc.uk", now + 900, now + 999, L"Doctor Who", L"the doctor travels in time"),
+                mk(L"bbc.uk", now + 700, now + 800, L"Who Knows", L"a quiz about the doctor"),
+                mk(L"bbc.uk", now + 50, now + 60, L"Crime (Beat) \"AND\" OR*", L"literal syntax"),
+            };
+            for (int k = 0; k < 30; ++k)  // 30 upcoming "Loop" shows on an allowed channel...
+                g1.push_back(mk(L"global.ca", now + 1000 + k, now + 2000 + k, L"Loop Show", L""));
+            for (int k = 0; k < 5; ++k)   // ...and 5 EARLIER ones the user cannot play
+                g1.push_back(mk(L"unknown.xx", now + 10 + k, now + 20 + k, L"Loop Hidden", L""));
+            expect(sdb.bulkInsertProgrammes(p1, g1, 5000) == static_cast<int>(g1.size()),
+                   "search: fixture guide stored");
+            expect(sdb.bulkInsertProgrammes(p2, {mk(L"dis.xx", now + 100, now + 200,
+                                                    L"Toronto Disabled", L"")}, 5000) == 1,
+                   "search: second playlist's guide stored");
+            expect(sdb.rebuildProgrammeIndex() && sdb.programmeSearchState() == State::Ready,
+                   "search: rebuildProgrammeIndex -> Ready");
+            // Load the channel set while P2 is still enabled, THEN disable it: its channel stays in
+            // the set, so only the query's own enabled-playlist guard can drop its programme.
+            expect(sdb.refreshProgrammeSearchChannels(), "search: channel set loaded");
+            sdb.setPlaylistEnabled(p2, false);
+
+            auto r = sdb.searchProgrammes(L"ronto", now, 200);
+            expect(titles(r) == L"Toronto Tonight",
+                   "search: title substring; past, unknown-channel and disabled-playlist rows dropped (got " +
+                       utf8FromWide(titles(r)) + ")");
+            expect(r.size() == 1 && r[0].inTitle &&
+                       r[0].markedTitle.find(L'\x02') != std::wstring::npos &&
+                       r[0].markedTitle.find(L'\x03') != std::wstring::npos,
+                   "search: a title match is marked (U+0002 ... U+0003)");
+            r = sdb.searchProgrammes(L"quebec", now, 200);
+            expect(titles(r) == L"The Québec Hour",
+                   "search: accent-insensitive title ('quebec' finds 'Québec')");
+            expect(r.size() == 1 && r[0].markedTitle == L"The \x02Québec\x03 Hour",
+                   "search: ... and marks the accented 'Québec' it found");
+            r = sdb.searchProgrammes(L"ελλαδα", now, 200);
+            expect(!r.empty(), "search: non-Latin case folding (Greek lower finds upper)");
+            expect(r.size() == 1 && r[0].markedTitle == L"\x02ΕΛΛΑΔΑ\x03 Σήμερα",
+                   "search: ... and marks the upper-case Greek it found");
+            r = sdb.searchProgrammes(L"σήμερα", now, 200);
+            expect(titles(r) == L"ΕΛΛΑΔΑ Σήμερα|ΣΉΜΕΡΑ" && r[0].markedTitle == L"ΕΛΛΑΔΑ \x02Σήμερα\x03" &&
+                       r[1].markedTitle == L"\x02ΣΉΜΕΡΑ\x03",
+                   "search: a Greek word with a tonos finds AND marks its capitals (Ή = ή) (got " +
+                       utf8FromWide(titles(r)) + ")");
+            r = sdb.searchProgrammes(L"ΚΌΣΜΟΣ", now, 200);
+            expect(titles(r) == L"Ο κόσμος" && r[0].markedTitle == L"Ο \x02κόσμος\x03",
+                   "search: Greek capitals find AND mark a final sigma (Σ = ς) (got " + utf8FromWide(titles(r)) +
+                       ")");
+            r = sdb.searchProgrammes(L"montreal", now, 200);
+            expect(r.size() == 1 && !r[0].inTitle && !r[0].snippet.empty(),
+                   "search: a description word matches accent-insensitively ('montreal' -> 'Montréal')");
+            expect(r.size() == 1 && r[0].snippet == L"a tour of \x02Montréal\x03",
+                   "search: ... and the snippet marks 'Montréal'");
+            // searchFold's table edges: accents dropped, letters of their own kept (lower-cased).
+            expect(searchFold(L'É') == L'e' && searchFold(L'ç') == L'c' && searchFold(L'Ł') == L'l' &&
+                       searchFold(L'Ÿ') == L'y' && searchFold(L'ÿ') == L'y' && searchFold(L'Ĺ') == L'l' &&
+                       searchFold(L'ž') == L'z' && searchFold(L'ſ') == L's',
+                   "searchFold: Latin accents fold to the base letter");
+            expect(searchFold(L'Æ') == L'æ' && searchFold(L'Œ') == L'œ' && searchFold(L'Ĳ') == L'ĳ' &&
+                       searchFold(L'ß') == L'ß' && searchFold(L'×') == L'×' && searchFold(L'÷') == L'÷' &&
+                       searchFold(L'ı') == L'ı' && searchFold(L'ĸ') == L'ĸ',
+                   "searchFold: ligatures and letters of their own keep their identity");
+            expect(searchFold(L'Σ') == L'σ' && searchFold(L'Ж') == L'ж' && searchFold(L'Ё') == L'ё' &&
+                       searchFold(L'東') == L'東' && searchFold(L'Z') == L'z' && searchFold(L'-') == L'-',
+                   "searchFold: Greek + Cyrillic case; everything else unchanged");
+            expect(searchFold(L'Ά') == L'ά' && searchFold(L'Έ') == L'έ' && searchFold(L'Ί') == L'ί' &&
+                       searchFold(L'Ό') == L'ό' && searchFold(L'Ώ') == L'ώ' && searchFold(L'Ϋ') == L'ϋ' &&
+                       searchFold(L'ς') == L'σ' && searchFold(L'ά') == L'ά',
+                   "searchFold: Greek as FTS5 folds it (case only, the tonos kept; final sigma = sigma)");
+            expect(searchFold(L'Ș') == L's' && searchFold(L'ș') == L's' && searchFold(L'Ț') == L't' &&
+                       searchFold(L'ț') == L't',
+                   "searchFold: Romanian comma-below letters");
+            expect(searchFold(L'µ') == L'μ' && searchFold(L'Ґ') == L'ґ' && searchFold(L'ґ') == L'ґ',
+                   "searchFold: micro sign and Ukrainian Ґ, as FTS5 folds them");
+            r = sdb.searchProgrammes(L"local", now, 200);
+            expect(r.size() == 1 && !r[0].inTitle &&
+                       r[0].snippet == L"\x02local\x03 news",
+                   "search: a description-only match carries a marked snippet");
+            expect(r.size() == 1 && r[0].channelName == L"CBC Toronto" && r[0].channelTvgId == L"CBCToronto.ca@HD",
+                   "search: a hit names the user's channel and its FULL tvg-id (for Play/Schedule)");
+            r = sdb.searchProgrammes(L"travel", now, 200);
+            expect(titles(r) == L"Doctor Who" && !r[0].inTitle,
+                   "search: the last description word is a prefix ('travel' finds 'travels')");
+            expect(titles(sdb.searchProgrammes(L"doctor", now, 200)) == L"Doctor Who|Who Knows",
+                   "search: title matches rank before description-only ones, even when later");
+            expect(titles(sdb.searchProgrammes(L"(Beat) \"AND\" OR*", now, 200)) ==
+                       L"Crime (Beat) \"AND\" OR*",
+                   "search: typed FTS5 syntax is searched literally");
+            for (const wchar_t* odd : {L"-", L"\"", L"NEAR(", L"a\"b", L"*", L"AND", L"(((", L"  "}) {
+                sdb.searchProgrammes(odd, now, 200);  // must not throw, crash or poison the connection
+            }
+            expect(titles(sdb.searchProgrammes(L"ronto", now, 200)) == L"Toronto Tonight",
+                   "search: odd input left the connection usable");
+            expect(titles(sdb.searchProgrammes(L"to", now, 200)).find(L"Toronto Tonight") != std::wstring::npos,
+                   "search: a 2-character term falls back to a title scan");
+            bool more = false;
+            r = sdb.searchProgrammes(L"loop", now, 10, &more);
+            expect(r.size() == 10 && more && titles(r).find(L"Hidden") == std::wstring::npos,
+                   "search: the limit counts only playable rows, and reports there were more");
+
+            // A refresh makes the index stale: until rebuilt it is never READ (LIKE answers).
+            expect(sdb.bulkInsertProgrammes(p1, {mk(L"cbctoronto.ca", now + 100, now + 200,
+                                                    L"Fresh Title", L"brand new description")},
+                                            6000) == 1,
+                   "search: refresh stored");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: a refresh leaves NeedsRebuild");
+            expect(titles(sdb.searchProgrammes(L"fresh", now, 200)) == L"Fresh Title" &&
+                       sdb.searchProgrammes(L"ronto", now, 200).empty(),
+                   "search: a stale index is bypassed (LIKE finds the new title, not the old)");
+            expect(sdb.rebuildProgrammeIndex() && titles(sdb.searchProgrammes(L"fresh", now, 200)) ==
+                                                       L"Fresh Title",
+                   "search: after the rebuild the index finds the new title");
+            sdb.deletePlaylist(p2);
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: deleting a playlist leaves NeedsRebuild");
+            expect(sdb.rebuildProgrammeIndex(), "search: rebuilt after the delete");
+        }
+        {   // A FRESH connection must read the saved stamp as current — else every launch would pay a
+            // full rebuild (~1.5 s on the owner's guide) before its first search.
+            Database sdb;
+            expect(sdb.open(spath), "search: reopens after the rebuild");
+            expect(sdb.programmeSearchState() == State::Ready,
+                   "search: a new connection finds the saved index current (no rebuild per launch)");
+        }
+        // An OLDER build's refresh (no re-index), simulated on a raw connection: a same-sized
+        // re-import that reuses the same ids — only epg_refreshed_<id> tells it apart.
+        auto rawExec = [&spath](const char* sql) {
+            sqlite3* raw = nullptr;
+            bool ok = false;
+            if (sqlite3_open16(spath.c_str(), &raw) == SQLITE_OK)
+                ok = sqlite3_exec(raw, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+            if (raw) sqlite3_close(raw);
+            return ok;
+        };
+        const std::string oldRefresh =
+            "BEGIN; UPDATE epg_programmes SET title='Old Build Title';"
+            " INSERT INTO settings(key,value) VALUES('epg_refreshed_" + std::to_string(p1) +
+            "','7777') ON CONFLICT(key) DO UPDATE SET value=excluded.value; COMMIT;";
+        expect(rawExec(oldRefresh.c_str()), "search: simulated older-build refresh applied");
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: reopens");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: an older build's same-sized refresh is detected (epg_refreshed changed)");
+        }
+        // v9 -> v10 on an existing library must NOT re-run v9's URL rewrite (a canary row in a
+        // spelling v9 would rewrite), and a failed v10 must leave v9 with search still answering.
+        const std::string downgrade =
+            "BEGIN; DROP TABLE epg_fts_title; DROP TABLE epg_fts_descr;"
+            " UPDATE channels SET stream_url='http://Canary.EXAMPLE:80/x.ts' WHERE name='Global';"
+            " CREATE TABLE epg_fts_title(x); PRAGMA user_version=9; COMMIT;";
+        expect(rawExec(downgrade.c_str()), "search: fixture turned into a v9 DB with a squatter table");
+        expect(canonicalStreamUrl(L"http://Canary.EXAMPLE:80/x.ts") != L"http://Canary.EXAMPLE:80/x.ts",
+               "search: the canary is a spelling v9 WOULD rewrite (else the next checks prove nothing)");
+        auto canaryUrl = [](Database& d, long long pid) {
+            for (const auto& c : d.channelsByPlaylist(pid))
+                if (c.name == L"Global") return c.streamUrl;
+            return std::wstring(L"<missing>");
+        };
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: the v9 DB opens");
+            expect(sdb.programmeSearchState() == State::Unavailable,
+                   "search: v10 failed (a non-FTS table squats the name) -> Unavailable, not a crash");
+            expect(canaryUrl(sdb, p1) == L"http://Canary.EXAMPLE:80/x.ts",
+                   "search: v9's URL rewrite was NOT re-run on a v9 DB");
+            sdb.refreshProgrammeSearchChannels();
+            expect(titles(sdb.searchProgrammes(L"brand new", now, 200)) == L"Old Build Title",
+                   "search: with no index, LIKE still searches descriptions");
+        }
+        expect(rawExec("DROP TABLE epg_fts_title;"), "search: squatter removed");
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: reopens after the squatter is gone");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: the retried v10 lands on the next open");
+            expect(canaryUrl(sdb, p1) == L"http://Canary.EXAMPLE:80/x.ts",
+                   "search: ...still without re-running v9");
+        }
+        {   // Performance guard: a large synthetic guide stays fast to search — THROUGH THE INDEX.
+            Database sdb;
+            expect(sdb.open(spath), "search/perf: opens");
+            std::vector<Programme> big;
+            big.reserve(40000);
+            for (int k = 0; k < 40000; ++k)
+                big.push_back(mk(L"global.ca", now + k, now + k + 30,
+                                 (L"Show " + std::to_wstring(k % 997) + L" news").c_str(),
+                                 L"the evening news and weather"));
+            expect(sdb.bulkInsertProgrammes(p1, big, 8000) == 40000, "search/perf: 40,000 stored");
+            expect(sdb.rebuildProgrammeIndex() && sdb.programmeSearchState() == State::Ready,
+                   "search/perf: indexed (so the timing below is the index path, not LIKE)");
+            sdb.refreshProgrammeSearchChannels();
+            const auto t0 = std::chrono::steady_clock::now();
+            const auto hits = sdb.searchProgrammes(L"news", now, 200);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            expect(hits.size() == 200 && ms < 500,
+                   "search: 40,000 programmes, a word in every row, 200 results in " + std::to_string(ms) +
+                       " ms (< 500)");
+        }
+        {   // One playlist: a refresh empties the table, so its new rows REUSE the old ids — a stale
+            // index read by mistake would answer "alpha" with whatever now sits at alpha's id. Plus
+            // two description cases the marking must handle: CJK (no word boundaries) and a word
+            // right after typographic punctuation.
+            const std::wstring rpath = dir + L"\\search_reuse.db";
+            for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((rpath + sfx).c_str());
+            Database rdb;
+            expect(rdb.open(rpath), "search/reuse: opens");
+            const long long rp = rdb.addPlaylist(L"R", L"http://r", true, 1000, L"http://r/epg");
+            rdb.bulkInsertChannels(rp, {chan(L"Chan", L"chan.xx", L"http://s/9")}, 1000);
+            expect(rdb.bulkInsertProgrammes(rp, {mk(L"chan.xx", now + 10, now + 20, L"Alpha Show", L"")},
+                                            5000) == 1,
+                   "search/reuse: first guide stored");
+            expect(rdb.rebuildProgrammeIndex() && rdb.refreshProgrammeSearchChannels(),
+                   "search/reuse: indexed");
+            const auto a = rdb.searchProgrammes(L"alpha", now, 200);
+            expect(titles(a) == L"Alpha Show", "search/reuse: 'alpha' found through the index");
+            expect(rdb.bulkInsertProgrammes(rp, {mk(L"chan.xx", now + 10, now + 20, L"Beta Show", L"")},
+                                            6000) == 1,
+                   "search/reuse: refreshed (index now stale)");
+            const auto b = rdb.searchProgrammes(L"beta", now, 200);
+            expect(!a.empty() && b.size() == 1 && b[0].id == a[0].id,
+                   "search/reuse: the refresh really reused alpha's id (else the next check proves nothing)");
+            expect(rdb.searchProgrammes(L"alpha", now, 200).empty(),
+                   "search/reuse: the stale index is not read (it would answer 'alpha' with 'Beta Show')");
+
+            const std::wstring tokyo = L"東京都の天気予報です";
+            expect(rdb.bulkInsertProgrammes(
+                       rp, {mk(L"chan.xx", now + 10, now + 20, L"Weather", tokyo.c_str()),
+                            mk(L"chan.xx", now + 30, now + 40, L"Special",
+                               L"It’s a “Doctor Who” special")},
+                       7000) == 2 &&
+                       rdb.rebuildProgrammeIndex(),
+                   "search/reuse: CJK + punctuation fixture indexed");
+            auto w = rdb.searchProgrammes(L"天気", now, 200);  // 2 CJK characters: a whole word
+            expect(titles(w) == L"Weather" && !w[0].inTitle &&
+                       w[0].snippet == L"東京都の\x02天気\x03予報です",
+                   "search/reuse: a 2-character CJK word is found in a description, and marked mid-run");
+            expect(titles(rdb.searchProgrammes(L"天気予", now, 200)) == L"Weather",
+                   "search/reuse: a 3-character CJK term (index path) still searches descriptions");
+            auto d = rdb.searchProgrammes(L"doctor", now, 200);
+            expect(titles(d) == L"Special" && d[0].snippet.find(L"\x02" L"Doctor\x03") != std::wstring::npos,
+                   "search/reuse: a word right after a curly quote is found AND marked");
+        }
     }
 
     out("== Scheduled recordings ==\n");
@@ -1799,11 +2094,12 @@ int selftest() {
                 if (q) sqlite3_finalize(q);
                 sqlite3_close(rawv);
             }
-            // 9, not 8: a v2 DB opened by a current build walks the whole chain, and v9 (the
-            // stream_url canonicalisation) is the last step. That it reaches 9 is also the only
-            // proof that canonicalizeStreamUrls() actually COMMITTED — it is the one migration
-            // step that reports failure rather than being probed for structurally.
-            expect(ver == 9, "v9: user_version advances to 9 after the v2 DB is migrated");
+            // 10: a v2 DB opened by a current build walks the whole chain. v10 (the programme-
+            // search tables) runs only when v9 (the stream_url canonicalisation) landed in the same
+            // open, so reaching 10 is also the proof that canonicalizeStreamUrls() actually
+            // COMMITTED — it is the one migration step that reports failure rather than being
+            // probed for structurally.
+            expect(ver == 10, "v9+v10: user_version advances to 10 after the v2 DB is migrated");
         }
         {   // --- VOD sync retirement. This DELETES rows, so it is pinned hard: the failure
             // mode is wiping somebody's library, and the live-TV list must be untouchable
@@ -3007,6 +3303,63 @@ int epgTool(const std::wstring& source) {
     return epg.programmes.empty() ? 1 : 0;
 }
 
+// Programme search on a REAL library (docs/EPG_SEARCH.md §6): opens `dbPath` — pass a COPY, never
+// the live database: opening it runs the schema upgrade, and this rebuilds the index — then reports
+// the upgrade, the index rebuild, loading the search's channel set (refreshProgrammeSearchChannels,
+// as the TV Guide's search does), and each term's search time (best of 5, with the channel filter
+// and the marking). Prints the terms, states, counts and timings — nothing from the library itself.
+int epgSearchBench(const std::wstring& dbPath, std::vector<std::wstring> terms) {
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::time_point t0) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    };
+    auto fmt = [](double v) {
+        char b[32];
+        snprintf(b, sizeof b, "%.1f", v);
+        return std::string(b);
+    };
+    Database db;
+    std::wstring err;
+    const auto tOpen = Clock::now();
+    if (!db.open(dbPath, &err)) {
+        line(L"open failed: " + err);
+        return 1;
+    }
+    out("open (incl. any schema upgrade): " + fmt(ms(tOpen)) + " ms\n");
+    const auto st = db.programmeSearchState();
+    out(std::string("state after open: ") +
+        (st == Database::ProgrammeSearchState::Ready          ? "Ready"
+         : st == Database::ProgrammeSearchState::NeedsRebuild ? "NeedsRebuild"
+                                                              : "Unavailable") + "\n");
+    const auto tRebuild = Clock::now();
+    const bool rebuilt = db.rebuildProgrammeIndex();
+    out(std::string("rebuildProgrammeIndex: ") + (rebuilt ? "ok" : "FAILED") + ", " +
+        fmt(ms(tRebuild)) + " ms\n");
+    const auto tSet = Clock::now();
+    const bool setOk = db.refreshProgrammeSearchChannels();
+    out(std::string("channel set (refreshProgrammeSearchChannels): ") + (setOk ? "ok" : "FAILED") +
+        ", " + fmt(ms(tSet)) + " ms\n");
+    if (terms.empty()) terms = {L"toronto", L"news", L"survivor", L"quebec", L"hockey", L"the", L"to"};
+    out(std::string("state before searching: ") +
+        (db.programmeSearchState() == Database::ProgrammeSearchState::Ready ? "Ready (index)"
+                                                                            : "NOT Ready (LIKE fallback)") +
+        "\n");
+    const long long now = static_cast<long long>(time(nullptr));
+    for (const auto& t : terms) {
+        double best = 1e9;
+        size_t n = 0;
+        bool more = false;
+        for (int r = 0; r < 5; ++r) {
+            const auto t0 = Clock::now();
+            n = db.searchProgrammes(t, now, 200, &more).size();
+            best = std::min(best, ms(t0));
+        }
+        outw(L"  search \"" + t + L"\": ");
+        out(std::to_string(n) + (more ? "+" : "") + " results in " + fmt(best) + " ms\n");
+    }
+    return rebuilt ? 0 : 1;
+}
+
 // Does a real-sized VOD import degrade the EXISTING live-TV UI? Win32/docs/XTREAM_VOD.md
 // calls this the epic's biggest risk and says to measure it BEFORE the sync ships: 43,599
 // movies is ~4x the owner's library, landing in the same `channels` table that already
@@ -3174,6 +3527,11 @@ int wmain(int argc, wchar_t** argv) {
     if (argc >= 3 && std::wstring(argv[1]) == L"--epg") return epgTool(argv[2]);
     if (argc >= 2 && std::wstring(argv[1]) == L"--tvgids")
         return tvgIds(argc >= 3 ? std::wstring(argv[2]) : std::wstring());
+    if (argc >= 3 && std::wstring(argv[1]) == L"--epgsearch") {
+        std::vector<std::wstring> terms;
+        for (int i = 3; i < argc; ++i) terms.emplace_back(argv[i]);
+        return epgSearchBench(argv[2], terms);
+    }
     if (argc >= 2 && std::wstring(argv[1]) == L"--benchdb") {
         // Defaults are the owner's real numbers: 43,599 movies beside a 442-channel list.
         const int mv = argc >= 3 ? _wtoi(argv[2]) : 43599;
@@ -3204,6 +3562,8 @@ int wmain(int argc, wchar_t** argv) {
         "  RabbitEarsCli --import <url|file>   (into the app's real DB)\n"
         "  RabbitEarsCli --epg <url|file>\n"
         "  RabbitEarsCli --tvgids [epg url|file]\n"
+        "  RabbitEarsCli --epgsearch <db> [term...]  (programme search on a COPY of a real\n"
+        "                                          library: upgrade, rebuild, search timings)\n"
         "  RabbitEarsCli --benchdb [movies] [live]  (does a VOD import slow the live-TV UI?\n"
         "                                            defaults 43599 movies / 442 live)\n"
         "  RabbitEarsCli --xtream [url] [--raw]  (probe an Xtream provider; url defaults\n"

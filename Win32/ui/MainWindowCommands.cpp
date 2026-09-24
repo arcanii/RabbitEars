@@ -491,6 +491,18 @@ void onEpgDone(AppState* st, EpgResult* res) {
         okCount > 0 ? trf(i18n::StringId::EpgStoredSummary,
                           { std::to_wstring(totalProg), std::to_wstring(chans.size()) })
                     : tr(i18n::StringId::EpgRefreshFailedSummary);
+    // Re-index for the TV Guide's programme search ONCE, after every playlist's guide is stored — a
+    // rebuild re-indexes the whole table, so doing it per playlist would repeat it (EPG_SEARCH.md §3).
+    // Its own transaction; if it fails, the stamp still says "stale": searches use LIKE until the next
+    // search SESSION, whose onSearchBegin rebuilds it.
+    if (okCount > 0 &&
+        st->db.programmeSearchState() != Database::ProgrammeSearchState::Unavailable) {
+        updateLoadingDialog(st->loadingDlg, tr(i18n::StringId::LoadingIndexingGuide));
+        const Clock::time_point tIndex = Clock::now();
+        const bool indexed = st->db.rebuildProgrammeIndex();
+        diag::info(L"EPG search index rebuild: " + msSince(tIndex) + L" ms" +
+                   (indexed ? L"" : L" — FAILED (the next search session retries): " + st->db.lastError()));
+    }
     // A fresh guide is exactly when a series rule learns about next week's airings — force it.
     if (okCount > 0) {
         updateLoadingDialog(st->loadingDlg, tr(i18n::StringId::LoadingCheckingRules));
@@ -542,8 +554,8 @@ void onEpgGuide(AppState* st) {
     QueryPerformanceCounter(&tBuild0);
 
     const long long now = static_cast<long long>(time(nullptr));
-    const long long winStart = now - 6 * 3600;    // a little history
-    const long long winEnd = now + 72 * 3600;     // three days ahead
+    const long long winStart = now - kGuideWindowPastSec;   // a little history
+    const long long winEnd = now + kGuideWindowAheadSec;    // three days ahead (EpgGuideControl.h)
     std::vector<GuideRow> rows;
     for (const auto& pl : st->db.listPlaylists()) {
         if (!pl.enabled) continue;
@@ -636,6 +648,47 @@ void onEpgGuide(AppState* st) {
         setStatus(st, ch->favourite ? trf(i18n::StringId::StatusRemovedFavourite, { channelName })
                                     : trf(i18n::StringId::StatusAddedFavourite, { channelName }));
     };
+    // Programme search (docs/EPG_SEARCH.md). Begin: load the channel set and, if the index is stale
+    // (the first search after upgrading, a deleted playlist, a refresh by an older build, a failed
+    // rebuild after a refresh), rebuild it — the guide is already showing "Preparing search…".
+    cb.onSearchBegin = [st]() {
+        using Clock = std::chrono::steady_clock;
+        const auto t0 = Clock::now();
+        bool rebuilt = false;
+        if (st->db.programmeSearchState() == Database::ProgrammeSearchState::NeedsRebuild)
+            rebuilt = st->db.rebuildProgrammeIndex();
+        const bool channels = st->db.refreshProgrammeSearchChannels();
+        diag::info(L"guide search session: " +
+                   std::to_wstring(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count()) +
+                   L" ms" + (rebuilt ? L" (index rebuilt)" : L"") +
+                   (channels ? L"" : L" — channel set FAILED: " + st->db.lastError()));
+    };
+    cb.onSearch = [st](const std::wstring& text, bool* truncated) {
+        using Clock = std::chrono::steady_clock;
+        const auto t0 = Clock::now();
+        const auto hits = st->db.searchProgrammes(text, static_cast<long long>(time(nullptr)), 200, truncated);
+        if (diag::enabled(diag::Level::Debug))
+            diag::debug(L"guide search: " + std::to_wstring(hits.size()) + L" hits in " +
+                        std::to_wstring(std::chrono::duration_cast<std::chrono::microseconds>(
+                                            Clock::now() - t0).count() / 1000.0) + L" ms");
+        std::vector<GuideSearchHit> out;
+        out.reserve(hits.size());
+        for (const auto& h : hits) {
+            GuideSearchHit g;
+            g.channelId = h.channelTvgId;  // the FULL tvg-id: what the guide rows and Play resolve
+            g.channelName = h.channelName.empty() ? h.programme.channelId : h.channelName;  // as a guide row does
+            g.title = h.programme.title;
+            g.descr = h.programme.descr;
+            g.markedTitle = h.markedTitle;
+            g.snippet = h.snippet;
+            g.startUtc = h.programme.startUtc;
+            g.stopUtc = h.programme.stopUtc;
+            g.inTitle = h.inTitle;
+            out.push_back(std::move(g));
+        }
+        return out;
+    };
+    cb.onRebuild = [st]() { onEpgGuide(st); };  // re-enters showEpgGuide on the open window
     closeLoadingDialog(loadDlg);  // dismiss the box before the guide window paints
     const size_t nRows = rows.size();  // capture before the move below empties `rows`
     QueryPerformanceCounter(&tShow0);

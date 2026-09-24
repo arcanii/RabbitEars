@@ -82,7 +82,9 @@ target_compile_definitions(sqlite3 PRIVATE
   _CRT_SECURE_NO_WARNINGS
   SQLITE_OMIT_LOAD_EXTENSION
   SQLITE_DQS=0                    # reject double-quoted string literals (safety)
-  SQLITE_DEFAULT_FOREIGN_KEYS=1)
+  SQLITE_DEFAULT_FOREIGN_KEYS=1
+  SQLITE_ENABLE_FTS5)             # the TV Guide's programme search (docs/EPG_SEARCH.md); the
+                                  # amalgamation's SQLITE_CORE compiles FTS5 out without it
 if(MSVC)
   target_compile_options(sqlite3 PRIVATE /w)  # don't hold third-party C to our bar
 endif()

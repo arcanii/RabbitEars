@@ -15,6 +15,11 @@
 
 namespace rabbitears {
 
+// The time window the host builds guide rows for, relative to "now" (MainWindowCommands onEpgGuide).
+// Shared so the guide can tell whether rebuilding its rows could ever bring a search result into them.
+constexpr long long kGuideWindowPastSec = 6 * 3600;    // a little history
+constexpr long long kGuideWindowAheadSec = 72 * 3600;  // three days ahead
+
 struct GuideProgramme {
     std::wstring title;
     std::wstring descr;         // shown when the block is clicked
@@ -26,6 +31,20 @@ struct GuideRow {
     std::wstring                channelId;    // tvg-id — resolves to a recordable stream (may be empty)
     std::wstring                channelName;
     std::vector<GuideProgramme> programmes;  // sorted by startUtc
+};
+
+// One programme-search result as the guide lists it (the host converts Database::ProgrammeHit —
+// docs/EPG_SEARCH.md). Marked text wraps each match in U+0002 … U+0003.
+struct GuideSearchHit {
+    std::wstring channelId;    // the channel's FULL tvg-id — the same id its GuideRow carries
+    std::wstring channelName;
+    std::wstring title, descr;
+    std::wstring markedTitle;  // the title with the typed text marked; empty = show `title` plain
+    std::wstring snippet;      // description-only matches: an excerpt with the words marked — or, when
+                               // marking found nothing (a fold searchFold does not make), the
+                               // description's start
+    long long    startUtc = 0, stopUtc = 0;
+    bool         inTitle = false;
 };
 
 struct GuideCallbacks {
@@ -46,12 +65,30 @@ struct GuideCallbacks {
     // label "Add to" vs "Remove from" Favourites. Both empty -> no favourite action in the guide.
     std::function<void(const std::wstring& channelId, const std::wstring& channelName)> onToggleFavourite;
     std::function<bool(const std::wstring& channelId)> isFavourite;
+    // Programme search, for the toolbar's search box (which also matches channel NAMES, itself, in the
+    // guide's rows — the host is not involved). onSearchBegin runs once per search SESSION, before its
+    // first search — a session starts when the box goes from empty to text, when
+    // the guide's rows are (re)built, and when the guide is reopened: the host loads the channel set
+    // and, if the index is stale, rebuilds it (a second or two — the guide shows "Preparing search…"
+    // first). onSearch returns the results for `text` and sets *truncated when there were more. With
+    // no onSearch, every search reports that nothing matches.
+    std::function<void()> onSearchBegin;
+    std::function<std::vector<GuideSearchHit>(const std::wstring& text, bool* truncated)> onSearch;
+    // Rebuild the guide's rows from the database (re-entering showEpgGuide on the same window), for a
+    // search result that is not in this window's rows. Tried only when it could help — the result lies
+    // inside the window a rebuild covers (kGuideWindowPastSec/AheadSec around now) and the rows have not
+    // been rebuilt since those results were fetched — e.g. the guide was refreshed since, or its rows
+    // were built long enough ago that the window has moved on.
+    std::function<void()> onRebuild;
 };
 
 // Open (or focus + refresh, if already open) the single modeless guide window over
 // `owner`, populated with `rows` and marking "now" at `nowUtc`. Safe to call again to
-// repopulate. `rows` may be empty (the window shows an empty guide). `cb.onSchedule`, if
-// set, adds a right-click "Schedule recording" action on programme blocks.
+// repopulate: a re-open shows the grid (not any search results; the search box keeps its text), with
+// every channel (the new rows clear a channel filter), except the re-entry a search result's jump
+// makes through GuideCallbacks::onRebuild, which keeps the results list and the channel filter.
+// `rows` may be empty (the window shows an empty guide). `cb.onSchedule`, if set, adds a right-click
+// "Schedule recording" action on programme blocks.
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
                   GuideCallbacks cb = {});
 
@@ -62,23 +99,27 @@ void hideEpgGuide();
 
 bool epgGuideOpen();  // true if the guide window exists (open or hidden)
 // Re-reveal an already-built guide WITHOUT re-querying the DB — instant reopen after a
-// play-from-guide hid it. Only moves the "now" line + airing highlight to `nowUtc` (the stored
-// programmes don't change); a full rebuild (showEpgGuide via onEpgGuide) is only needed the first
-// time or on an explicit Refresh. No-op if the guide isn't open.
+// play-from-guide hid it. Moves the "now" line + airing highlight to `nowUtc` (the stored
+// programmes don't change), shows the grid rather than any search results (the search box keeps its
+// text, and a channel filter stays on — the rows are the same), and starts a fresh search session.
+// A full rebuild (showEpgGuide via onEpgGuide) happens the first time, on an explicit reopen from the
+// menu, and when a search result's jump needs it (GuideCallbacks::onRebuild). No-op if the guide
+// isn't open.
 void revealEpgGuide(long long nowUtc);
 
 // Reveal the guide scrolled to a channel's row ("Show in TV Guide" from the channel grid):
-// clears any type-to-search filter, top-aligns the row matching `tvgId` (matched on the
-// normalised base id — '@feed' suffix stripped, case-folded — like the guide's own row
-// join), and re-centres the time axis on `nowUtc`. Returns false (without revealing) when
-// the guide isn't built yet or the channel has no guide row — the caller decides what to
-// tell the user. Build the guide first via the epgGuideOpen()/onEpgGuide pattern.
+// clears any channel filter, leaves any search results for the grid, top-aligns the row matching
+// `tvgId` (matched on the normalised base id — '@feed' suffix stripped, case-folded — like the
+// guide's own row join), and re-centres the time axis on `nowUtc`. Returns false — changing nothing
+// — when the guide isn't built yet or the channel has no guide row; the caller decides what to tell
+// the user. Build the guide first via the epgGuideOpen()/onEpgGuide pattern.
 bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc);
 
-// Refresh the guide for a LIVE UI-language change: re-set the (translated) window caption and
-// rebuild the cached Direct2D text formats so they pick up the new font family (the CJK UI faces
-// differ from Segoe UI), then repaint. The programme rows are unchanged, so this skips the DB
-// rebuild showEpgGuide would do. No-op if the guide window doesn't exist (open or hidden).
+// Refresh the guide for a LIVE UI-language change: re-set the (translated) window caption, rebuild
+// the cached Direct2D text formats and the search box's font so they pick up the new font family
+// (the CJK UI faces differ from Segoe UI), re-size the box to it, re-set its cue banner and the
+// results' headings, then repaint. The programme rows are unchanged, so this skips the DB rebuild
+// showEpgGuide would do. No-op if the guide window doesn't exist (open or hidden).
 void epgGuideRefreshLanguage();
 
 }  // namespace rabbitears

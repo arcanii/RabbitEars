@@ -3849,5 +3849,99 @@
     "cluster": "GuideGrid",
     "placeholders": [],
     "comment": "Body of that notice. After it closes, the Set Guide URL box opens again with the user's text still in it. Keep http:// and https:// untranslated."
+  },
+  {
+    "id": "GuideSearchCue",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Placeholder (cue banner) of the TV Guide's one search box, in its toolbar. It finds channels by name and programmes by title and description."
+  },
+  {
+    "id": "GuideNowButton",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "TV Guide toolbar button that scrolls the timeline back to the current time. Keep very short (a small button)."
+  },
+  {
+    "id": "GuideSearchPreparing",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Shown in the TV Guide's search results when a search starts — usually only briefly; for a second or two when the search index must be rebuilt first."
+  },
+  {
+    "id": "GuideSearchNone",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Heading in the TV Guide's search results when no programme matched (channels may still have). {0} = what the user typed. Only upcoming programmes (and ones airing now) are searched."
+  },
+  {
+    "id": "GuideSearchCount",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Heading above the programmes in the TV Guide's search results (below any matching channels). {0} = number of programmes found (1 or more) — phrased so it reads for 1 too."
+  },
+  {
+    "id": "GuideSearchShowingFirst",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Status line when the search hit its result limit. {0} = the number of results shown (normally the limit, 200)."
+  },
+  {
+    "id": "GuideSearchOnNow",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Small badge on a search result that is airing right now. Keep very short."
+  },
+  {
+    "id": "GuideSearchToday",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Day heading in the TV Guide's search results."
+  },
+  {
+    "id": "GuideSearchTomorrow",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Day heading in the TV Guide's search results."
+  },
+  {
+    "id": "GuideSearchShowInGuide",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Right-click menu item on a search result: scroll the TV Guide's timeline to that programme."
+  },
+  {
+    "id": "LoadingIndexingGuide",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Loading box line after a TV guide refresh, while the guide is indexed for programme search (a second or two; the app may not respond meanwhile)."
+  },
+  {
+    "id": "GuideSearchInDescriptions",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Section heading in the TV Guide's search results, above the programmes whose DESCRIPTION (not title) matched what the user typed. Day headings follow under it."
+  },
+  {
+    "id": "GuideSearchChannelsHeading",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "First heading in the TV Guide's search results: channels whose NAME contains what the user typed. {0} = how many (1 or more) — phrased so it reads for 1 too."
+  },
+  {
+    "id": "GuideSearchFilterChannels",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "The result under that heading: choosing it narrows the TV Guide's grid to those channels (a chip in the grid's corner clears it). {0} = what the user typed. The channel names are listed on the line below it."
   }
 ]

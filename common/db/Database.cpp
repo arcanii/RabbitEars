@@ -7,8 +7,10 @@
 #include <cwchar>  // std::wcstoll — NOT _wtoll, which is MSVC-only and breaks the macOS build
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
+#include "core/SearchFold.h"
 #include "core/UrlCanon.h"
 #include "platform/Encoding.h"
 
@@ -382,6 +384,7 @@ void Database::close() {
         sqlite3_close_v2(db_);
         db_ = nullptr;
     }
+    programmeIndexKnown_ = -1;  // belongs to the connection: a reopen re-checks the stamp
 }
 
 bool Database::exec(const char* sql) {
@@ -499,6 +502,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //   v9: channels.stream_url rewritten to its CANONICAL spelling, merging the rows that become
 //       equal. The first step here that rewrites existing DATA rather than adding columns — see
 //       canonicalizeStreamUrls().
+//   v10: two empty FTS5 tables for the TV Guide's programme search — see
+//       createProgrammeSearchTables() and docs/EPG_SEARCH.md.
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -508,7 +513,16 @@ void Database::migrate() {
         if (q && q.step()) v = q.intCol(0);
     }
     schemaVersion_ = static_cast<int>(v);
-    if (v >= 9) return;  // newest schema; bump in lockstep with the highest step below
+    if (v >= 10) return;  // newest schema; bump in lockstep with the highest step below
+    // ⚠ A v9 database goes STRAIGHT to v10. The v2–v9 block below has no per-step version gate: it
+    // rewrites user_version from the column checks (8 at most) and re-runs v9's channel-URL rewrite
+    // whenever v8's columns exist — so letting a v9 database into it would redo that rewrite
+    // (seconds on a large library: the original v9 run took 6.6 s on the owner's) and set
+    // user_version back to 8 — for good, if the re-run then failed.
+    if (v == 9) {
+        createProgrammeSearchTables();
+        return;
+    }
 
     // v2: playlists.enabled.
     if (!hasColumn("playlists", "enabled"))
@@ -683,6 +697,55 @@ void Database::migrate() {
     // downstream that writes a canonical URL is gated on that, so a failure here degrades to the
     // pre-v9 literal behaviour rather than to the destructive one.
     if (haveV8 && canonicalizeStreamUrls()) schemaVersion_ = 9;
+
+    // v10 — programme search. Gated on v9 having landed in this same open, so the version only
+    // ever advances one proven step at a time.
+    if (schemaVersion_ == 9) createProgrammeSearchTables();
+}
+
+// ---------------------------------------------------------------------------
+// v10 — two EMPTY external-content FTS5 tables for programme search (docs/EPG_SEARCH.md §3).
+//
+// Deliberately NO triggers: a trigger would make every write to epg_programmes depend on FTS5, so a
+// build without it (every release through 0.2.18, and an older mac build) would fail every guide
+// refresh with "no such module". Without triggers such a build still opens, refreshes and
+// integrity-checks this database (measured with an FTS5-less build of this amalgamation) — it only
+// leaves the index stale, which the stamp catches. Nothing is indexed here, so the upgrade is
+// instant, and nothing in this class builds the index on its own: a CALLER runs
+// rebuildProgrammeIndex() — Win32 after each guide refresh, and before the first search whenever
+// programmeSearchState() says NeedsRebuild. Until then searchProgrammes() answers with LIKE.
+//
+// Both tables and the version in ONE transaction: a failure (SQLITE_BUSY, a full disk) leaves v9
+// and nothing half-made, and the next open retries; search answers with LIKE meanwhile.
+bool Database::createProgrammeSearchTables() {
+    Tx tx(db_);
+    if (!tx) return false;
+    // remove_diacritics: trigram accepts 1 (its values 1 and 2 select the same folding), unicode61
+    // takes 2 (also folds the diacritics of letters that carry several).
+    if (!exec("CREATE VIRTUAL TABLE IF NOT EXISTS epg_fts_title USING fts5("
+              "title, content='epg_programmes', content_rowid='id',"
+              " tokenize='trigram remove_diacritics 1')"))
+        return false;
+    if (!exec("CREATE VIRTUAL TABLE IF NOT EXISTS epg_fts_descr USING fts5("
+              "descr, content='epg_programmes', content_rowid='id',"
+              " tokenize='unicode61 remove_diacritics 2')"))
+        return false;
+    // IF NOT EXISTS succeeds over an ordinary table of the same name, so check what is there.
+    if (!programmeSearchTablesExist()) return false;
+    // Tables just made are empty: a stamp left from an earlier life of this database (a downgrade and
+    // back) must not vouch for them, or search would call an empty index Ready.
+    if (!exec("DELETE FROM settings WHERE key='epg_fts_stamp'")) return false;
+    if (!exec("PRAGMA user_version=10")) return false;  // transactional: rolls back with the tables
+    if (!tx.commit()) return false;
+    schemaVersion_ = 10;
+    return true;
+}
+
+bool Database::programmeSearchTablesExist() {
+    Stmt q(db_, "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+                " AND name IN ('epg_fts_title','epg_fts_descr')"
+                " AND sql LIKE 'CREATE VIRTUAL TABLE%USING fts5(%'");
+    return q && q.step() && q.intCol(0) == 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -903,6 +966,7 @@ void Database::deletePlaylist(long long playlistId) {
     if (!q) return;
     q.bindInt(1, playlistId);
     q.stepDone();
+    programmeIndexKnown_ = -1;  // ON DELETE CASCADE removed its programmes: re-check the stamp
 }
 
 void Database::renamePlaylist(long long playlistId, const std::wstring& name) {
@@ -1107,7 +1171,10 @@ std::vector<Channel> Database::channelsByPlaylist(long long playlistId, const Gr
         db_,
         std::string("SELECT ") + kChannelCols + " FROM channels WHERE playlist_id=?" +
             gridWhere(g, binds) +
-            " ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g),
+            // `, id` only breaks ties the keys before it leave unspecified — so the TV Guide's row
+            // join (which keeps the first channel per tvg-id in this order) and the programme search's
+            // channel table (refreshProgrammeSearchChannels, same order + id) pick the SAME channel.
+            " ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id" + gridLimit(g),
         nullptr, playlistId, &binds);
 }
 
@@ -1336,6 +1403,7 @@ int Database::clearDeadStatuses() {
 int Database::bulkInsertProgrammes(long long playlistId, const std::vector<Programme>& programmes,
                                    long long nowEpoch) {
     if (!db_) return 0;
+    programmeIndexKnown_ = -1;  // whatever happens below, the search index must be re-checked
     Tx tx(db_);
     if (!tx) return 0;  // contended writer: the guide was not replaced
     {  // A refresh replaces this playlist's guide wholesale — the feed is authoritative.
@@ -1418,6 +1486,409 @@ std::vector<Programme> Database::programmesInWindowAll(long long windowStartUtc,
     q.bindInt(1, windowEndUtc);
     q.bindInt(2, windowStartUtc);
     while (q.step()) out.push_back(readProgramme(q));
+    return out;
+}
+
+// ---- Programme search (schema v10) — docs/EPG_SEARCH.md ----------------------
+
+// What the index must have been built from: the programme count and max id, plus every
+// epg_refreshed_<playlist> setting — which bulkInsertProgrammes rewrites on EVERY refresh, in every
+// build since the one that created schema v3, so an older build's refresh changes it too. Count and
+// max id alone would not do: a same-sized re-import reuses the same ids. Empty = could not read.
+std::wstring Database::programmeIndexStamp() {
+    std::wstring s;
+    {
+        Stmt q(db_, "SELECT COUNT(*), IFNULL(MAX(id),0) FROM epg_programmes");
+        if (!q || !q.step()) return L"";
+        s = std::to_wstring(q.intCol(0)) + L":" + std::to_wstring(q.intCol(1));
+    }
+    Stmt q(db_, "SELECT key, value FROM settings WHERE key GLOB 'epg_refreshed_*' ORDER BY key");
+    if (!q) return L"";
+    while (q.step()) s += L";" + q.textCol(0) + L"=" + q.textCol(1);
+    return s;
+}
+
+Database::ProgrammeSearchState Database::programmeSearchState() {
+    if (!db_ || schemaVersion_ < 10) return ProgrammeSearchState::Unavailable;
+    if (programmeIndexKnown_ < 0) {
+        const std::wstring now = programmeIndexStamp();
+        const auto saved = getSetting(L"epg_fts_stamp");
+        programmeIndexKnown_ = (!now.empty() && saved && *saved == now) ? 1 : 0;
+    }
+    return programmeIndexKnown_ == 1 ? ProgrammeSearchState::Ready
+                                     : ProgrammeSearchState::NeedsRebuild;
+}
+
+bool Database::rebuildProgrammeIndex() {
+    if (!db_ || schemaVersion_ < 10) return false;
+    Tx tx(db_);
+    if (!tx) return false;  // contended writer: nothing changed, the old stamp still stands
+    if (!exec("INSERT INTO epg_fts_title(epg_fts_title) VALUES('rebuild')")) return false;
+    if (!exec("INSERT INTO epg_fts_descr(epg_fts_descr) VALUES('rebuild')")) return false;
+    const std::wstring stamp = programmeIndexStamp();  // same transaction: what was just indexed
+    if (stamp.empty()) return false;
+    {
+        Stmt q(db_, "INSERT INTO settings(key,value) VALUES('epg_fts_stamp',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+        if (!q) return false;
+        q.bindText(1, stamp);
+        if (q.stepDone() != SQLITE_DONE) return false;
+    }
+    if (!tx.commit()) return false;
+    programmeIndexKnown_ = 1;
+    return true;
+}
+
+namespace {
+
+// The search's channel table: one row per (playlist, normalised tvg-id) the user can play, carrying
+// the channel a TV Guide row would show for it.
+constexpr const char* kSearchChannelTable =
+    "CREATE TEMP TABLE IF NOT EXISTS guide_channels("
+    "playlist_id INTEGER NOT NULL, cid TEXT NOT NULL, name TEXT NOT NULL, tvg_id TEXT NOT NULL,"
+    " PRIMARY KEY(playlist_id, cid)) WITHOUT ROWID";
+
+// A tvg-id normalised as core/RecordingRules normaliseTvgId does — the part before '@',
+// ASCII-lower-cased (SQLite's lower() is ASCII-only too). Used on BOTH sides of the join.
+#define RE_NORM_TVG(col) "lower(substr(" col ",1,instr(" col "||'@','@')-1))"
+
+}  // namespace
+
+bool Database::refreshProgrammeSearchChannels() {
+    if (!db_) return false;
+    if (!exec(kSearchChannelTable)) return false;
+    // A DEFERRED transaction that WRITES only the TEMP schema takes no write lock on the main
+    // database (it only reads `channels`), so this never contends with the guide store or the sync
+    // workers. One statement, not a row loop: ~90 ms at the owner's 410k channels, where listing
+    // them through channelsByPlaylist took 1.1 s.
+    if (!exec("BEGIN")) return false;
+    // Per (playlist, id) keep the FIRST channel in channelsByPlaylist's own order — the one the
+    // guide's row join keeps (onEpgGuide's byBase.emplace), so a result names and plays the same
+    // channel its guide row does.
+    const bool ok =
+        exec("DELETE FROM temp.guide_channels") &&
+        exec("INSERT INTO temp.guide_channels(playlist_id,cid,name,tvg_id)"
+             " SELECT playlist_id, cid, name, tvg_id FROM ("
+             "  SELECT playlist_id, " RE_NORM_TVG("tvg_id") " AS cid, name, tvg_id,"
+             "   ROW_NUMBER() OVER (PARTITION BY playlist_id, " RE_NORM_TVG("tvg_id")
+             "    ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id) AS rn"
+             "  FROM channels WHERE tvg_id<>''"
+             "   AND playlist_id IN (SELECT id FROM playlists WHERE enabled=1))"
+             " WHERE rn=1");
+    if (!ok || !exec("COMMIT")) {
+        exec("ROLLBACK");  // a failed COMMIT leaves the transaction open — close it
+        return false;
+    }
+    return true;
+}
+
+namespace {
+
+// Unicode code points in a UTF-8 string (portable: wchar_t is UTF-16 on Windows, UTF-32 on mac).
+size_t codePoints(const std::string& u8) {
+    size_t n = 0;
+    for (unsigned char b : u8)
+        if ((b & 0xC0) != 0x80) ++n;
+    return n;
+}
+
+std::wstring trimSpace(const std::wstring& s) {
+    // U+3000 too: a Japanese IME's Space types the ideographic space.
+    const size_t b = s.find_first_not_of(L" \t\r\n\f\v\u3000");
+    if (b == std::wstring::npos) return L"";
+    const size_t e = s.find_last_not_of(L" \t\r\n\f\v\u3000");
+    return s.substr(b, e - b + 1);
+}
+
+// "Could be part of a word": an ASCII letter or digit, or anything non-ASCII outside the common
+// punctuation and space blocks — a portable stand-in for iswalnum, which on macOS's C locale says no
+// to every non-ASCII letter. The excluded blocks are the ones real guide text puts right against a
+// word, and that the unicode61 tokenizer treats as separators: U+00A0–U+00BF (no-break space, « »,
+// ¡ ¿), U+2000–U+206F (curly quotes ‘ ’ “ ”, dashes, …), U+3000–U+303F (CJK 「」、。).
+bool wordish(wchar_t c) {
+    const unsigned long u = static_cast<unsigned long>(c);
+    if ((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z')) return true;
+    if (u < 0x80) return false;
+    return !((u >= 0x00A0 && u <= 0x00BF) || (u >= 0x2000 && u <= 0x206F) || (u >= 0x3000 && u <= 0x303F));
+}
+
+// Does the text contain CJK? The unicode61 tokenizer has no word segmentation for it — a run of
+// Chinese or Japanese without spaces is ONE token — so descriptions in those scripts are searched
+// with LIKE instead (the titles' trigram index is fine: trigram needs no word boundaries).
+bool isCjkChar(wchar_t c) {
+    const unsigned long u = static_cast<unsigned long>(c);
+    return (u >= 0x3040 && u <= 0x30FF) ||   // hiragana, katakana
+           (u >= 0x3400 && u <= 0x4DBF) ||   // CJK extension A
+           (u >= 0x4E00 && u <= 0x9FFF) ||   // CJK unified ideographs
+           (u >= 0xAC00 && u <= 0xD7AF) ||   // hangul syllables
+           (u >= 0xF900 && u <= 0xFAFF) ||   // CJK compatibility ideographs
+           (u >= 0xFF66 && u <= 0xFF9F);     // half-width katakana
+}
+bool hasCjk(const std::wstring& s) { return std::any_of(s.begin(), s.end(), isCjkChar); }
+
+// The typed text split on whitespace, keeping only words with something a tokenizer could keep.
+std::vector<std::wstring> searchWords(const std::wstring& text) {
+    std::vector<std::wstring> words;
+    std::wstring cur;
+    auto flush = [&] {
+        for (wchar_t c : cur)
+            if (wordish(c)) {
+                words.push_back(cur);
+                break;
+            }
+        cur.clear();
+    };
+    for (wchar_t c : text) {
+        if (c == L' ' || c == L'\t' || c == L'\r' || c == L'\n' || c == L'\u3000') flush();
+        else cur += c;
+    }
+    flush();
+    return words;
+}
+
+// One FTS5 string: "…" with every inner " doubled — the only escaping FTS5's syntax has, and it
+// makes whatever the user typed (*, (, -, AND, OR, NEAR, :) a literal to search for.
+std::wstring ftsQuoted(const std::wstring& s) {
+    std::wstring o = L"\"";
+    for (wchar_t c : s) {
+        if (c == L'"') o += L'"';
+        o += c;
+    }
+    return o + L"\"";
+}
+
+// The description query: each word quoted and simply juxtaposed — FTS5's implicit AND, which
+// (unlike an explicit AND) drops a word that yields no tokens — with the last one a prefix:
+// "doctor" "who"*. Empty = no description search.
+std::wstring descrQuery(const std::vector<std::wstring>& words) {
+    std::wstring q;
+    for (size_t i = 0; i < words.size(); ++i) {
+        if (i) q += L' ';
+        q += ftsQuoted(words[i]);
+        if (i + 1 == words.size()) q += L'*';
+    }
+    return q;
+}
+
+// %text% for LIKE … ESCAPE '\'.
+std::wstring likeContains(const std::wstring& text) {
+    std::wstring o = L"%";
+    for (wchar_t c : text) {
+        if (c == L'%' || c == L'_' || c == L'\\') o += L'\\';
+        o += c;
+    }
+    return o + L"%";
+}
+
+// Does `needle` occur in `hay` at `pos`, comparing through searchFold (case, and Latin accents — so
+// the "Québec" a search for "quebec" found gets marked)? With `wordStart`, only where a word begins
+// (the tokenizer's view: a description word matches at its start, never in the middle of another
+// word) — except for a CJK needle, whose words have no boundaries to start at (see hasCjk).
+bool matchesAt(const std::wstring& hay, size_t pos, const std::wstring& needle, bool wordStart) {
+    if (needle.empty() || pos + needle.size() > hay.size()) return false;
+    if (wordStart && pos > 0 && wordish(hay[pos - 1]) && wordish(needle[0]) && !isCjkChar(needle[0]))
+        return false;
+    for (size_t k = 0; k < needle.size(); ++k)
+        if (searchFold(hay[pos + k]) != searchFold(needle[k])) return false;
+    return true;
+}
+
+// `text` with every occurrence of any `needles` entry wrapped in U+0002 … U+0003 (the longest one
+// where several start at the same place). Empty when nothing occurs — the caller shows it plain.
+std::wstring markAll(const std::wstring& text, const std::vector<std::wstring>& needles, bool wordStart) {
+    std::wstring o;
+    bool any = false;
+    for (size_t i = 0; i < text.size();) {
+        size_t len = 0;
+        for (const auto& n : needles)
+            if (n.size() > len && matchesAt(text, i, n, wordStart)) len = n.size();
+        if (len) {
+            o += L'\x02';
+            o.append(text, i, len);
+            o += L'\x03';
+            i += len;
+            any = true;
+        } else {
+            o += text[i++];
+        }
+    }
+    return any ? o : std::wstring();
+}
+
+// Never cut between the two halves of a UTF-16 surrogate pair (an emoji or other astral character on
+// Windows, where wchar_t is 16-bit): move a cut off a low surrogate. A no-op with 32-bit wchar_t.
+size_t offLowSurrogate(const std::wstring& s, size_t i, bool forward) {
+    while (i > 0 && i < s.size() && static_cast<unsigned long>(s[i]) >= 0xDC00 &&
+           static_cast<unsigned long>(s[i]) <= 0xDFFF) {
+        if (forward) ++i;
+        else --i;
+    }
+    return i;
+}
+
+// An excerpt of a description around the EARLIEST occurrence of any typed word, the words marked;
+// the description's start when searchFold's comparison finds none (a match the tokenizer found
+// through some other folding — the match is still real, it just cannot be located here).
+std::wstring snippetAround(const std::wstring& descr, const std::vector<std::wstring>& words) {
+    constexpr size_t kBefore = 30, kAfter = 90, kPlain = 110;
+    size_t at = std::wstring::npos;
+    for (size_t i = 0; i < descr.size() && at == std::wstring::npos; ++i)
+        for (const auto& w : words)
+            if (matchesAt(descr, i, w, true)) {
+                at = i;
+                break;
+            }
+    if (at == std::wstring::npos)
+        return descr.size() > kPlain ? descr.substr(0, offLowSurrogate(descr, kPlain, false)) + L"…"
+                                     : descr;
+    size_t b = offLowSurrogate(descr, at > kBefore ? at - kBefore : 0, true);
+    size_t e = offLowSurrogate(descr, std::min(descr.size(), at + kAfter), false);
+    if (b > 0) {  // start on a word boundary
+        const size_t sp = descr.find(L' ', b);
+        if (sp != std::wstring::npos && sp < at) b = sp + 1;
+    }
+    if (e < descr.size()) {
+        const size_t sp = descr.rfind(L' ', e);
+        if (sp != std::wstring::npos && sp > at) e = sp;
+    }
+    const std::wstring cut = descr.substr(b, e - b);
+    const std::wstring marked = markAll(cut, words, true);
+    return (b > 0 ? L"…" : L"") + (marked.empty() ? cut : marked) +
+           (e < descr.size() ? L"…" : L"");
+}
+
+// The join that keeps only programmes the caller can show (refreshProgrammeSearchChannels). CROSS
+// JOIN fixes the join ORDER: SQLite's planner otherwise drives from epg_programmes through
+// idx_epg_lookup (playlist_id IN …) and probes the matches per row — 47 ms for a rare word on the
+// owner's 193k programmes, against 0.2 ms matches-first (measured, vendored 3.53.2).
+constexpr const char* kSearchChannelJoin =
+    " CROSS JOIN temp.guide_channels g ON g.playlist_id=p.playlist_id AND g.cid="
+    RE_NORM_TVG("p.channel_id");
+
+}  // namespace
+
+#undef RE_NORM_TVG
+
+std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstring& text,
+                                                               long long fromUtc, int limit,
+                                                               bool* truncated) {
+    std::vector<ProgrammeHit> out;
+    if (truncated) *truncated = false;
+    if (!db_ || limit <= 0) return out;
+    const std::wstring term = trimSpace(text);
+    if (term.empty()) return out;
+    // The search needs its channel table even when the caller never loaded one (then: no results).
+    if (!exec(kSearchChannelTable)) return out;
+
+    // Trigram cannot match under 3 characters, and a stale index must never be READ: a reused rowid
+    // would return the wrong programme (a single-guide refresh restarts ids at 1), and reading a
+    // column or snippet() through FTS5 on a stale rowid fails with SQLITE_CORRUPT_VTAB.
+    const bool ready = programmeSearchState() == ProgrammeSearchState::Ready;
+    const bool useIndex = ready && codePoints(utf8FromWide(term)) >= 3;
+    const bool cjk = hasCjk(term);  // descriptions by LIKE: unicode61 does not segment CJK
+    const std::vector<std::wstring> words = searchWords(term);
+    const std::wstring titleQ = ftsQuoted(term);
+    const std::wstring descrQ = (useIndex && !cjk) ? descrQuery(words) : L"";
+
+    // 1. Match, keep the caller's channels, rank, limit — ROWIDS ONLY from the index: fetching a
+    //    column, highlight() or snippet() through FTS5 reads (and re-tokenises) the content row of
+    //    EVERY match before the LIMIT applies — measured 700 ms for "the" with snippet().
+    std::string sql;
+    if (useIndex) {
+        sql = "SELECT p.id, MAX(m.t) AS inTitle, p.start_utc, g.name, g.tvg_id FROM ("
+              "SELECT rowid AS id, 1 AS t FROM epg_fts_title WHERE epg_fts_title MATCH ?1";
+        if (!descrQ.empty())
+            sql += " UNION ALL SELECT rowid, 0 FROM epg_fts_descr WHERE epg_fts_descr MATCH ?2";
+        else if (cjk)  // the whole term as a substring of the description (a table scan, ~50 ms)
+            sql += " UNION ALL SELECT id, 0 FROM epg_programmes WHERE descr LIKE ?5 ESCAPE '\\'";
+        sql += ") m CROSS JOIN epg_programmes p ON p.id=m.id";
+        sql += kSearchChannelJoin;
+        sql += " WHERE p.stop_utc>?3";
+        sql += std::string(" AND p.") + kEnabledOnly;
+        sql += " GROUP BY p.id ORDER BY inTitle DESC, p.start_utc LIMIT ?4";
+    } else {
+        // LIKE, matching the whole term as one substring: titles always; descriptions too unless
+        // the index is Ready (a 1–2 character Latin term WITH a Ready index searches titles only — a
+        // one-letter description scan matches nearly everything), and always for CJK, where two
+        // characters are already a whole word.
+        sql = "SELECT p.id, (p.title LIKE ?1 ESCAPE '\\') AS inTitle, p.start_utc, g.name, g.tvg_id"
+              " FROM epg_programmes p";
+        sql += kSearchChannelJoin;
+        sql += " WHERE p.stop_utc>?3";
+        sql += std::string(" AND p.") + kEnabledOnly;
+        sql += (ready && !cjk) ? " AND p.title LIKE ?1 ESCAPE '\\'"
+                               : " AND (p.title LIKE ?1 ESCAPE '\\' OR p.descr LIKE ?1 ESCAPE '\\')";
+        sql += " ORDER BY inTitle DESC, p.start_utc LIMIT ?4";
+    }
+    struct Ranked {
+        long long    id;
+        bool         inTitle;
+        std::wstring name, tvgId;
+    };
+    std::vector<Ranked> ranked;
+    {
+        Stmt q(db_, sql.c_str());
+        if (!q) {
+            lastError_ = wideFromUtf8(sqlite3_errmsg(db_));
+            return out;
+        }
+        q.bindText(1, useIndex ? titleQ : likeContains(term));
+        if (useIndex && !descrQ.empty()) q.bindText(2, descrQ);
+        if (useIndex && descrQ.empty() && cjk) q.bindText(5, likeContains(term));
+        q.bindInt(3, fromUtc);
+        q.bindInt(4, static_cast<long long>(limit) + 1);  // one extra says "there are more"
+        while (q.step()) ranked.push_back({q.intCol(0), q.intCol(1) != 0, q.textCol(3), q.textCol(4)});
+    }
+    if (static_cast<int>(ranked.size()) > limit) {
+        ranked.resize(static_cast<size_t>(limit));
+        if (truncated) *truncated = true;
+    }
+    if (ranked.empty()) return out;
+
+    // 2. The winners' rows. A separate statement, so in principle another connection could commit
+    //    between the two — none in this process writes epg_programmes (only bulkInsertProgrammes and
+    //    deletePlaylist's cascade do, on the caller's connection), and a missing id is skipped below.
+    std::string idList;
+    for (const auto& r : ranked) {
+        if (!idList.empty()) idList += ',';
+        idList += std::to_string(r.id);
+    }
+    std::unordered_map<long long, ProgrammeHit> byId;
+    {
+        Stmt q(db_, (std::string("SELECT id, playlist_id, ") + kProgrammeCols +
+                     " FROM epg_programmes WHERE id IN (" + idList + ")")
+                        .c_str());
+        if (!q) return out;
+        while (q.step()) {
+            ProgrammeHit h;
+            h.id = q.intCol(0);
+            h.playlistId = q.intCol(1);
+            // readProgramme reads kProgrammeCols from column 0; here they start at column 2.
+            h.programme.channelId = q.textCol(2);
+            h.programme.startUtc = q.intCol(3);
+            h.programme.stopUtc = q.intCol(4);
+            h.programme.title = q.textCol(5);
+            h.programme.subTitle = q.textCol(6);
+            h.programme.descr = q.textCol(7);
+            h.programme.category = q.textCol(8);
+            h.programme.episodeNum = q.textCol(9);
+            h.programme.iconUrl = q.textCol(10);
+            byId.emplace(h.id, std::move(h));
+        }
+    }
+    // 3. Mark the matches for display, in C++ over at most `limit` rows (see ProgrammeHit).
+    out.reserve(ranked.size());
+    for (auto& r : ranked) {
+        auto it = byId.find(r.id);
+        if (it == byId.end()) continue;
+        ProgrammeHit& h = it->second;
+        h.inTitle = r.inTitle;
+        h.channelName = std::move(r.name);
+        h.channelTvgId = std::move(r.tvgId);
+        if (h.inTitle) h.markedTitle = markAll(h.programme.title, {term}, false);
+        else h.snippet = snippetAround(h.programme.descr, words);
+        out.push_back(std::move(h));
+    }
     return out;
 }
 

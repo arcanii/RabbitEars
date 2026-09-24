@@ -593,5 +593,19 @@
   "LoadingSavingProgrammes": "正在儲存 {1} 的 {0} 個節目…",
   "LoadingCheckingRules": "正在以新的節目表檢查錄影規則…",
   "SetGuideUrlNoUrlHeading": "找不到網址",
-  "SetGuideUrlNoUrlBody": "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。"
+  "SetGuideUrlNoUrlBody": "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。",
+  "GuideSearchCue": "搜尋頻道和節目…",
+  "GuideNowButton": "現在",
+  "GuideSearchPreparing": "正在準備搜尋…",
+  "GuideSearchNone": "沒有符合「{0}」的待播節目",
+  "GuideSearchCount": "找到的待播節目：{0}",
+  "GuideSearchShowingFirst": "顯示前 {0} 筆 — 輸入更多字以縮小範圍",
+  "GuideSearchOnNow": "播出中",
+  "GuideSearchToday": "今天",
+  "GuideSearchTomorrow": "明天",
+  "GuideSearchShowInGuide": "在節目表中顯示",
+  "LoadingIndexingGuide": "正在為搜尋建立節目表索引…",
+  "GuideSearchInDescriptions": "在節目說明中找到",
+  "GuideSearchChannelsHeading": "符合的頻道：{0}",
+  "GuideSearchFilterChannels": "只顯示符合「{0}」的頻道"
 }

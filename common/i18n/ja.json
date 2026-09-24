@@ -593,5 +593,19 @@
   "LoadingSavingProgrammes": "{1} の {0} 番組を保存中…",
   "LoadingCheckingRules": "新しい番組表で録画ルールを確認中…",
   "SetGuideUrlNoUrlHeading": "Web アドレスが見つかりません",
-  "SetGuideUrlNoUrlBody": "http:// または https:// で始まる番組表のリンクを貼り付けてください。\r\n\r\n何も保存されていません。入力した内容のまま再び開くので、修正してください。"
+  "SetGuideUrlNoUrlBody": "http:// または https:// で始まる番組表のリンクを貼り付けてください。\r\n\r\n何も保存されていません。入力した内容のまま再び開くので、修正してください。",
+  "GuideSearchCue": "チャンネルと番組を検索…",
+  "GuideNowButton": "現在",
+  "GuideSearchPreparing": "検索を準備中…",
+  "GuideSearchNone": "「{0}」に一致する今後の番組はありません",
+  "GuideSearchCount": "見つかった今後の番組: {0}",
+  "GuideSearchShowingFirst": "最初の {0} 件を表示中 — さらに入力して絞り込んでください",
+  "GuideSearchOnNow": "放送中",
+  "GuideSearchToday": "今日",
+  "GuideSearchTomorrow": "明日",
+  "GuideSearchShowInGuide": "番組表で表示",
+  "LoadingIndexingGuide": "検索用に番組表のインデックスを作成中…",
+  "GuideSearchInDescriptions": "説明文に一致",
+  "GuideSearchChannelsHeading": "一致するチャンネル: {0}",
+  "GuideSearchFilterChannels": "「{0}」に一致するチャンネルだけを表示"
 }

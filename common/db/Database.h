@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "models/Channel.h"
@@ -185,6 +186,72 @@ public:
     // playlist-scoped (see core/RecordingRules).
     std::vector<Programme> programmesInWindowAll(long long windowStartUtc, long long windowEndUtc);
 
+    // ---- Programme search (schema v10, docs/EPG_SEARCH.md) ------------------
+    // Two external-content FTS5 tables over epg_programmes: titles (trigram — any substring) and
+    // descriptions (unicode61 — words and prefixes), both case- and accent-insensitive. NOTHING
+    // maintains them automatically (no triggers, and bulkInsertProgrammes does not touch them): a
+    // caller that wants search calls rebuildProgrammeIndex() after storing guides, and search checks
+    // a stamp first so a stale index is never read. Until then, nothing here costs anything.
+    enum class ProgrammeSearchState {
+        Ready,         // the index matches epg_programmes
+        NeedsRebuild,  // it does not (never built, a refresh or playlist delete since, an older
+                       // build's refresh) — call rebuildProgrammeIndex() before relying on search
+        Unavailable,   // no index (schema v10 did not land): search answers with a LIKE scan
+    };
+    // Cheap after the first call: the stamp (COUNT + MAX(id) over epg_programmes plus the
+    // epg_refreshed_* settings — 7 ms at 193k rows, measured) is compared once, then remembered until
+    // this object changes epg_programmes (bulkInsertProgrammes, deletePlaylist) or is reopened. Nothing
+    // else in the process writes epg_programmes (the sync workers' connections do not).
+    ProgrammeSearchState programmeSearchState();
+    // Rebuild both tables from epg_programmes and record the stamp, in ONE transaction of its own.
+    // Seconds on a large guide (~1.5 s at the owner's 193k programmes, measured through this code on
+    // a copy of their library — RabbitEarsCli --epgsearch): call it where the user has been
+    // told, e.g. behind a loading box. False = nothing changed (no index, a contended writer, or a
+    // failed statement — lastError()); the old stamp then still says whether the index is current.
+    bool rebuildProgrammeIndex();
+
+    struct ProgrammeHit {
+        long long    id = 0;            // epg_programmes.id
+        long long    playlistId = 0;
+        Programme    programme;         // channelId is the GUIDE's id (not normalised)
+        // The user's channel it airs on — the one a TV Guide row shows for it: the first of that
+        // playlist's channels sharing the normalised tvg-id, in channelsByPlaylist's order.
+        // channelTvgId is that channel's FULL tvg-id, which is what Play / Schedule resolve;
+        // channelName may be empty (a nameless channel — show the id, as the guide does).
+        std::wstring channelName, channelTvgId;
+        bool         inTitle = false;   // false = matched only in the description
+        // For display, each marked occurrence wrapped in U+0002 … U+0003: `markedTitle` = the title
+        // with the typed text marked (title matches); `snippet` = an excerpt of the description around
+        // the EARLIEST occurrence of any typed word (description-only matches). Marking is simpler
+        // than the index's matching, so it can differ: it compares characters through searchFold
+        // (core/SearchFold.h — case, and Latin accents: "quebec" marks "Québec"), one for one, so a
+        // match the index found through some other folding stays unmarked (markedTitle empty,
+        // snippet = the description's start); it marks EVERY typed word as a prefix (the index takes
+        // only the last), and compares typed punctuation literally.
+        std::wstring markedTitle, snippet;
+    };
+    // (Re)load which channels a search may return: every channel with a tvg-id in an ENABLED
+    // playlist, per playlist, by normalised tvg-id — the channels a TV Guide row can be built for
+    // (the guide itself only builds rows for programmes in its −6 h..+72 h window). Results are
+    // filtered to these BEFORE the limit. Kept on this connection (a TEMP table) until the next call;
+    // call it when a search session starts (~90 ms at the owner's 410k channels, measured).
+    bool refreshProgrammeSearchChannels();
+    // Programmes still airing or upcoming at `fromUtc` (stop_utc > fromUtc) on a channel
+    // refreshProgrammeSearchChannels() loaded, whose title contains `text` or whose description has
+    // its words (the last one as a prefix): title matches first, then description-only matches, each
+    // soonest first; at most `limit`. The text is searched for literally — FTS5 syntax typed by the
+    // user is never interpreted. Case is folded for every cased script, accents only for LATIN (the
+    // tokenizers do not strip e.g. Greek tonos). Under 3 characters (trigram's minimum), or unless
+    // the index is Ready, it falls back to a LIKE scan for the whole text as one substring — of the
+    // titles, and also of the descriptions unless the index is Ready: slower, ASCII-only case folding,
+    // accents exact (its results are still marked through searchFold, which ignores accents). A term
+    // with CJK in it searches descriptions by LIKE too, since the description tokenizer cannot split
+    // CJK into words. `truncated` (optional) is set when more than `limit` matched. Measured on the owner's
+    // real guide (193k programmes): 0.2–0.4 ms for most words, 20–40 ms for the commonest ("news",
+    // "the"); the LIKE fallback ~50 ms.
+    std::vector<ProgrammeHit> searchProgrammes(const std::wstring& text, long long fromUtc, int limit,
+                                               bool* truncated = nullptr);
+
     // ---- Scheduled recordings ----------------------------------------------
     long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
     std::vector<ScheduledRecording> listSchedules();     // ordered by start_utc
@@ -236,6 +303,14 @@ private:
     // it is the only step that REWRITES existing rows rather than adding columns, and the only one
     // whose failure has to be reported rather than probed for structurally.
     bool canonicalizeStreamUrls();
+    // The v10 step: create the two (empty) programme-search tables and record v10 — one
+    // transaction. True when the DB is at v10 afterwards.
+    bool createProgrammeSearchTables();
+    bool programmeSearchTablesExist();       // both tables present AND genuinely FTS5
+    std::wstring programmeIndexStamp();      // what the index must have been built from
+    // programmeSearchState()'s memory: -1 = not yet checked since this connection last changed
+    // epg_programmes, 0 = stale, 1 = current. Reset by bulkInsertProgrammes and deletePlaylist.
+    int          programmeIndexKnown_ = -1;
 
     sqlite3*     db_ = nullptr;
     std::wstring lastError_;
