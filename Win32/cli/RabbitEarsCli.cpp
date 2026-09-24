@@ -1284,6 +1284,27 @@ int selftest() {
                    "fold: Cyrillic");
             expect(foldHit(L"ΕΡΤ ΝΕΑ", L"ερτ") == 1,
                    "fold: Greek");
+            expect(foldHit(L"ΉΛΙΟΣ ΚΑΙ ΘΑΛΑΣΣΑ", L"ήλιο") == 1,
+                   "fold: Greek capital with a tonos (Ή = ή)");
+            expect(foldHit(L"Ο ΚΟΣΜΟΣ ΣΗΜΕΡΑ", L"κοσμος") == 1,
+                   "fold: Greek final sigma (ς = Σ)");
+            expect(foldHit(L"ΆΡΗΣ", L"άρης") == 1 && foldHit(L"ΈΛΛΗΝΕΣ ΣΤΟ ΠΑΓΚΟΣΜΙΟ", L"έλληνες") == 1 &&
+                       foldHit(L"ΌΛΥΜΠΟΣ", L"όλυμπος") == 1 && foldHit(L"ΏΡΑ ΓΙΑ ΝΈΑ", L"ώρα") == 1 &&
+                       foldHit(L"ΠΡΟΪΟΝ", L"προϊον") == 1,
+                   "fold: Greek tonos capitals + final sigma together (Ά Έ Ό Ώ Ϊ)");
+            expect(foldHit(L"Ίδρυμα Ωνάση", L"ίδρυμα") == 1 && foldHit(L"Ύπνος και όνειρα", L"ύπνος") == 1 &&
+                       foldHit(L"ΠΡΩΤΕΫΟΥΣΑ", L"πρωτεϋουσα") == 1,
+                   "fold: Greek title case too (Ί Ύ), and Ϋ");
+            expect(foldHit(L"ȘTIRI ȚĂRII", L"știri") == 1 && foldHit(L"ȘTIRI ȚĂRII", L"țării") == 1,
+                   "fold: Romanian comma-below capitals (Ș Ț)");
+            expect(foldHit(L"ȘTIRI", L"stiri") == 0, "fold: ...still case-only: ș is not s");
+            {  // the owner-facing case: an EXACT rule typed in lower case, the airing in capitals
+                std::vector<Programme> ps{prog(L"cnn.us", L"ΆΡΗΣ", 2000, 3000)};
+                expect(expandRules({rule(9, L"cnn.us", L"άρης", RuleMatch::Exact)}, ps, {}, 1000, 100000).size() == 1,
+                       "fold: an Exact rule 'άρης' matches the airing 'ΆΡΗΣ'");
+            }
+            expect(foldHit(L"ΑΡΗΣ", L"άρης") == 0,
+                   "fold: still CASE-only — a tonos is not stripped (ΑΡΗΣ does not match άρης)");
             expect(foldHit(L"ŽIVOT", L"život") == 1, "fold: Latin Extended-A");
             expect(foldHit(L"NEWS AT TEN", L"news") == 1, "fold: plain ASCII still works");
             expect(foldHit(L"ニュース", L"ニュース") == 1,
@@ -1515,6 +1536,27 @@ int selftest() {
                 auto v = expandRules({rule(5, L"cnn.us", L"Doctor Who", RuleMatch::Exact)}, later, made, 1000, 100000);
                 expect(made.size() == 1 && v.empty(),
                        "a later airing of an already-scheduled episode is not re-created");
+            }
+            {  // a key stored by an OLDER fold still dedups: before final sigma folded, the sub-title
+               // "Ο κόσμος" was keyed "οκόσμος"; today it is "οκόσμοσ" — the stored one is re-folded
+                std::vector<Programme> first = {ep(L"ERT.gr", L"Ειδήσεις", 2000, 3000, L"", L"Ο κόσμος")};
+                auto made = expandRules({rule(5, L"ert.gr", L"Ειδήσεις", RuleMatch::Exact)}, first, {}, 1000, 100000);
+                expect(made.size() == 1 && made[0].episodeKey == L"n:|s:οκόσμοσ",
+                       "episode key folds final sigma (got " +
+                           (made.empty() ? std::string("none") : utf8FromWide(made[0].episodeKey)) + ")");
+                if (!made.empty()) made[0].episodeKey = L"n:|s:οκόσμος";  // as the older build stored it
+                std::vector<Programme> later = {ep(L"ERT.gr", L"Ειδήσεις", 90000, 91000, L"", L"Ο κόσμος")};
+                auto v = expandRules({rule(5, L"ert.gr", L"Ειδήσεις", RuleMatch::Exact)}, later, made, 1000, 100000);
+                expect(made.size() == 1 && v.empty(),
+                       "a row keyed by the older fold (ς kept) still claims its episode — no repeat recording");
+            }
+            {  // the stored key is re-folded, so the fold must be idempotent: kra (ĸ, no capital) once
+               // paired with Ĺ, and a re-folded "ĺ" never matched the fresh "Ĺ" — every repeat recorded
+                std::vector<Programme> first = {ep(L"KNR.gl", L"Qanorooq", 2000, 3000, L"", L"Qaĸa")};
+                auto made = expandRules({rule(5, L"knr.gl", L"Qanorooq", RuleMatch::Exact)}, first, {}, 1000, 100000);
+                std::vector<Programme> later = {ep(L"KNR.gl", L"Qanorooq", 90000, 91000, L"", L"Qaĸa")};
+                auto v = expandRules({rule(5, L"knr.gl", L"Qanorooq", RuleMatch::Exact)}, later, made, 1000, 100000);
+                expect(made.size() == 1 && v.empty(), "an episode key with ĸ (kra) still dedups its repeat");
             }
             {  // title-scoped: a Contains rule over two series does NOT cross-dedup on a shared num
                 std::vector<Programme> ps = {ep(L"CNN.us", L"Star Trek: TNG", 2000, 3000, L"1.1.0/1", L""),

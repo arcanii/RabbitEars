@@ -20,19 +20,33 @@ namespace {
 // common/ has to stay platform-neutral (no Win32 CharLowerW, no ICU), so this is an explicit table
 // for the ranges EPG titles actually use. It is SIMPLE case folding — 1:1, no expansions like
 // ß→ss — which is exactly right for matching: both sides go through it, so they agree.
+//
+// CASE only, never accents: a rule for "cafe" does not match "CAFÉ" (recording-rule matching is
+// deliberately stricter than search — core/SearchFold.h is the accent-blind fold search uses). Greek
+// capitals WITH a tonos fold to their lower-case forms WITH it (Ή -> ή, not η), and final sigma ς
+// folds to σ, so "άρης" matches "ΆΡΗΣ" — the word's last letter is ς in one and Σ in the other.
 wchar_t foldChar(wchar_t c) {
     if (c < 0x80) return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 0x20) : c;
     // Latin-1 Supplement: À-Þ -> à-þ, skipping × (0xD7), which is maths, not a letter.
     if (c >= 0x00C0 && c <= 0x00DE && c != 0x00D7) return static_cast<wchar_t>(c + 0x20);
-    // Latin Extended-A: even/odd upper/lower pairs, with two documented exceptions.
+    // Latin Extended-A: even/odd upper/lower pairs, with three documented exceptions.
     if (c >= 0x0100 && c <= 0x017F) {
         if (c == 0x0130) return 0x0069;             // İ (dotted capital I) -> i
+        if (c == 0x0138) return c;                  // ĸ (kra) has no capital: pairing it made Ĺ,
+                                                    // and the fold must be idempotent (stored keys)
         if (c == 0x0178) return 0x00FF;             // Ÿ -> ÿ (breaks the pairing)
         if (c >= 0x0139 && c <= 0x0148) return (c % 2 == 1) ? static_cast<wchar_t>(c + 1) : c;
         if (c >= 0x0179 && c <= 0x017E) return (c % 2 == 1) ? static_cast<wchar_t>(c + 1) : c;
         return (c % 2 == 0) ? static_cast<wchar_t>(c + 1) : c;
     }
-    if (c >= 0x0391 && c <= 0x03A9 && c != 0x03A2) return static_cast<wchar_t>(c + 0x20);  // Greek
+    if (c == 0x0218 || c == 0x021A) return static_cast<wchar_t>(c + 1);  // Romanian Ș Ț -> ș ț
+    // Greek: Α-Ω and Ϊ Ϋ (0x03A2 is unassigned), the capitals with a tonos, and final sigma.
+    if (c >= 0x0391 && c <= 0x03AB && c != 0x03A2) return static_cast<wchar_t>(c + 0x20);
+    if (c == 0x0386) return 0x03AC;                                         // Ά -> ά
+    if (c >= 0x0388 && c <= 0x038A) return static_cast<wchar_t>(c + 0x25);  // Έ Ή Ί -> έ ή ί
+    if (c == 0x038C) return 0x03CC;                                         // Ό -> ό
+    if (c == 0x038E || c == 0x038F) return static_cast<wchar_t>(c + 0x3F);  // Ύ Ώ -> ύ ώ
+    if (c == 0x03C2) return 0x03C3;                                         // ς -> σ
     if (c >= 0x0410 && c <= 0x042F) return static_cast<wchar_t>(c + 0x20);  // Cyrillic А-Я
     if (c >= 0x0400 && c <= 0x040F) return static_cast<wchar_t>(c + 0x50);  // Cyrillic Ѐ-Џ
     // Everything else (CJK, Hebrew, Arabic, Thai…) is caseless — return it unchanged.
@@ -128,9 +142,13 @@ std::vector<ScheduledRecording> expandRules(const std::vector<RecordingRule>& ru
     // Episode dedup seed: a show already queued/recorded (any status) claims its episode, so a
     // later airing of the SAME episode is skipped. Keyed by folded title + episode key; rows with
     // no episode key (manual / pre-v6 / no-episode-num) don't participate — they slot-dedup only.
+    // The stored key is re-folded: it was folded when its row was created, perhaps by an older
+    // foldChar (before Greek ς/tonos capitals folded, an "ο κόσμος" sub-title keyed as "οκόσμος",
+    // today "οκόσμοσ"). Folding is idempotent and each extension only folds characters the older
+    // fold left alone, so re-folding an old key gives exactly today's key for the same episode.
     std::set<std::pair<std::wstring, std::wstring>> takenEpisodes;
     for (const ScheduledRecording& s : existing)
-        if (!s.episodeKey.empty()) takenEpisodes.emplace(foldTitle(s.title), s.episodeKey);
+        if (!s.episodeKey.empty()) takenEpisodes.emplace(foldTitle(s.title), foldTitle(s.episodeKey));
 
     // Fold each programme's channel id + title ONCE. A guide can hold tens of thousands of
     // rows; re-folding them per rule turned this into O(rules x programmes) allocations.
