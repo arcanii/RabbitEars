@@ -6,13 +6,18 @@
 # ---------------------------------------------------------------------------
 # RabbitEarsPlatformWin — the Windows platform layer the core deliberately
 # excludes: WinHTTP download (Http.cpp) + the %LOCALAPPDATA% db path (Paths.cpp,
-# which implements Database::defaultDbPath). Linked by the CLI and the GUI.
-# The macOS peers are ../mac/platform/*.
+# which implements Database::defaultDbPath) + log-credential masking
+# (UrlRedact.cpp — pure, here so the CLI selftest can reach it). Linked by the CLI
+# and the GUI. The macOS peers are ../mac/platform/* (UrlRedact has none).
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsPlatformWin STATIC
   platform/Http.cpp
-  platform/Paths.cpp)
+  platform/Paths.cpp
+  platform/UrlRedact.cpp)
 target_link_libraries(RabbitEarsPlatformWin PUBLIC RabbitEarsCore shell32 ole32 winhttp)
+# Win32/ as an include root: for this library's own sources (platform/HttpProgress.h,
+# platform/UrlRedact.h) and, PUBLIC, for the CLI's platform/UrlRedact.h. The GUI targets add it too.
+target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---------------------------------------------------------------------------
 # RabbitEarsCli — headless test/inspection tool for the core (--selftest).

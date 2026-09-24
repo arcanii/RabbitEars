@@ -587,5 +587,11 @@
   "TooltipBtnSkipFwd": "快轉 {0} 秒",
   "MacDialogDeadLinkClearBody": "要將所有頻道重設為「未檢查」嗎？\r\n\r\n被「隱藏無法使用的頻道」隱藏的頻道將重新出現。播放頻道時會重新檢查。",
   "StatusAiringKeptRule": "此播出項目來自影集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓影集規則再次將同一播出項目排入佇列。",
-  "MeterLookVuSilver": "銀色 VU"
+  "MeterLookVuSilver": "銀色 VU",
+  "LoadingDownloadingProgress": "正在下載 {0}… {1} MB{2}",
+  "LoadingReadingProgress": "正在讀取 {0}… {1} 個節目{2}",
+  "LoadingSavingProgrammes": "正在儲存 {1} 的 {0} 個節目…",
+  "LoadingCheckingRules": "正在以新的節目表檢查錄影規則…",
+  "SetGuideUrlNoUrlHeading": "找不到網址",
+  "SetGuideUrlNoUrlBody": "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。"
 }

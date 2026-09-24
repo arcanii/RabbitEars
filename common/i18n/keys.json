@@ -3802,5 +3802,52 @@
     "cluster": "DialogMeters",
     "placeholders": [],
     "comment": "Meter look: a second analog VU needle gauge, styled after a silver 1970s cassette-deck meter (brushed-silver faceplate, blue and red scale). 'VU' is the standard audio abbreviation (volume unit) — keep it as VU. Do not name a manufacturer."
+  },
+  {
+    "id": "LoadingDownloadingProgress",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": "Loading box line while the TV guide downloads, updated a few times a second. {0} = the playlist name, {1} = the amount received so far in MB (1 MB = 1,048,576 bytes) with one decimal (e.g. 42.5), {2} = the LoadingProgressTag suffix (\" (1 of 2)\") or empty. No total is shown."
+  },
+  {
+    "id": "LoadingReadingProgress",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": "Loading box line while the downloaded TV guide is read, updated a few times a second. {0} = the playlist name, {1} = programmes read so far (a plain integer, e.g. 120000), {2} = the LoadingProgressTag suffix or empty."
+  },
+  {
+    "id": "LoadingSavingProgrammes",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "Loading box line while the read TV guide is written to the library (the app may not respond for a moment). {0} = number of programmes (plain integer), {1} = the playlist name."
+  },
+  {
+    "id": "LoadingCheckingRules",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Loading box line after a TV guide refresh, while series recording rules are matched against the new guide."
+  },
+  {
+    "id": "SetGuideUrlNoUrlHeading",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Heading of the notice shown when the text entered in Set Guide URL contains no http:// or https:// address."
+  },
+  {
+    "id": "SetGuideUrlNoUrlBody",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Body of that notice. After it closes, the Set Guide URL box opens again with the user's text still in it. Keep http:// and https:// untranslated."
   }
 ]

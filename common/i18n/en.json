@@ -587,5 +587,11 @@
   "TooltipBtnSkipFwd": "Forward {0} seconds",
   "MacDialogDeadLinkClearBody": "Reset every channel back to “not checked”?\r\n\r\nChannels hidden by “Hide unavailable” will reappear. Playing a channel re-tests it.",
   "StatusAiringKeptRule": "This airing came from a series rule and can’t be removed until its scheduled recording time is over — removing it sooner could let a series rule queue it again.",
-  "MeterLookVuSilver": "Silver VU"
+  "MeterLookVuSilver": "Silver VU",
+  "LoadingDownloadingProgress": "Downloading {0}… {1} MB{2}",
+  "LoadingReadingProgress": "Reading {0}… {1} programmes{2}",
+  "LoadingSavingProgrammes": "Saving {0} programmes from {1}…",
+  "LoadingCheckingRules": "Checking your recording rules against the new guide…",
+  "SetGuideUrlNoUrlHeading": "No web address found",
+  "SetGuideUrlNoUrlBody": "Paste the guide link that starts with http:// or https://.\r\n\r\nNothing was saved. The box opens again with your text so you can fix it."
 }

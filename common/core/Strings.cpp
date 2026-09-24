@@ -644,6 +644,13 @@ constexpr std::array<const char*, N> kEn = {{
     "This airing came from a series rule and can’t be removed until its scheduled recording time is over — removing it sooner could let a series rule queue it again.",  // StatusAiringKeptRule
     // --- DialogMeters ---
     "Silver VU",  // MeterLookVuSilver
+    // --- GuideGrid ---
+    "Downloading {0}… {1} MB{2}",  // LoadingDownloadingProgress
+    "Reading {0}… {1} programmes{2}",  // LoadingReadingProgress
+    "Saving {0} programmes from {1}…",  // LoadingSavingProgrammes
+    "Checking your recording rules against the new guide…",  // LoadingCheckingRules
+    "No web address found",  // SetGuideUrlNoUrlHeading
+    "Paste the guide link that starts with http:// or https://.\r\n\r\nNothing was saved. The box opens again with your text so you can fix it.",  // SetGuideUrlNoUrlBody
 }};
 
 // 日本語
@@ -1278,6 +1285,13 @@ constexpr std::array<const char*, N> kJa = {{
     "この放送はシリーズルールによるもので、録画予定時刻が終わるまで削除できません。それより前に削除すると、シリーズルールが同じ放送を再度予約する可能性があります。",  // StatusAiringKeptRule
     // --- DialogMeters ---
     "シルバー VU",  // MeterLookVuSilver
+    // --- GuideGrid ---
+    "{0} をダウンロード中… {1} MB{2}",  // LoadingDownloadingProgress
+    "{0} を読み込み中… {1} 番組{2}",  // LoadingReadingProgress
+    "{1} の {0} 番組を保存中…",  // LoadingSavingProgrammes
+    "新しい番組表で録画ルールを確認中…",  // LoadingCheckingRules
+    "Web アドレスが見つかりません",  // SetGuideUrlNoUrlHeading
+    "http:// または https:// で始まる番組表のリンクを貼り付けてください。\r\n\r\n何も保存されていません。入力した内容のまま再び開くので、修正してください。",  // SetGuideUrlNoUrlBody
 }};
 
 // 繁體中文
@@ -1912,6 +1926,13 @@ constexpr std::array<const char*, N> kZhHant = {{
     "此播出項目來自影集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓影集規則再次將同一播出項目排入佇列。",  // StatusAiringKeptRule
     // --- DialogMeters ---
     "銀色 VU",  // MeterLookVuSilver
+    // --- GuideGrid ---
+    "正在下載 {0}… {1} MB{2}",  // LoadingDownloadingProgress
+    "正在讀取 {0}… {1} 個節目{2}",  // LoadingReadingProgress
+    "正在儲存 {1} 的 {0} 個節目…",  // LoadingSavingProgrammes
+    "正在以新的節目表檢查錄影規則…",  // LoadingCheckingRules
+    "找不到網址",  // SetGuideUrlNoUrlHeading
+    "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。",  // SetGuideUrlNoUrlBody
 }};
 
 // 繁體中文（香港）
@@ -2546,6 +2567,13 @@ constexpr std::array<const char*, N> kZhHK = {{
     "此播出項目來自劇集規則，在其排定的錄影時間結束前無法移除 — 提早移除可能會讓劇集規則再次將同一播出項目排入佇列。",  // StatusAiringKeptRule
     // --- DialogMeters ---
     "銀色 VU",  // MeterLookVuSilver
+    // --- GuideGrid ---
+    "正在下載 {0}… {1} MB{2}",  // LoadingDownloadingProgress
+    "正在讀取 {0}… {1} 個節目{2}",  // LoadingReadingProgress
+    "正在儲存 {1} 的 {0} 個節目…",  // LoadingSavingProgrammes
+    "正在以新的節目表檢查錄影規則…",  // LoadingCheckingRules
+    "找不到網址",  // SetGuideUrlNoUrlHeading
+    "請貼上以 http:// 或 https:// 開頭的節目表連結。\r\n\r\n尚未儲存任何內容。輸入框會帶著您輸入的文字再次開啟，方便您修正。",  // SetGuideUrlNoUrlBody
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

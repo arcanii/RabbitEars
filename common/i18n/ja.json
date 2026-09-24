@@ -587,5 +587,11 @@
   "TooltipBtnSkipFwd": "{0} 秒進む",
   "MacDialogDeadLinkClearBody": "すべてのチャンネルを「未確認」に戻しますか？\r\n\r\n「利用できないチャンネルを非表示」で隠れていたチャンネルが再び表示されます。チャンネルを再生すると再度判定されます。",
   "StatusAiringKeptRule": "この放送はシリーズルールによるもので、録画予定時刻が終わるまで削除できません。それより前に削除すると、シリーズルールが同じ放送を再度予約する可能性があります。",
-  "MeterLookVuSilver": "シルバー VU"
+  "MeterLookVuSilver": "シルバー VU",
+  "LoadingDownloadingProgress": "{0} をダウンロード中… {1} MB{2}",
+  "LoadingReadingProgress": "{0} を読み込み中… {1} 番組{2}",
+  "LoadingSavingProgrammes": "{1} の {0} 番組を保存中…",
+  "LoadingCheckingRules": "新しい番組表で録画ルールを確認中…",
+  "SetGuideUrlNoUrlHeading": "Web アドレスが見つかりません",
+  "SetGuideUrlNoUrlBody": "http:// または https:// で始まる番組表のリンクを貼り付けてください。\r\n\r\n何も保存されていません。入力した内容のまま再び開くので、修正してください。"
 }

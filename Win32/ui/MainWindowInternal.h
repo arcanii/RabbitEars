@@ -240,6 +240,10 @@ struct EpgFetch {
     std::wstring           name;
     std::wstring           error;       // empty on success
     std::vector<Programme> programmes;  // parsed rows (empty on failure)
+    // Where the worker's time went; onEpgDone logs it (beside the store's own time) for a
+    // successful fetch, and the download time for a failed one.
+    long long              downloadMs = 0, gunzipMs = 0, parseMs = 0;
+    size_t                 downloadBytes = 0, xmlBytes = 0;
 };
 struct EpgResult {
     std::vector<EpgFetch> fetches;

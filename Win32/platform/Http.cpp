@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/Http.h"
+#include "platform/HttpProgress.h"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -18,6 +19,11 @@ struct Handle {
 }  // namespace
 
 bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int timeoutMs) {
+    return httpGetWithProgress(url, out, error, timeoutMs, {});
+}
+
+bool httpGetWithProgress(const std::wstring& url, std::string& out, std::wstring& error,
+                         int timeoutMs, const HttpProgressFn& onProgress) {
     out.clear();
 
     URL_COMPONENTS uc{};
@@ -108,6 +114,7 @@ bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int
         }
         out.resize(base + read);
         if (read == 0) break;
+        if (onProgress) onProgress(out.size());
     }
     return true;
 }

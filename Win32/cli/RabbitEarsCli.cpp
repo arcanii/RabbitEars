@@ -33,6 +33,7 @@
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Encoding.h"
+#include "platform/UrlRedact.h"
 #include "ui/DockLayout.h"
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
@@ -230,6 +231,172 @@ int selftest() {
         expect(parseXmltvTime("20260705140000") == 1783260000LL, "missing tz treated as UTC");
         expect(parseXmltvTime("202607051400") == 1783260000LL, "missing seconds tolerated");
         expect(parseXmltvTime("2026") == 0, "too-few digits -> 0");
+
+        // Progress overload (the guide refresh's running count): called at each multiple of
+        // kXmltvProgressEvery, never with 0; same result as the plain overload.
+        std::string big = "<tv>";
+        const size_t nBig = 2 * kXmltvProgressEvery + kXmltvProgressEvery / 2;  // 2,500
+        for (size_t k = 0; k < nBig; ++k)
+            big += "<programme start=\"20260705140000 +0000\" channel=\"c\"><title>t</title></programme>";
+        big += "</tv>";
+        std::vector<size_t> calls;
+        const XmltvDocument withProgress =
+            parseXmltv(big, [&calls](size_t soFar) { calls.push_back(soFar); });
+        expect(withProgress.programmes.size() == nBig && parseXmltv(big).programmes.size() == nBig,
+               "progress overload parses the same " + std::to_string(nBig) + " programmes");
+        expect(calls.size() == 2 && calls[0] == kXmltvProgressEvery &&
+                   calls[1] == 2 * kXmltvProgressEvery,
+               "progress called at 1000 and 2000 only (got " + std::to_string(calls.size()) + " calls)");
+    }
+
+    out("== Log masking + pasted guide URL (Win32 UrlRedact) ==\n");
+    {
+        // A guide/playlist URL: credential-named query values are masked with no registration.
+        const std::wstring epgLine =
+            L"set epg_url for playlist id=3 to \"http://h.example:8080/xmltv.php?username=alice123&password=s3cretPW\"";
+        const std::wstring m1 = redactUrls(epgLine, {});
+        expect(m1 == L"set epg_url for playlist id=3 to \"http://h.example:8080/xmltv.php?username=***&password=***\"",
+               "query username/password masked; host, path and quotes kept");
+        expect(redactUrls(L"http://h/x?PassWord=xyz1234&type=m3u_plus&action=get_live_streams", {}) ==
+                   L"http://h/x?PassWord=***&type=m3u_plus&action=get_live_streams",
+               "param names case-insensitive; non-credential params kept");
+        expect(redactUrls(L"http://h/x?user=ab", {}) == L"http://h/x?user=***",
+               "a credential-named value is masked whatever its length");
+
+        // A login in a path the shape rules do not recognise needs registration.
+        const std::vector<std::wstring> creds =
+            urlCredentials(L"http://h/get.php?username=alice123&password=s3cretPW&type=m3u_plus");
+        expect(creds.size() == 2 && creds[0] == L"alice123" && creds[1] == L"s3cretPW",
+               "urlCredentials: username + password from the query (got " + std::to_string(creds.size()) + ")");
+        expect(redactUrls(L"play: http://h:80/alice123/s3cretPW/index.m3u8", creds) ==
+                   L"play: http://h:80/***/***/index.m3u8",
+               "registered login masked in a path that is not a stream shape");
+
+        // The spelling XtreamClient writes into a stream path is registered from the playlist URL
+        // alone (pins encodeLikeXtream to XtreamClient's encoder), so last session's log is masked
+        // at startup even where it quotes the path without its scheme.
+        {
+            const std::wstring pl =
+                L"http://h:8080/get.php?username=us%21er9&password=p%40ss+w0rd%23&type=m3u_plus";
+            XtreamCreds xc;
+            expect(parseXtreamPlaylistUrl(pl, xc), "pin: the tricky playlist URL parses");
+            const std::wstring movie = xtreamMovieUrl(xc, 77, L"mkv");
+            const size_t pathAt = movie.find(L'/', movie.find(L"://") + 3);
+            const std::wstring bare = L"open failed for " + movie.substr(pathAt);  // no scheme
+            const std::wstring masked = redactUrls(bare, urlCredentials(pl));
+            expect(!movie.empty() && masked == L"open failed for /movie/***/***/77.mkv",
+                   "pin: XtreamClient's path spelling of a special-character login is registered");
+        }
+        expect(redactUrls(L"http://h/x?username=abcd&password=ab#cdef", {}) ==
+                   L"http://h/x?username=***&password=***",
+               "a '#' inside a query value does not end it (XtreamClient reads past it)");
+        expect(redactUrls(L"alice123 opened http://h/alice123/x", creds) == L"*** opened http://h/***/x",
+               "a registered login is masked anywhere in the line, not only in a URL");
+        expect(redactUrls(L"http stream error for /alice123/s3cretPW/12345.ts", creds) ==
+                   L"http stream error for /***/***/12345.ts",
+               "...including a stream path quoted without its scheme");
+        expect(redactUrls(L"a plain line, no secrets", creds) == L"a plain line, no secrets",
+               "a line with no URL and no registered login is returned unchanged");
+        expect(redactUrls(L"a http://h/?password=abcd1 b http://g/x?user=efgh2&q=1 c", {}) ==
+                   L"a http://h/?password=*** b http://g/x?user=***&q=1 c",
+               "every URL on a line is masked (no registered secrets: the URL scan alone)");
+        expect(redactUrls(L"x https://bob:hunter22@host/p y", {}) == L"x https://***@host/p y",
+               "user-info masked");
+
+        // Xtream stream paths are masked by shape, with nothing registered.
+        expect(redactUrls(L"play: http://h:8080/abcuser/abcpass/123456", {}) ==
+                   L"play: http://h:8080/***/***/123456",
+               "stream path /USER/PASS/123 masked unregistered");
+        expect(redactUrls(L"http://h/live/abcuser/abcpass/123456.ts http://h/movie/abcuser/abcpass/77.mkv", {}) ==
+                   L"http://h/live/***/***/123456.ts http://h/movie/***/***/77.mkv",
+               "/live/ and /movie/ stream paths masked unregistered");
+        expect(redactUrls(L"http://h/timeshift/u1234/p1234/60/2026-09-24:10-00/123.ts", {}) ==
+                   L"http://h/timeshift/***/***/60/2026-09-24:10-00/123.ts",
+               "/timeshift/ path: only the two login segments masked");
+        expect(redactUrls(L"https://cdn.x/a/b/playlist.m3u8 http://h/x/12.ts http://h/a/b/c/12.ts", {}) ==
+                   L"https://cdn.x/a/b/playlist.m3u8 http://h/x/12.ts http://h/a/b/c/12.ts",
+               "non-stream shapes untouched (non-numeric last segment; 2 segments; 4 without a kind)");
+        expect(redactUrls(L"see http://h/abcuser/abcpass/123.ts, ok (http://h/abcuser/abcpass/9)", {}) ==
+                   L"see http://h/***/***/123.ts, ok (http://h/***/***/9)",
+               "stream shape still recognised with the sentence's punctuation after it");
+        expect(redactUrls(L"http://a/e.xml,http://u1:pw12@b/abcuser/abcpass/1.ts", {}) ==
+                   L"http://a/e.xml,http://***@b/***/***/1.ts",
+               "two URLs run together are analysed separately");
+        expect(redactUrls(L"http://h/x?password=abcd;ef&type=m3u_plus", {}) ==
+                   L"http://h/x?password=***&type=m3u_plus",
+               "';' is part of a query value, not a separator");
+        expect(redactUrls(L"http://h/x?u=1&amp;password=abcd12", {}) == L"http://h/x?u=1&amp;password=***",
+               "an HTML-escaped &amp;password= still counts");
+        expect(redactUrls(L"alive=1 live /live/ x", { L"live" }) == L"alive=1 *** /***/ x",
+               "a registered login is masked only as a whole token (not inside 'alive')");
+        expect(redactUrls(L"u=http%3A%2F%2Fh%2Falice123%2Fx", creds) == L"u=http%3A%2F%2Fh%2F***%2Fx",
+               "...where a %XX escape before it counts as a boundary");
+        // A stream path's login is registered only for an account already known.
+        const std::vector<std::wstring> sc =
+            streamLoginToRegister(L"http://h/movie/abcuser/ab%20cd12/9.mkv", { L"abcuser" });
+        auto scHas = [&sc](const wchar_t* v) { return std::find(sc.begin(), sc.end(), v) != sc.end(); };
+        expect(sc.size() == 3 && scHas(L"abcuser") && scHas(L"ab%20cd12") && scHas(L"ab cd12"),
+               "streamLoginToRegister: a known account's path login, as written and decoded");
+        expect(streamLoginToRegister(L"http://h/movie/abcuser/abcpass/9.mkv", {}).empty() &&
+                   streamLoginToRegister(L"http://h/stream/channel/5.ts", { L"alice123" }).empty(),
+               "streamLoginToRegister: nothing for an unknown account or a lookalike (no ordinary words)");
+        expect(urlCredentials(L"http://h/live/abcuser/abcpass/1.ts").empty(),
+               "urlCredentials never returns a stream path's segments");
+        const std::vector<std::wstring> plus = urlCredentials(L"http://h/?password=ab+cd12");
+        expect(std::find(plus.begin(), plus.end(), L"ab+cd12") != plus.end() &&
+                   std::find(plus.begin(), plus.end(), L"ab cd12") != plus.end(),
+               "urlCredentials: a query value also with '+' read as a space");
+        expect(redactUrls(L"http://h/live/chan1/123.m3u8 and http://h/hls/live/123.m3u8", {}) ==
+                   L"http://h/live/chan1/123.m3u8 and http://h/***/***/123.m3u8",
+               "3 segments starting with a kind word are not /USER/PASS/123; any other 3 are "
+               "(masked in that line only - the documented cost)");
+        expect(redactUrls(L"udp://@239.1.1.1:1234 rtp://@232.0.0.1:5000", {}) ==
+                   L"udp://@239.1.1.1:1234 rtp://@232.0.0.1:5000",
+               "an empty user-info (multicast) is not masked");
+        expect(redactUrls(L"x!abc123 y and pass!x", { L"!abc123", L"pass!" }) == L"x*** y and ***x",
+               "a secret's punctuation edge matches whatever is beside it");
+        {
+            std::wstring big;
+            for (int k = 0; k < 200000; ++k) big += L" alice123";
+            const auto t0 = std::chrono::steady_clock::now();
+            const std::wstring masked = redactUrls(big, { L"alice123" });
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            expect(masked.find(L"alice123") == std::wstring::npos && masked.size() == 200000u * 4u &&
+                       ms < 2000,
+                   "200,000 hits masked in one pass (" + std::to_string(ms) + " ms; an in-place loop took seconds)");
+        }
+        expect(redactUrls(L"http://h/ab/cd/x.ts ab", { L"ab" }) == L"http://h/ab/cd/x.ts ab",
+               "a registered secret under 4 chars is ignored");
+        expect(urlCredentials(L"http://h/?username=ab&password=abc").empty(),
+               "urlCredentials skips values under 4 chars");
+        const std::vector<std::wstring> enc = urlCredentials(L"http://h/?username=u%40mail&password=p%2Bw0rd");
+        auto has = [&enc](const wchar_t* v) { return std::find(enc.begin(), enc.end(), v) != enc.end(); };
+        expect(has(L"u%40mail") && has(L"u@mail") && has(L"p%2Bw0rd") && has(L"p+w0rd"),
+               "urlCredentials returns the raw AND the percent-decoded form");
+        const std::vector<std::wstring> ui = urlCredentials(L"ftp://bob:hunter22@host/");
+        expect(ui.size() == 1 && ui[0] == L"hunter22",
+               "urlCredentials: user-info password kept, the 3-char user skipped");
+
+        // Set Guide URL: keep just the address out of whatever was pasted.
+        expect(extractHttpUrl(L"EPG Link : http://h.example/xmltv.php?username=a&password=b") ==
+                   L"http://h.example/xmltv.php?username=a&password=b",
+               "extractHttpUrl: a provider email line yields just the address");
+        expect(extractHttpUrl(L"  https://h/x.php?password=Secret!.  ") == L"https://h/x.php?password=Secret!.",
+               "extractHttpUrl: a lone address is kept exactly as typed (a password may end in ! or .)");
+        expect(extractHttpUrl(L"Guide: https://h/x.xml.gz.") == L"https://h/x.xml.gz",
+               "extractHttpUrl: an address in prose loses the sentence's full stop");
+        expect(extractHttpUrl(L"(see http://h/guide)") == L"http://h/guide",
+               "extractHttpUrl: an unmatched closing parenthesis dropped");
+        expect(extractHttpUrl(L"http://h/a_(b)") == L"http://h/a_(b)",
+               "extractHttpUrl: a matched parenthesis kept");
+        expect(extractHttpUrl(L"<http://h/g>") == L"http://h/g", "extractHttpUrl: angle brackets end it");
+        expect(extractHttpUrl(L"HTTP://H/G") == L"HTTP://H/G", "extractHttpUrl: scheme case-insensitive, kept as typed");
+        expect(extractHttpUrl(L"x https://a/1 then http://b/2") == L"https://a/1",
+               "extractHttpUrl: the FIRST address wins, https or http");
+        expect(extractHttpUrl(L"no address here").empty() && extractHttpUrl(L"http://").empty() &&
+                   extractHttpUrl(L"ftp://h/x").empty(),
+               "extractHttpUrl: none, a bare scheme, or a non-http scheme -> empty");
     }
 
     out("== SQLite store ==\n");

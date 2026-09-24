@@ -36,6 +36,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
+#include "platform/LogSecrets.h"
 #include "platform/Profile.h"
 #include "platform/Updater.h"
 #include "platform/WakeScheduler.h"
@@ -603,6 +604,13 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // plain atomics, so this is just seeding state — nothing else depends on them yet.
                 if (auto lv = st->db.getSetting(L"log_level"); lv && !lv->empty())
                     diag::setLevel(diag::levelFromString(utf8FromWide(*lv), diag::Level::Info));
+                // The provider logins to mask in the log (platform/LogSecrets.h), registered before
+                // anything below can log a playlist, guide or stream URL.
+                for (const auto& pl : st->db.listPlaylists()) {
+                    diag::addSecretsFromUrl(pl.sourceUrl);
+                    diag::addSecretsFromUrl(pl.epgUrl);
+                }
+                diag::scrubPreviousLog();  // one written before masking existed kept them in clear
                 {
                     int nBeta = 0;
                     const BetaFeature* allBeta = allBetaFeatures(nBeta);

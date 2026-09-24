@@ -9,6 +9,8 @@
 // CDATA sections, comments, the XML/DOCTYPE prologue, and self-closing tags.
 #pragma once
 
+#include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,15 @@ struct XmltvDocument {
 // Parse an XMLTV document from raw UTF-8 bytes (already gunzipped — see core/Gzip).
 // A UTF-8 BOM is tolerated. Malformed islands are skipped, not fatal.
 XmltvDocument parseXmltv(const std::string& utf8Bytes);
+
+// The same parse, reporting progress: `onProgress(programmesSoFar)` is called on the parsing
+// thread each time the count reaches a multiple of kXmltvProgressEvery (never with 0, and not
+// necessarily with the final count). An empty `onProgress` is the plain overload above.
+// Added for the Win32 guide refresh's running count. The overload above keeps its signature and
+// its results; it now forwards here with an empty callback.
+constexpr std::size_t kXmltvProgressEvery = 1000;
+XmltvDocument parseXmltv(const std::string& utf8Bytes,
+                         const std::function<void(std::size_t)>& onProgress);
 
 // Parse an XMLTV timestamp ("YYYYMMDDHHMMSS ±HHMM", with the seconds and/or zone
 // optional) to unix epoch seconds (UTC). A missing zone is treated as UTC. Returns

@@ -34,6 +34,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Log.h"
+#include "platform/LogSecrets.h"
 #include "platform/Updater.h"
 #include "resource.h"
 #include "version.h"
@@ -446,6 +447,7 @@ void startPlaylistWorker(AppState* st, const std::wstring& source, bool isUrl,
                          const std::wstring& name) {
     st->busy = true;
     setStatus(st, isUrl ? tr(i18n::StringId::StatusDownloadingPlaylist) : tr(i18n::StringId::StatusLoadingPlaylist));
+    if (isUrl) diag::addSecretsFromUrl(source);  // before the line below logs it
     diag::info((isUrl ? L"playlist download start: " : L"playlist load start: ") + source);
     HWND hwnd = st->hwnd;
     std::thread([hwnd, source, isUrl, name]() {

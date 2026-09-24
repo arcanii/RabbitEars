@@ -1616,7 +1616,13 @@ HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstrin
 }
 
 void updateLoadingDialog(HWND dlg, const std::wstring& message) {
-    if (dlg && IsWindow(dlg)) SetWindowTextW(GetDlgItem(dlg, ID_LOADING_MSG), message.c_str());
+    if (!dlg || !IsWindow(dlg)) return;
+    HWND msg = GetDlgItem(dlg, ID_LOADING_MSG);
+    SetWindowTextW(msg, message.c_str());
+    // Make sure the line is painted before returning (UpdateWindow flushes any update region the
+    // SetWindowTextW left): a caller may set a line and then block the UI thread — the guide
+    // refresh's store runs on it — and the line has to be on screen before that.
+    UpdateWindow(msg);
 }
 
 void closeLoadingDialog(HWND dlg) {

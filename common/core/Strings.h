@@ -645,6 +645,13 @@ enum class StringId {
     StatusAiringKeptRule,
     // --- DialogMeters ---
     MeterLookVuSilver,
+    // --- GuideGrid ---
+    LoadingDownloadingProgress,
+    LoadingReadingProgress,
+    LoadingSavingProgrammes,
+    LoadingCheckingRules,
+    SetGuideUrlNoUrlHeading,
+    SetGuideUrlNoUrlBody,
     Count  // sentinel — MUST stay last
 };
 

@@ -72,7 +72,8 @@ void showInfoDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& 
 // TV guide). showLoadingDialog returns the window (or nullptr) — pump it via the main loop,
 // update its message line with updateLoadingDialog as progress arrives, and closeLoadingDialog
 // when done. updateLoadingDialog/closeLoadingDialog no-op on a null HWND, so callers needn't
-// null-check.
+// null-check. updateLoadingDialog paints the new line immediately, so it is safe to call right
+// before blocking the UI thread.
 HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
                        const std::wstring& message);
 void updateLoadingDialog(HWND dlg, const std::wstring& message);

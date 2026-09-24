@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <cwchar>
@@ -37,7 +38,10 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
 #include "db/Database.h"
+#include "platform/HttpProgress.h"
 #include "platform/Log.h"
+#include "platform/LogSecrets.h"
+#include "platform/UrlRedact.h"
 #include "platform/PowerPolicy.h"
 #include "platform/Profile.h"
 #include "platform/Updater.h"
@@ -296,6 +300,10 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
     const std::wstring src = trf(i18n::StringId::PlaylistSourceLine, { res->source });
     if (res->ok && !res->doc.channels.empty()) {
         const long long now = static_cast<long long>(time(nullptr));
+        // The playlist's own guide URL (its x-tvg-url) can carry the login too — and for a playlist
+        // imported from a FILE it is the only place we can learn it from. Register it now, not at
+        // the next launch, so this session's stream lines are masked (platform/LogSecrets.h).
+        diag::addSecretsFromUrl(res->doc.epgUrl);
         const long long pid = st->db.addPlaylist(res->name, res->source, res->isUrl, now, res->doc.epgUrl);
         if (pid == 0) {
             setStatus(st, tr(i18n::StringId::StatusAddPlaylistFailedDb));
@@ -365,9 +373,30 @@ void onEpgRefresh(AppState* st) {
     diag::info(L"EPG refresh start: " + std::to_wstring(targets.size()) + L" playlist(s)");
     HWND hwnd = st->hwnd;
     std::thread([hwnd, targets]() {
+        using Clock = std::chrono::steady_clock;
+        auto msSince = [](Clock::time_point t0) {
+            return static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
+        };
         // Progress lines carry a heap wstring* the UI thread shows in the loading box, then frees.
         auto post = [hwnd](const std::wstring& s) {
             PostMessageW(hwnd, WM_APP_EPG_PROGRESS, 0, reinterpret_cast<LPARAM>(new std::wstring(s)));
+        };
+        // The running counts (download bytes, parsed programmes) arrive far faster than anyone can
+        // read them — a read per network chunk, a call per 1,000 programmes — so post at most one
+        // line per 250 ms, and build it only when it will be posted. A skipped line is simply
+        // overtaken by the next.
+        Clock::time_point lastPost = Clock::now();
+        auto due = [&lastPost]() {
+            const Clock::time_point now = Clock::now();
+            if (now - lastPost < std::chrono::milliseconds(250)) return false;
+            lastPost = now;
+            return true;
+        };
+        auto mb = [](unsigned long long b) {
+            wchar_t buf[32];
+            swprintf_s(buf, L"%.1f", static_cast<double>(b) / (1024.0 * 1024.0));
+            return std::wstring(buf);
         };
         const size_t n = targets.size();
         auto* res = new EpgResult();
@@ -383,16 +412,35 @@ void onEpgRefresh(AppState* st) {
             std::string bytes;
             std::wstring err;
             post(trf(i18n::StringId::LoadingDownloadingName, { t.name, tag }));
-            if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60 s
+            const Clock::time_point tDownload = Clock::now();
+            const bool got = httpGetWithProgress(  // guides are large: 60 s per connect step / data wait
+                t.url, bytes, err, 60000, [&](unsigned long long received) {
+                    if (due())
+                        post(trf(i18n::StringId::LoadingDownloadingProgress,
+                                 { t.name, mb(received), tag }));
+                });
+            f.downloadMs = msSince(tDownload);
+            f.downloadBytes = bytes.size();
+            if (!got) {
                 f.error = err.empty() ? tr(i18n::StringId::EpgErrorDownloadFailed) : err;
             } else {
                 post(trf(i18n::StringId::LoadingParsingName,
                          { t.name, std::to_wstring(bytes.size() / 1024), tag }));
+                const Clock::time_point tGunzip = Clock::now();
                 const std::string xml = gunzipIfNeeded(bytes);
-                if (xml.empty())
+                f.gunzipMs = msSince(tGunzip);
+                f.xmlBytes = xml.size();
+                if (xml.empty()) {
                     f.error = tr(i18n::StringId::EpgErrorEmptyAfterDecompress);
-                else
-                    f.programmes = parseXmltv(xml).programmes;
+                } else {
+                    const Clock::time_point tParse = Clock::now();
+                    f.programmes = parseXmltv(xml, [&](size_t soFar) {
+                        if (due())
+                            post(trf(i18n::StringId::LoadingReadingProgress,
+                                     { t.name, std::to_wstring(soFar), tag }));
+                    }).programmes;
+                    f.parseMs = msSince(tParse);
+                }
             }
             res->fetches.push_back(std::move(f));
         }
@@ -401,9 +449,16 @@ void onEpgRefresh(AppState* st) {
 }
 
 void onEpgDone(AppState* st, EpgResult* res) {
+    using Clock = std::chrono::steady_clock;
+    auto msSince = [](Clock::time_point t0) {
+        return std::to_wstring(
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
+    };
     st->busy = false;
-    closeLoadingDialog(st->loadingDlg);  // dismiss the "please wait" box before the results dialog
-    st->loadingDlg = nullptr;
+    // The "please wait" box stays up until the results dialog replaces it: the store and the rule
+    // pass below both run HERE, on the UI thread, and with the box already gone a large guide
+    // (190k programmes) left a window that did not respond with nothing on screen to say why.
+    // updateLoadingDialog repaints the line at once, so each step is named before it blocks.
     const long long now = static_cast<long long>(time(nullptr));
     int okCount = 0, totalProg = 0;
     std::set<std::wstring> chans;
@@ -411,15 +466,26 @@ void onEpgDone(AppState* st, EpgResult* res) {
     for (auto& f : res->fetches) {
         if (!f.error.empty()) {
             detail += f.name + L":  " + f.error + L"\r\n";
-            diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error);
+            diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error + L" (download took " +
+                        std::to_wstring(f.downloadMs) + L" ms)");
             continue;
         }
+        updateLoadingDialog(st->loadingDlg,
+                            trf(i18n::StringId::LoadingSavingProgrammes,
+                                { std::to_wstring(f.programmes.size()), f.name }));
+        const Clock::time_point tStore = Clock::now();
         const int stored = st->db.bulkInsertProgrammes(f.playlistId, f.programmes, now);
+        const std::wstring storeMs = msSince(tStore);
         ++okCount;
         totalProg += stored;
         for (const auto& p : f.programmes) chans.insert(p.channelId);
         detail += trf(i18n::StringId::EpgDetailProgrammesLine, { f.name, std::to_wstring(stored) });
         diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
+        diag::info(L"EPG timings for \"" + f.name + L"\": download " + std::to_wstring(f.downloadMs) +
+                   L" ms (" + std::to_wstring(f.downloadBytes) + L" bytes), gunzip " +
+                   std::to_wstring(f.gunzipMs) + L" ms (" + std::to_wstring(f.xmlBytes) +
+                   L" bytes), parse " + std::to_wstring(f.parseMs) + L" ms (" +
+                   std::to_wstring(f.programmes.size()) + L" programmes), store " + storeMs + L" ms");
     }
     std::wstring summary =
         okCount > 0 ? trf(i18n::StringId::EpgStoredSummary,
@@ -427,13 +493,18 @@ void onEpgDone(AppState* st, EpgResult* res) {
                     : tr(i18n::StringId::EpgRefreshFailedSummary);
     // A fresh guide is exactly when a series rule learns about next week's airings — force it.
     if (okCount > 0) {
+        updateLoadingDialog(st->loadingDlg, tr(i18n::StringId::LoadingCheckingRules));
+        const Clock::time_point tRules = Clock::now();
         const int queued = expandRecordingRules(st, /*force=*/true);
         syncWakeFromSchedules(st);
+        diag::info(L"EPG rule pass + wake sync: " + msSince(tRules) + L" ms");
         if (queued > 0) {
             detail += trf(i18n::StringId::EpgRulesQueuedDetail, { std::to_wstring(queued) });
             summary += trf(i18n::StringId::EpgQueuedByRulesSummary, { std::to_wstring(queued) });
         }
     }
+    closeLoadingDialog(st->loadingDlg);  // now the results dialog takes over
+    st->loadingDlg = nullptr;
     setStatus(st, summary);
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
@@ -583,9 +654,27 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
     for (const auto& pl : st->db.listPlaylists())
         if (pl.id == pid) { url = pl.epgUrl; break; }
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
-    if (!promptText(hwnd, hInst, st->dpi, tr(i18n::StringId::SetGuideUrlTitle),
-                    tr(i18n::StringId::SetGuideUrlPrompt), url))
-        return;
+    for (;;) {
+        if (!promptText(hwnd, hInst, st->dpi, tr(i18n::StringId::SetGuideUrlTitle),
+                        tr(i18n::StringId::SetGuideUrlPrompt), url))
+            return;
+        if (url.find_first_not_of(L" \t\r\n") == std::wstring::npos) {  // blank = clear
+            url.clear();
+            break;
+        }
+        // Keep only the address: a provider's email line pasted whole ("EPG Link : http://…") was
+        // saved as-is and every refresh then failed with "Invalid URL.".
+        const std::wstring found = extractHttpUrl(url);
+        if (!found.empty()) {
+            url = found;
+            break;
+        }
+        // No http(s) address in it. Say so and re-open the prompt with the text kept to fix.
+        showInfoDialog(hwnd, hInst, st->dpi, tr(i18n::StringId::SetGuideUrlTitle),
+                       tr(i18n::StringId::SetGuideUrlNoUrlHeading),
+                       tr(i18n::StringId::SetGuideUrlNoUrlBody));
+    }
+    diag::addSecretsFromUrl(url);  // before the line below logs it
     st->db.setPlaylistEpgUrl(pid, url);
     diag::info(L"set epg_url for playlist id=" + std::to_wstring(pid) +
                (url.empty() ? L" (cleared)" : L" to \"" + url + L"\""));

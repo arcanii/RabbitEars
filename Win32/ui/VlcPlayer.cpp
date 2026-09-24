@@ -9,6 +9,7 @@
 #include "ui/VlcEngine.h"
 #include "platform/Encoding.h"
 #include "platform/Log.h"
+#include "platform/LogSecrets.h"
 
 namespace rabbitears {
 namespace {
@@ -330,6 +331,7 @@ void VlcPlayer::doStop(bool async) {
 void VlcPlayer::doPlay(const Cmd& c) {
     doStop(/*async=*/true);  // tear the previous channel down off-thread — don't block this open
     if (!inst_) return;
+    diag::addSecretsFromUrl(c.url);  // a known account's path spelling, for libVLC's lines too
     diag::info(L"play: " + c.url);
     const std::string u = utf8FromWide(c.url);
     libvlc_media_t* m = libvlc_media_new_location(inst_, u.c_str());
@@ -648,6 +650,7 @@ void VlcPlayer::setAspectRatio(const char* ar) {
 void VlcPlayer::doRecordStart(const Cmd& c) {
     doRecordStop();  // Phase 1: one recording at a time
     if (!inst_) return;
+    diag::addSecretsFromUrl(c.url);  // before anything below logs it (platform/LogSecrets.h)
     const std::string u = utf8FromWide(c.url);
     libvlc_media_t* m = libvlc_media_new_location(inst_, u.c_str());
     if (!m) {

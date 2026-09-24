@@ -212,7 +212,16 @@ long long parseXmltvTime(const std::string& s) {
 }
 
 XmltvDocument parseXmltv(const std::string& utf8Bytes) {
+    return parseXmltv(utf8Bytes, std::function<void(std::size_t)>{});
+}
+
+XmltvDocument parseXmltv(const std::string& utf8Bytes,
+                         const std::function<void(std::size_t)>& onProgress) {
     XmltvDocument doc;
+    auto pushed = [&doc, &onProgress]() {
+        if (onProgress && doc.programmes.size() % kXmltvProgressEvery == 0)
+            onProgress(doc.programmes.size());
+    };
     const std::string& s = utf8Bytes;
     const size_t n = s.size();
     size_t i = 0;
@@ -262,6 +271,7 @@ XmltvDocument parseXmltv(const std::string& utf8Bytes) {
             i = (gt == std::string::npos) ? n : gt + 1;
             if (inProg && ieq(name, "programme")) {
                 doc.programmes.push_back(std::move(cur));
+                pushed();
                 cur = Programme{};
                 inProg = false;
             }
@@ -316,6 +326,7 @@ XmltvDocument parseXmltv(const std::string& utf8Bytes) {
             inProg = true;
             if (selfClose) {  // empty <programme .../> — unusual, but don't lose it
                 doc.programmes.push_back(std::move(cur));
+                pushed();
                 cur = Programme{};
                 inProg = false;
             }

@@ -3,6 +3,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <string>
 
 #include <vlc/vlc.h>
 
@@ -23,11 +24,20 @@ void vlcLogCb(void*, int level, const libvlc_log_t*, const char* fmt, va_list ar
     // on a libVLC thread and can fire often on a sick stream.
     const diag::Level lvl = level >= LIBVLC_ERROR ? diag::Level::Error : diag::Level::Warn;
     if (!diag::enabled(lvl)) return;
-    char buf[1024];
+    // Sized to the message (up to 64 KB), not a fixed 1 KB: a line cut mid-URL can end partway
+    // through a stream path's login, and a partial one is neither a registered secret nor a URL
+    // shape the log's masking recognises (platform/UrlRedact.h). (A cut query value is still
+    // masked — by its parameter's name.)
     va_list ap;
     va_copy(ap, args);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    const int need = vsnprintf(nullptr, 0, fmt, ap);
     va_end(ap);
+    if (need < 0) return;
+    std::string buf(static_cast<size_t>(need < 65536 ? need : 65536) + 1, '\0');
+    va_copy(ap, args);
+    vsnprintf(buf.data(), buf.size(), fmt, ap);
+    va_end(ap);
+    buf.resize(buf.size() - 1);  // drop the terminator vsnprintf wrote
     diag::write(level >= LIBVLC_ERROR ? L"VLC-ERR" : L"VLC-WARN", wideFromUtf8(buf));
 }
 
