@@ -10,12 +10,24 @@ so it doesn't collide with the macOS team's root-level edits (they own `mac/`).
 ## 🔎 EPG search + calendar — the active work (owner request, 2026-09-24)
 
 The plan, what step 1 shipped, and every measurement behind it: **`Win32/HANDOVER.md` → "0.2.19-dev —
-the owner's two EPG requests"**. In short: step 1 (refresh progress, Set Guide URL, log masking) is
-done; **step 2** = `docs/EPG_SEARCH.md` first, then a real guide search box + FTS5 programme search
-(titles + descriptions); **step 3 (calendar) is parked** — the owner's provider publishes ~6 h of future
-guide and its Xtream API none.
+the owner's two EPG requests"**. In short: step 1 (refresh progress, Set Guide URL, log masking) and
+**step 2** (ONE guide search box for channels + programmes, FTS5 + schema v10 — `0892cf4`, design and
+as-built record in `docs/EPG_SEARCH.md`) are done and owner-tested; **step 3 (calendar) is parked** —
+the owner's provider publishes ~6 h of future guide and its Xtream API none.
 
 Open items this work left or found (none blocking):
+- **The TV Guide's scrollbars are light in the dark theme** — the window's own `WS_HSCROLL`/`WS_VSCROLL`
+  (pre-existing; the owner's screenshots show a white bar beside the dark results list). The main
+  window themes its controls with `SetWindowTheme(…, L"DarkMode_Explorer", …)` (`MainWindow.cpp:178`);
+  the guide window never does.
+- **The main window's CHANNEL search → FTS5** — its `LIKE` over 411k rows is still ~134 ms a query;
+  the same `SQLITE_ENABLE_FTS5` makes it a natural follow-up (`docs/EPG_SEARCH.md` §7, "not in step 2").
+- **Marking gaps (cosmetic):** accents FTS5 strips but `searchFold` keeps — Vietnamese / pinyin
+  (U+01A0–U+0233 bar Ș Ț) and U+1E00–U+1EF9 — are FOUND but left unmarked; the stroke letters (Ł, Ø …)
+  fold here but not in FTS5 (`common/core/SearchFold.h` header). A LIKE-fallback result (1–2 typed
+  characters) is marked accent-blind while LIKE matched accents exactly.
+- **Past programmes in search** are hidden (decision §7.4); with catch-up (below) they could come back
+  as playable results.
 - **Set Guide URL: warn when the link looks like a PLAYLIST** (`get.php`, `type=m3u`, `.m3u`) rather
   than a guide — the single-line prompt keeps only the first line of a pasted email block, and if that
   is the M3U link the refresh silently stores 0 programmes. Needs a Yes/No prompt + i18n strings.
@@ -37,7 +49,14 @@ Open items this work left or found (none blocking):
   the mac log still records Xtream logins in clear — `Win32/platform/UrlRedact.{h,cpp}` is pure C++ and
   could move to `common/` if they want it; (2) `common/core/XtreamClient.h`'s `XtreamCreds` comment says
   "'+' is … a literal '+' in a path", but `encodeComponent` writes a `+` into a path as `%2B` (the code
-  is fine — the comment overstates).
+  is fine — the comment overstates); (3) **step 2 changed the shared core** (`0892cf4`, `35b8826`) and
+  it has only been compiled with MSVC: `SQLITE_ENABLE_FTS5` on the root `sqlite3` target (their build
+  uses it), **schema v10** in `common/db/Database.cpp` (FTS5 tables; a mac build on it migrates the DB
+  to v10 — empty tables, since nothing on mac rebuilds or searches the index; the next guide refresh
+  just marks it stale), the new header `common/core/SearchFold.h`, and `foldChar` in
+  `common/core/RecordingRules.cpp` (their series rules now also match Greek/Romanian titles across
+  case). A mac search UI would call `refreshProgrammeSearchChannels()` then `searchProgrammes()` —
+  `docs/EPG_SEARCH.md` has the contract.
 
 ---
 

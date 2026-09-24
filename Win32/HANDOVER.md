@@ -31,7 +31,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.18 SHIPPED, auto-update LIVE** · **0.2.19-dev** in progress (`APP_VERSION` 0.2.19) · macOS **0.2.17**
+## Current state — **v0.2.18 SHIPPED, auto-update LIVE** · **0.2.19-dev** ready to cut (`APP_VERSION` 0.2.19) · macOS **0.2.17**
 
 ### 🛠️ 0.2.19-dev — the owner's two EPG requests (2026-09-24)
 
@@ -105,11 +105,47 @@ like a playlist link; the topmost loading box staying above other apps during th
   (Latin accented, Greek, Cyrillic, Arabic; no CJK). **FTS5 is NOT compiled into our SQLite** on
   either platform (`CMakeLists.txt:81` — the amalgamation's `SQLITE_CORE` compiles FTS5 out unless
   `SQLITE_ENABLE_FTS5`); enabling it is one define that reaches the mac build too.
-- **The guide's corner search box has no caret** (owner): it is painted, not an EDIT — step 2 replaces it.
+- **The guide's corner search box has no caret** (owner): it is painted, not an EDIT — step 2 replaced it.
 
-**Next: step 2** — write `docs/EPG_SEARCH.md` first (shared-core boundary + a mac section: the FTS5
-define, a schema-v10 FTS table rebuilt inside `bulkInsertProgrammes`' transaction with no triggers),
-then build. Recommended index: titles trigram + descriptions unicode61.
+**Step 2 — DONE, committed `0892cf4`, owner-tested live** (dev profile, build 431, 2026-09-24), plus
+**`35b8826`**, a recording-rules fix found on the way. The design AND the as-built record:
+**[`docs/EPG_SEARCH.md`](../docs/EPG_SEARCH.md)** (§7 = the owner's decisions).
+- **One search box** — "Search channels and programmes…" — in a new guide toolbar with a **Now** button;
+  the corner cell's painted type-to-filter is gone. *The owner's first live look at a TWO-box build
+  ("two search bars?") changed decision §7.1 to one box.* Results replace the grid: **matching channels
+  first** (in memory, by name, case- and accent-blind; its one item — selected by default, so
+  "toronto, Enter" — narrows the grid and shows a **"toronto ✕" chip** in the corner; click or Esc
+  clears it), then **upcoming programmes** (FTS5), title matches before description-only ones, by day,
+  the match marked, "On now" badges. Click jumps to the programme in the grid; double-click / Enter
+  opens the programme dialog; right-click = Play / Schedule / Record series / Show in guide.
+- **Shared core (reaches the mac build):** `SQLITE_ENABLE_FTS5` on the root `sqlite3` target (mac builds
+  that target too); **schema v10** — external-content FTS5 tables (titles trigram, descriptions
+  unicode61), rebuilt after each guide store, stamp-checked so a stale index is never read, a v9
+  database never re-runs v9's rewrite, an FTS5-less build stays at v9 and searches by LIKE;
+  `Database::searchProgrammes` / `refreshProgrammeSearchChannels` / `programmeSearchState` /
+  `rebuildProgrammeIndex`; `common/core/SearchFold.h` (the accent-blind fold used to mark matches —
+  "quebec" marks "Québec" — and for the guide's channel matching). 14 new i18n keys (609; CJK drafts).
+- **Measured live** (owner's dev profile, 201,962 programmes, 2,474 guide channels): a refresh =
+  download 8.0 s, parse 0.71 s, store 0.83 s, **index rebuild 1.53 s** (its own loading-box line,
+  "Indexing the guide for search…"); a search session's first query +0.1 s (the channel set);
+  searches **0.3–2 ms** typical, ≤ 61 ms worst seen; the guide's first open 1.4 s. The v10 upgrade on
+  a copy of the real library: 26–41 ms.
+- **Owner-verified:** the results for "toronto" and "quebec" (screenshots: the channels block, marked
+  titles — "Québec" included — centred labels, the shorter rows), then asked to commit. The chip, the
+  jump and type-over-the-grid were in the test list; nothing was reported against them.
+- **Verified:** both theme flags build, `--selftest` ALL PASS (709), `gen_i18n --check` OK; four
+  adversarial review rounds on the first (two-box) build, three on the one-box rework and the folds —
+  every finding fixed.
+- **`35b8826` — recording rules:** `foldChar` (case-only) now folds the Greek capitals with a tonos,
+  Ϊ Ϋ and final ς, and Romanian Ș Ț, so a rule for "άρης" matches "ΆΡΗΣ"; the PERSISTED episode keys
+  are re-folded before comparing (so rows stored by the older fold still dedup), which needed the fold
+  to be idempotent — kra (ĸ) no longer pairs with Ĺ.
+- 🍎 **Not compiled with Apple clang here** — the mac team's first build of `main` with `0892cf4` is the
+  first compile of the new `common/db` code on their side; flagged in BACKLOG. A mac build on it
+  migrates its database to v10 (empty FTS tables; nothing on mac searches yet).
+
+**Next: 0.2.19 is ready to cut** (step 1 + step 2 + the rules fix). **Step 3 (the calendar) stays
+parked** — see "What the investigation found".
 
 ### ✅ 0.2.18 — SHIPPED (2026-09-24), both appcasts LIVE @ `2df99ea`
 
@@ -1149,13 +1185,13 @@ Paste this verbatim to start a fresh session with working context restored:
 > **State:** **0.2.18 is SHIPPED and auto-update is LIVE** (full `0.2.18.426`, tag `v0.2.18` @ `3c14828`,
 > appcasts @ `2df99ea`). `APP_VERSION` is **0.2.19** (bumped, not released). macOS is at 0.2.17.
 > **Active work: the owner's two EPG requests** — full-text search in the guide and a calendar of
-> future airings. **Step 1 is done and owner-verified** (guide-refresh progress + timings, Set Guide URL
-> extracting the address from pasted text, and provider logins masked in the diagnostic log).
-> **Next is step 2:** write `docs/EPG_SEARCH.md` FIRST (FTS5 is not compiled in on either platform;
-> the define and a schema-v10 table reach the mac build), then a real search box in the guide + FTS5
-> programme search, descriptions included. **Step 3, the calendar, is parked**: the owner's provider
-> publishes only ~6 h of future guide and its Xtream API none — HANDOVER's "What the investigation
-> found" has every measurement. The repo has TWO writers (the mac team pushes to `main`), so run
+> future airings. **Steps 1 and 2 are done, committed and owner-tested:** step 1 = guide-refresh
+> progress + timings, Set Guide URL extracting the address from pasted text, provider logins masked in
+> the diagnostic log; step 2 (`0892cf4`) = ONE search box in the TV Guide for channels and programmes,
+> FTS5 + schema v10 in `common/` (`docs/EPG_SEARCH.md` is the design and as-built record), plus
+> `35b8826` (Greek/Romanian case folding in recording rules). **0.2.19 is ready to cut.** **Step 3,
+> the calendar, is parked**: the owner's provider publishes only ~6 h of future guide and its Xtream
+> API none — HANDOVER's "What the investigation found" has every measurement. The repo has TWO writers (the mac team pushes to `main`), so run
 > `git fetch`, `git status` and `git log origin/main..` first, and verify
 > `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for a release.
 >

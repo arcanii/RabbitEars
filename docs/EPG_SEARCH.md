@@ -1,7 +1,9 @@
 # EPG programme search — design
 
 > **Status (2026-09-24):** design **approved by the owner** (all six decisions in §7 taken as
-> recommended); implementation starting. Step 2 of the owner's two EPG
+> recommended — then decision 1 REVISED by the owner after the first live test: ONE search box, §7.1);
+> IMPLEMENTED and committed (`0892cf4`; the recording-rules fold fix found on the way, `35b8826`) —
+> §§2–6 describe it as built; owner-tested live in the dev profile (build 431). Step 2 of the owner's two EPG
 > requests (the full context, step 1 and every measurement it rests on: `Win32/HANDOVER.md` →
 > "0.2.19-dev — the owner's two EPG requests"). Step 3, the calendar, is out of scope and parked: the
 > owner's provider publishes ~6 hours of future guide and its Xtream API none.
@@ -102,16 +104,20 @@ SQLite. So:
 | change | file | effect on mac |
 |---|---|---|
 | `SQLITE_ENABLE_FTS5` on the `sqlite3` target | root `CMakeLists.txt` | FTS5 compiled into the mac binary: ~270 KB bigger per architecture (x64 MSVC figure; not measured on clang). The amalgamation's FTS5 is plain C, but **it has not been compiled with Apple clang here** — the first mac build is the check. |
-| schema **v10**: create the two FTS5 tables (empty) | `common/db/Database.cpp` `migrate()` | instant, at the mac app's first launch after the merge. **No index is built then** — see §3. **Please confirm there is no competing v10 in flight.** |
-| new `Database::rebuildProgrammeIndex()`, `searchProgrammes()` | `common/db/Database.{h,cpp}` | available; **nothing runs them unless called**. `bulkInsertProgrammes` is NOT changed, so a mac guide refresh costs exactly what it does today. |
+| schema **v10**: create the two FTS5 tables (empty) | `common/db/Database.cpp` `migrate()` | instant (41 ms on a copy of the owner's library), at the mac app's first launch after the merge. **No index is built then.** **Please confirm there is no competing v10 in flight.** |
+| new `programmeSearchState()`, `rebuildProgrammeIndex()`, `refreshProgrammeSearchChannels()`, `searchProgrammes()` | `common/db/Database.{h,cpp}` | available; **nothing runs them unless called**. `bulkInsertProgrammes` does not maintain the index, so a mac guide refresh costs exactly what it does today. |
+| `channelsByPlaylist` ORDER BY gains a final `, id` | `common/db/Database.cpp` | changes the order only among rows that tie on every other key (previously unspecified) — so the guide and the search pick the same channel for a tvg-id. |
 | i18n | `common/i18n/*.json` | new keys appended; mac need not use them. |
 
 No enum a mac `switch` depends on changes (no mac `switch` uses `StringId`). A mac build **older** than
 this change, opening a v10 database, behaves like the FTS5-less probe above: works, and changes
-`epg_programmes` without re-indexing — which the stamp (§3) detects the next time anything searches.
+`epg_programmes` without re-indexing — which the stamp (§3) reports as `NeedsRebuild` to whoever next
+asks.
 
-**If mac adds search later:** call `rebuildProgrammeIndex()` after its refresh stores (or let the first
-search do it — §3), and reuse `searchProgrammes()`.
+**If mac adds search later:** after its refresh stores, call `rebuildProgrammeIndex()`; before a search
+session, `if (programmeSearchState() == NeedsRebuild) rebuildProgrammeIndex();` then
+`refreshProgrammeSearchChannels()`; then `searchProgrammes()` per query. `searchProgrammes` never builds
+the index itself — without a Ready index it answers with a LIKE scan.
 
 ---
 
@@ -120,57 +126,63 @@ search do it — §3), and reuse `searchProgrammes()`.
 ### Schema v10 — two empty tables
 
 ```sql
-CREATE VIRTUAL TABLE epg_fts_title USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS epg_fts_title USING fts5(
     title, content='epg_programmes', content_rowid='id',
     tokenize='trigram remove_diacritics 1');
-CREATE VIRTUAL TABLE epg_fts_descr USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS epg_fts_descr USING fts5(
     descr, content='epg_programmes', content_rowid='id',
     tokenize='unicode61 remove_diacritics 2');
 ```
 
 - **External content** (`content='epg_programmes'`): the text is stored once, in `epg_programmes`; the
   index holds only tokens. Trigram's `remove_diacritics` is parsed in its create (`sqlite3.c:266895`;
-  1 and 2 both select the same fold mode there, `:266899`), and the vendored probe built and queried
-  both tables with exactly these options. Side effect: with `remove_diacritics` on, FTS5 no longer
-  accelerates `LIKE`/`GLOB` on the trigram table (`:267014`) — irrelevant here, since the short-query
-  fallback (§4) scans `epg_programmes` directly.
+  1 and 2 both select the same fold mode there, `:266899`). Both tokenizers fold case and accents for
+  **Latin** script; they do **not** strip e.g. Greek tonos (`σημερα` does not find `Σήμερα`). Side
+  effect: with `remove_diacritics` on, FTS5 no longer accelerates `LIKE`/`GLOB` on the trigram table
+  (`:267014`) — irrelevant, since the LIKE fallback scans `epg_programmes` directly.
+- **unicode61 cannot segment CJK**: a run of Chinese or Japanese without spaces is ONE token, so a word
+  inside it is not findable through `epg_fts_descr`. A search term containing CJK therefore searches
+  descriptions with `LIKE` (a table scan, ~50 ms) — titles stay on the trigram index, which needs no
+  word boundaries.
 - **No triggers.** Triggers would make every write to `epg_programmes` depend on FTS5, and a build
   without it would then fail every guide refresh with "no such module". The index is maintained
-  explicitly instead. The probe above is what makes this a verified property, not a hope.
-- **The migration must not re-run v9.** `migrate()` has no per-step gate: its only guard is the early
-  `if (v >= 9) return;` (`Database.cpp:511`); after it, `user_version` is rewritten from the column
-  checks (8 at most, `:666`) and v9's channel-URL rewrite runs whenever v8's columns exist (`:685`).
-  Simply raising the early return to `v >= 10` would send every v9 database back through v9 (and set
-  `user_version` to 8 on the way). So: wrap the v2–v9 steps in `if (v < 9) { … }`, and give v10 its own
-  step — `CREATE VIRTUAL TABLE IF NOT EXISTS` ×2, then `user_version=10` only when both tables exist.
-  The realistic failures (`SQLITE_BUSY`, a full disk) leave v9, retry on the next open, and search falls
-  back to `LIKE` meanwhile (§4). It cannot fail for want of FTS5: one `sqlite3` target feeds every
-  binary that contains this step.
+  explicitly instead. The probe in §1 is what makes this a verified property, not a hope.
+- **The migration must not re-run v9.** `migrate()` has no per-step gate: its only guard was the early
+  `if (v >= 9) return;`; after it, `user_version` is rewritten from the column checks (8 at most) and
+  v9's channel-URL rewrite runs whenever v8's columns exist. Simply raising the early return to
+  `v >= 10` would have sent every v9 database back through v9. **As built:** `if (v >= 10) return;`,
+  then `if (v == 9) { createProgrammeSearchTables(); return; }` — a v9 database skips the old block
+  entirely — and a database older than v9 runs the old block and then v10 only if v9 landed in the same
+  open. v10 is ONE transaction: both `CREATE VIRTUAL TABLE IF NOT EXISTS`, a check that both names are
+  genuinely `USING fts5` tables (`IF NOT EXISTS` succeeds over an ordinary table of the same name), the
+  removal of any old `epg_fts_stamp`, and `user_version=10`. A failure (`SQLITE_BUSY`, a full disk)
+  leaves v9 and nothing half-made; the next open retries, and search answers with LIKE meanwhile. It
+  cannot fail for want of FTS5: one `sqlite3` target feeds every binary that contains this step.
+  **Selftest-pinned**, and the pin was shown to fail with the v9 gate removed.
 
-### Keeping the index true — a stamp, and one rebuild after a refresh
+### Keeping the index true — a stamp, and explicit rebuilds
 
 - **`rebuildProgrammeIndex()`** — its own `BEGIN IMMEDIATE` transaction: `'rebuild'` both tables, then
   write `epg_fts_stamp` to `settings` — the row count, the max `id`, and the concatenated
   `epg_refreshed_<playlist>` values. `bulkInsertProgrammes` has rewritten those on every refresh since
   the commit that created schema v3 (`910e19e`), so every older build changes them too. Count and max
-  id alone would NOT do: an old build re-importing a same-sized guide reuses the same ids.
-- **Win32 calls it ONCE per refresh**, after `onEpgDone` has stored every playlist — not inside
-  `bulkInsertProgrammes`, where N guide playlists would mean N full rebuilds (`'rebuild'` re-indexes the
-  whole table). The loading box names the step ("Indexing the guide for search…"). Measured on the
-  owner's guide: **+1.27 s** (330 + 938 ms). Nothing can search in between: the store and the rebuild
-  run back-to-back on the UI thread, which is also the thread that searches.
-- **Search checks the stamp first** (`COUNT(*)` + `MAX(id)` + the settings: **7 ms** on the real
-  guide, measured — so once per guide open, not per keystroke) and rebuilds when it does not match,
-  behind "Preparing search…". That one rule covers everything else: the first search after upgrading
-  (v10 created the tables empty), a playlist deleted (count changed), a refresh by an older build or by
-  the mac app, and a failed rebuild. **Until the rebuild has run, the index must not be read** — see
-  the next point.
-- **Stale entries are dangerous, not just untidy.** FTS5 with external content reads the content row
-  for columns, `snippet()` and `highlight()`; a stale rowid there fails with `SQLITE_CORRUPT_VTAB`
-  ("fts5: missing row … from content table", `sqlite3.c:261872–261883`), and a REUSED rowid silently
-  returns the wrong programme (a single-guide refresh reuses ids from 1). The stamp check before every
-  search session is what makes reading the index safe; the match queries additionally read **rowids
-  only** (§4).
+  id alone would NOT do: an old build re-importing a same-sized guide reuses the same ids. **Measured
+  through this code on a copy of the owner's library: ~1.5 s** for 193k programmes.
+- **Nothing in `Database` builds the index on its own** — callers do. Win32 does it (a) **once per guide
+  refresh**, after `onEpgDone` has stored every playlist ("Indexing the guide for search…"), not inside
+  `bulkInsertProgrammes`, where N guide playlists would mean N full rebuilds; and (b) **before the first
+  search of a burst of typing** when `programmeSearchState()` says `NeedsRebuild` ("Preparing search…").
+- **`programmeSearchState()`** compares the stamp (`COUNT` + `MAX(id)` + the settings: **7 ms** on the
+  real guide) once, then remembers the answer until this object changes `epg_programmes`
+  (`bulkInsertProgrammes`, `deletePlaylist`) or is reopened. That one check covers the first search after
+  upgrading (v10 created the tables empty and cleared any stamp), a playlist deleted (count changed), a
+  refresh by an older build or by the mac app, and a failed rebuild. **Selftest-pinned**, including that
+  a fresh connection reads a saved stamp as current (no rebuild per launch).
+- **A stale index is never READ.** `searchProgrammes` uses the index only when the state is `Ready`;
+  otherwise it answers with LIKE. Reading it stale would be wrong, not just untidy: a single-guide refresh
+  restarts ids at 1, so a stale entry points at a different programme (selftest-pinned with a reused id,
+  and shown to fail when the guard is removed); and reading a column, `highlight()` or `snippet()`
+  through FTS5 on a rowid whose row is gone fails with `SQLITE_CORRUPT_VTAB` (`sqlite3.c:261872–261883`).
 
 ### The write lock
 
@@ -178,140 +190,206 @@ CREATE VIRTUAL TABLE epg_fts_descr USING fts5(
 workers (`Win32/ui/VodSync.cpp:97`, `Win32/ui/DeadLinkSweep.cpp:39`; mac has the same two) open their
 own connections and wait up to `busy_timeout` (5 s, `Database.cpp:421`), then fail with `SQLITE_BUSY`.
 With the rebuild in its own transaction, no single hold grows: the store stays ~1 s, the rebuild adds a
-separate ~1.3 s on this guide. A guide ~4× the owner's would push the rebuild alone toward 5 s.
-**Measure on the real library before choosing anything cleverer.** The cleverer option on record —
-incremental per playlist, FTS5 `'delete'` rows for the old programmes and indexing only the new — is
-fragile with external content: `'delete'` must be given the exact values that were indexed, so it has
-to run BEFORE the old rows are deleted and only when the stamp says the index is in sync, or it
-corrupts the index.
+separate ~1.5 s on this guide. A guide ~3× the owner's would push the rebuild alone toward 5 s. The
+cleverer option on record — incremental per playlist, FTS5 `'delete'` rows for the old programmes and
+indexing only the new — is fragile with external content: `'delete'` must be given the exact values that
+were indexed, so it has to run BEFORE the old rows are deleted and only when the stamp says the index is
+in sync, or it corrupts the index.
 
 ---
 
 ## 4. The query
 
-`Database::searchProgrammes(text, fromUtc, limit, …)` — two queries.
+`Database::searchProgrammes(text, fromUtc, limit, &truncated)` — as built.
 
-**1. Match, filter, rank — rowids only.** Both FTS arms read `rowid` and nothing else; the join back to
-`epg_programmes` drops any id that no longer exists; the channel filter runs in SQL so the `LIMIT` counts
-only rows the user can play:
+**The channel set.** `refreshProgrammeSearchChannels()` fills a TEMP table
+`guide_channels(playlist_id, cid, name, tvg_id)` with ONE `INSERT … SELECT`: every channel with a tvg-id
+in an enabled playlist, keyed by (playlist, normalised tvg-id), keeping per key the FIRST channel in
+`channelsByPlaylist`'s own order (`ROW_NUMBER() OVER (… ORDER BY kind, (lcn IS NULL), lcn, sort_order,
+name COLLATE NOCASE, id)`) — the channel the guide's row join keeps, so a result names and plays the same
+channel its guide row does. ~90 ms at the owner's 410k channels (listing them through
+`channelsByPlaylist` took 1.1 s). The guide itself only builds rows for programmes in its −6 h..+72 h
+window; search has no upper bound.
+
+**1. Match, filter, rank — rowids only:**
 
 ```sql
-SELECT p.id, MAX(m.inTitle) AS inTitle
-FROM (SELECT rowid AS id, 1 AS inTitle FROM epg_fts_title WHERE epg_fts_title MATCH :titleQ
+SELECT p.id, MAX(m.t) AS inTitle, p.start_utc, g.name, g.tvg_id
+FROM (SELECT rowid AS id, 1 AS t FROM epg_fts_title WHERE epg_fts_title MATCH :titleQ
       UNION ALL
-      SELECT rowid, 0 FROM epg_fts_descr WHERE epg_fts_descr MATCH :descrQ) m
-JOIN epg_programmes p ON p.id = m.id
-JOIN temp.guide_channels g                      -- the user's channels, see below
+      SELECT rowid, 0 FROM epg_fts_descr WHERE epg_fts_descr MATCH :descrQ   -- or, for a CJK term:
+      -- SELECT id, 0 FROM epg_programmes WHERE descr LIKE :term ESCAPE '\'
+     ) m
+CROSS JOIN epg_programmes p ON p.id = m.id
+CROSS JOIN temp.guide_channels g
   ON g.playlist_id = p.playlist_id
  AND g.cid = lower(substr(p.channel_id, 1, instr(p.channel_id || '@', '@') - 1))
 WHERE p.stop_utc > :fromUtc
+  AND p.playlist_id IN (SELECT id FROM playlists WHERE enabled = 1)
 GROUP BY p.id
-ORDER BY inTitle DESC, MIN(p.start_utc)
-LIMIT :limit;
+ORDER BY inTitle DESC, p.start_utc
+LIMIT :limit + 1;           -- the extra row sets `truncated`
 ```
 
-- `temp.guide_channels(playlist_id, cid)` holds the (playlist, normalised tvg-id) pairs of every
-  channel in an **enabled** playlist, built with the same `normId` rule, per playlist — exactly the rows
-  the guide can show. SQLite's `lower()` is ASCII-only, like `normId`. Built when a search session
-  starts (it is small: 2,495 pairs here); **not measured yet**.
+- **`CROSS JOIN` pins the join order.** With plain `JOIN`, the vendored 3.53.2 planner drove from
+  `epg_programmes` through `idx_epg_lookup` (`playlist_id IN …`) and probed the matches per row: **47 ms
+  for a rare word**, against **0.2 ms** matches-first (measured on the owner's guide).
+- The description arm is left out when the typed text has no word a tokenizer could keep.
 - **Title matches first, then description-only matches, each soonest first.** Past programmes are
-  excluded (`fromUtc` = now) — they cannot be played, except on the 298 catch-up channels, a later
-  feature. *(Decided, §7.4.)*
+  excluded (`fromUtc` = now) — decided, §7.4.
 
-**2. Details for the ≤ 200 winners** — `SELECT … FROM epg_programmes WHERE id IN (…)`, and for the
-description matches a `snippet(epg_fts_descr, …)` query restricted to those ids (`… MATCH :descrQ AND
-rowid IN (…)`), which only ever reads rows that exist. Not measured yet; bounded by the 200 ids.
+**2. The winners' rows** — `SELECT … FROM epg_programmes WHERE id IN (…)` for the ≤ `limit` ids.
 
-**The user's text is never FTS5 syntax.** Typed `"`, `*`, `(`, `-`, `AND`/`OR`/`NOT`/`NEAR` must search
-for themselves. Title query: the trimmed text as ONE quoted phrase (inner `"` doubled) — trigram
-matches it as a substring, and spaces count as characters, hence the trim. Description query: each word
-quoted and simply juxtaposed (FTS5's implicit AND, which — unlike an explicit `AND` — drops a word that
-yields no tokens, such as a lone `-`), the last one a prefix: `"doctor" "who"*`.
+**3. Marking, in C++, not FTS5.** `highlight()` and `snippet()` read and re-tokenise the content row of
+every match before the LIMIT applies: `snippet()` took **700 ms for "the"** and 180 ms for "news" on the
+owner's guide. So the ≤ 200 results are marked in C++ (U+0002 … U+0003 around each match): the title
+with the typed text (title matches), and for description-only matches an excerpt around the earliest
+typed word. The marking is simpler than the index's matching and can differ: it compares characters
+through `searchFold` (`common/core/SearchFold.h` — case for Latin, Greek and Cyrillic as FTS5 folds it,
+Latin accents dropped, one character for one), so "quebec" marks "Québec"; a match the index found
+through some other folding (Vietnamese and pinyin accents) stays unmarked (the snippet is then the
+description's start), and the stroke letters (Ø Ł …) fold to their base letter though FTS5 keeps them; it marks every typed word as a prefix (the index takes only the
+last); it compares typed punctuation literally; and it treats the common punctuation blocks (U+00A0–BF,
+U+2000–206F, U+3000–303F) as word boundaries, as the tokenizer does, so `“Doctor` still marks `Doctor`.
+For a CJK word it drops the word-start rule (CJK has no word boundaries to start at).
 
-**1–2 characters:** trigram yields no tokens for a term under 3 characters, so the phrase matches
-nothing. Those fall back to `LIKE` on titles (~30 ms), rather than waiting for the third character.
-*(Decided, §7.5.)*
+**The user's text is never FTS5 syntax.** Typed `"`, `*`, `(`, `-`, `AND`/`OR`/`NOT`/`NEAR` search for
+themselves. Title query: the trimmed text as ONE quoted phrase (inner `"` doubled) — trigram matches it
+as a substring. Description query: each word quoted and simply juxtaposed (FTS5's implicit AND, which —
+unlike an explicit `AND` — drops a word that yields no tokens, such as a lone `-`), the last one a
+prefix: `"doctor" "who"*`.
 
-**No index (v10 not landed):** the same function answers with `LIKE` over titles + descriptions
-(46–70 ms, ASCII-only case folding) — slower and less complete, never broken.
+**The LIKE fallback** — the whole text as ONE substring (not word by word), ASCII-only case folding,
+~50 ms: used when the term has **1–2 characters** (trigram yields no tokens under 3; decided, §7.5) or the
+index is **not `Ready`** (never built, stale, or v10 not landed). It searches titles, and also
+descriptions unless the index is `Ready` — so a 1–2 character Latin term with a Ready index searches
+titles only (a one-letter description scan matches nearly everything). A CJK term always searches
+descriptions too, since two CJK characters are already a whole word.
 
-**Limit 200**, with "showing the first 200 — type more to narrow it" when hit (now true, since the
-limit counts playable rows).
+**Measured through this code on a copy of the owner's library** (`RabbitEarsCli --epgsearch <copy>`):
+v10 upgrade 41 ms; index rebuild ~1.5 s; channel set ~90 ms; searches **0.2–0.4 ms** for "toronto",
+"survivor", "quebec", "hockey", "kimmel", "doctor who", "montreal"; **22.5 ms** "news", **40.8 ms** "the",
+13.7 ms "the news"; 1–2 characters (LIKE) ~48 ms.
 
 ---
 
 ## 5. The UI (Win32)
 
-**The layout** *(decided, §7.1)*: keep the corner cell as the **channel filter** the owner
-already uses — but make it a real EDIT (the missing caret, paste, selection, IME) — and add a
-**"Search programmes…" box** in a new thin toolbar strip above the hour axis. The strip also holds a
-**Now** button (scrolls the time axis back to now — decided, §7.6), and is where step 3's day buttons
-would go.
+**The layout** *(decided, §7.1 — revised by the owner after the first live test)*: **one search box**,
+"Search channels and programmes…", in a new 40-dp toolbar strip above the hour axis. It replaces the
+corner cell's old type-to-filter: typing anywhere in the guide goes to it. The strip also holds a
+painted **Now** button (scrolls the time axis back to now — decided, §7.6; Home does the same in the
+grid), and is where step 3's day buttons would go. The corner cell is empty until a channel filter is
+on; then it shows a **chip** — the filter's text and an ✕ — and a click anywhere on it clears the filter.
 
-- Both boxes are standard `EDIT` controls themed like the main search box (`dialogCtlColor` for
-  `WM_CTLCOLOREDIT`, a cue banner). The guide window is a Direct2D surface without `WS_CLIPCHILDREN`
-  today (`EpgGuideControl.cpp:675`); it gains it, so the grid never paints over the boxes.
-- **Keys:** a focused EDIT receives Esc/Enter/↓ itself, not the guide's window procedure, so both boxes
-  are subclassed (precedent: `ChannelGridControl.cpp:462`) to keep Esc = clear, then close, and to add
-  ↓/Enter. Today's "type anywhere in the guide to filter channels" survives by forwarding a printable
-  `WM_CHAR` from the grid to the channel-filter box (focus it, then pass the character).
+- The box is a standard `EDIT` control, themed by `dialogCtlColor` (which paints EDITs in the theme's
+  `windowBg`, so its painted frame uses that colour too), with a cue banner. The guide window gains
+  `WS_CLIPCHILDREN` so its Direct2D paint never draws over it.
+- **Keys:** a focused EDIT receives Esc/Enter/arrows itself, so the box is subclassed; there is no
+  dialog manager, so Tab is handled there too (it hands the keys to the grid, when the grid shows).
+  **Esc**, one layer at a time: empties the focused box (closing the results), else leaves the
+  results, else clears the channel filter, else empties the box, else closes the guide. "Type anywhere
+  in the guide": a printable `WM_CHAR` on the guide goes to the box — over the grid it REPLACES what
+  the box still holds from the last search (a new search; Backspace edits that text instead), over the
+  results it adds to it. Focus is remembered across deactivation (a dialog, Alt-Tab) and restored to
+  the box if it had it.
+- **Channels** are matched in the guide itself, in memory — the rows it was built with, by channel
+  NAME, a substring, case- and accent-insensitive (`searchFold`: "quebec" finds "TVA QUÉBEC"). One
+  function (`channelMatches`) gives both the count the results show and the rows the filter keeps.
 - **Programme search** debounces 200 ms exactly as the main search does (one-shot timer + a
   `searchPending` flag re-checked on the tick, because `KillTimer` does not remove an already-posted
-  `WM_TIMER`).
-- **Results replace the grid** while the box has text: a Direct2D list in the guide's own style — per
-  row: day + time, channel name, **title** (matched text emphasised), and for description matches a
-  one-line snippet. An "on now" badge for what is airing. Grouped under "Today" / "Tomorrow" / a date.
-- **Keyboard:** ↓ from the box into the list, ↑/↓ to move, **Enter** = the programme dialog (Play /
-  Schedule / Record series — the existing `programmeDialog`), **Esc** = back to the grid.
-- **Mouse:** click = **jump to it in the grid** (scroll the time axis and the row into view, briefly
-  highlight the block, keep the query) *(decided, §7.3)*; double-click = the programme dialog;
-  right-click = Record / Record series / Show in guide.
+  `WM_TIMER`); a navigation key pressed inside those 200 ms runs the pending search first, so it acts
+  on what the box says. The first search of a SESSION — after the box was empty, after the guide's rows
+  were (re)built, or after the guide was reopened — paints "Preparing search…" and then calls the host,
+  which loads the channel set and rebuilds a stale index.
+- **Results replace the grid** while shown: a Direct2D list in the guide's own style. First, when any
+  channel name matches, "Matching channels: N" and ONE item — "Show only channels matching “x”", the
+  first dozen names beneath it with the typed text marked; choosing it narrows the grid to those
+  channels, empties the box and shows the chip (the grid's old type-to-filter, now "type, Enter": the
+  item is selected by default). Then the programmes under their count ("Upcoming programmes found: N",
+  "showing the first 200", or "no upcoming programmes match"), day headings ("Today" / "Tomorrow" / a
+  date in the user's locale) — the description-only matches under a heading of their own ("Found in the
+  description"), their days starting again beneath it — and per result the title with the matched
+  text in bold accent, time range and channel, an "On now" badge for what is airing, and for description
+  matches a one-line snippet (a third line: those rows are 62 dp, the rest 46).
+- **Keyboard:** ↑/↓/PgUp/PgDn move the selection and **Enter** opens the programme dialog (Play /
+  Schedule / Record series — the existing `programmeDialog`), or applies the channel filter — from the
+  search box or from the guide itself. After a jump, Enter (or ↓ in the search box), or a click in the search box, brings the results
+  back — by searching again, so "Today" and "On now" are current. Focus arriving in the box any other way
+  (restored on activation, Tab) does NOT bring them back: that would cover what "Show in TV Guide" or a
+  reopen was asked to show. Home scrolls the grid to now.
+- **Mouse** *(decided, §7.3)*: a click **jumps to the programme in the grid** — scrolls the time axis and
+  the row into view, outlines the block in the accent colour for 2.5 s, keeps the query; a **double-click**
+  opens the programme dialog (the first click has already jumped, so the second — arriving as
+  `WM_LBUTTONDBLCLK` on the grid, the class now has `CS_DBLCLKS` — opens the programme that click jumped
+  to; if the jump could not happen, the list is still there and the double-click opens the result
+  directly); right-click = Play / Schedule / Record series / Show in guide. A click on the channels item
+  applies the filter (its double-click's second click, landing on the grid, is ignored). A click on the
+  box's painted frame focuses the box. A jump keeps a channel filter that shows the programme's row, and
+  clears one that hides it.
 - **The grid may be older than the search.** Search reads the database; the grid's rows can predate the
   last refresh (they survive a hide/reveal). If a result is not in the grid's rows, the jump rebuilds
-  them first (the existing `onEpgGuide` path) rather than failing.
-- **Nothing found / no guide / "Preparing search…"** each get a plain line, not an empty list.
+  them (the host's `onEpgGuide`, re-entering `showEpgGuide` on the same window) and retries — but only
+  when that could help: the programme lies inside the window a rebuild covers (`kGuideWindowPastSec` /
+  `kGuideWindowAheadSec` around now, shared with the host), and the rows have not been rebuilt since
+  those results were fetched. Otherwise, or if it is still missing, the jump just beeps. Reopening the
+  guide shows the grid with every channel (the query stays in the box; the rows are rebuilt, which
+  clears a channel filter).
 
-New strings (appended to `keys.json`, en/ja/zh-Hant): the placeholder, the result count, "none found",
-"showing the first 200", "on now", Today/Tomorrow, "Preparing search…", and the loading-box line
-"Indexing the guide for search…". Dates in results need locale-aware formatting, which Win32 does not
-have yet (the guide prints `HH:MM` only) — step 3 needs it too.
+New strings (appended to `keys.json`, en/ja/zh-Hant; CJK a machine draft): the placeholder, Now,
+"Preparing search…", none found, the count, "showing the first {0}", "On now", Today, Tomorrow,
+"Show in guide", "Found in the description", the loading-box line "Indexing the guide for search…",
+"Matching channels: {0}" and "Show only channels matching “{0}”".
 
 ---
 
 ## 6. Testing
 
-**Selftest (CLI, automated):**
-- v9 → v10 on a database that already holds programmes: two empty tables, `user_version` 10, and **v9's
-  URL rewrite NOT re-run** (a canary row whose stream URL v9 would rewrite stays untouched).
-- A v10 step that fails leaves v9 and search still answers via `LIKE` — injected by pre-creating an
-  ordinary table named `epg_fts_title`, so `CREATE VIRTUAL TABLE` fails.
-- Search: title substring ("ronto" finds "Toronto"), accents ("quebec" finds "Québec"), non-Latin case
-  (Greek); description words and a prefix; title matches ranked before description-only ones; past
-  programmes excluded; a programme on a channel the user does not have is dropped **before** the limit;
-  **typed FTS5 syntax searched literally** (quotes, `*`, parentheses, `AND`/`OR`/`NEAR`, a lone `-`).
-- The stamp: a refresh then a search finds the new titles and not the old; deleting a playlist, a
-  refresh without a rebuild (simulating an older build), and a same-sized re-import each force a
-  rebuild; a stale index is never read (no `SQLITE_CORRUPT_VTAB`).
-- Two guide playlists: one refresh → one rebuild.
-- A performance guard on a large synthetic guide.
+**Selftest (CLI, automated — `RabbitEarsCli --selftest`, block "Programme search"):**
+- A fresh database reaches v10 with the index not yet built; v2 → v10 walks the whole chain.
+- **v9 → v10 does NOT re-run v9's URL rewrite** — a canary stream URL in a spelling v9 would rewrite
+  stays untouched (and the check asserts the canary IS such a spelling). Shown to fail with the gate
+  removed.
+- **A failed v10** — injected by an ordinary table squatting on `epg_fts_title` (`IF NOT EXISTS` then
+  succeeds, the fts5-declaration check fails) — leaves v9, reports `Unavailable`, and LIKE still searches
+  descriptions; with the squatter gone, the next open lands v10.
+- Search: title substring ("ronto" finds "Toronto"); accents ("quebec" finds "Québec"); Greek case;
+  description words and a prefix; title matches ranked before description-only ones; past programmes,
+  channels the user does not have, and disabled playlists dropped — **before** the limit; typed FTS5
+  syntax searched literally (quotes, parentheses, `AND`, `OR*`); odd input (a lone `-`, `"`, `NEAR(`,
+  `*`, `(((`) neither errors nor poisons the connection; a 2-character term falls back to titles.
+- Marking: a marked title, a marked snippet, the channel name + full tvg-id on a hit; "quebec" marks
+  "Québec" (title and snippet) and lower-case Greek marks upper-case; `searchFold`'s table edges (accents
+  dropped; Æ Œ Ĳ ß × ı ĸ kept); a CJK word found in a description and marked mid-run (2 characters →
+  LIKE, 3 → the index path with a LIKE description arm); a word right after a curly quote found AND
+  marked.
+- The stamp: a refresh leaves `NeedsRebuild` and the stale index is bypassed; a rebuild finds the new
+  title; deleting a playlist leaves `NeedsRebuild`; a fresh connection reads a saved stamp as `Ready`;
+  a simulated older-build same-sized refresh (only `epg_refreshed_<id>` changed) is detected; **a refresh
+  that reuses ids** (one playlist) is never answered from the stale index — asserted to really reuse the
+  id, and shown to fail with the Ready guard removed.
+- A performance guard: 40,000 synthetic programmes, a word in every row, 200 results through the index
+  in < 500 ms (49 ms measured).
 
-**Measured before committing, on a COPY of the real library** (`run-profile.ps1 -Refresh` snapshots it
-into the dev profile, so v10 runs on real data without touching the real one): the migration, the
-refresh's store + index time, the first-search rebuild, `temp.guide_channels` build time, and search
-latency (with snippets and the channel filter) for common and rare words.
+**Measured on a COPY of the real library** with `RabbitEarsCli --epgsearch <copy> [terms…]` (§4's
+numbers). `run-profile.ps1 -Refresh` snapshots the real library into the dev profile for the owner's
+live test, where v10 runs on real data without touching the real one.
 
 **Owner, live:** search for a show known to be on today; a word only in a description; an accented
-title; "jump to it" and the programme dialog from a result; a refresh (the new "Indexing…" line); the
-channel filter now shows a caret, and typing anywhere in the guide still filters.
+title (marked); "jump to it", the double-click and Enter dialogs from a result; the right-click menu;
+Now; a refresh (the new "Indexing…" line); a channel name + Enter narrows the grid, the chip's ✕ (and
+Esc) clears it; typing over the grid starts a new search.
 
 ---
 
 ## 7. Decisions — **DECIDED by the owner, 2026-09-24: "go with the recommendations"**
 
-1. **Two boxes.** The corner cell stays the channel filter (now a real text box), and a separate
-   "Search programmes…" box sits in a new toolbar. *(Rejected: one box listing channels AND
-   programmes — typing would no longer narrow the grid the way the owner's "toronto" filter does.)*
-2. **Titles AND descriptions**, accepting ~1.3 s more per guide refresh (in the loading box) and
+1. **One box** — *REVISED by the owner, 2026-09-24, after the first live test* ("two search bars?"). As
+   first decided, the corner cell kept the channel filter (as a real text box) beside a separate
+   "Search programmes…" box; built, they read as two copies of one search. Now one box lists matching
+   channels AND programmes, and the channels' item narrows the grid (§5) — the "toronto" filter the
+   owner used is "toronto, Enter", no longer live with every keystroke.
+2. **Titles AND descriptions**, accepting ~1.3 s (measured ~1.5 s as built) more per guide refresh (in the loading box) and
    ~27 MB more database.
 3. **A click jumps to the programme in the grid**; Enter or double-click opens the programme dialog.
 4. **Past programmes are hidden.**
