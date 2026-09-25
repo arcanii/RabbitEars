@@ -16,10 +16,15 @@ as-built record in `docs/EPG_SEARCH.md`) SHIPPED in 0.2.19; **step 3 (calendar) 
 the owner's provider publishes ~6 h of future guide and its Xtream API none.
 
 Open items this work left or found (none blocking):
-- **The TV Guide's scrollbars are light in the dark theme** — the window's own `WS_HSCROLL`/`WS_VSCROLL`
-  (pre-existing; the owner's screenshots show a white bar beside the dark results list). The main
-  window themes its controls with `SetWindowTheme(…, L"DarkMode_Explorer", …)` (`MainWindow.cpp:178`);
-  the guide window never does.
+- ✅ **FIXED after 0.2.19 (unreleased): the TV Guide's scrollbars were light in the dark theme** — the
+  window's own `WS_HSCROLL`/`WS_VSCROLL`, which `applyDialogDarkMode`'s child pass never reached. Now
+  `themeGuideChrome` (`Win32/ui/EpgGuideControl.cpp`) also calls `SetWindowTheme` on the guide window
+  itself (`DarkMode_Explorer` for a dark skin; the theme REMOVED for a light one) — shown on a captured
+  test window to darken a top-level window's own bars, and removing it to bring the light bars back.
+  Also: **a live skin switch now repaints an open guide** (`epgGuideRefreshTheme`, from
+  `applyActiveSkin`) — it never did, since the main window's redraw does not reach this separate
+  top-level window. Owner check: the bars beside the guide and its results are dark; switching skin
+  with the guide open restyles it at once.
 - **The main window's CHANNEL search → FTS5** — its `LIKE` over 411k rows is still ~134 ms a query;
   the same `SQLITE_ENABLE_FTS5` makes it a natural follow-up (`docs/EPG_SEARCH.md` §7, "not in step 2").
 - **Marking gaps (cosmetic):** accents FTS5 strips but `searchFold` keeps — Vietnamese / pinyin
@@ -28,6 +33,25 @@ Open items this work left or found (none blocking):
   characters) is marked accent-blind while LIKE matched accents exactly.
 - **Past programmes in search** are hidden (decision §7.4); with catch-up (below) they could come back
   as playable results.
+- **A guide "coverage" line — say how many channels the guide shows, and that more exist without guide
+  data** (owner, 2026-09-25, from a user: *"when trying to search the guide i get only about 20
+  channels ?"*). The guide builds a row only for a channel whose playlist has a guide URL, whose tvg-id
+  matches a guide channel (base id, case-folded — `onEpgGuide`, `Win32/ui/MainWindowCommands.cpp`), and
+  which has programmes in −6 h..+72 h; everything else is silently absent, so ~20 rows looks like a
+  broken guide and the search's "Matching channels" cannot find the rest. That user's rows ran
+  alphabetically from "ALB - …" and "DE - …" — no AR/BE/CA rows at all, though the owner's library on
+  what looks like the same provider has 2,474 — so their guide feed and playlist mostly do not match
+  (or the guide URL belongs to another source). The counts are already in hand while `onEpgGuide`
+  builds the rows: rows shown; the enabled playlists' channels with a tvg-id (`byBase` sizes) and
+  without one; the guide's channel groups that matched none of the user's channels (`!have`). Proposal:
+  a line in the guide toolbar — *"Guide data for 23 of your 4,835 channels"* — whose click/tooltip
+  explains the rest (*"2,410 channels in the guide match none of yours — check the playlist's guide URL"*
+  / *"1,200 of your channels have no tvg-id"*), plus the same counts in the diag log's `TV guide
+  first-open` line so a user's log answers the question. In search: *"N more channels match but have no
+  guide data"* under the channels block. New i18n strings.
+- **A programme 24 h or longer shows the same time twice** — the provider's all-day filler on the Sky
+  Sport event channels reads "Sendepause 13:00 – 13:00" in the same user's screenshot. Show the length or
+  the days ("13:00 – 13:00 +1 day") when stop − start ≥ 24 h.
 - **Set Guide URL: warn when the link looks like a PLAYLIST** (`get.php`, `type=m3u`, `.m3u`) rather
   than a guide — the single-line prompt keeps only the first line of a pasted email block, and if that
   is the M3U link the refresh silently stores 0 programmes. Needs a Yes/No prompt + i18n strings.
