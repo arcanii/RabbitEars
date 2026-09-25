@@ -206,6 +206,9 @@ only in `./bin` and on PATH, while `sign_update` lives in the mac build dir, and
 needs `--account SQLTerminal`, which the script does not pass by default. What worked, from the repo
 root on the Mac:
 `SIGN_UPDATE="$(ls build-mac*/sparkle/bin/sign_update | head -1)" SIGN_UPDATE_ARGS="--account SQLTerminal" scripts/sign-release.sh <installer>`.
+**Since 0.2.19 the script defaults both** (it looks in `build-mac*/sparkle/bin` and passes
+`--account SQLTerminal` unless `SIGN_UPDATE_ARGS` is set), so plain `scripts/sign-release.sh
+"<installer>"` is enough; the long form above still works.
 Then `make-appcast.ps1` twice with `-Tag v0.2.18`, each signature checked on Windows against the public
 key in `Win32/platform/Updater.cpp` (Python `cryptography`, Ed25519 over the file's raw bytes), commit +
 push, and both feeds + both enclosures verified.

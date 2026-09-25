@@ -73,8 +73,12 @@ portable zip for people who prefer it; those users update manually).
    allows both and picks the native set at install time.
 4. **Sign each installer** with the private key and copy the printed `sparkle:edSignature`
    (one signature per file):
-   - macOS (copy the installer over first): `scripts/sign-release.sh RabbitEars-<ver>-setup.exe`
-     — wraps Sparkle's `sign_update` (login-Keychain key) and prints just the signature.
+   - macOS (copy the installer over first — or `curl -LO` it from the GitHub release, which also
+     proves you sign the bytes users download), from the repo root:
+     `scripts/sign-release.sh "RabbitEars-<ver>-setup.exe"` — wraps Sparkle's `sign_update` and prints
+     just the signature. It finds `sign_update` in the mac build dir (`build-mac*/sparkle/bin`) and
+     passes `--account SQLTerminal` (the family key's Keychain account) by default; `SIGN_UPDATE=` /
+     `SIGN_UPDATE_ARGS=` override either. Quote paths with spaces or accents.
    - Windows (if the key is there): `sign_update.exe build\installer\RabbitEars-<ver>-setup.exe`
 5. **Generate the appcast(s)** at the repo root — one per arch you built:
    ```cmd
