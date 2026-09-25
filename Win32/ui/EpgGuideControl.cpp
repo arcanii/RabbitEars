@@ -99,6 +99,7 @@ struct GuideState {
     RECT  searchField{}, nowButton{};  // painted frames (client coords)
     RECT  chip{};                     // the corner cell's channel-filter chip ("toronto ✕"), while filtering
     bool  nowHover = false, chipHover = false;
+    int   themedDark = -1;            // the skin darkness themeGuideChrome last applied (-1 = none yet)
 
     // ---- search
     bool searchPending = false;   // debounce armed (KillTimer can't unpost a queued WM_TIMER)
@@ -1588,6 +1589,24 @@ void applyData(GuideState* st, std::vector<GuideRow> rows, long long nowUtc) {
     setFilter(st, L"");  // fresh data -> fresh channel filter (populates st->rows from st->allRows)
 }
 
+// The guide's chrome in the current skin: the caption, border and child controls
+// (applyDialogDarkMode), and the window's OWN scroll bars — WS_HSCROLL/WS_VSCROLL on the guide itself,
+// which applyDialogDarkMode's child pass never reaches, so they stayed light beside the dark grid.
+// SetWindowTheme on the top-level window is enough to darken them (checked by capturing a test window:
+// no AllowDarkModeForWindow or SetPreferredAppMode needed). A light skin REMOVES the theme instead —
+// the window's bars, and the search box's (applyDialogDarkMode only ever sets the dark one) — which is
+// exactly the look before any of this. Only when the skin's darkness changed: every SetWindowTheme
+// sends WM_THEMECHANGED and repaints the frame.
+void themeGuideChrome(HWND hwnd) {
+    applyDialogDarkMode(hwnd);
+    const int dark = currentTheme().dark ? 1 : 0;
+    GuideState* st = stateOf(hwnd);
+    if (st && st->themedDark == dark) return;
+    SetWindowTheme(hwnd, dark ? L"DarkMode_Explorer" : nullptr, nullptr);
+    if (!dark && st && st->hSearch) SetWindowTheme(st->hSearch, nullptr, nullptr);
+    if (st) st->themedDark = dark;
+}
+
 }  // namespace
 
 void hideEpgGuide() {
@@ -1595,6 +1614,15 @@ void hideEpgGuide() {
 }
 
 bool epgGuideOpen() { return g_guide && IsWindow(g_guide); }
+
+void epgGuideRefreshTheme() {
+    if (!g_guide || !IsWindow(g_guide)) return;
+    // The main window's own repaint never reaches this separate top-level window, so a live skin
+    // switch left the guide in the old skin until something repainted it. The grid, the results and
+    // the painted frames read currentTheme() at paint time; the caption and scroll bars are pushed.
+    themeGuideChrome(g_guide);
+    RedrawWindow(g_guide, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+}
 
 void epgGuideRefreshLanguage() {
     if (!g_guide || !IsWindow(g_guide)) return;
@@ -1642,7 +1670,7 @@ void revealEpgGuide(long long nowUtc) {
         updateScrollbars(g_guide, st);
         InvalidateRect(g_guide, nullptr, FALSE);
     }
-    applyDialogDarkMode(g_guide);  // re-theme the caption in case the skin changed while hidden
+    themeGuideChrome(g_guide);  // re-theme the caption + scroll bars in case the skin changed while hidden
     ShowWindow(g_guide, IsIconic(g_guide) ? SW_RESTORE : SW_SHOW);
     SetForegroundWindow(g_guide);
 }
@@ -1677,7 +1705,7 @@ bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc) {
     st->hoverRow = row;            // transient highlight so the target row is identifiable
     updateScrollbars(g_guide, st);
     InvalidateRect(g_guide, nullptr, FALSE);
-    applyDialogDarkMode(g_guide);
+    themeGuideChrome(g_guide);
     ShowWindow(g_guide, IsIconic(g_guide) ? SW_RESTORE : SW_SHOW);
     SetForegroundWindow(g_guide);
     return true;
@@ -1708,7 +1736,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
             updateScrollbars(g_guide, st);
             InvalidateRect(g_guide, nullptr, FALSE);
         }
-        applyDialogDarkMode(g_guide);  // re-theme the caption in case the skin changed
+        themeGuideChrome(g_guide);  // re-theme the caption + scroll bars in case the skin changed
         ShowWindow(g_guide, IsIconic(g_guide) ? SW_RESTORE : SW_SHOW);  // re-reveal if a play-from-guide had hidden it
         SetForegroundWindow(g_guide);
         return;
@@ -1731,7 +1759,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
         st->scrollX = std::max(0, timeToContentX(st, nowUtc) - dpx(st->dpi, 80));
         updateScrollbars(hwnd, st);
     }
-    applyDialogDarkMode(hwnd);  // dark/immersive caption + themed border (matches the app chrome)
+    themeGuideChrome(hwnd);  // dark/immersive caption + themed border + scroll bars (matches the app chrome)
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 }

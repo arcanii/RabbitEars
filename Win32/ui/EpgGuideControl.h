@@ -98,6 +98,11 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
 void hideEpgGuide();
 
 bool epgGuideOpen();  // true if the guide window exists (open or hidden)
+
+// Re-apply the guide's chrome for a LIVE skin switch (Settings ▸ Theme) — the caption, border, scroll
+// bars and search box — and repaint it (the grid and the results read the theme at paint time).
+// No-op if the guide window doesn't exist (open or hidden).
+void epgGuideRefreshTheme();
 // Re-reveal an already-built guide WITHOUT re-querying the DB — instant reopen after a
 // play-from-guide hid it. Moves the "now" line + airing highlight to `nowUtc` (the stored
 // programmes don't change), shows the grid rather than any search results (the search box keeps its

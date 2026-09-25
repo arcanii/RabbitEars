@@ -181,6 +181,7 @@ void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
         SetWindowTheme(h, sub, nullptr);
     TreeView_SetBkColor(st->nav, th.panelBg);
     TreeView_SetTextColor(st->nav, th.textPrimary);
+    if (epgGuideOpen()) epgGuideRefreshTheme();  // its own top-level window: the redraw below misses it
     if (repaint)
         RedrawWindow(hwnd, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
