@@ -31,9 +31,37 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.19 SHIPPED, auto-update LIVE** · **0.2.20-dev** (`APP_VERSION` 0.2.20, bumped 2026-09-25) · macOS **0.2.17**
+## Current state — **v0.2.20 SHIPPED, auto-update LIVE** (`APP_VERSION` 0.2.20 — bump before the next cut) · macOS **0.2.17**
 
-### 🛠️ 0.2.20-dev — guide polish + channel search (owner's list, 2026-09-25)
+### ✅ 0.2.20 — SHIPPED (2026-09-25), both appcasts LIVE @ `528cd9a`
+
+**Released:** tag **`v0.2.20`** @ `74a3b9a` (verified: `git ls-remote origin refs/heads/main` == HEAD
+before building AND before tagging), full version **`0.2.20.441`**, GitHub release "RabbitEars 0.2.20"
+with three installers — uploaded sizes match, and ALL THREE downloaded back from the release are
+byte-identical to the local builds:
+
+| installer | bytes | SHA-256 |
+|---|---|---|
+| `RabbitEars-0.2.20-setup.exe` (x64) | 35,548,064 | `B1676322F4B0E9A50EF43B06105CC381F94FD2CFD310CF04BCBF5E2220D438CB` |
+| `RabbitEars-0.2.20-arm64-setup.exe` | 30,385,798 | `5707F74F3C71DE9205E688F13ECE53B80D640E8587C14C3DDE74F09DEF27A190` |
+| `RabbitEars-0.2.20-universal-setup.exe` | 63,634,320 | `F0FB895028FFB4A76F0B69E0770D54BE4EA3823E3F7191E7CCB2915980510368` |
+
+Both theme flags built and `--selftest` ALL PASS (750) on the release commit (x64); both build dirs at
+THEME_ENGINE=ON / BUILD_GUI=ON; ARM64 PE machine `0xAA64` (cross-compiled). ⚠️ The **universal**
+installer's first build failed — Inno's "Resource update error: EndUpdateResource failed, try excluding
+the Output folder from your antivirus software (110)", a transient lock on the share, leaving a 950 KB
+stub — and succeeded on a plain retry; check its size (~63.6 MB) before uploading. Signed by the owner
+on the Mac with the long form (`SIGN_UPDATE=… SIGN_UPDATE_ARGS="--account SQLTerminal"`) — the new
+`sign-release.sh` defaults (`5de5b83`) are still untried on the Mac; both signatures verified on
+Windows against the app's EdDSA key over the DOWNLOADED bytes (valid on their own installer, INVALID
+swapped). The release notes warn users not to go back to 0.2.18 or older (schema v11 triggers).
+
+**What 0.2.20 contains:** `e300dec` dark TV-Guide scroll bars + live skin restyle · `5de5b83`
+`sign-release.sh` defaults · `5b23f91` the coverage line, all-day times, the Set Guide URL playlist
+warning, live-first `channelByTvgId`, and channel search on FTS5 (schema v11) · docs (`b4b32eb`,
+`74a3b9a`). The block below is the pre-release record.
+
+### 🛠️ 0.2.20 — guide polish + channel search (owner's list, 2026-09-25)
 
 On `main` since 0.2.19: `e300dec` dark TV-Guide scroll bars + a live skin switch restyling an open
 guide · `5de5b83` `sign-release.sh` finds `sign_update` and passes `--account SQLTerminal` itself.
@@ -1238,12 +1266,17 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first** — the top "Current state" block (0.2.19 and the EPG work) — plus
-> `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic, parked on owner decisions).
-> Older release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
+> **Read `Win32/HANDOVER.md` first** — the top "Current state" block (0.2.20, 0.2.19 and the EPG work)
+> — plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic, parked on owner
+> decisions). Older release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
 >
-> **State:** **0.2.19 is SHIPPED and auto-update is LIVE** (full `0.2.19.434`, tag `v0.2.19` @ `5a2378d`,
-> appcasts @ `d2401b5`). `APP_VERSION` is **0.2.20** (bumped, not released). macOS is at 0.2.17.
+> **State:** **0.2.20 is SHIPPED and auto-update is LIVE** (full `0.2.20.441`, tag `v0.2.20` @ `74a3b9a`,
+> appcasts @ `528cd9a`). `APP_VERSION` is still **0.2.20** — bump it (`cmake/AppVersion.cmake:11`, ask
+> the owner) before the next cut. macOS is at 0.2.17. **0.2.20** = the TV Guide's coverage line
+> (+ the "not in the guide" note in its search), all-day programme times, the Set Guide URL
+> playlist-link warning, dark guide scroll bars, and **channel search on FTS5 — schema v11, kept by
+> TRIGGERS** (`docs/CHANNEL_SEARCH.md`: FTS5-less builds ≤ 0.2.18 can no longer write channels to a v11
+> database; the owner accepted that).
 > **The owner's two EPG requests** — full-text search in the guide and a calendar of future airings:
 > **steps 1 and 2 SHIPPED in 0.2.19** — step 1 = guide-refresh progress + timings, Set Guide URL
 > extracting the address from pasted text, provider logins masked in the diagnostic log; step 2
@@ -1256,7 +1289,9 @@ Paste this verbatim to start a fresh session with working context restored:
 > and verify `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for
 > a release.
 >
-> **Shipped without a full owner run:** in 0.2.19 the search's filter chip, the jump from a result and
+> **Shipped without a full owner run:** in 0.2.20 nothing of note (all seven owner checks passed; the
+> Mac has not yet run the new `sign-release.sh` defaults — 0.2.20 was signed with the long form); in
+> 0.2.19 the search's filter chip, the jump from a result and
 > typing over the grid (nothing reported against them), and the recording-rules fold (selftest only);
 > in 0.2.18 the search debounce, the lost schedule-status-write fix (HANDOVER's "Lost schedule-status
 > writes" block has six owner checks — the ordinary scheduled-recording path first), the Light-skin
