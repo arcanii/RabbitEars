@@ -25,36 +25,28 @@ Open items this work left or found (none blocking):
   `applyActiveSkin`) — it never did, since the main window's redraw does not reach this separate
   top-level window. Owner check: the bars beside the guide and its results are dark; switching skin
   with the guide open restyles it at once.
-- **The main window's CHANNEL search → FTS5** — its `LIKE` over 411k rows is still ~134 ms a query;
-  the same `SQLITE_ENABLE_FTS5` makes it a natural follow-up (`docs/EPG_SEARCH.md` §7, "not in step 2").
+- ✅ **DONE for 0.2.20 (unreleased) — the owner's 0.2.20 list (2026-09-25):**
+  - **The guide coverage line** (from a user who saw ~20 guide channels): "ⓘ Guide data for N of M
+    channels with a guide ID" in the guide toolbar; a click explains the rest — ids in playlists with no
+    guide link, ids the guide has no programmes for, guide channels matching none of the user's — and the
+    same counts go in the diag log (`TV guide first-open` / `TV guide: no rows`) and under an empty
+    guide's notice. Counted in `onEpgGuide` with `Database::distinctLiveGuideIds()` + `liveGuideIds()`
+    (two queries on the tvg-id index, ~3 ms each).
+    In search: "Also in your channel list, not in the guide: N" (`countUncoveredChannelNames`).
+  - **All-day programmes** read "13:00 – 13:00 (24 h)" (`timeRange`, `GuideTimeRangeLong`).
+  - **Set Guide URL warns** when the address looks like a playlist (`looksLikePlaylistUrl`: get.php, the
+    XUI path form …/m3u_plus, type=m3u[_plus], .m3u/.m3u8); No re-opens the prompt; a line naming both
+    links takes the guide one.
+  - **The main window's channel search on FTS5** — names only, triggers, schema v11:
+    **[`docs/CHANNEL_SEARCH.md`](../docs/CHANNEL_SEARCH.md)** (0.1–1 ms vs 120–180 ms; a one-time
+    3.9–4.5 s upgrade on the owner's 410k channels; FTS5-less builds ≤ 0.2.18 can no longer add, refresh
+    or delete playlists or sync movies on a v11 database — accepted).
 - **Marking gaps (cosmetic):** accents FTS5 strips but `searchFold` keeps — Vietnamese / pinyin
   (U+01A0–U+0233 bar Ș Ț) and U+1E00–U+1EF9 — are FOUND but left unmarked; the stroke letters (Ł, Ø …)
   fold here but not in FTS5 (`common/core/SearchFold.h` header). A LIKE-fallback result (1–2 typed
   characters) is marked accent-blind while LIKE matched accents exactly.
 - **Past programmes in search** are hidden (decision §7.4); with catch-up (below) they could come back
   as playable results.
-- **A guide "coverage" line — say how many channels the guide shows, and that more exist without guide
-  data** (owner, 2026-09-25, from a user: *"when trying to search the guide i get only about 20
-  channels ?"*). The guide builds a row only for a channel whose playlist has a guide URL, whose tvg-id
-  matches a guide channel (base id, case-folded — `onEpgGuide`, `Win32/ui/MainWindowCommands.cpp`), and
-  which has programmes in −6 h..+72 h; everything else is silently absent, so ~20 rows looks like a
-  broken guide and the search's "Matching channels" cannot find the rest. That user's rows ran
-  alphabetically from "ALB - …" and "DE - …" — no AR/BE/CA rows at all, though the owner's library on
-  what looks like the same provider has 2,474 — so their guide feed and playlist mostly do not match
-  (or the guide URL belongs to another source). The counts are already in hand while `onEpgGuide`
-  builds the rows: rows shown; the enabled playlists' channels with a tvg-id (`byBase` sizes) and
-  without one; the guide's channel groups that matched none of the user's channels (`!have`). Proposal:
-  a line in the guide toolbar — *"Guide data for 23 of your 4,835 channels"* — whose click/tooltip
-  explains the rest (*"2,410 channels in the guide match none of yours — check the playlist's guide URL"*
-  / *"1,200 of your channels have no tvg-id"*), plus the same counts in the diag log's `TV guide
-  first-open` line so a user's log answers the question. In search: *"N more channels match but have no
-  guide data"* under the channels block. New i18n strings.
-- **A programme 24 h or longer shows the same time twice** — the provider's all-day filler on the Sky
-  Sport event channels reads "Sendepause 13:00 – 13:00" in the same user's screenshot. Show the length or
-  the days ("13:00 – 13:00 +1 day") when stop − start ≥ 24 h.
-- **Set Guide URL: warn when the link looks like a PLAYLIST** (`get.php`, `type=m3u`, `.m3u`) rather
-  than a guide — the single-line prompt keeps only the first line of a pasted email block, and if that
-  is the M3U link the refresh silently stores 0 programmes. Needs a Yes/No prompt + i18n strings.
 - **The loading box is TOPMOST** and now stays up through the ~1 s UI-thread store, so if the owner
   switches apps during that second it floats over them until the store ends. Cosmetic; the real fix is
   storing off the UI thread (own connection — see "TV Guide off-thread" below).
@@ -80,7 +72,12 @@ Open items this work left or found (none blocking):
   just marks it stale), the new header `common/core/SearchFold.h`, and `foldChar` in
   `common/core/RecordingRules.cpp` (their series rules now also match Greek/Romanian titles across
   case). A mac search UI would call `refreshProgrammeSearchChannels()` then `searchProgrammes()` —
-  `docs/EPG_SEARCH.md` has the contract.
+  `docs/EPG_SEARCH.md` has the contract. (4) **0.2.20 changes `searchChannels`** (`common/db`): channel NAMES only,
+  case- and accent-blind, through an FTS5 index kept by triggers (**schema v11**, a ~4 s one-time
+  upgrade at 410k channels) — no mac code change needed; mac 0.2.17 (no FTS5) cannot write channels to
+  a v11 database. `docs/CHANNEL_SEARCH.md`. Also new and additive: `distinctLiveGuideIds`,
+  `liveGuideIds`, `countUncoveredChannelNames`, `channelSearchIndexed`, `open(…, upgradeSchema)`; and
+  `MainWindowController.mm`'s search comment (~line 1290, "triple-LIKE") is now stale.
 
 ---
 

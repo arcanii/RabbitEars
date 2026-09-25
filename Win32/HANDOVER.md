@@ -31,7 +31,33 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.19 SHIPPED, auto-update LIVE** (`APP_VERSION` 0.2.19 — bump before the next cut) · macOS **0.2.17**
+## Current state — **v0.2.19 SHIPPED, auto-update LIVE** · **0.2.20-dev** (`APP_VERSION` 0.2.20, bumped 2026-09-25) · macOS **0.2.17**
+
+### 🛠️ 0.2.20-dev — guide polish + channel search (owner's list, 2026-09-25)
+
+On `main` since 0.2.19: `e300dec` dark TV-Guide scroll bars + a live skin switch restyling an open
+guide · `5de5b83` `sign-release.sh` finds `sign_update` and passes `--account SQLTerminal` itself.
+Built for 0.2.20 (the owner picked all four; details and file pointers in BACKLOG's EPG section):
+- **Guide coverage line** — "ⓘ Guide data for N of M channels with a guide ID" in the guide toolbar, a
+  click explaining the rest; the counts in the diag log; "Also in your channel list, not in the guide:
+  N" in the guide search. Prompted by a user who saw ~20 guide channels (their feed and playlist mostly do
+  not match — the log now says so).
+- **All-day programmes** — "13:00 – 13:00 (24 h)".
+- **Set Guide URL warns on a playlist link** (Yes/No, No re-opens the prompt).
+- **Channel search on FTS5** — **[`docs/CHANNEL_SEARCH.md`](../docs/CHANNEL_SEARCH.md)**: names only,
+  kept by triggers, **schema v11**; 0.1–1 ms vs 120–180 ms on the owner's 410k channels; a **~4 s
+  one-time upgrade** at the first open (logged in `db opened: … in N ms`); FTS5-less builds (≤ 0.2.18,
+  mac 0.2.17) can no longer add, refresh or delete playlists or sync movies on a v11 database — the
+  owner's accepted price for triggers.
+- `APP_VERSION` 0.2.20.
+
+**Committed `5b23f91`. Owner-verified live (dev profile, 0.2.20.439, 2026-09-25):** the first launch
+("longer than normal, but it launched ok" — the log: `db opened … in 4797 ms incl. any schema
+upgrade`), the main window's search, the coverage line and its explanation (the log: 2,473 of 3,397 ids
+with rows, 924 without despite a link, 441 guide channels matching none), the guide-search note, an
+all-day programme, the Set Guide URL warning, the dark scroll bars + a live skin switch. A guide search
+session now starts in 8–10 ms (was ~100 ms). Both theme flags, `--selftest` ALL PASS (750); three
+adversarial review rounds, all findings fixed.
 
 ### ✅ 0.2.19 — SHIPPED (2026-09-24), both appcasts LIVE @ `d2401b5`
 
@@ -1217,8 +1243,7 @@ Paste this verbatim to start a fresh session with working context restored:
 > Older release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
 >
 > **State:** **0.2.19 is SHIPPED and auto-update is LIVE** (full `0.2.19.434`, tag `v0.2.19` @ `5a2378d`,
-> appcasts @ `d2401b5`). `APP_VERSION` is still **0.2.19** — bump it (`cmake/AppVersion.cmake:11`, ask
-> the owner) before the next cut. macOS is at 0.2.17.
+> appcasts @ `d2401b5`). `APP_VERSION` is **0.2.20** (bumped, not released). macOS is at 0.2.17.
 > **The owner's two EPG requests** — full-text search in the guide and a calendar of future airings:
 > **steps 1 and 2 SHIPPED in 0.2.19** — step 1 = guide-refresh progress + timings, Set Guide URL
 > extracting the address from pasted text, provider logins masked in the diagnostic log; step 2
