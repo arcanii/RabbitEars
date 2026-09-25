@@ -15,6 +15,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <commctrl.h>
@@ -557,53 +558,94 @@ void onEpgGuide(AppState* st) {
     const long long winStart = now - kGuideWindowPastSec;   // a little history
     const long long winEnd = now + kGuideWindowAheadSec;    // three days ahead (EpgGuideControl.h)
     std::vector<GuideRow> rows;
+    // Index channels by their EPG id: iptv-org tvg-ids carry an "@feed" quality suffix
+    // (e.g. "CNN.us@SD") while XMLTV feeds key on the base id ("CNN.us"), so match on the base,
+    // case-insensitively (`normId` — the same normalisation as Database's RE_NORM_TVG).
+    auto normId = [](const std::wstring& s) {
+        std::wstring b = s.substr(0, s.find(L'@'));
+        for (auto& ch : b)
+            if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+        return b;
+    };
+    // The toolbar's coverage line (GuideCoverage), counted alongside the rows: per playlist, its live
+    // channels' distinct guide ids (one query for all playlists, ~3 ms) split into those with a row,
+    // those without one in a playlist with no guide link, and those without one despite a link; and,
+    // across ALL playlists, the guide's channels that matched none of the user's.
+    GuideCoverage coverage;
+    coverage.valid = true;
+    std::unordered_map<long long, int> idsByPlaylist;
+    for (const auto& [pid, n] : st->db.distinctLiveGuideIds()) idsByPlaylist[pid] = n;
+    std::unordered_set<std::wstring> guideMatched, guideUnmatched;  // normalised guide ids
     for (const auto& pl : st->db.listPlaylists()) {
         if (!pl.enabled) continue;
+        const auto idsIt = idsByPlaylist.find(pl.id);
+        const int ids = idsIt == idsByPlaylist.end() ? 0 : idsIt->second;
+        std::unordered_set<std::wstring> rowBases;  // this playlist's ids that got a row
         auto progs = st->db.programmesInWindow(pl.id, winStart, winEnd);  // ordered channel_id, start
-        if (progs.empty()) continue;
-        // Index channels by their EPG id: iptv-org tvg-ids carry an "@feed" quality suffix
-        // (e.g. "CNN.us@SD") while XMLTV feeds key on the base id ("CNN.us"), so match on the base,
-        // case-insensitively (`normId`). Keep the FIRST channel per base — its FULL tvg-id becomes the
-        // row's channelId, which Play/Schedule resolve via channelByTvgId, so every row stays playable.
-        auto normId = [](const std::wstring& s) {
-            std::wstring b = s.substr(0, s.find(L'@'));
-            for (auto& ch : b)
-                if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
-            return b;
-        };
-        std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> byBase;  // base -> (name, full tvg-id)
-        for (const auto& c : st->db.channelsByPlaylist(pl.id))
-            if (!c.tvgId.empty()) byBase.emplace(normId(c.tvgId), std::make_pair(c.name, c.tvgId));
-        GuideRow cur;
-        std::wstring curId;
-        bool have = false;     // building a row for a channel that IS in this playlist?
-        bool started = false;  // entered any channel group yet? (have can no longer double as this)
-        auto flush = [&] {
-            if (have && !cur.programmes.empty()) rows.push_back(std::move(cur));
-            cur = GuideRow{};
-            have = false;
-        };
-        for (auto& p : progs) {
-            if (!started || p.channelId != curId) {
-                flush();
-                curId = p.channelId;
-                started = true;
-                auto it = byBase.find(normId(curId));  // programme.channelId is the EPG base id
-                if (it != byBase.end()) {
-                    cur.channelId = it->second.second;  // the channel's FULL tvg-id (Play/Schedule use it)
-                    cur.channelName = it->second.first.empty() ? curId : it->second.first;
-                    have = true;
+        if (!progs.empty()) {
+            // LIVE channels only (like the coverage count). Keep the FIRST channel per base — its FULL
+            // tvg-id becomes the row's channelId, which Play/Schedule resolve via channelByTvgId, so
+            // every row stays playable.
+            std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> byBase;  // base -> (name, full tvg-id)
+            for (const auto& c : st->db.channelsByPlaylist(pl.id))
+                if (!c.tvgId.empty() && c.kind == Channel::Kind::Live)
+                    byBase.emplace(normId(c.tvgId), std::make_pair(c.name, c.tvgId));
+            GuideRow cur;
+            std::wstring curId;
+            bool have = false;     // building a row for a channel that IS in this playlist?
+            bool started = false;  // entered any channel group yet? (have can no longer double as this)
+            auto flush = [&] {
+                if (have && !cur.programmes.empty()) rows.push_back(std::move(cur));
+                cur = GuideRow{};
+                have = false;
+            };
+            for (auto& p : progs) {
+                if (!started || p.channelId != curId) {
+                    flush();
+                    curId = p.channelId;
+                    started = true;
+                    const std::wstring base = normId(curId);  // programme.channelId is the EPG base id
+                    auto it = byBase.find(base);
+                    if (it != byBase.end()) {
+                        cur.channelId = it->second.second;  // the channel's FULL tvg-id (Play/Schedule use it)
+                        cur.channelName = it->second.first.empty() ? curId : it->second.first;
+                        have = true;
+                        guideMatched.insert(base);
+                        rowBases.insert(base);
+                    } else {
+                        guideUnmatched.insert(base);
+                    }
                 }
+                if (have) cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
             }
-            if (have) cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
+            flush();
         }
-        flush();
+        const int shownHere = static_cast<int>(rowBases.size());  // <= ids: each is one of its live ids
+        const int missing = std::max(0, ids - shownHere);
+        coverage.withId += ids;
+        coverage.shown += std::min(shownHere, ids);
+        (pl.epgUrl.empty() ? coverage.inNoLinkPlaylists : coverage.noProgrammes) += missing;
     }
+    // "Matching none of yours" means none in ANY enabled playlist — also one with no guide link of its
+    // own, whose channel this guide would serve once linked (so that is not "another provider").
+    std::unordered_set<std::wstring> anyLiveId;
+    for (auto& id : st->db.liveGuideIds()) anyLiveId.insert(std::move(id));
+    for (const auto& id : guideUnmatched)
+        if (!guideMatched.count(id) && !anyLiveId.count(id)) ++coverage.guideUnmatched;
+    const std::wstring coverageLog =
+        std::to_wstring(coverage.shown) + L" of " + std::to_wstring(coverage.withId) +
+        L" guide ids among the live channels have rows; " + std::to_wstring(coverage.inNoLinkPlaylists) +
+        L" without one in playlists with no guide link, " + std::to_wstring(coverage.noProgrammes) +
+        L" despite one; " + std::to_wstring(coverage.guideUnmatched) + L" guide channels matching none";
     QueryPerformanceCounter(&tBuild1);
     if (rows.empty()) {
+        diag::info(L"TV guide: no rows (" + coverageLog + L")");
         closeLoadingDialog(loadDlg);  // dismiss before the modal info box, or it stacks on top
+        // The generic notice, then what the counts say about THIS library.
         showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::TvGuideTitle),
-                       tr(i18n::StringId::GuideNoGuideHeading), tr(i18n::StringId::GuideNoGuideBody));
+                       tr(i18n::StringId::GuideNoGuideHeading),
+                       tr(i18n::StringId::GuideNoGuideBody) + L"\r\n\r\n" + guideCoverageSummary(coverage) +
+                           L"\r\n\r\n" + guideCoverageExplanation(coverage));
         return;
     }
     std::sort(rows.begin(), rows.end(),
@@ -663,6 +705,12 @@ void onEpgGuide(AppState* st) {
                    L" ms" + (rebuilt ? L" (index rebuilt)" : L"") +
                    (channels ? L"" : L" — channel set FAILED: " + st->db.lastError()));
     };
+    // "Also in your channel list, not in the guide": matching live names none of whose channels carries
+    // a guide row's id — through the channel index, well under a millisecond for a specific name; -1
+    // under 3 characters, without the index, or past 5,000 matching channels (a broad word).
+    cb.onCountChannelNames = [st](const std::wstring& text, const std::unordered_set<std::wstring>& guideIds) {
+        return st->db.countUncoveredChannelNames(text, guideIds, 5000);
+    };
     cb.onSearch = [st](const std::wstring& text, bool* truncated) {
         using Clock = std::chrono::steady_clock;
         const auto t0 = Clock::now();
@@ -692,12 +740,13 @@ void onEpgGuide(AppState* st) {
     closeLoadingDialog(loadDlg);  // dismiss the box before the guide window paints
     const size_t nRows = rows.size();  // capture before the move below empties `rows`
     QueryPerformanceCounter(&tShow0);
-    showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb);
+    showEpgGuide(st->hwnd, hInst, st->dpi, std::move(rows), now, cb, coverage);
     QueryPerformanceCounter(&tShow1);
     auto ms = [&](LONGLONG a, LONGLONG b) { return std::to_wstring((b - a) * 1000 / freq.QuadPart); };
+    // The coverage counts too, so a user's log answers "why does my guide show so few channels?".
     diag::info(L"TV guide first-open: DB+build " + ms(tBuild0.QuadPart, tBuild1.QuadPart) +
                L" ms, window " + ms(tShow0.QuadPart, tShow1.QuadPart) + L" ms (" +
-               std::to_wstring(nRows) + L" channels)");
+               std::to_wstring(nRows) + L" channels; " + coverageLog + L")");
 }
 
 // Prompt for a playlist's XMLTV guide URL (seeded with its current one), save the override,
@@ -717,8 +766,34 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
         }
         // Keep only the address: a provider's email line pasted whole ("EPG Link : http://…") was
         // saved as-is and every refresh then failed with "Invalid URL.".
-        const std::wstring found = extractHttpUrl(url);
+        std::wstring found = extractHttpUrl(url);
+        // A line naming several links ("M3U: …get.php… EPG: …xmltv.php…", or a portal link first): when
+        // the first is not clearly a guide, step through the addresses after it and take the first
+        // with a guide link's clear shape (.xml, .gz, xmltv.php), if there is one — not merely any
+        // non-playlist address. Else keep the first address (and ask below if it is a playlist's).
+        if (!found.empty() && !looksLikeGuideUrl(found)) {
+            std::wstring rest = url, probe = found;
+            for (int guard = 0; guard < 16; ++guard) {
+                const size_t at = rest.find(probe);
+                if (at == std::wstring::npos) break;
+                rest.erase(0, at + probe.size());
+                probe = extractHttpUrl(rest);
+                if (probe.empty()) break;
+                if (looksLikeGuideUrl(probe)) {
+                    found = probe;
+                    break;
+                }
+            }
+        }
         if (!found.empty()) {
+            // A playlist link saved here stores 0 programmes on every refresh, silently. Ask; No (the
+            // default) re-opens the prompt with what was typed, to fix. The URL is not shown: it
+            // carries the provider login.
+            if (looksLikePlaylistUrl(found) &&
+                MessageBoxW(hwnd, tr(i18n::StringId::SetGuideUrlPlaylistWarning).c_str(),
+                            tr(i18n::StringId::SetGuideUrlTitle).c_str(),
+                            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+                continue;
             url = found;
             break;
         }

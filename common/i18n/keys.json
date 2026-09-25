@@ -3943,5 +3943,68 @@
       "{0}"
     ],
     "comment": "The result under that heading: choosing it narrows the TV Guide's grid to those channels (a chip in the grid's corner clears it). {0} = what the user typed. The channel names are listed on the line below it."
+  },
+  {
+    "id": "GuideTimeRangeLong",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": "A programme's start – stop time when it lasts 24 hours or more (the two times alone would read the same, e.g. \"13:00 – 13:00\"). {0} = start, {1} = stop (local HH:MM), {2} = its length in whole hours."
+  },
+  {
+    "id": "SetGuideUrlPlaylistWarning",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Yes/No question after the user enters a guide URL that looks like a PLAYLIST link (get.php, type=m3u, .m3u) rather than an XMLTV guide link. Yes = save it anyway; No = the prompt opens again with the text. Keep \"xmltv.php\", \".xml\" and \".xml.gz\" untranslated."
+  },
+  {
+    "id": "GuideCoverageLine",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "A clickable line in the TV Guide's toolbar. {0} = channels that have a row in the guide (guide data), {1} = the user's live channels that carry a guide ID (tvg-id), counted once per ID in each playlist. Clicking it explains the difference."
+  },
+  {
+    "id": "GuideCoverageNoLink",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "One line of the explanation behind the coverage line, \"label: count\" style (reads for 1 too). {0} = channels with a guide ID but no guide row, in playlists that have no guide (XMLTV) link. Names the menu path like GuideNoGuideBody does."
+  },
+  {
+    "id": "GuideCoverageNoProgrammes",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "One line of the coverage explanation, \"label: count\" style. {0} = channels with a guide ID, in playlists that HAVE a guide link, that the guide lists no programmes for from now to three days ahead (or 6 hours back)."
+  },
+  {
+    "id": "GuideCoverageUnmatched",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "One line of the coverage explanation, \"label: count\" style. {0} = channels in the downloaded guide (with programmes now or soon) whose ID matches none of the user's channels in any playlist. Names the menu path like GuideNoGuideBody does."
+  },
+  {
+    "id": "GuideCoverageNoId",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Last line of the coverage explanation: playlist entries without a guide ID (tvg-id) never appear in the guide."
+  },
+  {
+    "id": "GuideSearchMoreChannels",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "A note in the TV Guide's search results, under the matching channels, \"label: count\" style. {0} = how many MORE channel names in the user's channel list match what was typed but are not in the guide — no channel by that name carries the guide ID of a guide row (so another feed of a channel the guide shows is not counted)."
   }
 ]

@@ -607,5 +607,13 @@
   "LoadingIndexingGuide": "Indexing the guide for search…",
   "GuideSearchInDescriptions": "Found in the description",
   "GuideSearchChannelsHeading": "Matching channels: {0}",
-  "GuideSearchFilterChannels": "Show only channels matching “{0}”"
+  "GuideSearchFilterChannels": "Show only channels matching “{0}”",
+  "GuideTimeRangeLong": "{0} – {1} ({2} h)",
+  "SetGuideUrlPlaylistWarning": "This looks like a PLAYLIST link, not a guide link — a guide link usually ends in xmltv.php, .xml or .xml.gz.\n\nUse it anyway?",
+  "GuideCoverageLine": "Guide data for {0} of {1} channels with a guide ID",
+  "GuideCoverageNoLink": "In playlists with no guide link: {0} (right-click the playlist ▸ Set Guide URL…).",
+  "GuideCoverageNoProgrammes": "With a guide ID the guide has no programmes for, from now to three days ahead: {0}.",
+  "GuideCoverageUnmatched": "Channels in the guide matching none of yours: {0}. If that is most of the guide, its link may be for another provider or region (right-click the playlist ▸ Set Guide URL…).",
+  "GuideCoverageNoId": "Playlist entries without a guide ID (tvg-id) — series episodes, movies, many event channels — never appear in the guide.",
+  "GuideSearchMoreChannels": "Also in your channel list, not in the guide: {0}"
 }

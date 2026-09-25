@@ -112,7 +112,8 @@ void cancelSearchDebounce(AppState* st) {
 }
 
 // The search box's EN_CHANGE only ARMS a timer; this is the work it defers. Deliberately global
-// (any name/group/tvg match across the whole library), not scoped to the current nav view.
+// (a channel-NAME match across the whole library — schema v11, docs/CHANNEL_SEARCH.md), not scoped to
+// the current nav view.
 //
 // Known and accepted: the closing updateCounts() now lands ~200 ms after the keystroke instead of
 // during it, so it can overwrite a status message written in that window (a player event, say).

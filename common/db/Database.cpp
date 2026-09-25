@@ -134,9 +134,9 @@ constexpr const char* kEnabledOnly =
 //     had to become a SQL scalar to survive 14k channels.
 //
 // Deliberately NOT applied to searchChannels(): a user searching for a FILM must be able to
-// find it, so search keeps the VOD rows and pays for them. ⚠ That price is bigger than it
-// looks — see BACKLOG: one keystroke is 0.63 -> 80.00 ms, and the 7.9 ms once recorded for
-// this path was measured with a term matching zero movies. It remains an open owner decision.
+// find it, so search keeps the VOD rows. Their price (one LIKE keystroke 0.63 -> 80.00 ms at the
+// owner's shape — BACKLOG) is gone for 3+ characters since the v11 channel index (0.2–1 ms,
+// docs/CHANNEL_SEARCH.md); 1–2 characters still scan the names.
 //
 // listGroups() is NOT in that category any more: it went kind-scoped in its own right (via
 // listGroupsOfKind(0)) when movies got their own "Movies" nav root, so VOD categories are a
@@ -402,8 +402,9 @@ bool Database::exec(const char* sql) {
 //   mac/platform/Paths.cpp     (~/Library/Application Support/RabbitEars)
 // so this file (the shared core) depends only on sqlite3 — no shell32/ole32.
 
-bool Database::open(const std::wstring& path, std::wstring* error) {
+bool Database::open(const std::wstring& path, std::wstring* error, bool upgradeSchema) {
     close();
+    upgradeSchema_ = upgradeSchema;
     const std::string utf8 = utf8FromWide(path);
     const int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
     if (sqlite3_open_v2(utf8.c_str(), &db_, flags, nullptr) != SQLITE_OK) {
@@ -504,6 +505,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 //       canonicalizeStreamUrls().
 //   v10: two empty FTS5 tables for the TV Guide's programme search — see
 //       createProgrammeSearchTables() and docs/EPG_SEARCH.md.
+//   v11: the channel search index — an FTS5 table over channels.name kept in step by triggers —
+//       see createChannelSearchIndex() and docs/CHANNEL_SEARCH.md.
 // A fresh DB starts at user_version 0 (kSchema built the v1 shape), an existing
 // 0.1.x DB is at 1, a 0.1.9+ DB at 2; each open applies whatever steps are missing.
 void Database::migrate() {
@@ -513,14 +516,20 @@ void Database::migrate() {
         if (q && q.step()) v = q.intCol(0);
     }
     schemaVersion_ = static_cast<int>(v);
-    if (v >= 10) return;  // newest schema; bump in lockstep with the highest step below
-    // ⚠ A v9 database goes STRAIGHT to v10. The v2–v9 block below has no per-step version gate: it
-    // rewrites user_version from the column checks (8 at most) and re-runs v9's channel-URL rewrite
-    // whenever v8's columns exist — so letting a v9 database into it would redo that rewrite
-    // (seconds on a large library: the original v9 run took 6.6 s on the owner's) and set
+    if (v >= 11) return;  // newest schema; bump in lockstep with the highest step below
+    // A worker's second connection takes the version as it is (open()'s upgradeSchema).
+    if (!upgradeSchema_) return;
+    if (v == 10) {
+        createChannelSearchIndex();
+        return;
+    }
+    // ⚠ A v9 database goes STRAIGHT on to v10 (and v11). The v2–v9 block below has no per-step
+    // version gate: it rewrites user_version from the column checks (8 at most) and re-runs v9's
+    // channel-URL rewrite whenever v8's columns exist — so letting a v9 database into it would redo
+    // that rewrite (seconds on a large library: the original v9 run took 6.6 s on the owner's) and set
     // user_version back to 8 — for good, if the re-run then failed.
     if (v == 9) {
-        createProgrammeSearchTables();
+        if (createProgrammeSearchTables()) createChannelSearchIndex();
         return;
     }
 
@@ -698,9 +707,67 @@ void Database::migrate() {
     // pre-v9 literal behaviour rather than to the destructive one.
     if (haveV8 && canonicalizeStreamUrls()) schemaVersion_ = 9;
 
-    // v10 — programme search. Gated on v9 having landed in this same open, so the version only
-    // ever advances one proven step at a time.
+    // v10 — programme search; v11 — channel search. Each gated on the step before having landed in
+    // this same open, so the version only ever advances one proven step at a time.
     if (schemaVersion_ == 9) createProgrammeSearchTables();
+    if (schemaVersion_ == 10) createChannelSearchIndex();
+}
+
+// ---------------------------------------------------------------------------
+// v11 — the channel search index (docs/CHANNEL_SEARCH.md): an external-content FTS5 trigram table
+// over channels.name ("quebec" finds "TVA QUÉBEC", a substring, case- and accent-blind), built here
+// from the rows already there and kept in step by three triggers.
+//
+// TRIGGERS, unlike v10 — the owner's decision (2026-09-25), with its price stated: channels are
+// written by several paths on both platforms (a playlist add on the UI thread, the VOD sync on its
+// own connection, retirement, a playlist delete's cascade), and a trigger keeps every one of them in
+// step with no caller involved and nothing to go stale. It costs ~5 ms per 1,000 channel rows written
+// (+2 s on a 410k-row playlist, measured), and the build below ~4 s ONCE on the owner's 410k
+// channels. THE PRICE: a build WITHOUT FTS5 — every Windows release through 0.2.18, mac through
+// 0.2.17 — can no longer insert, update or delete channels in this database ("no such module:
+// fts5"): installing one of those over this breaks adding, refreshing and deleting playlists (the
+// delete silently — its statement fails to prepare) and the VOD sync; reads, favourites and dead-link
+// marks still work. 0.2.19+ has FTS5; auto-update only moves forward.
+//
+// The update trigger fires only when the name actually changed: bulkInsertChannels' upsert rewrites
+// name=excluded.name on every row of a refresh. Everything — table, triggers, build, version — in ONE
+// transaction: a failure leaves v10 with NO triggers (so channel writes keep working) and search on
+// LIKE; the next open retries.
+bool Database::createChannelSearchIndex() {
+    Tx tx(db_);
+    if (!tx) return false;
+    // From clean, whatever an earlier life of this database left: the index is rebuilt below anyway,
+    // and IF NOT EXISTS would keep a stale trigger body, or an older FTS5 channels_fts with other
+    // columns that the name-only delete trigger would then corrupt. An ORDINARY table squatting on
+    // the name is not dropped — the CREATE below fails on it, and v11 waits (it is not ours to drop).
+    if (!exec("DROP TRIGGER IF EXISTS channels_fts_ai") || !exec("DROP TRIGGER IF EXISTS channels_fts_ad") ||
+        !exec("DROP TRIGGER IF EXISTS channels_fts_au"))
+        return false;
+    if (channelSearchTableExists() && !exec("DROP TABLE channels_fts")) return false;
+    if (!exec("CREATE VIRTUAL TABLE channels_fts USING fts5("
+              "name, content='channels', content_rowid='id', tokenize='trigram remove_diacritics 1')"))
+        return false;
+    if (!channelSearchTableExists()) return false;  // belt and braces, before any trigger writes into it
+    if (!exec("CREATE TRIGGER channels_fts_ai AFTER INSERT ON channels BEGIN"
+              " INSERT INTO channels_fts(rowid, name) VALUES (new.id, new.name); END") ||
+        !exec("CREATE TRIGGER channels_fts_ad AFTER DELETE ON channels BEGIN"
+              " INSERT INTO channels_fts(channels_fts, rowid, name) VALUES ('delete', old.id, old.name); END") ||
+        !exec("CREATE TRIGGER channels_fts_au AFTER UPDATE OF name ON channels"
+              " WHEN old.name IS NOT new.name BEGIN"
+              " INSERT INTO channels_fts(channels_fts, rowid, name) VALUES ('delete', old.id, old.name);"
+              " INSERT INTO channels_fts(rowid, name) VALUES (new.id, new.name); END"))
+        return false;
+    if (!exec("INSERT INTO channels_fts(channels_fts) VALUES ('rebuild')")) return false;
+    if (!exec("PRAGMA user_version=11")) return false;  // transactional: rolls back with the rest
+    if (!tx.commit()) return false;
+    schemaVersion_ = 11;
+    return true;
+}
+
+bool Database::channelSearchTableExists() {
+    Stmt q(db_, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='channels_fts'"
+                " AND sql LIKE 'CREATE VIRTUAL TABLE%USING fts5(%'");
+    return q && q.step() && q.intCol(0) == 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -1224,25 +1291,42 @@ std::vector<Channel> Database::favourites(const GridFilter& g) {
                            nullptr, std::nullopt, &binds);
 }
 
+namespace {
+// Defined with programme search further down (the same anonymous namespace).
+size_t codePoints(const std::string& u8);
+std::wstring ftsQuoted(const std::wstring& s);
+std::wstring likeContains(const std::wstring& text);
+
+// searchChannels' channel-name match, as a WHERE term binding its text at ?1: the channel index when
+// it can answer (v11, 3+ characters), else a LIKE scan of the names. `bound` gets the text to bind.
+// (countUncoveredChannelNames matches the same way, joining from the index instead.)
+std::string channelNameMatch(bool indexed, const std::wstring& term, std::wstring& bound) {
+    if (indexed && codePoints(utf8FromWide(term)) >= 3) {
+        bound = ftsQuoted(term);  // the whole text as ONE phrase — a substring, as LIKE was
+        return "id IN (SELECT rowid FROM channels_fts WHERE channels_fts MATCH ?1)";
+    }
+    bound = likeContains(term);  // LIKE is ASCII-case-insensitive by default; typed % and _ literal
+    return "name LIKE ?1 ESCAPE '\\'";
+}
+}  // namespace
+
 std::vector<Channel> Database::searchChannels(const std::wstring& term, const GridFilter& g) {
-    // Case-insensitive substring match on name/group/tvg_name.
+    // Channel NAMES (see the header): through the v11 index when it can answer, else LIKE.
     //
     // ⚠ Routed through runChannelQuery like every other grid query, and that is deliberate: this
     // used to build its own Stmt, which meant a "central" limit added to the shared helper would
-    // have silently skipped THE hottest path in the app. This runs on every EN_CHANGE of the search
-    // box, synchronously on the UI thread — 1,626 ms per keystroke on a 411k-row library before the
-    // cap, 134 ms after. The pattern is bound once at ?1 and referenced three times; the grid
-    // filter's bare `?` placeholders take the next free indexes after it.
-    const std::wstring pattern = L"%" + term + L"%";
+    // have silently skipped THE hottest path in the app. It runs on the search box's debounce tick,
+    // synchronously on the UI thread — 1,626 ms on a 411k-row library before the cap, 134 ms after,
+    // ~0.2 ms through the index. The text is bound once at ?1; the grid filter's bare `?`
+    // placeholders take the next free indexes after it.
+    std::wstring bound;
+    const std::string match = channelNameMatch(channelSearchIndexed(), term, bound);
     std::vector<std::wstring> binds;
     return runChannelQuery(
         db_,
-        std::string("SELECT ") + kChannelCols +
-            " FROM channels WHERE (name LIKE ?1 COLLATE NOCASE "
-            "OR group_title LIKE ?1 COLLATE NOCASE OR tvg_name LIKE ?1 COLLATE NOCASE) AND " +
-            kEnabledOnly + gridWhere(g, binds) +
-            " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g),
-        &pattern, std::nullopt, &binds);
+        std::string("SELECT ") + kChannelCols + " FROM channels WHERE " + match + " AND " + kEnabledOnly +
+            gridWhere(g, binds) + " ORDER BY (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE" + gridLimit(g),
+        &bound, std::nullopt, &binds);
 }
 
 std::optional<Channel> Database::channelByLcn(int lcn) {
@@ -1254,10 +1338,12 @@ std::optional<Channel> Database::channelByLcn(int lcn) {
 }
 
 std::optional<Channel> Database::channelByTvgId(const std::wstring& tvgId) {
+    // Live first (kind 0): a TV Guide row — built from live channels only — whose tvg-id a movie also
+    // carries must play the channel, not a film that happens to sort earlier.
     auto rows = runChannelQuery(db_,
                                 std::string("SELECT ") + kChannelCols +
                                     " FROM channels WHERE tvg_id=? AND " + kEnabledOnly +
-                                    " ORDER BY sort_order LIMIT 1",
+                                    " ORDER BY kind, sort_order LIMIT 1",
                                 &tvgId);
     if (rows.empty()) return std::nullopt;
     return rows.front();
@@ -1562,9 +1648,9 @@ bool Database::refreshProgrammeSearchChannels() {
     // workers. One statement, not a row loop: ~90 ms at the owner's 410k channels, where listing
     // them through channelsByPlaylist took 1.1 s.
     if (!exec("BEGIN")) return false;
-    // Per (playlist, id) keep the FIRST channel in channelsByPlaylist's own order — the one the
-    // guide's row join keeps (onEpgGuide's byBase.emplace), so a result names and plays the same
-    // channel its guide row does.
+    // Per (playlist, id) keep the FIRST LIVE channel in channelsByPlaylist's own order — the one the
+    // guide's row join keeps (onEpgGuide's byBase.emplace, live channels only), so a result names and
+    // plays the same channel its guide row does.
     const bool ok =
         exec("DELETE FROM temp.guide_channels") &&
         exec("INSERT INTO temp.guide_channels(playlist_id,cid,name,tvg_id)"
@@ -1572,14 +1658,68 @@ bool Database::refreshProgrammeSearchChannels() {
              "  SELECT playlist_id, " RE_NORM_TVG("tvg_id") " AS cid, name, tvg_id,"
              "   ROW_NUMBER() OVER (PARTITION BY playlist_id, " RE_NORM_TVG("tvg_id")
              "    ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id) AS rn"
-             "  FROM channels WHERE tvg_id<>''"
-             "   AND playlist_id IN (SELECT id FROM playlists WHERE enabled=1))"
+             "  FROM channels WHERE tvg_id>'' AND +kind=0"  // + : the tvg-id index, not every live row
+             "   AND +playlist_id IN (SELECT id FROM playlists WHERE enabled=1))"
              " WHERE rn=1");
     if (!ok || !exec("COMMIT")) {
         exec("ROLLBACK");  // a failed COMMIT leaves the transaction open — close it
         return false;
     }
     return true;
+}
+
+std::vector<std::pair<long long, int>> Database::distinctLiveGuideIds() {
+    std::vector<std::pair<long long, int>> out;
+    if (!db_) return out;
+    // The unary + on kind AND on the GROUP BY keeps the planner on idx_channels_tvgid — a range over
+    // just the rows that HAVE a tvg-id — instead of idx_channels_live or idx_channels_playlist (which
+    // it picks for a plain GROUP BY playlist_id, to skip a sort): 2.8 ms vs 81 ms on the owner's
+    // library (measured, vendored 3.53.2). kind 0 = live, as everywhere in this file.
+    Stmt q(db_, "SELECT playlist_id, COUNT(DISTINCT " RE_NORM_TVG("tvg_id") ") FROM channels"
+                " WHERE tvg_id>'' AND +kind=0 GROUP BY +playlist_id");
+    if (!q) return out;
+    while (q.step()) out.emplace_back(q.intCol(0), static_cast<int>(q.intCol(1)));
+    return out;
+}
+
+std::vector<std::wstring> Database::liveGuideIds() {
+    std::vector<std::wstring> out;
+    if (!db_) return out;
+    Stmt q(db_, (std::string("SELECT DISTINCT " RE_NORM_TVG("tvg_id") " FROM channels"
+                             " WHERE tvg_id>'' AND +kind=0 AND +") + kEnabledOnly)
+                    .c_str());
+    if (!q) return out;
+    while (q.step()) out.push_back(q.textCol(0));
+    return out;
+}
+
+int Database::countUncoveredChannelNames(const std::wstring& text,
+                                         const std::unordered_set<std::wstring>& coveredIds, int maxRows) {
+    if (!db_ || !channelSearchIndexed() || maxRows <= 0 || codePoints(utf8FromWide(text)) < 3) return -1;
+    // Driven FROM the index (CROSS JOIN fixes the order), so LIMIT stops it early: "id IN (SELECT rowid
+    // …)" would collect every match first — 10.6 ms for "the" (68k) even under LIMIT 1, vs 3.5 ms.
+    Stmt q(db_, (std::string("SELECT c.name, " RE_NORM_TVG("c.tvg_id") " FROM channels_fts"
+                             " CROSS JOIN channels c ON c.id=channels_fts.rowid"
+                             " WHERE channels_fts MATCH ?1 AND c.kind=0 AND c.") +
+                 kEnabledOnly + " LIMIT ?2")
+                    .c_str());
+    if (!q) return -1;
+    q.bindText(1, ftsQuoted(text));  // the same phrase searchChannels' index path uses
+    q.bindInt(2, static_cast<long long>(maxRows) + 1);  // one extra says "too many to be worth it"
+    // A name counts when NONE of its channels is covered: "CBC Toronto HD" and "… FHD" sharing the
+    // guide's row id are both covered, a same-named channel elsewhere does not uncover them.
+    std::unordered_map<std::wstring, bool> nameCovered;
+    int rows = 0;
+    while (q.step()) {
+        if (++rows > maxRows) return -1;
+        const std::wstring id = q.textCol(1);
+        bool& covered = nameCovered.emplace(q.textCol(0), false).first->second;
+        if (!id.empty() && coveredIds.count(id)) covered = true;
+    }
+    int n = 0;
+    for (const auto& [name, covered] : nameCovered)
+        if (!covered) ++n;
+    return n;
 }
 
 namespace {

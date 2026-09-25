@@ -607,5 +607,13 @@
   "LoadingIndexingGuide": "検索用に番組表のインデックスを作成中…",
   "GuideSearchInDescriptions": "説明文に一致",
   "GuideSearchChannelsHeading": "一致するチャンネル: {0}",
-  "GuideSearchFilterChannels": "「{0}」に一致するチャンネルだけを表示"
+  "GuideSearchFilterChannels": "「{0}」に一致するチャンネルだけを表示",
+  "GuideTimeRangeLong": "{0} – {1}（{2} 時間）",
+  "SetGuideUrlPlaylistWarning": "これは番組表のリンクではなく、プレイリストのリンクのようです。番組表のリンクは通常 xmltv.php、.xml、.xml.gz で終わります。\n\nこのまま使用しますか？",
+  "GuideCoverageLine": "ガイド ID のある {1} チャンネル中 {0} チャンネルに番組表データがあります",
+  "GuideCoverageNoLink": "番組表のリンクがないプレイリスト内: {0}（プレイリストを右クリック ▸ 番組表URLを設定…）。",
+  "GuideCoverageNoProgrammes": "ガイド ID はあるが、現在から 3 日後までの番組が番組表にないもの: {0}。",
+  "GuideCoverageUnmatched": "どのチャンネルとも一致しない番組表のチャンネル: {0}。番組表の大半がそうなら、リンクが別のプロバイダーや地域のものかもしれません（プレイリストを右クリック ▸ 番組表URLを設定…）。",
+  "GuideCoverageNoId": "ガイド ID（tvg-id）のないプレイリスト項目（シリーズのエピソード、映画、多くのイベントチャンネル）は番組表に表示されません。",
+  "GuideSearchMoreChannels": "チャンネル一覧にもあり、番組表にないもの: {0}"
 }

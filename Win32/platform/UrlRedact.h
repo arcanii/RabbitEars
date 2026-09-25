@@ -27,6 +27,19 @@ namespace rabbitears {
 //    ')' when the address contains no '('. Empty when that first occurrence is a bare "http://".
 std::wstring extractHttpUrl(const std::wstring& text);
 
+// Does `url` look like a PLAYLIST link rather than an XMLTV guide link? For Set Guide URL, whose
+// single-line prompt keeps only the first line of a pasted email block — often the M3U link, which
+// then stores 0 programmes on every refresh. True for an Xtream playlist endpoint (…/get.php, or the
+// path form …/m3u_plus and …/m3u), a type=m3u / type=m3u_plus query, or a path ending in .m3u /
+// .m3u8; false for anything ending in
+// .xml / .xml.gz / .gz or an xmltv.php endpoint, and for everything else (a guide link can look like
+// anything, so only the clear playlist shapes are flagged). Case-insensitive.
+bool looksLikePlaylistUrl(const std::wstring& url);
+// Does `url` have one of a guide link's clear shapes — a path ending in .xml, .gz or …/xmltv.php
+// (query and fragment ignored, case-insensitive)? Set Guide URL takes such an address from a pasted
+// line that names the playlist link first.
+bool looksLikeGuideUrl(const std::wstring& url);
+
 // The credential values `url` carries in a form that can be recognised generically: the
 // user-info part (user:pass@host) and the values of credential-named query parameters (username,
 // password, and the like — see UrlRedact.cpp). Each is returned as written in the URL and, when

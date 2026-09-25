@@ -36,7 +36,9 @@ void sweepThread(HWND hwnd, std::wstring dbPath) {
     // you get SQLITE_BUSY (or, worse with our discard-the-result writers, a silently lost write).
     Database db;
     std::wstring err;
-    if (!db.open(dbPath, &err)) {
+    // A second connection: the app's own already migrated the schema (or could not — which a
+    // worker must not retry, holding the write lock; Database::open's upgradeSchema).
+    if (!db.open(dbPath, &err, /*upgradeSchema=*/false)) {
         diag::error(L"dead-link sweep: cannot open its own DB connection: " + err);
         g_running = false;
         PostMessageW(hwnd, WM_APP_DEADLINK_DONE, 0, 0);

@@ -11,7 +11,9 @@
 #include <ctime>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <set>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -398,6 +400,28 @@ int selftest() {
         expect(extractHttpUrl(L"no address here").empty() && extractHttpUrl(L"http://").empty() &&
                    extractHttpUrl(L"ftp://h/x").empty(),
                "extractHttpUrl: none, a bare scheme, or a non-http scheme -> empty");
+        // ...and warn when what was pasted is the PLAYLIST link.
+        expect(looksLikePlaylistUrl(L"http://h:80/get.php?username=u&password=p&type=m3u_plus&output=ts") &&
+                   looksLikePlaylistUrl(L"http://h/GET.PHP?username=u") &&
+                   looksLikePlaylistUrl(L"https://h/list/playlist.m3u") &&
+                   looksLikePlaylistUrl(L"https://h/live/index.M3U8?token=1") &&
+                   looksLikePlaylistUrl(L"http://h/panel_api.php?type=m3u&u=1") &&
+                   looksLikePlaylistUrl(L"http://h/x.php?a=1&type=m3u_plus#frag") &&
+                   looksLikePlaylistUrl(L"http://h:8080/playlist/user/pass/m3u_plus") &&
+                   looksLikePlaylistUrl(L"http://h/playlist/user/pass/M3U?output=ts"),
+               "looksLikePlaylistUrl: get.php, the path form, .m3u/.m3u8 and type=m3u[_plus] flagged");
+        expect(!looksLikePlaylistUrl(L"http://h/xmltv.php?username=u&password=p") &&
+                   !looksLikePlaylistUrl(L"https://h/guide.xml") && !looksLikePlaylistUrl(L"https://h/epg.xml.gz") &&
+                   !looksLikePlaylistUrl(L"https://h/epg.gz?type=m3u") && !looksLikePlaylistUrl(L"https://h/epg") &&
+                   !looksLikePlaylistUrl(L"http://h/x.php?type=m3u8") &&
+                   !looksLikePlaylistUrl(L"http://h/x.php?subtype=m3u") &&
+                   !looksLikePlaylistUrl(L"http://h/get.php.xml"),
+               "looksLikePlaylistUrl: guide shapes (xmltv.php, .xml, .gz), unknowns and near-misses not flagged");
+        expect(looksLikeGuideUrl(L"http://h/xmltv.php?username=u&password=p") &&
+                   looksLikeGuideUrl(L"https://h/EPG.XML.GZ?x=1#f") && looksLikeGuideUrl(L"https://h/guide.xml") &&
+                   !looksLikeGuideUrl(L"http://h/c/") && !looksLikeGuideUrl(L"http://h/get.php?type=m3u") &&
+                   !looksLikeGuideUrl(L"http://h/x.php?file=a.xml"),
+               "looksLikeGuideUrl: the clear guide shapes only (the path, not the query)");
     }
 
     out("== SQLite store ==\n");
@@ -644,6 +668,20 @@ int selftest() {
                    "search: a description-only match carries a marked snippet");
             expect(r.size() == 1 && r[0].channelName == L"CBC Toronto" && r[0].channelTvgId == L"CBCToronto.ca@HD",
                    "search: a hit names the user's channel and its FULL tvg-id (for Play/Schedule)");
+            {  // the TV Guide's coverage count: distinct guide ids, as the guide joins them, live only
+                const long long p3 = sdb.addPlaylist(L"P3", L"http://p3", true, 1000);
+                ParsedChannel mv = chan(L"A Movie", L"movie.id", L"http://s/m1");
+                mv.kind = Channel::Kind::Movie;
+                sdb.bulkInsertChannels(p3, {chan(L"CNN HD", L"CNN.us@HD", L"http://s/c1"),
+                                            chan(L"CNN SD", L"cnn.us@SD", L"http://s/c2"),
+                                            chan(L"Local", L"", L"http://s/c3"), mv},
+                                       1000);
+                std::map<long long, int> ids;
+                for (const auto& [plId, count] : sdb.distinctLiveGuideIds()) ids[plId] = count;
+                expect(ids.size() == 3 && ids[p1] == 4 && ids[p2] == 1 && ids[p3] == 1,
+                       "distinctLiveGuideIds: per playlist (disabled ones too); CNN.us@HD = cnn.us@SD; no-id "
+                       "rows and movies not counted");
+            }
             r = sdb.searchProgrammes(L"travel", now, 200);
             expect(titles(r) == L"Doctor Who" && !r[0].inTitle,
                    "search: the last description word is a prefix ('travel' finds 'travels')");
@@ -712,8 +750,12 @@ int selftest() {
         }
         // v9 -> v10 on an existing library must NOT re-run v9's URL rewrite (a canary row in a
         // spelling v9 would rewrite), and a failed v10 must leave v9 with search still answering.
+        // A REAL v9 database has no channel index either (v11): drop it too, so the retry below builds
+        // it from scratch — the v9 -> v10 -> v11 path in one open.
         const std::string downgrade =
             "BEGIN; DROP TABLE epg_fts_title; DROP TABLE epg_fts_descr;"
+            " DROP TRIGGER channels_fts_ai; DROP TRIGGER channels_fts_ad; DROP TRIGGER channels_fts_au;"
+            " DROP TABLE channels_fts;"
             " UPDATE channels SET stream_url='http://Canary.EXAMPLE:80/x.ts' WHERE name='Global';"
             " CREATE TABLE epg_fts_title(x); PRAGMA user_version=9; COMMIT;";
         expect(rawExec(downgrade.c_str()), "search: fixture turned into a v9 DB with a squatter table");
@@ -743,6 +785,10 @@ int selftest() {
                    "search: the retried v10 lands on the next open");
             expect(canaryUrl(sdb, p1) == L"http://Canary.EXAMPLE:80/x.ts",
                    "search: ...still without re-running v9");
+            expect(sdb.channelSearchIndexed() &&
+                       rawExec("INSERT INTO channels_fts(channels_fts, rank) VALUES('integrity-check', 1)") &&
+                       !sdb.searchChannels(L"toronto").empty(),
+                   "search: ...and v11 follows in the same open, the channel index built from the v9 rows");
         }
         {   // Performance guard: a large synthetic guide stays fast to search — THROUGH THE INDEX.
             Database sdb;
@@ -808,6 +854,171 @@ int selftest() {
             auto d = rdb.searchProgrammes(L"doctor", now, 200);
             expect(titles(d) == L"Special" && d[0].snippet.find(L"\x02" L"Doctor\x03") != std::wstring::npos,
                    "search/reuse: a word right after a curly quote is found AND marked");
+        }
+    }
+
+    out("== Channel search (schema v11, FTS5 + triggers) ==\n");
+    {
+        const std::wstring cpath = dir + L"\\chsearch.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((cpath + sfx).c_str());
+        auto ch = [](const wchar_t* name, const wchar_t* group, const wchar_t* url,
+                     Channel::Kind kind = Channel::Kind::Live) {
+            ParsedChannel c;
+            c.name = name;
+            c.groupTitle = group;
+            c.streamUrl = url;
+            c.kind = kind;
+            return c;
+        };
+        auto names = [](const std::vector<Channel>& v) {
+            std::wstring s;
+            for (const auto& c : v) s += (s.empty() ? L"" : L"|") + c.name;
+            return s;
+        };
+        // A raw connection for what Database does not expose (it runs beside an open Database: WAL).
+        auto rawQuery = [&](const char* sql) {
+            sqlite3* r = nullptr;
+            long long v = -1;
+            if (sqlite3_open16(cpath.c_str(), &r) == SQLITE_OK) {
+                sqlite3_stmt* q = nullptr;
+                if (sqlite3_prepare_v2(r, sql, -1, &q, nullptr) == SQLITE_OK && sqlite3_step(q) == SQLITE_ROW)
+                    v = sqlite3_column_int64(q, 0);
+                if (q) sqlite3_finalize(q);
+            }
+            if (r) sqlite3_close(r);
+            return v;
+        };
+        auto rawExec = [&](const char* sql) {
+            sqlite3* r = nullptr;
+            bool ok = false;
+            if (sqlite3_open16(cpath.c_str(), &r) == SQLITE_OK)
+                ok = sqlite3_exec(r, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+            if (r) sqlite3_close(r);
+            return ok;
+        };
+        // FTS5's own check of an external-content index against its content table: an index out of
+        // step with `channels` (a missed insert, delete or rename) fails it.
+        auto indexInStep = [&] {
+            return rawExec("INSERT INTO channels_fts(channels_fts, rank) VALUES('integrity-check', 1)");
+        };
+        const std::vector<ParsedChannel> base = {ch(L"TVA QUÉBEC HD", L"CA French", L"http://c/1"),
+                                                 ch(L"CBC Toronto", L"CA English", L"http://c/2"),
+                                                 ch(L"Sky Sport 1", L"DE Sport", L"http://c/3"),
+                                                 ch(L"100% Hits", L"Music", L"http://c/4")};
+        long long p1 = 0;
+        {
+            Database cdb;
+            expect(cdb.open(cpath), "chsearch: a fresh DB opens");
+            expect(cdb.channelSearchIndexed() && rawQuery("PRAGMA user_version") == 11,
+                   "chsearch: a fresh DB reaches v11 (the channel index exists)");
+            p1 = cdb.addPlaylist(L"C1", L"http://c1", true, 1000);
+            expect(cdb.bulkInsertChannels(p1, base, 1000) == 4, "chsearch: 4 channels stored");
+            expect(names(cdb.searchChannels(L"quebec")) == L"TVA QUÉBEC HD",
+                   "chsearch: case- and accent-blind through the index ('quebec' finds 'TVA QUÉBEC HD')");
+            expect(names(cdb.searchChannels(L"ky spo")) == L"Sky Sport 1", "chsearch: a substring, across a space");
+            expect(cdb.searchChannels(L"french").empty(),
+                   "chsearch: NAMES only — a group title no longer matches (owner, 2026-09-25)");
+            expect(names(cdb.searchChannels(L"To")) == L"CBC Toronto",
+                   "chsearch: 2 characters take the LIKE path, names only");
+            expect(names(cdb.searchChannels(L"%")) == L"100% Hits" && cdb.searchChannels(L"_").empty(),
+                   "chsearch: the LIKE path takes a typed % and _ literally");
+            expect(names(cdb.searchChannels(L"0% H")) == L"100% Hits", "chsearch: ...and so does the index path");
+            expect(cdb.countUncoveredChannelNames(L"toronto", {}, 100) == 1 &&
+                       cdb.countUncoveredChannelNames(L"to", {}, 100) == -1,
+                   "chsearch: countUncoveredChannelNames by name; -1 under 3 characters");
+            // A refresh renaming a channel keeps its stream URL: the upsert's UPDATE path.
+            std::vector<ParsedChannel> renamed = base;
+            renamed[0].name = L"TVA Montréal HD";
+            expect(cdb.bulkInsertChannels(p1, renamed, 2000) == 4, "chsearch: refreshed with one channel renamed");
+            expect(cdb.searchChannels(L"quebec").empty() && names(cdb.searchChannels(L"montreal")) == L"TVA Montréal HD",
+                   "chsearch: a rename reaches the index (the update trigger)");
+            // Movies: searched, but not counted as channels; retired by a VOD sync; gone with their playlist.
+            const long long p2 = cdb.addPlaylist(L"C2", L"http://c2", true, 1000);
+            expect(cdb.bulkInsertChannels(p2, {ch(L"Toronto Story", L"Drama", L"http://c/m1", Channel::Kind::Movie),
+                                               ch(L"Toronto Nights", L"Drama", L"http://c/m2", Channel::Kind::Movie)},
+                                          1000) == 2,
+                   "chsearch: two movies stored");
+            expect(cdb.searchChannels(L"toronto").size() == 3 && cdb.countUncoveredChannelNames(L"toronto", {}, 100) == 1,
+                   "chsearch: movies are searched, but not counted as live channel names");
+            // Asked of the INDEX itself: searchChannels joins back to `channels`, so a stale entry for a
+            // deleted row would stay invisible there — and wrong the day its rowid is reused.
+            expect(cdb.retireMissingChannels(p2, static_cast<int>(Channel::Kind::Movie), {L"http://c/m1"}) == 1 &&
+                       rawQuery("SELECT COUNT(*) FROM channels_fts WHERE channels_fts MATCH '\"nights\"'") == 0,
+                   "chsearch: a retired movie leaves the index (the delete trigger)");
+            cdb.setPlaylistEnabled(p1, false);
+            expect(cdb.searchChannels(L"sky sport").empty(), "chsearch: a disabled playlist's channels are not found");
+            cdb.setPlaylistEnabled(p1, true);
+            cdb.deletePlaylist(p2);
+            expect(rawQuery("SELECT COUNT(*) FROM channels_fts WHERE channels_fts MATCH '\"story\"'") == 0,
+                   "chsearch: a deleted playlist's channels leave the index (the cascade fires the trigger)");
+            // The guide note's count: a name is "not in the guide" only when none of its channels carries
+            // a guide row's id — another feed of a channel the guide shows (an FHD beside the HD) is in it.
+            const long long p4 = cdb.addPlaylist(L"C4", L"http://c4", true, 1000);
+            auto idd = [&](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+                ParsedChannel c = ch(name, L"CA", url);
+                c.tvgId = tvg;
+                return c;
+            };
+            expect(cdb.bulkInsertChannels(p4, {idd(L"CBC Toronto HD", L"CBC.ca@HD", L"http://c/41"),
+                                               idd(L"CBC Toronto FHD", L"cbc.ca@FHD", L"http://c/42"),
+                                               idd(L"Toronto One", L"one.ca", L"http://c/43"),
+                                               idd(L"Toronto Radio", L"", L"http://c/44")},
+                                          1000) == 4,
+                   "chsearch: an id-carrying fixture stored");
+            // A same-named channel elsewhere with NO id does not uncover a name the guide has (the rule
+            // is "none of its channels covered", not whichever channel is read last — this one is).
+            const long long p5 = cdb.addPlaylist(L"C5", L"http://c5", true, 1000);
+            expect(cdb.bulkInsertChannels(p5, {ch(L"CBC Toronto HD", L"CA", L"http://c/51")}, 1000) == 1,
+                   "chsearch: a same-named, id-less channel in another playlist stored");
+            const std::unordered_set<std::wstring> guideRows{L"cbc.ca"};
+            expect(cdb.countUncoveredChannelNames(L"toronto", guideRows, 100) == 3,
+                   "chsearch: countUncoveredChannelNames skips both feeds of the guide's cbc.ca (3 = CBC Toronto, "
+                   "Toronto One, Toronto Radio)");
+            expect(cdb.countUncoveredChannelNames(L"toronto", guideRows, 5) == -1,
+                   "chsearch: ...and gives up (-1) past maxRows matching channels (6 here)");
+            // A guide row plays by tvg-id: a movie carrying the same id, listed FIRST, must not win.
+            const long long p6 = cdb.addPlaylist(L"C6", L"http://c6", true, 1000);
+            ParsedChannel film = idd(L"Dup Film", L"dup.xx", L"http://c/61");
+            film.kind = Channel::Kind::Movie;
+            expect(cdb.bulkInsertChannels(p6, {film, idd(L"Dup Live", L"dup.xx", L"http://c/62")}, 1000) == 2,
+                   "chsearch: a movie and a live channel sharing a tvg-id stored (the movie first)");
+            const auto byId = cdb.channelByTvgId(L"dup.xx");
+            expect(byId && byId->name == L"Dup Live", "channelByTvgId: the live channel wins over a movie sorted first");
+            expect(indexInStep(), "chsearch: the index is in step with channels after inserts, a rename, a "
+                                  "retirement and a playlist delete (FTS5 integrity-check)");
+        }
+        // v10 -> v11 on an existing library: the build fills the index from the rows already there.
+        expect(rawExec("BEGIN; DROP TRIGGER channels_fts_ai; DROP TRIGGER channels_fts_ad;"
+                       " DROP TRIGGER channels_fts_au; DROP TABLE channels_fts; PRAGMA user_version=10; COMMIT;"),
+               "chsearch: fixture turned back into a v10 DB");
+        {
+            Database cdb;
+            expect(cdb.open(cpath) && cdb.channelSearchIndexed(), "chsearch: a v10 DB lands v11 on open");
+            expect(names(cdb.searchChannels(L"montreal")) == L"TVA Montréal HD" && indexInStep(),
+                   "chsearch: ...with the existing channels indexed");
+        }
+        // A failed v11 (an ordinary table squats the name) leaves v10 with NO triggers — channel writes
+        // keep working — and search on LIKE; the next open, squatter gone, lands v11.
+        expect(rawExec("BEGIN; DROP TRIGGER channels_fts_ai; DROP TRIGGER channels_fts_ad;"
+                       " DROP TRIGGER channels_fts_au; DROP TABLE channels_fts; CREATE TABLE channels_fts(x);"
+                       " PRAGMA user_version=10; COMMIT;"),
+               "chsearch: fixture turned into a v10 DB with a squatter table");
+        {
+            Database cdb;
+            expect(cdb.open(cpath) && !cdb.channelSearchIndexed() && rawQuery("PRAGMA user_version") == 10,
+                   "chsearch: v11 failed -> stays v10, no crash");
+            expect(rawQuery("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'channels_fts%'") == 0,
+                   "chsearch: ...and left no trigger behind");
+            expect(cdb.bulkInsertChannels(p1, {ch(L"Late Arrival", L"X", L"http://c/9")}, 3000) == 1,
+                   "chsearch: ...so channel writes still work");
+            expect(names(cdb.searchChannels(L"sky sport")) == L"Sky Sport 1", "chsearch: ...and search answers by LIKE");
+        }
+        expect(rawExec("DROP TABLE channels_fts;"), "chsearch: squatter removed");
+        {
+            Database cdb;
+            expect(cdb.open(cpath) && cdb.channelSearchIndexed(), "chsearch: the retried v11 lands on the next open");
+            expect(names(cdb.searchChannels(L"arrival")) == L"Late Arrival" && indexInStep(),
+                   "chsearch: ...indexing the channel written while it was at v10");
         }
     }
 
@@ -2136,12 +2347,12 @@ int selftest() {
                 if (q) sqlite3_finalize(q);
                 sqlite3_close(rawv);
             }
-            // 10: a v2 DB opened by a current build walks the whole chain. v10 (the programme-
+            // 11: a v2 DB opened by a current build walks the whole chain. v10 (the programme-
             // search tables) runs only when v9 (the stream_url canonicalisation) landed in the same
-            // open, so reaching 10 is also the proof that canonicalizeStreamUrls() actually
-            // COMMITTED — it is the one migration step that reports failure rather than being
-            // probed for structurally.
-            expect(ver == 10, "v9+v10: user_version advances to 10 after the v2 DB is migrated");
+            // open, and v11 (the channel index) only when v10 did, so reaching 11 is also the proof
+            // that canonicalizeStreamUrls() actually COMMITTED — it is the one migration step that
+            // reports failure rather than being probed for structurally.
+            expect(ver == 11, "v9..v11: user_version advances to 11 after the v2 DB is migrated");
         }
         {   // --- VOD sync retirement. This DELETES rows, so it is pinned hard: the failure
             // mode is wiping somebody's library, and the live-TV list must be untouchable
@@ -2477,6 +2688,8 @@ int selftest() {
                        "grid: searchChannels honours the cap (its own Stmt would have ignored it)");
                 expect(gdb.searchChannels(L"Ch").size() == 40,
                        "grid: ...and is unlimited by default");
+                expect(gdb.searchChannels(L"Ch1", scap).size() == 3 && gdb.searchChannels(L"Ch1").size() == 11,
+                       "grid: the channel-index path (3+ characters) honours the cap too");
             }
 
             // *** URL canonicalisation — step 1 of the duplicate-movies fix (BACKLOG). The tests
@@ -3398,6 +3611,27 @@ int epgSearchBench(const std::wstring& dbPath, std::vector<std::wstring> terms) 
         }
         outw(L"  search \"" + t + L"\": ");
         out(std::to_string(n) + (more ? "+" : "") + " results in " + fmt(best) + " ms\n");
+    }
+    // The main window's channel search, as applySearch runs it (the grid cap + its probe row), and
+    // the guide search's "Also in your channel list, not in the guide" count (here with no guide rows).
+    out(std::string("channel search: ") + (db.channelSearchIndexed() ? "index (v11)" : "LIKE (no index)") + "\n");
+    Database::GridFilter cap;
+    cap.limit = 5001;
+    for (const auto& t : terms) {
+        double best = 1e9, bestCount = 1e9;
+        size_t n = 0;
+        int names = 0;
+        for (int r = 0; r < 5; ++r) {
+            auto t0 = Clock::now();
+            n = db.searchChannels(t, cap).size();
+            best = std::min(best, ms(t0));
+            t0 = Clock::now();
+            names = db.countUncoveredChannelNames(t, {}, 5000);  // no guide rows: the upper bound
+            bestCount = std::min(bestCount, ms(t0));
+        }
+        outw(L"  channels \"" + t + L"\": ");
+        out(std::to_string(n) + " rows in " + fmt(best) + " ms; live names " + std::to_string(names) + " in " +
+            fmt(bestCount) + " ms\n");
     }
     return rebuilt ? 0 : 1;
 }

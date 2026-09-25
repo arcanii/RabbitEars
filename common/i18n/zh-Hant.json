@@ -607,5 +607,13 @@
   "LoadingIndexingGuide": "正在為搜尋建立節目表索引…",
   "GuideSearchInDescriptions": "在節目說明中找到",
   "GuideSearchChannelsHeading": "符合的頻道：{0}",
-  "GuideSearchFilterChannels": "只顯示符合「{0}」的頻道"
+  "GuideSearchFilterChannels": "只顯示符合「{0}」的頻道",
+  "GuideTimeRangeLong": "{0} – {1}（{2} 小時）",
+  "SetGuideUrlPlaylistWarning": "這看起來像是播放清單連結，而不是節目表連結 — 節目表連結通常以 xmltv.php、.xml 或 .xml.gz 結尾。\n\n仍要使用嗎？",
+  "GuideCoverageLine": "在 {1} 個有節目表 ID 的頻道中，{0} 個有節目表資料",
+  "GuideCoverageNoLink": "在沒有節目表連結的播放清單中：{0}（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",
+  "GuideCoverageNoProgrammes": "有節目表 ID，但節目表中沒有從現在到三天後的節目：{0}。",
+  "GuideCoverageUnmatched": "節目表中與您的任何頻道都不相符的頻道：{0}。如果節目表大多如此，其連結可能屬於其他供應商或地區（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",
+  "GuideCoverageNoId": "沒有節目表 ID（tvg-id）的播放清單項目 — 影集集數、電影、許多活動頻道 — 不會出現在節目表中。",
+  "GuideSearchMoreChannels": "頻道清單中也有、但不在節目表中：{0}"
 }

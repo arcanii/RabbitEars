@@ -666,6 +666,14 @@ enum class StringId {
     GuideSearchInDescriptions,
     GuideSearchChannelsHeading,
     GuideSearchFilterChannels,
+    GuideTimeRangeLong,
+    SetGuideUrlPlaylistWarning,
+    GuideCoverageLine,
+    GuideCoverageNoLink,
+    GuideCoverageNoProgrammes,
+    GuideCoverageUnmatched,
+    GuideCoverageNoId,
+    GuideSearchMoreChannels,
     Count  // sentinel — MUST stay last
 };
 

@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <windows.h>
@@ -47,6 +48,26 @@ struct GuideSearchHit {
     bool         inTitle = false;
 };
 
+// What the toolbar's coverage line says — "Guide data for {shown} of {withId} channels with a guide
+// ID" — and the explanation a click on it opens. The host counts it while building the rows
+// (onEpgGuide), per enabled playlist — a channel in two playlists counts in each — and the parts add
+// up: withId = shown + inNoLinkPlaylists + noProgrammes.
+struct GuideCoverage {
+    bool valid = false;         // false = no coverage line
+    int  shown = 0;             // guide ids with a row (programmes in the window), per playlist
+    int  withId = 0;            // the live channels' distinct guide ids (normalised tvg-ids)
+    int  inNoLinkPlaylists = 0; // ids without a row, in playlists with no guide link
+    int  noProgrammes = 0;      // ids without a row, in playlists that HAVE a guide link
+    int  guideUnmatched = 0;    // the guide's channels (programmes in the window) matching NONE of
+                                // the user's channels, in any playlist
+};
+
+// The coverage line itself ("Guide data for N of M channels with a guide ID"), and the explanation
+// behind it: one paragraph per reason that applies (blank lines between), and the note that entries
+// without a guide ID never appear. Both are also appended to the host's "No guide to show" notice.
+std::wstring guideCoverageSummary(const GuideCoverage& c);
+std::wstring guideCoverageExplanation(const GuideCoverage& c);
+
 struct GuideCallbacks {
     // Clicking a programme opens a popup with Play / Schedule / Close. The host resolves
     // the channel (by tvg-id) and plays it / creates the schedule. Empty callbacks hide
@@ -74,6 +95,13 @@ struct GuideCallbacks {
     // no onSearch, every search reports that nothing matches.
     std::function<void()> onSearchBegin;
     std::function<std::vector<GuideSearchHit>(const std::wstring& text, bool* truncated)> onSearch;
+    // How many distinct channel NAMES in the user's whole channel list match `text` (the main
+    // window's channel search, live channels) with NO channel carrying one of `guideIds` — the
+    // normalised ids of the guide's own rows, so another feed of a channel the guide shows (an FHD
+    // beside the HD) is not counted — or -1 when that cannot be answered cheaply. Shown as "Also in
+    // your channel list, not in the guide: N". Empty = no such note.
+    std::function<int(const std::wstring& text, const std::unordered_set<std::wstring>& guideIds)>
+        onCountChannelNames;
     // Rebuild the guide's rows from the database (re-entering showEpgGuide on the same window), for a
     // search result that is not in this window's rows. Tried only when it could help — the result lies
     // inside the window a rebuild covers (kGuideWindowPastSec/AheadSec around now) and the rows have not
@@ -88,9 +116,10 @@ struct GuideCallbacks {
 // every channel (the new rows clear a channel filter), except the re-entry a search result's jump
 // makes through GuideCallbacks::onRebuild, which keeps the results list and the channel filter.
 // `rows` may be empty (the window shows an empty guide). `cb.onSchedule`, if set, adds a right-click
-// "Schedule recording" action on programme blocks.
+// "Schedule recording" action on programme blocks. `coverage` (when valid) is the toolbar's
+// coverage line.
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
-                  GuideCallbacks cb = {});
+                  GuideCallbacks cb = {}, GuideCoverage coverage = {});
 
 // Hide the guide window if it is open. The window is kept alive (not destroyed), so a later
 // showEpgGuide re-reveals and repopulates it. Called when the host starts playing a channel

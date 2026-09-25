@@ -94,7 +94,9 @@ void syncBody(HWND hwnd, const std::wstring& dbPath, const std::vector<SyncTarge
     // unsafe thing to do with this database.
     Database db;
     std::wstring err;
-    if (!db.open(dbPath, &err)) {
+    // A second connection: the app's own already migrated the schema (or could not — which a
+    // worker must not retry, holding the write lock; Database::open's upgradeSchema).
+    if (!db.open(dbPath, &err, /*upgradeSchema=*/false)) {
         diag::error(L"VOD sync: cannot open its own DB connection: " + err);
         rep.result = VodSyncResult::DatabaseError;
         rep.detail = err;

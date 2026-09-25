@@ -284,6 +284,46 @@ std::wstring extractHttpUrl(const std::wstring& text) {
     return url;
 }
 
+namespace {
+// The path of `url`, lower-cased, without its query and fragment.
+std::wstring lowerPath(const std::wstring& url) {
+    const std::wstring low = lowerAscii(url);
+    return low.substr(0, low.find_first_of(L"?#"));
+}
+bool pathEndsWith(const std::wstring& path, const wchar_t* s) {
+    const size_t n = std::wcslen(s);
+    return path.size() >= n && path.compare(path.size() - n, n, s) == 0;
+}
+}  // namespace
+
+bool looksLikeGuideUrl(const std::wstring& url) {
+    const std::wstring path = lowerPath(url);
+    return pathEndsWith(path, L".xml") || pathEndsWith(path, L".gz") || pathEndsWith(path, L"/xmltv.php");
+}
+
+bool looksLikePlaylistUrl(const std::wstring& url) {
+    const std::wstring low = lowerAscii(url);
+    const size_t cut = low.find_first_of(L"?#");
+    const std::wstring path = low.substr(0, cut);
+    const std::wstring query = cut == std::wstring::npos || low[cut] != L'?'
+                                   ? L""
+                                   : low.substr(cut + 1, low.find(L'#', cut) - cut - 1);
+    auto endsWith = [&](const wchar_t* s) { return pathEndsWith(path, s); };
+    // A guide's shapes win: never question those.
+    if (looksLikeGuideUrl(url)) return false;
+    if (endsWith(L"/get.php") || endsWith(L".m3u") || endsWith(L".m3u8")) return true;
+    // XUI/Xtream's path-form playlist: …/playlist/<user>/<pass>/m3u_plus (or …/m3u).
+    if (endsWith(L"/m3u") || endsWith(L"/m3u_plus")) return true;
+    // type=m3u / type=m3u_plus as a whole query parameter.
+    for (size_t b = 0; b <= query.size();) {
+        const size_t e = std::min(query.find(L'&', b), query.size());
+        const std::wstring kv = query.substr(b, e - b);
+        if (kv == L"type=m3u" || kv == L"type=m3u_plus") return true;
+        b = e + 1;
+    }
+    return false;
+}
+
 std::vector<std::wstring> urlCredentials(const std::wstring& url) {
     std::vector<std::wstring> out;
     auto add = [&out](const std::wstring& v) {

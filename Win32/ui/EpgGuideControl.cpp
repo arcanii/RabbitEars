@@ -50,6 +50,16 @@ std::wstring hm(long long epoch) {
     return b;
 }
 
+// "13:00 – 14:30" in local time. A programme of 24 hours or more would read the same time twice — a
+// provider's all-day filler does ("Sendepause 13:00 – 13:00" on a sports event channel) — so it also
+// says how long it runs: "13:00 – 13:00 (24 h)".
+std::wstring timeRange(long long startUtc, long long stopUtc) {
+    constexpr long long kDay = 24 * 3600;
+    if (stopUtc - startUtc < kDay) return trf(i18n::StringId::GuideTimeRange, {hm(startUtc), hm(stopUtc)});
+    return trf(i18n::StringId::GuideTimeRangeLong,
+               {hm(startUtc), hm(stopUtc), std::to_wstring((stopUtc - startUtc + 1800) / 3600)});
+}
+
 // A line in the search-results list. Top to bottom: the matching channels (a Section heading and the
 // one Channels item that narrows the grid to them), then the programmes (a Section heading with the
 // count, a Heading per day, a Hit per programme), then the description-only programmes under a
@@ -59,6 +69,7 @@ enum class ItemKind {
     Section,   // a block's heading, in the accent: channels, programmes found (or none, or "Preparing
                // search…" alone), "Found in the description"
     Channels,  // "Show only channels matching …" — choosing it applies the channel filter
+    Note,      // "Also in your channel list, not in the guide: N" — plain text, no band
     Hit,       // one programme
 };
 struct ResultItem {
@@ -100,6 +111,11 @@ struct GuideState {
     RECT  chip{};                     // the corner cell's channel-filter chip ("toronto ✕"), while filtering
     bool  nowHover = false, chipHover = false;
     int   themedDark = -1;            // the skin darkness themeGuideChrome last applied (-1 = none yet)
+    // The toolbar's coverage line, right of Now: its space, and the part a click opens (the ⓘ and the
+    // text as painted — set by paint(), empty until then).
+    GuideCoverage coverage;
+    RECT  coverageRect{}, coverageHit{};
+    bool  coverageHover = false;
 
     // ---- search
     bool searchPending = false;   // debounce armed (KillTimer can't unpost a queued WM_TIMER)
@@ -111,6 +127,7 @@ struct GuideState {
     bool hitsTruncated = false;
     int  channelCount = 0;        // guide rows whose channel name matches searchedText
     std::wstring channelNames;    // the first of them, " · "-joined, for the Channels item
+    int  moreChannels = 0;        // matching names in the channel list NOT in the guide (onCountChannelNames)
     std::vector<ResultItem> items;
     int  resultsH = 0;            // content height of `items`
     int  resultsScrollY = 0;
@@ -348,6 +365,8 @@ void layoutChildren(HWND hwnd, GuideState* st) {
                                    dpx(st->dpi, 440));
     st->searchField = {m, m, m + searchW, m + fieldH};
     st->nowButton = {st->searchField.right + m, m, st->searchField.right + m + nowW, m + fieldH};
+    st->coverageRect = {st->nowButton.right + 2 * m, m, std::max<LONG>(st->nowButton.right + 2 * m, rc.right - m),
+                        m + fieldH};
     const int fm = dpx(st->dpi, 5);
     st->chip = {fm, st->toolbarH + fm, st->channelColW - fm, gridTop(st) - fm};
     // The text sits right of the painted magnifier; the EDIT is borderless, vertically centred, as
@@ -440,6 +459,9 @@ void buildItems(GuideState* st) {
                 -1, st->resultHdrH);
             add(ItemKind::Channels, L"", -1, st->resultRowH);
         }
+        if (st->moreChannels > 0)  // the channel list has more by that name: say why the guide doesn't
+            add(ItemKind::Note, trf(i18n::StringId::GuideSearchMoreChannels, {std::to_wstring(st->moreChannels)}),
+                -1, st->resultHdrH);
         std::wstring status;
         if (st->hits.empty()) status = trf(i18n::StringId::GuideSearchNone, {st->searchedText});
         else if (st->hitsTruncated)
@@ -560,6 +582,7 @@ void findChannels(GuideState* st, const std::wstring& text) {
     std::unordered_set<std::wstring> seen;
     st->channelCount = 0;
     st->channelNames.clear();
+    st->moreChannels = 0;
     if (needle.empty()) return;  // "" is in every name
     for (const GuideRow& row : st->allRows) {
         if (!channelMatches(row, needle) || !seen.insert(row.channelName).second) continue;
@@ -571,6 +594,16 @@ void findChannels(GuideState* st, const std::wstring& text) {
         }
         ++st->channelCount;
     }
+    // The channel list may hold more by that name that the guide has no row for (no guide data): asked
+    // of the host with the rows' ids — here, so a rebuild of the rows recounts it too.
+    if (st->cb.onCountChannelNames) {
+        std::unordered_set<std::wstring> guideIds;
+        for (const GuideRow& row : st->allRows)
+            if (!row.channelId.empty()) guideIds.insert(normId(row.channelId));
+        auto count = st->cb.onCountChannelNames;  // a copy, like onSearchBegin
+        const int n = count(text, guideIds);
+        if (n > 0) st->moreChannels = n;
+    }
 }
 
 // Run the search for what the box says now: the guide's own channel names (in memory), and the
@@ -581,6 +614,7 @@ void runSearch(HWND hwnd, GuideState* st) {
         st->hits.clear();
         st->channelCount = 0;
         st->channelNames.clear();
+        st->moreChannels = 0;
         st->items.clear();
         st->resultsH = 0;
         st->searchedText.clear();
@@ -594,6 +628,7 @@ void runSearch(HWND hwnd, GuideState* st) {
         st->hits.clear();
         st->channelCount = 0;
         st->channelNames.clear();
+        st->moreChannels = 0;
         buildItems(st);  // "Preparing search…" alone
         st->resultsScrollY = 0;
         st->showResults = false;
@@ -664,6 +699,29 @@ void drawMarked(GuideState* st, const std::wstring& marked, IDWriteTextFormat* f
     SafeRelease(layout);
 }
 
+// The width `s` takes in `fmt` on one line (0 when it cannot be measured).
+float textWidth(IDWriteTextFormat* fmt, const std::wstring& s) {
+    IDWriteFactory* dw = dwriteFactory();
+    IDWriteTextLayout* layout = nullptr;
+    if (!dw || !fmt || FAILED(dw->CreateTextLayout(s.c_str(), static_cast<UINT32>(s.size()), fmt, 100000.0f,
+                                                   1000.0f, &layout)) || !layout)
+        return 0.0f;
+    DWRITE_TEXT_METRICS m{};
+    const float w = SUCCEEDED(layout->GetMetrics(&m)) ? m.widthIncludingTrailingWhitespace : 0.0f;
+    SafeRelease(layout);
+    return w;
+}
+
+// "Guide data for 23 of 4835 channels with a guide ID" — the toolbar's coverage line.
+std::wstring coverageText(const GuideState* st) { return guideCoverageSummary(st->coverage); }
+
+// A click on the coverage line: why the guide has the rows it has.
+void showCoverage(HWND hwnd, GuideState* st) {
+    const GuideCoverage c = st->coverage;  // a copy: the modal pumps messages
+    showInfoDialog(hwnd, st->hInst, st->dpi, tr(i18n::StringId::TvGuideTitle), coverageText(st),
+                   guideCoverageExplanation(c));
+}
+
 // ---- paint -----------------------------------------------------------------
 
 void paint(HWND hwnd, GuideState* st) {
@@ -732,6 +790,10 @@ void paint(HWND hwnd, GuideState* st) {
             const float y = top + static_cast<float>(it.y) - sy;
             const float h = static_cast<float>(it.h);
             if (y + h < top || y >= ch) continue;
+            if (it.kind == ItemKind::Note) {  // plain secondary text on the list's own background
+                text(it.label, st->fmtSub, pad * 2, y, cw - pad * 4, h, th.textSecondary);
+                continue;
+            }
             if (!selectable(it)) {
                 // A block's heading stands apart from the day headings under it: accent, bolder.
                 const bool section = it.kind == ItemKind::Section;
@@ -769,7 +831,7 @@ void paint(HWND hwnd, GuideState* st) {
             }
             drawMarked(st, g.markedTitle.empty() ? g.title : g.markedTitle, st->fmtProg, x, y + pad, w, lh1,
                        tc, mc);
-            text(trf(i18n::StringId::GuideTimeRange, {hm(g.startUtc), hm(g.stopUtc)}) + L"  ·  " +
+            text(timeRange(g.startUtc, g.stopUtc) + L"  ·  " +
                      g.channelName,
                  st->fmtSub, x, y + pad + lh1, cw - pad * 4, lh2, sc);
             if (threeLines(g))
@@ -809,7 +871,7 @@ void paint(HWND hwnd, GuideState* st) {
                     const COLORREF sc = airing ? th.selectionText : th.textSecondary;
                     text(p.title, st->fmtProg, tx, rowY + dpx(st->dpi, 5), tw,
                          static_cast<float>(dpx(st->dpi, 18)), tc);
-                    text(trf(i18n::StringId::GuideTimeRange, {hm(p.startUtc), hm(p.stopUtc)}), st->fmtSub, tx,
+                    text(timeRange(p.startUtc, p.stopUtc), st->fmtSub, tx,
                          rowY + static_cast<float>(dpx(st->dpi, 23)), tw, static_cast<float>(dpx(st->dpi, 16)),
                          sc);
                 }
@@ -881,6 +943,28 @@ void paint(HWND hwnd, GuideState* st) {
         text(tr(i18n::StringId::GuideNowButton), st->fmtSub, nb.left, nb.top, nb.right - nb.left, nb.bottom - nb.top,
              th.textPrimary, /*centred=*/true);
     }
+    // The coverage line: an ⓘ and "Guide data for N of M channels with a guide ID", a link to the
+    // explanation (trimmed with an ellipsis when the window is narrow; hidden when there is no room).
+    st->coverageHit = {};
+    if (st->coverage.valid) {
+        const D2D1_RECT_F cr = rectF(st->coverageRect);
+        const float r = static_cast<float>(dpx(st->dpi, 7)), gap = static_cast<float>(dpx(st->dpi, 6));
+        const float avail = cr.right - cr.left - 2 * r - gap;
+        if (avail > static_cast<float>(dpx(st->dpi, 40)) && st->fmtSub) {
+            const COLORREF c = st->coverageHover ? th.textPrimary : th.textSecondary;
+            const float cx = cr.left + r, cy = (cr.top + cr.bottom) * 0.5f;
+            st->brush->SetColor(colorToD2D(st->coverageHover ? th.accent : th.textSecondary));
+            rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r - 0.5f, r - 0.5f), st->brush, 1.2f);
+            text(L"i", st->fmtSub, cx - r, cr.top, 2 * r, cr.bottom - cr.top,
+                 st->coverageHover ? th.accent : th.textSecondary, /*centred=*/true);
+            const std::wstring line = coverageText(st);
+            const float tx = cr.left + 2 * r + gap;
+            drawMarked(st, line, st->fmtSub, tx, cr.top, avail, cr.bottom - cr.top, c, c);
+            const float w = std::min(avail, textWidth(st->fmtSub, line));
+            st->coverageHit = {st->coverageRect.left, st->coverageRect.top,
+                               static_cast<LONG>(tx + w + 1.0f), st->coverageRect.bottom};
+        }
+    }
     fill(0, tbH - 1, cw, 1, th.border);  // toolbar divider
 
     if (rt->EndDraw() == D2DERR_RECREATE_TARGET) discardDevice(st);
@@ -915,7 +999,7 @@ const GuideProgramme* programmeAt(HWND hwnd, GuideState* st, int x, int y, int* 
 void openProgramme(HWND hwnd, GuideState* st, const std::wstring& channelId, const std::wstring& channelName,
                    const std::wstring& title, const std::wstring& descr, long long startUtc, long long stopUtc) {
     std::wstring info = channelName + L"\r\n" +
-                        trf(i18n::StringId::GuideTimeRange, {hm(startUtc), hm(stopUtc)}) + L"\r\n";
+                        timeRange(startUtc, stopUtc) + L"\r\n";
     if (!descr.empty()) info += L"\r\n" + descr;
     const GuideCallbacks cb = st->cb;  // a copy: an action can re-enter showEpgGuide
     const ProgrammeAction act = programmeDialog(hwnd, st->hInst, st->dpi, title, info);
@@ -1343,6 +1427,17 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT) {  // the coverage line is a link: the hand says so
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+                if (inRect(st->coverageHit, pt.x, pt.y)) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
+                }
+            }
+            break;
         case WM_MOUSEMOVE: {
             if (!st->tracking) {  // arm one-shot leave tracking so the hover can clear
                 TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
@@ -1359,6 +1454,11 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (chh != st->chipHover) {
                 st->chipHover = chh;
                 InvalidateRect(hwnd, &st->chip, FALSE);
+            }
+            const bool cvh = inRect(st->coverageHit, mx, my);
+            if (cvh != st->coverageHover) {
+                st->coverageHover = cvh;
+                InvalidateRect(hwnd, &st->coverageRect, FALSE);
             }
             if (st->showResults) {
                 const int i = itemAtY(hwnd, st, my);
@@ -1377,11 +1477,12 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_MOUSELEAVE:
             st->tracking = false;
-            if (st->hoverRow != -1 || st->resultHover != -1 || st->nowHover || st->chipHover) {
+            if (st->hoverRow != -1 || st->resultHover != -1 || st->nowHover || st->chipHover || st->coverageHover) {
                 st->hoverRow = -1;
                 st->resultHover = -1;
                 st->nowHover = false;
                 st->chipHover = false;
+                st->coverageHover = false;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -1391,6 +1492,10 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (msg == WM_LBUTTONDOWN) st->swallowedDown = false;  // only ever the down just before
             if (inRect(st->nowButton, mx, my)) {
                 goToNow(hwnd, st);
+                return 0;
+            }
+            if (inRect(st->coverageHit, mx, my)) {
+                if (msg == WM_LBUTTONDOWN) showCoverage(hwnd, st);
                 return 0;
             }
             // A click on the box's painted frame (the magnifier, the padding) focuses the box — and,
@@ -1615,6 +1720,26 @@ void hideEpgGuide() {
 
 bool epgGuideOpen() { return g_guide && IsWindow(g_guide); }
 
+std::wstring guideCoverageSummary(const GuideCoverage& c) {
+    return trf(i18n::StringId::GuideCoverageLine, {std::to_wstring(c.shown), std::to_wstring(c.withId)});
+}
+
+std::wstring guideCoverageExplanation(const GuideCoverage& c) {
+    std::wstring body;
+    auto para = [&](const std::wstring& s) {
+        if (!body.empty()) body += L"\r\n\r\n";
+        body += s;
+    };
+    if (c.inNoLinkPlaylists > 0)
+        para(trf(i18n::StringId::GuideCoverageNoLink, {std::to_wstring(c.inNoLinkPlaylists)}));
+    if (c.noProgrammes > 0)
+        para(trf(i18n::StringId::GuideCoverageNoProgrammes, {std::to_wstring(c.noProgrammes)}));
+    if (c.guideUnmatched > 0)
+        para(trf(i18n::StringId::GuideCoverageUnmatched, {std::to_wstring(c.guideUnmatched)}));
+    para(tr(i18n::StringId::GuideCoverageNoId));
+    return body;
+}
+
 void epgGuideRefreshTheme() {
     if (!g_guide || !IsWindow(g_guide)) return;
     // The main window's own repaint never reaches this separate top-level window, so a live skin
@@ -1712,7 +1837,7 @@ bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc) {
 }
 
 void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> rows, long long nowUtc,
-                  GuideCallbacks cb) {
+                  GuideCallbacks cb, GuideCoverage coverage) {
     registerGuideClass(hInst);
     if (g_guide && IsWindow(g_guide)) {  // already open — repopulate + focus
         GuideState* st = stateOf(g_guide);
@@ -1728,6 +1853,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
             }
             const std::wstring keepFilter = st->inRebuild ? st->filter : std::wstring();
             st->cb = std::move(cb);
+            st->coverage = coverage;
             applyData(st, std::move(rows), nowUtc);  // clears the filter...
             if (!keepFilter.empty()) setFilter(st, keepFilter);  // ...which a jump's rebuild restores
             // Start scrolled so "now" sits a little in from the left edge.
@@ -1751,6 +1877,7 @@ void showEpgGuide(HWND owner, HINSTANCE hInst, UINT dpi, std::vector<GuideRow> r
     if (GuideState* st = stateOf(hwnd)) {
         st->hInst = hInst;
         st->cb = std::move(cb);
+        st->coverage = coverage;
         st->dpi = GetDpiForWindow(hwnd);
         computeMetrics(st);
         recreateFormats(st);

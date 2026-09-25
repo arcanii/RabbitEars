@@ -665,6 +665,14 @@ constexpr std::array<const char*, N> kEn = {{
     "Found in the description",  // GuideSearchInDescriptions
     "Matching channels: {0}",  // GuideSearchChannelsHeading
     "Show only channels matching “{0}”",  // GuideSearchFilterChannels
+    "{0} – {1} ({2} h)",  // GuideTimeRangeLong
+    "This looks like a PLAYLIST link, not a guide link — a guide link usually ends in xmltv.php, .xml or .xml.gz.\n\nUse it anyway?",  // SetGuideUrlPlaylistWarning
+    "Guide data for {0} of {1} channels with a guide ID",  // GuideCoverageLine
+    "In playlists with no guide link: {0} (right-click the playlist ▸ Set Guide URL…).",  // GuideCoverageNoLink
+    "With a guide ID the guide has no programmes for, from now to three days ahead: {0}.",  // GuideCoverageNoProgrammes
+    "Channels in the guide matching none of yours: {0}. If that is most of the guide, its link may be for another provider or region (right-click the playlist ▸ Set Guide URL…).",  // GuideCoverageUnmatched
+    "Playlist entries without a guide ID (tvg-id) — series episodes, movies, many event channels — never appear in the guide.",  // GuideCoverageNoId
+    "Also in your channel list, not in the guide: {0}",  // GuideSearchMoreChannels
 }};
 
 // 日本語
@@ -1320,6 +1328,14 @@ constexpr std::array<const char*, N> kJa = {{
     "説明文に一致",  // GuideSearchInDescriptions
     "一致するチャンネル: {0}",  // GuideSearchChannelsHeading
     "「{0}」に一致するチャンネルだけを表示",  // GuideSearchFilterChannels
+    "{0} – {1}（{2} 時間）",  // GuideTimeRangeLong
+    "これは番組表のリンクではなく、プレイリストのリンクのようです。番組表のリンクは通常 xmltv.php、.xml、.xml.gz で終わります。\n\nこのまま使用しますか？",  // SetGuideUrlPlaylistWarning
+    "ガイド ID のある {1} チャンネル中 {0} チャンネルに番組表データがあります",  // GuideCoverageLine
+    "番組表のリンクがないプレイリスト内: {0}（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideCoverageNoLink
+    "ガイド ID はあるが、現在から 3 日後までの番組が番組表にないもの: {0}。",  // GuideCoverageNoProgrammes
+    "どのチャンネルとも一致しない番組表のチャンネル: {0}。番組表の大半がそうなら、リンクが別のプロバイダーや地域のものかもしれません（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideCoverageUnmatched
+    "ガイド ID（tvg-id）のないプレイリスト項目（シリーズのエピソード、映画、多くのイベントチャンネル）は番組表に表示されません。",  // GuideCoverageNoId
+    "チャンネル一覧にもあり、番組表にないもの: {0}",  // GuideSearchMoreChannels
 }};
 
 // 繁體中文
@@ -1975,6 +1991,14 @@ constexpr std::array<const char*, N> kZhHant = {{
     "在節目說明中找到",  // GuideSearchInDescriptions
     "符合的頻道：{0}",  // GuideSearchChannelsHeading
     "只顯示符合「{0}」的頻道",  // GuideSearchFilterChannels
+    "{0} – {1}（{2} 小時）",  // GuideTimeRangeLong
+    "這看起來像是播放清單連結，而不是節目表連結 — 節目表連結通常以 xmltv.php、.xml 或 .xml.gz 結尾。\n\n仍要使用嗎？",  // SetGuideUrlPlaylistWarning
+    "在 {1} 個有節目表 ID 的頻道中，{0} 個有節目表資料",  // GuideCoverageLine
+    "在沒有節目表連結的播放清單中：{0}（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideCoverageNoLink
+    "有節目表 ID，但節目表中沒有從現在到三天後的節目：{0}。",  // GuideCoverageNoProgrammes
+    "節目表中與您的任何頻道都不相符的頻道：{0}。如果節目表大多如此，其連結可能屬於其他供應商或地區（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideCoverageUnmatched
+    "沒有節目表 ID（tvg-id）的播放清單項目 — 影集集數、電影、許多活動頻道 — 不會出現在節目表中。",  // GuideCoverageNoId
+    "頻道清單中也有、但不在節目表中：{0}",  // GuideSearchMoreChannels
 }};
 
 // 繁體中文（香港）
@@ -2630,6 +2654,14 @@ constexpr std::array<const char*, N> kZhHK = {{
     "在節目說明中找到",  // GuideSearchInDescriptions
     "符合的頻道：{0}",  // GuideSearchChannelsHeading
     "只顯示符合「{0}」的頻道",  // GuideSearchFilterChannels
+    "{0} – {1}（{2} 小時）",  // GuideTimeRangeLong
+    "這看起來像是播放清單連結，而不是節目表連結 — 節目表連結通常以 xmltv.php、.xml 或 .xml.gz 結尾。\n\n仍要使用嗎？",  // SetGuideUrlPlaylistWarning
+    "在 {1} 個有節目表 ID 的頻道中，{0} 個有節目表資料",  // GuideCoverageLine
+    "在沒有節目表連結的播放清單中：{0}（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideCoverageNoLink
+    "有節目表 ID，但節目表中沒有從現在到三天後的節目：{0}。",  // GuideCoverageNoProgrammes
+    "節目表中與您的任何頻道都不相符的頻道：{0}。如果節目表大多如此，其連結可能屬於其他供應商或地區（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideCoverageUnmatched
+    "沒有節目表 ID（tvg-id）的播放清單項目 — 影集集數、電影、許多活動頻道 — 不會出現在節目表中。",  // GuideCoverageNoId
+    "頻道清單中也有、但不在節目表中：{0}",  // GuideSearchMoreChannels
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

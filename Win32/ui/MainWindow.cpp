@@ -588,7 +588,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // early; the rest load after createChildren (which the child windows must exist for).
             const std::wstring dbPath = Database::defaultDbPath();
             std::wstring err;
+            const ULONGLONG tOpen = GetTickCount64();
             const bool dbOk = st->db.open(dbPath, &err);
+            // Includes any schema upgrade — the one-time v11 channel index takes ~4 s on the owner's
+            // 410k channels (Database::createChannelSearchIndex), logged below with the channel count.
+            const ULONGLONG openMs = GetTickCount64() - tOpen;
             i18n::setActiveLang(systemLang());
             if (dbOk) {
                 // Accept ANY persisted value and let resolveLang() validate it (an unknown code
@@ -715,7 +719,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 int total = 0;
                 channelGridGetCounts(st->grid, nullptr, &total);
                 if (total == 0) setStatus(st, tr(i18n::StringId::StatusNoChannelsYet));
-                diag::info(L"db opened: " + dbPath + L" (" + std::to_wstring(total) + L" channels)");
+                diag::info(L"db opened: " + dbPath + L" (" + std::to_wstring(total) + L" channels) in " +
+                           std::to_wstring(openMs) + L" ms incl. any schema upgrade");
                 // Resume the last-watched channel (Settings → Resume last channel, default on).
                 // channelById returns nullopt if the channel/playlist was deleted — just skip.
                 if (st->resumeLast) {

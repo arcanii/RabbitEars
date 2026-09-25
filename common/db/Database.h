@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -60,7 +61,11 @@ public:
 
     // Open (creating if needed) the DB at `path`, apply pragmas, and create the
     // schema. Returns false and sets `error` (if non-null) on failure.
-    bool open(const std::wstring& path, std::wstring* error = nullptr);
+    // `upgradeSchema` false: take the database at whatever version it is (read, not migrated) — for a
+    // worker's second connection, opened after the app's own. A schema step the app's connection
+    // could not complete must not be retried from a worker: the v11 build holds the write lock for
+    // ~4 s on a large library, long enough for the UI's own writes to time out behind it.
+    bool open(const std::wstring& path, std::wstring* error = nullptr, bool upgradeSchema = true);
     void close();
     bool isOpen() const { return db_ != nullptr; }
 
@@ -145,7 +150,24 @@ public:
     std::vector<Channel> allMovies(const GridFilter& g = {});  // newest-first (provider `added`)
     std::vector<std::wstring> listVodGroups();  // the VOD categories
     std::vector<Channel> favourites(const GridFilter& g = {});
+    // Channels (any kind) in enabled playlists whose NAME contains `term` — a substring, case- and
+    // accent-insensitive for Latin script ("quebec" finds "TVA QUÉBEC"); typed characters are
+    // literal (no wildcards). Through the channel index (schema v11 — docs/CHANNEL_SEARCH.md):
+    // 0.2–1 ms for most words on the owner's 410k channels, ~45 ms for the commonest ("the"). Under
+    // 3 characters (trigram's minimum — which also covers most CJK searches), or without the index
+    // (v11 not landed), a LIKE scan of the names: ~110–150 ms there, ASCII-only case folding. Before
+    // v11 this also matched group titles and tvg-names; names only is the owner's decision (2026-09-25).
     std::vector<Channel> searchChannels(const std::wstring& term, const GridFilter& g = {});
+    // The TV Guide search's "Also in your channel list, not in the guide: N": how many DISTINCT names
+    // of LIVE channels in enabled playlists match `text` the way searchChannels does, NONE of whose
+    // channels carries one of `coveredIds` — the guide rows' guide ids, normalised ('@feed' stripped,
+    // ASCII-lower-cased) — so an HD/FHD sibling of a channel the guide shows is not counted. -1 when
+    // it cannot be answered cheaply: under 3 characters, no channel index, or more than `maxRows`
+    // matching channels (a broad word, where the note would be noise anyway).
+    int countUncoveredChannelNames(const std::wstring& text, const std::unordered_set<std::wstring>& coveredIds,
+                                   int maxRows);
+    // True once the channel index exists (schema v11 landed on this connection).
+    bool channelSearchIndexed() const { return schemaVersion_ >= 11; }
     std::optional<Channel> channelByLcn(int lcn);
     // First enabled channel carrying this tvg-id (the EPG join key); nullopt if none.
     // Used to resolve a guide programme back to a recordable stream.
@@ -251,6 +273,16 @@ public:
     // "the"); the LIKE fallback ~50 ms.
     std::vector<ProgrammeHit> searchProgrammes(const std::wstring& text, long long fromUtc, int limit,
                                                bool* truncated = nullptr);
+    // Per playlist (enabled or not): how many distinct guide ids its LIVE channels carry — tvg-ids
+    // normalised the way the guide joins them ('@feed' stripped, ASCII-lower-cased), so channels
+    // sharing an id count once. Playlists with none are absent. The TV Guide's coverage line ("guide
+    // data for N of M channels with a guide ID"). ONE pass over the tvg-id index's id-carrying rows,
+    // whatever the number of playlists: ~3 ms on the owner's library, whose 366k live rows are mostly
+    // series episodes carrying no id at all.
+    std::vector<std::pair<long long, int>> distinctLiveGuideIds();
+    // Those ids themselves, across ENABLED playlists — the coverage line's "guide channels matching
+    // none of yours" is the guide's channels minus these. Same index, ~3 ms.
+    std::vector<std::wstring> liveGuideIds();
 
     // ---- Scheduled recordings ----------------------------------------------
     long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
@@ -307,6 +339,10 @@ private:
     // transaction. True when the DB is at v10 afterwards.
     bool createProgrammeSearchTables();
     bool programmeSearchTablesExist();       // both tables present AND genuinely FTS5
+    // The v11 step: the channel search index — table, triggers, the build from existing rows and
+    // v11 — in one transaction. True when the DB is at v11 afterwards.
+    bool createChannelSearchIndex();
+    bool channelSearchTableExists();         // channels_fts present AND genuinely FTS5
     std::wstring programmeIndexStamp();      // what the index must have been built from
     // programmeSearchState()'s memory: -1 = not yet checked since this connection last changed
     // epg_programmes, 0 = stale, 1 = current. Reset by bulkInsertProgrammes and deletePlaylist.
@@ -322,6 +358,7 @@ private:
     // 8 and writes keep the old literal behaviour, which merely duplicates movies: bad, survivable,
     // and repaired by the next successful open.
     int          schemaVersion_ = 0;
+    bool         upgradeSchema_ = true;  // open()'s upgradeSchema: false = read the version, migrate nothing
 };
 
 }  // namespace rabbitears
