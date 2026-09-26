@@ -949,6 +949,9 @@ int selftest() {
                    meterHeightForDrag(167, false, 144, lab) == 37 && maxMeterHeightDp(144, 150, 0, lab) == 30 &&
                    maxMeterHeightDp(144, 150, 0) == 40 && !stripMetrics(kMeterHeightMax, 144, 150, 0, lab).ownRow,
                "meter labels: the edge drag and the height cap count the labels' row");
+        // An own row's meters touch (the owner's ask); inline they keep their 6 dp, as they always had.
+        expect(trayMeterGapPx(true, 144) == 0 && trayMeterGapPx(false, 144) == 9 && trayMeterGapPx(false, 96) == 6,
+               "meter tray: an own row's meters stand side by side; the standard tray keeps its 6-dp gaps");
     }
 
     out("== Needle meters' own width (own row + bridge; ui/VuDial.h, ui/MiniMeter.h) ==\n");

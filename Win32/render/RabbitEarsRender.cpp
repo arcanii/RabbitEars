@@ -478,7 +478,7 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
             if (const int nw = miniMeterNaturalWidth(style, meterH, dpi)) w = nw;
         if (rightX - w < meterLeft + pad) continue;  // does not fit: hidden, as in layout()
         placed[nPlaced++] = {k, rightX - w, w};
-        rightX -= w + dp(6, dpi);
+        rightX -= w + trayMeterGapPx(sm.ownRow, dpi);  // an own row's meters touch, as in layout()
     }
     StripLabels labels;
     labels.dpi = dpi;

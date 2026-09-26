@@ -40,6 +40,12 @@ inline int trayDp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96)
 
 inline int clampMeterHeightDp(int h) { return std::clamp(h, kMeterHeightMin, kMeterHeightMax); }
 
+// The space between two meters: 6 dp inline (the standard tray, as it always was); none in an own row, where
+// the meters stand side by side like a rack of instruments (the owner's ask, 2026-09-26). The tank keeps its
+// distance either way.
+constexpr int kTrayMeterGapDp = 6;
+inline int trayMeterGapPx(bool ownRow, UINT dpi) { return ownRow ? 0 : MulDiv(kTrayMeterGapDp, static_cast<int>(dpi), 96); }
+
 // A tray width (`w96`: its 96-dpi width at the standard height) scaled with the meters' height.
 inline int trayWidth(int w96, int meterPx, UINT dpi) {
     return MulDiv(trayDp(w96, dpi), meterPx, trayDp(kMeterHeightStd, dpi));

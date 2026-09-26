@@ -58,7 +58,9 @@ void layoutBridge(HWND hwnd) {
     RECT rc;
     GetClientRect(hwnd, &rc);
     for (RECT& r : b->labelRc) r = RECT{};
-    const int pad = dp(12, b->dpi), gap = dp(8, b->dpi), base = dp(kMeterHeightStd, b->dpi);
+    // The meters stand side by side, as in the tray's own row (MeterTray.h trayMeterGapPx); the tank keeps
+    // its distance.
+    const int pad = dp(12, b->dpi), tankGap = dp(8, b->dpi), base = dp(kMeterHeightStd, b->dpi);
     const int labelPx = meterLabelPx(g_st->meterLabels, b->dpi);
     Pair ps[5];
     pairs(g_st, b, ps);
@@ -78,10 +80,16 @@ void layoutBridge(HWND hwnd) {
             if (const int nw = miniMeterNaturalWidth(miniMeterStyle(ps[i].tray), h, b->dpi)) return nw;
         return static_cast<int>(static_cast<double>(dp(ps[i].w96, b->dpi)) * h / base);
     };
+    // The space before pair i when it is not the row's first: only the tank's.
+    auto gapBefore = [&](int i) { return i == 4 ? tankGap : trayMeterGapPx(true, b->dpi); };
     auto rowWidth = [&](int h) {
-        int total = gap * (n - 1);
+        int total = 0;
+        bool first = true;
         for (int i = 0; i < 5; ++i)
-            if (ps[i].on && ps[i].mine) total += widthAt(i, h);
+            if (ps[i].on && ps[i].mine) {
+                total += (first ? 0 : gapBefore(i)) + widthAt(i, h);
+                first = false;
+            }
         return total;
     };
     const int availW = std::max(1, static_cast<int>(rc.right) - 2 * pad);
@@ -99,6 +107,7 @@ void layoutBridge(HWND hwnd) {
     // The tank's sim runs only while it is shown here (a hidden tank pauses; it also un-hides one that its
     // own menu hid, once the tray shows the tank again).
     if (b->tank) bufferMeterSetHidden(b->tank, !ps[4].on);
+    bool first = true;
     for (int i = 0; i < 5; ++i) {
         const Pair& p = ps[i];
         if (!p.mine) continue;
@@ -107,10 +116,12 @@ void layoutBridge(HWND hwnd) {
                                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
             continue;
         }
+        if (!first) x += gapBefore(i);
+        first = false;
         const int w = widthAt(i, h);
         if (dwp) dwp = DeferWindowPos(dwp, p.mine, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         if (labelPx > 0) b->labelRc[i] = RECT{x, y + h, x + w, y + h + labelPx};  // pair i == label slot i
-        x += w + gap;
+        x += w;
     }
     if (dwp) EndDeferWindowPos(dwp);
     InvalidateRect(hwnd, nullptr, TRUE);

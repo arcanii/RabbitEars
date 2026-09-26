@@ -483,7 +483,7 @@ void layout(HWND hwnd, AppState* st) {
                 dwp = DeferWindowPos(dwp, s.h, nullptr, rightX - w, meterY, w, meterH,
                                      kSwpMove | SWP_SHOWWINDOW);
             labelCell(s.kind, rightX - w, w);
-            rightX -= w + dp(6, st->dpi);
+            rightX -= w + trayMeterGapPx(strip.ownRow, st->dpi);  // an own row's meters touch
         } else if (s.h && dwp) {
             dwp = DeferWindowPos(dwp, s.h, nullptr, 0, 0, 0, 0,
                                  kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
