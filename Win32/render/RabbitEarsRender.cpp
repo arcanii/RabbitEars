@@ -30,11 +30,15 @@
 //   --strip-only / --no-strip   only / skip the transport-strip renders (theme-engine builds)
 //   --time MS   the strip animation time in milliseconds (default 1500)
 //   --bench-paint  no PNGs: time the REAL per-frame work (one tick + one paint) of every meter kind and
-//               look, and the tank, at the tray's widths for 30 / 50 / 72 / 120 dp, at 144 dpi (150 %)
+//               look, and the tank, at the tray's widths for 30 / 50 / 72 / 120 dp, at 144 dpi (150 %) —
+//               each kind's width for every look (the own row gives a needle look its own, which differs)
 //   --meter-height DP   the tray sheets AND the strips at this meter height, 30..120 (default 30 = the
 //               standard tray; the strip grows and the widths scale with it, as in the app — ui/MeterTray.h);
 //               other heights add _h<DP> to the names, and fill a Bitrate meter's whole history first (a
-//               tall dial holds more columns than the 90 samples fed) — as --bench-paint does at every height
+//               tall dial holds more columns than the 90 samples fed) — as --bench-paint does at every height;
+//               there (the app's own row) a needle look takes its instrument's own width, as in layout()
+//   --meter-labels  the meters' labels under an own row of meters, printed in the strip's frame as the app
+//               prints them (ui/MeterLabels.h); adds _labels to the names of the strips that show them
 // Exit code: 0 = every PNG written, 1 = something failed (details on stdout), 2 = bad arguments.
 #include <windows.h>
 
@@ -56,6 +60,7 @@ using std::min;
 #include "core/Strings.h"
 #include "ui/BufferMeter.h"
 #include "ui/MiniMeter.h"
+#include "ui/MeterLabels.h"  // the labels under an own row of meters (--meter-labels)
 #include "ui/MeterTray.h"  // the tray geometry layout() uses
 #include "ui/Skin.h"
 #include "ui/Theme.h"
@@ -295,6 +300,9 @@ const wchar_t* kKindNames[] = {L"Spectrum", L"Signal", L"Bitrate", L"Frames"};
 // --meter-height: the tray meters' height in dp (the strip and the widths follow it, as in the app). 30
 // = the standard tray — whose sheets keep their names and bytes; any other height adds "_h<dp>".
 int g_meterH96 = kMeterHeightStd;
+// --meter-labels: the meters' labels under an own row (MeterLabels.h) — "_labels" in the names of the
+// strips that print them (an own row); the tray sheets never do.
+bool g_meterLabels = false;
 std::wstring heightSuffix() {
     wchar_t s[16] = L"";
     if (g_meterH96 != kMeterHeightStd) swprintf_s(s, L"_h%d", g_meterH96);
@@ -311,9 +319,17 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
     const int mh = dp(g_meterH96, dpi);
     const int zoom = std::max(1, ((dpi <= 96) ? 4 : 3) * 30 / g_meterH96);
     const int gap = 8, labelW = 70, top = 34, rowLabelH = 16;
+    // Each look at the width the app gives it: its kind's — or, taller than the standard height (the
+    // app's own row), a needle look's own (miniMeterNaturalWidth). A column is as wide as its widest.
+    auto cellW = [&](int k, int s) {
+        if (g_meterH96 != kMeterHeightStd)
+            if (const int nw = miniMeterNaturalWidth(kStyles[s], mh, dpi)) return nw;
+        return trayWidth(kTrayMeterW96[k], mh, dpi);
+    };
     int colW[4], totalW = labelW;
     for (int k = 0; k < 4; ++k) {
-        colW[k] = trayWidth(kTrayMeterW96[k], mh, dpi);
+        colW[k] = 0;
+        for (int s = 0; s < kStyleCount; ++s) colW[k] = std::max(colW[k], cellW(k, s));
         totalW += colW[k] * zoom + gap;
     }
     const int bufW = trayWidth(kTrayTankW96, mh, dpi);
@@ -333,11 +349,11 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
         for (int k = 0; k < 4; ++k) {
             if (s == 0) {
                 wchar_t lab[64];
-                swprintf_s(lab, L"%ls %dx%d", kKindNames[k], colW[k], mh);
+                swprintf_s(lab, L"%ls %dx%d", kKindNames[k], trayWidth(kTrayMeterW96[k], mh, dpi), mh);
                 cv.text(x, y, lab, RGB(170, 170, 176), 13);
             }
             const int nb = 16;  // SpectrumTap::kBands — what the tray spectrum is really fed
-            Img im = renderMini(kKinds[k], kStyles[s], colW[k], mh, dpi, 90, nb, g_meterH96 != kMeterHeightStd);
+            Img im = renderMini(kKinds[k], kStyles[s], cellW(k, s), mh, dpi, 90, nb, g_meterH96 != kMeterHeightStd);
             cv.put(im, x, y + rowLabelH, zoom);
             x += colW[k] * zoom + gap;
         }
@@ -401,6 +417,17 @@ std::wstring adapterName() {
     return d.Description;
 }
 
+// The strip's labels for paintSkinStrip's overlay, as the app's paintStripLabels prints them.
+struct StripLabels {
+    UINT dpi = 96;
+    RECT rc[kMeterLabelSlots]{};
+};
+void paintRenderLabels(HDC dc, void* ctx) {
+    const auto* l = static_cast<const StripLabels*>(ctx);
+    for (int i = 0; i < kMeterLabelSlots; ++i)
+        if (!IsRectEmpty(&l->rc[i])) paintMeterLabel(dc, l->rc[i], meterLabelText(i), l->dpi);
+}
+
 // The transport strip: the REAL paintSkinStrip() (D3D11 shader + D2D hairline into an offscreen
 // GDI-compatible texture, BitBlt'd into the DC we pass — here a memory DC on a DIB, no window), with
 // the meter tray composited at the exact MainWindowChrome.cpp layout() positions. The buttons,
@@ -412,11 +439,10 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
     // enough not to cap it): inline at the standard height, an own row of meters above the transport
     // row when taller (MeterTray.h).
     const int W = dp(1100, dpi), pad = dp(10, dpi);
-    const StripMetrics sm = stripMetrics(g_meterH96, dpi, 0, W - 2 * pad);
+    const int labelPx = meterLabelPx(g_meterLabels, dpi);  // an own row's labels' row, with --meter-labels
+    const StripMetrics sm = stripMetrics(g_meterH96, dpi, 0, W - 2 * pad, labelPx);
     const int H = sm.stripPx;       // == MainWindow stripHeight()
     Canvas cv(W, H, 0x00FF00FFu);  // magenta = "strip failed to paint"
-    const bool ok = skin::paintSkinStrip(cv.dc, RECT{0, 0, W, H}, dpi);
-    GdiFlush();
     const int meterH = sm.meterPx;
     const int meterY = sm.ownRow ? dp(kMeterRowTopDp, dpi) : (H - meterH) / 2;
     // Where layout()'s transport controls end, left to right from the strip's edge (play, stop, record,
@@ -434,21 +460,47 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
     controlsEnd += dp(84, dpi) + dp(2, dpi);
     controlsEnd += dp(110, dpi) + pad * 2;
     const int meterLeft = sm.ownRow ? 0 : controlsEnd;
+    // Where layout() puts the tank and the meters, right to left — in an own row a needle look at its
+    // instrument's own width (miniMeterNaturalWidth) — and, with the labels on, each one's label cell.
+    struct Placed {
+        int slot, x, w;  // slot: the MeterKind (0..3), or kMeterLabelTank
+    };
+    Placed placed[kMeterLabelSlots];
+    int nPlaced = 0;
     int rightX = W - pad;
     const int bufW = trayWidth(kTrayTankW96, meterH, dpi);
-    cv.put(renderBuffer(bufW, meterH, dpi, 360, false, L"12.4 Mb/s"), rightX - bufW, meterY, 1);
+    placed[nPlaced++] = {kMeterLabelTank, rightX - bufW, bufW};
     rightX -= bufW + pad;
     const int order[] = {3, 2, 1, 0};  // rightmost first: Frames, Bitrate, Signal, Spectrum
     for (int k : order) {
-        const int w = trayWidth(kTrayMeterW96[k], meterH, dpi);
+        int w = trayWidth(kTrayMeterW96[k], meterH, dpi);
+        if (sm.ownRow)
+            if (const int nw = miniMeterNaturalWidth(style, meterH, dpi)) w = nw;
         if (rightX - w < meterLeft + pad) continue;  // does not fit: hidden, as in layout()
-        cv.put(renderMini(kKinds[k], style, w, meterH, dpi, 90, 16, g_meterH96 != kMeterHeightStd), rightX - w,
-               meterY, 1);
+        placed[nPlaced++] = {k, rightX - w, w};
         rightX -= w + dp(6, dpi);
     }
+    StripLabels labels;
+    labels.dpi = dpi;
+    const bool withLabels = sm.ownRow && labelPx > 0;
+    if (withLabels)
+        for (int i = 0; i < nPlaced; ++i)
+            labels.rc[placed[i].slot] =
+                RECT{placed[i].x, meterY + meterH, placed[i].x + placed[i].w, meterY + meterH + labelPx};
+    // The strip first (its labels in the frame, as the app prints them), then the meters over it.
+    const bool ok = skin::paintSkinStrip(cv.dc, RECT{0, 0, W, H}, dpi, withLabels ? paintRenderLabels : nullptr,
+                                         &labels);
+    GdiFlush();
+    for (int i = 0; i < nPlaced; ++i) {
+        const Placed& p = placed[i];
+        cv.put(p.slot == kMeterLabelTank
+                   ? renderBuffer(p.w, meterH, dpi, 360, false, L"12.4 Mb/s")
+                   : renderMini(kKinds[p.slot], style, p.w, meterH, dpi, 90, 16, g_meterH96 != kMeterHeightStd),
+               p.x, meterY, 1);
+    }
     wchar_t name[160];
-    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls.png", wid(skin).c_str(), dpi, tag, adapterTag.c_str(),
-               heightSuffix().c_str());
+    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls%ls.png", wid(skin).c_str(), dpi, tag, adapterTag.c_str(),
+               heightSuffix().c_str(), withLabels ? L"_labels" : L"");
     writePng(cv.snapshot(), name);
     if (!ok) fail((std::wstring(L"paintSkinStrip returned false for ") + name).c_str());
     // A 3x zoom of just the right-hand tray, where the meters sit on the strip.
@@ -467,8 +519,8 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
             tray.px[static_cast<size_t>(y) * tray.w + x] = full.px[static_cast<size_t>(y) * W + trayX + x];
     Canvas z(tray.w * 3, H * 3, 0);
     z.put(tray, 0, 0, 3);
-    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls_trayzoom3.png", wid(skin).c_str(), dpi, tag,
-               adapterTag.c_str(), heightSuffix().c_str());
+    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls%ls_trayzoom3.png", wid(skin).c_str(), dpi, tag,
+               adapterTag.c_str(), heightSuffix().c_str(), withLabels ? L"_labels" : L"");
     writePng(z.snapshot(), name);
 }
 #endif  // RABBITEARS_THEME_ENGINE
@@ -571,7 +623,7 @@ void benchPaint(UINT dpi) {
 
 int usage() {
     wprintf(L"usage: RabbitEarsRender [outdir] [--skin ID]... [--strip-only | --no-strip] [--time MS]"
-            L" [--meter-height DP] [--bench-paint]\n");
+            L" [--meter-height DP] [--meter-labels] [--bench-paint]\n");
     return 2;
 }
 
@@ -593,6 +645,8 @@ int wmain(int argc, wchar_t** argv) {
             skins.push_back(id);
         } else if (a == L"--bench-paint") {
             benchOnly = true;
+        } else if (a == L"--meter-labels") {
+            g_meterLabels = true;
         } else if (a == L"--strip-only") {
             stripOnly = true;
         } else if (a == L"--no-strip") {
@@ -693,6 +747,10 @@ int wmain(int argc, wchar_t** argv) {
             if (!noStrip) {
                 stripShot(id, dpi, 0.0f, MeterStyle::Led, L"default", atag);
                 stripShot(id, dpi, 0.6f, MeterStyle::Vu, L"vu_glass60", atag);
+                // Taller (the app's own row, where a needle look takes its own width): the Silver face too.
+                // Not at the standard height, whose file set stays as it always was.
+                if (g_meterH96 != kMeterHeightStd)
+                    stripShot(id, dpi, 0.6f, MeterStyle::VuSilver, L"silver_glass60", atag);
             }
 #endif
             if (!stripOnly) {

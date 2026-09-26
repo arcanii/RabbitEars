@@ -337,6 +337,14 @@ The three size routes as ONE mechanism plus a window:
   checks every scaling (147 columns at worst, at 120 dp); Standard / Large and the Scope trace are
   byte-identical. The render tool fills a Bitrate history first at non-standard heights, and the bench
   always — BOTH changed what their numbers mean for Bitrate (a full dial): compare like with like.
+- **One size for needle meters, and meter labels** (the owner's asks after seeing Large, 2026-09-26): in the
+  own row and the bridge a needle look takes its instrument's natural width (`vuDialNaturalWidth` — the window
+  at its face's aspect with the face's own margins; `miniMeterNaturalWidth` adds the chrome), so identical
+  dials match; the cell looks keep their kind widths, the standard tray is untouched. Optional labels
+  (Settings ▸ Meters ▸ Meter labels) print each meter's short name under it in the own row and the bridge —
+  capitals, tracked out, the theme's muted text with a hairline shadow below-right (the key light is
+  above-left) — `Win32/ui/MeterLabels.{h,cpp}`; the skin strip prints them inside its animated frame.
+  `RabbitEarsRender --meter-height 50 --meter-labels` shows them (and a Silver strip).
 - Status and the exact TODO: Win32/HANDOVER.md, 0.2.21-dev item (3).
 
 Plus two things that would help: the **reference photos/mockups** (not in the repo), and more **real

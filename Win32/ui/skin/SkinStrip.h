@@ -27,7 +27,11 @@ bool initSkinStrip();
 // (r.left, r.top). `dst` MUST be child-clipped — a BeginPaint HDC, or GetDCEx with
 // DCX_CLIPCHILDREN — so the transport controls are excluded. Returns false on
 // failure (caller should GDI-fill the strip instead).
-bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi);
+// `overlay` (optional) draws on the rendered frame BEFORE it is blitted, in `dst`'s
+// coordinates, so what it draws (the meter labels, ui/MeterLabels.h) is part of every
+// animated frame rather than painted over one — no flicker.
+bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi, void (*overlay)(HDC dc, void* ctx) = nullptr,
+                    void* ctx = nullptr);
 
 // Phase 4b-2: render a per-skin neon "edge glow" for a dock gutter rect `r` (the thin
 // divider between panels) and BitBlt it into `dst` at (r.left, r.top). The bar's

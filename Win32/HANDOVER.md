@@ -80,8 +80,39 @@ mutation-tested, not re-reviewed). **Owner check — NOT yet run (copy `build\ch
 large, and a large bridge window: the Bitrate meter's dial fills edge to edge (give it ~30 s of playback at
 150 % — a full history); open the bridge DURING playback: its Bitrate graph matches the tray's at once.
 
-**Order for the next session:** (a) ✅ stage A + the Bitrate fix committed, NOT pushed — the owner's glance at the
-Bitrate meter (just above), then push (`git ls-remote` first — the mac team pushes to `main` too); (b) photoreal
+**Committed, NOT pushed — the commit after `6ffc91b`: needle meters at one size + meter labels (the owner's asks
+after seeing Large, 2026-09-26: *"should the meters all be the same size? We should have labels as an option"*).**
+The owner chose:
+(a) in the own row (Large and up) and the bridge ONLY, a needle look (VU needle, Silver VU) takes its
+instrument's natural width — `VuDial.h` `vuDialWindow` (the two face builders now place their window by it) /
+`vuDialNaturalWidth`, `MiniMeter.h` `miniMeterNaturalWidth` (+ `meterChromePx`, `vuFaceOf` moved there) — so
+identical dials are identical (before, each frame took its kind's width: uneven faceplate, and the narrow Signal
+meter squeezed a Silver dial); cell looks keep their kind widths; the standard tray untouched. A side effect:
+at Extra large the four needle meters now fit where Spectrum used to drop. (b) Labels: Settings ▸ Meters ▸ Meter
+labels (id 2038, setting `meter_labels`, OFF by default) — each meter's short name (Spectrum / Signal / Bitrate
+/ Frames / Data flow: the dialog's "Audio spectrum" / "Signal strength" were cut off under a Large needle meter)
+in capitals, tracked out, the theme's muted text + a hairline shadow below-right, in a 14-dp row under an own row
+(`MeterTray.h` `labelPx` through every own-row function: strip, cap, drag) and under the bridge's meters
+(`Win32/ui/MeterLabels.{h,cpp}`); none in the standard strip (no room), none under a hidden tank. The skin strip
+prints them INSIDE its animated frame (a new overlay callback on `skin::paintSkinStrip`, before the blit — no
+flicker); the plain strip after its fill. RabbitEarsRender: `--meter-labels`, needle looks at their own width at
+non-standard heights, a `silver_glass60` strip there. 4 i18n keys (643: MenuMeterLabels, MeterLabelSpectrum /
+Signal / Frames; Bitrate and Data flow reuse the dialog's). **Verified:** BOTH flags 0 warnings (OFF from a clean
+export of the tree); `--selftest` ALL PASS (**858** each — 4 new: the label row's geometry, the needle width's
+exact aspect/margins at every height and its pinned values; 6 mutations, all caught); the 56 standard renders
+byte-identical to `6ffc91b`'s, the classic build's 12 too. One adversarial review (no high; its medium — a
+hidden tank kept its "DATA FLOW" label, and right-click Hide did not relayout the strip — fixed; lows and nits
+acted on; the fixes built and verified, not re-reviewed). **Left:** with the bridge closed, the menu item shows
+no change at the standard height (labels need an own row) — no hint in the menu (BACKLOG); the owner: "labels not
+visible (this is ok)". **The owner's checks — ALL SIX PASSED (copy `build\check-0221-labels\`, 2026-09-26;
+screenshot: Large, four Silver VUs + labels):** (1) Large, four identical needle frames — *"Large meters good"*;
+(2) the labels on/off — *"Meter labels good"*; (3) the tank's right-click Hide takes its label, Show brings it
+back; (4) the bridge's labels follow a resize; (5) 日本語 and a skin switch with labels on; (6) the standard size
+as before. The owner then asked for the meters **touching (no gap)** — the next commit.
+
+**Order for the next session:** (a) ✅ stage A, the Bitrate fix and the labels / one-size work committed, NOT pushed
+— the owner's glance at a cell-look Bitrate meter at Extra large (the Bitrate fix's check, still not run: their
+tray is all VU now), then push (`git ls-remote` first — the mac team pushes to `main` too); (b) photoreal
 stage B — new selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's
 cost at size: a Tube Bitrate ~10–15 ms a frame at 120 dp), then stage C — skins as materials, skins driving meters
 (PHOTOREAL.md); (c) the cleanups (4) — multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise,
@@ -1648,8 +1679,9 @@ Paste this verbatim to start a fresh session with working context restored:
 >
 > **Tools that change how visual work is done:**
 > * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip | --strip-only] [--meter-height DP]
->   [--bench-paint]` renders every meter look, the tank and every skinned strip to PNG from the REAL paint
->   code, byte-reproducibly (the strip at any meter height, as layout() lays it out); `--bench-paint` times
+>   [--meter-labels] [--bench-paint]` renders every meter look, the tank and every skinned strip to PNG from
+>   the REAL paint code, byte-reproducibly (the strip at any meter height, as layout() lays it out — needle
+>   looks at their own width, a Silver strip too, and with `--meter-labels` the labels); `--bench-paint` times
 >   every look's per-frame tick+paint at 30/50/72/120 dp. Render before and after every visual change,
 >   byte-compare the unchanged ones, read the PNGs yourself, and hand the owner a labelled sheet (Pillow is
 >   installed). The "150dpi" sheets are 156 % scaling.

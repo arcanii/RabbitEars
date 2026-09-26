@@ -47,11 +47,8 @@ constexpr UINT kTimerMs = 33;  // ~30fps animation
 // the per-cell ramp pushes this many distinct colours through it.
 int dpx(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
-// The chrome band a meter reserves around its dial: a 1px themed FrameRect plus the rest of the
-// pad. Used for BOTH the content inset AND the glass mask's frame width, so the two can never
-// disagree — the bezel is painted exactly here, which is why it costs zero dial pixels at any DPI
-// and at any meter size (the tray meters are dp(30) tall; the Settings previews are dp(86)).
-int meterChromePx(UINT dpi) { return dpx(2, dpi); }
+// The chrome band a meter reserves around its dial is meterChromePx() (MiniMeter.h — the own row and
+// the bridge size needle meters with it too).
 
 COLORREF lerpCol(COLORREF a, COLORREF b, float t) {
     t = std::clamp(t, 0.0f, 1.0f);
@@ -324,8 +321,8 @@ float scalarLevel(const MiniMeterState* st) {
 // the same way the Tube look owns its phosphor glow. The palette drives what it sensibly can: `bg` IS
 // THE LAMP (the bulb's hue; CLR_INVALID, or black, is the face's own bulb — see MiniMeter.h), `high`
 // the red zone, and `accent` the needle. The STOCK accent resolves to the face's own black needle,
-// which both reference instruments have; any other accent is drawn exactly as picked.
-VuFace vuFaceOf(MeterStyle style) { return style == MeterStyle::VuSilver ? VuFace::Silver : VuFace::Backlit; }
+// which both reference instruments have; any other accent is drawn exactly as picked. (A look's face:
+// vuFaceOf, MiniMeter.h.)
 
 // What the needle reads, per kind. The printed scale is dB, so only SOUND is read in dB: the Spectrum
 // kind's level is the mean of SpectrumTap's bands, which are already logarithmic ((dBFS + 72) / 60),

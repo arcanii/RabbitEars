@@ -7,6 +7,7 @@
 #include "resource.h"
 #include "ui/BufferMeter.h"
 #include "ui/MainWindowInternal.h"
+#include "ui/MeterLabels.h"
 #include "ui/MeterTray.h"
 #include "ui/MiniMeter.h"
 #include "ui/Theme.h"
@@ -26,6 +27,7 @@ struct Bridge {
     HWND spectrum = nullptr, signal = nullptr, bitrate = nullptr, frames = nullptr, tank = nullptr;
     UINT dpi = 96;
     bool placing = false;  // SetWindowPlacement in progress: a DPI change then keeps the placed size
+    RECT labelRc[kMeterLabelSlots]{};  // where layoutBridge put each meter's label (empty = none)
 };
 
 Bridge* stateOf(HWND h) { return reinterpret_cast<Bridge*>(GetWindowLongPtrW(h, GWLP_USERDATA)); }
@@ -46,22 +48,23 @@ void pairs(const AppState* st, const Bridge* b, Pair out[5]) {
     out[4] = {st->bufferMeter, b->tank, !bufferMeterHidden(st->bufferMeter), kTrayTankW96};
 }
 
-// One row, left to right as in the tray, as tall as the window allows — the widths keep the tray's
-// proportions, scaled together, and shrink with the height when the row would not fit the width.
+// One row, left to right as in the tray, as tall as the window allows, with the labels' row under it
+// while the labels are on (MeterLabels.h). A needle look takes its instrument's own width
+// (miniMeterNaturalWidth — two meters of one face match), every other meter the tray's width for its kind,
+// scaled with the height; the row is as tall as it can be while it fits the width.
 void layoutBridge(HWND hwnd) {
     Bridge* b = stateOf(hwnd);
     if (!b || !g_st) return;
     RECT rc;
     GetClientRect(hwnd, &rc);
+    for (RECT& r : b->labelRc) r = RECT{};
     const int pad = dp(12, b->dpi), gap = dp(8, b->dpi), base = dp(kMeterHeightStd, b->dpi);
+    const int labelPx = meterLabelPx(g_st->meterLabels, b->dpi);
     Pair ps[5];
     pairs(g_st, b, ps);
-    int sumW = 0, n = 0;
+    int n = 0;
     for (const Pair& p : ps)
-        if (p.on && p.mine) {
-            sumW += dp(p.w96, b->dpi);
-            ++n;
-        }
+        if (p.on && p.mine) ++n;
     if (n == 0) {  // nothing on: nothing shown (not the last layout's meters, nor a paused tank at 0,0)
         for (const Pair& p : ps)
             if (p.mine) ShowWindow(p.mine, SW_HIDE);
@@ -69,34 +72,44 @@ void layoutBridge(HWND hwnd) {
         InvalidateRect(hwnd, nullptr, TRUE);
         return;
     }
-    const int availW = std::max(1, static_cast<int>(rc.right) - 2 * pad - gap * (n - 1));
-    const int availH = std::max(1, static_cast<int>(rc.bottom) - 2 * pad);
-    double scale = static_cast<double>(availH) / base;
-    scale = std::min(scale, static_cast<double>(availW) / sumW);
+    // Pair i's width at height h (0..3 the MiniMeters — ps[4] is the tank, never a needle).
+    auto widthAt = [&](int i, int h) {
+        if (i < 4 && ps[i].tray)
+            if (const int nw = miniMeterNaturalWidth(miniMeterStyle(ps[i].tray), h, b->dpi)) return nw;
+        return static_cast<int>(static_cast<double>(dp(ps[i].w96, b->dpi)) * h / base);
+    };
+    auto rowWidth = [&](int h) {
+        int total = gap * (n - 1);
+        for (int i = 0; i < 5; ++i)
+            if (ps[i].on && ps[i].mine) total += widthAt(i, h);
+        return total;
+    };
+    const int availW = std::max(1, static_cast<int>(rc.right) - 2 * pad);
     // No taller than the tray's own maximum (stage A): the fixed-pitch looks' cost grows with the area
     // (a Tube-look Bitrate meter at 120 dp: ~10 ms a frame at 100 % and 150 % scaling, ~15 ms at 115 % —
     // RabbitEarsRender --bench-paint). In pixels, so the rounding of dp() at this DPI cannot push it past
-    // trayDp(120).
-    scale = std::min(scale, static_cast<double>(trayDp(kMeterHeightMax, b->dpi)) / base);
-    const int h = std::max(1, static_cast<int>(base * scale));
-    int total = gap * (n - 1);
-    for (const Pair& p : ps)
-        if (p.on && p.mine) total += static_cast<int>(dp(p.w96, b->dpi) * scale);
-    int x = (static_cast<int>(rc.right) - total) / 2;
-    const int y = (static_cast<int>(rc.bottom) - h) / 2;
+    // trayDp(120). Then shorter, a pixel at a time, until the row fits the width (a needle's width can
+    // step back by a pixel as the height grows — its margins round — so this is a scan, not a formula).
+    int h = std::min(static_cast<int>(rc.bottom) - 2 * pad - labelPx, trayDp(kMeterHeightMax, b->dpi));
+    while (h > 1 && rowWidth(h) > availW) --h;
+    h = std::max(1, h);
+    int x = (static_cast<int>(rc.right) - rowWidth(h)) / 2;
+    const int y = (static_cast<int>(rc.bottom) - h - labelPx) / 2;
     HDWP dwp = BeginDeferWindowPos(n + 1);
     // The tank's sim runs only while it is shown here (a hidden tank pauses; it also un-hides one that its
     // own menu hid, once the tray shows the tank again).
     if (b->tank) bufferMeterSetHidden(b->tank, !ps[4].on);
-    for (const Pair& p : ps) {
+    for (int i = 0; i < 5; ++i) {
+        const Pair& p = ps[i];
         if (!p.mine) continue;
         if (!p.on) {
             if (dwp) dwp = DeferWindowPos(dwp, p.mine, nullptr, 0, 0, 0, 0,
                                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
             continue;
         }
-        const int w = static_cast<int>(dp(p.w96, b->dpi) * scale);
+        const int w = widthAt(i, h);
         if (dwp) dwp = DeferWindowPos(dwp, p.mine, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (labelPx > 0) b->labelRc[i] = RECT{x, y + h, x + w, y + h + labelPx};  // pair i == label slot i
         x += w + gap;
     }
     if (dwp) EndDeferWindowPos(dwp);
@@ -161,6 +174,7 @@ LRESULT CALLBACK BridgeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 bufferMeterSetHidden(g_st->bufferMeter, hidden);
                 if (g_st->db.isOpen()) g_st->db.setSetting(L"buffer_hidden", hidden ? L"1" : L"0");
                 if (g_bridge) layoutBridge(g_bridge);
+                if (g_st->meterLabels) layout(g_st->hwnd, g_st);  // the tray tank's label, in the strip
             });
             linkMirrors(nb);
             return 0;
@@ -176,6 +190,15 @@ LRESULT CALLBACK BridgeProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             GetClientRect(hwnd, &rc);
             FillRect(reinterpret_cast<HDC>(wParam), &rc, themeBrush(currentTheme().windowBg));
             return 1;
+        }
+        case WM_PAINT: {  // the meters paint themselves; the labels under them, while they are on
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            if (b)
+                for (int i = 0; i < kMeterLabelSlots; ++i)
+                    if (!IsRectEmpty(&b->labelRc[i])) paintMeterLabel(dc, b->labelRc[i], meterLabelText(i), b->dpi);
+            EndPaint(hwnd, &ps);
+            return 0;
         }
         case WM_GETMINMAXINFO: {
             const UINT d = b ? b->dpi : GetDpiForWindow(hwnd);
@@ -315,7 +338,9 @@ void meterBridgeRefreshTheme() {
 }
 
 void meterBridgeRefreshLanguage() {
-    if (g_bridge) SetWindowTextW(g_bridge, tr(i18n::StringId::MeterBridgeTitle).c_str());
+    if (!g_bridge) return;
+    SetWindowTextW(g_bridge, tr(i18n::StringId::MeterBridgeTitle).c_str());
+    InvalidateRect(g_bridge, nullptr, TRUE);  // the labels, in the new language (and its UI face)
 }
 
 }  // namespace mw

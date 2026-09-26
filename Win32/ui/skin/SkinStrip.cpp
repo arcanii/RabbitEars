@@ -321,7 +321,7 @@ bool initSkinStrip() {
     return true;
 }
 
-bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi) {
+bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi, void (*overlay)(HDC dc, void* ctx), void* ctx) {
     (void)dpi;  // strip renders at device pixels; kept for API symmetry
     if (!g_strip) return false;
     const UINT w = static_cast<UINT>(std::max<LONG>(r.right - r.left, 1));
@@ -332,6 +332,13 @@ bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi) {
     if (FAILED(g_strip->tex.As(&surf))) return false;
     HDC src = nullptr;
     if (FAILED(surf->GetDC(FALSE, &src)) || !src) return false;
+    if (overlay) {
+        // In dst's coordinates: the frame's (0, 0) is dst's (r.left, r.top).
+        POINT org{};
+        SetViewportOrgEx(src, -r.left, -r.top, &org);
+        overlay(src, ctx);
+        SetViewportOrgEx(src, org.x, org.y, nullptr);
+    }
     BitBlt(dst, r.left, r.top, static_cast<int>(w), static_cast<int>(h), src, 0, 0, SRCCOPY);
     surf->ReleaseDC(nullptr);
     return true;

@@ -139,6 +139,9 @@ Open items this work left or found (none blocking):
 > - **Tall Bitrate dials show older peaks flat-topped** after the rate drops: the adaptive ceiling halves every
 >   ~11 s (0.985 a sample at the default Breathing, ~4 samples a second), and a 120-dp dial spans 28–37 s. By
 >   design (the same happened within 64 samples); revisit if it reads wrong on stage B's looks.
+> - **Meter labels at the standard height:** Settings ▸ Meters ▸ Meter labels shows nothing while the tray is
+>   Standard and the bridge is closed (labels need an own row — Large and up); the menu does not say so (the key's
+>   translator comment does). A grayed hint, as for the drag, would cost one i18n key.
 > - **Render tool, tall heights:** the Silver VU's "VU" legends can differ by a few anti-aliased pixels
 >   between runs (GDI+ text — seen once in four runs at 120 dp, 150 dpi). Compare tall renders from one run,
 >   or mask the legends; the standard-height renders never draw them (always byte-identical).

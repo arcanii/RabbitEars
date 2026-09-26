@@ -701,6 +701,11 @@ enum class StringId {
     MeterBridgeTitle,
     // --- Menu ---
     MenuMeterSetup,
+    MenuMeterLabels,
+    // --- Transport ---
+    MeterLabelSpectrum,
+    MeterLabelSignal,
+    MeterLabelFrames,
     Count  // sentinel — MUST stay last
 };
 

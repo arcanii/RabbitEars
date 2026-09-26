@@ -236,6 +236,7 @@ void layout(HWND hwnd, AppState* st) {
     const int W = rc.right, H = rc.bottom;
     const int cmdH = cmdBarH(st->dpi);
     st->stripEdge = RECT{};  // set below when the strip is shown
+    for (RECT& r : st->meterLabelRc) r = RECT{};  // ...and the meters' labels, when an own row shows them
 
     // Batch every child move into one atomic BeginDeferWindowPos pass so a resize /
     // splitter drag repaints the panes together instead of child-by-child. The
@@ -325,9 +326,11 @@ void layout(HWND hwnd, AppState* st) {
     // historical 50-dp strip with the meters inline; taller, the meters in a row of their own above the
     // transport row — no taller than half the video panel, and the tank fitting the row's width.
     // (At least 1 px each: 0 means "no limit" — a panel squeezed to nothing must not get the full height.)
+    // With the meter labels on, an own row has a row for them under the meters (the standard strip none).
+    const int labelPx = meterLabelPx(st->meterLabels, st->dpi);
     const StripMetrics strip =
         stripMetrics(st->meterHeightDp, st->dpi, std::max(1, static_cast<int>(vidR.bottom - vidR.top) / 2),
-                     std::max(1, vidW - 2 * dp(10, st->dpi)));
+                     std::max(1, vidW - 2 * dp(10, st->dpi)), labelPx);
     const int sHt = strip.stripPx;
     st->stripPx = strip.stripPx;
 
@@ -448,22 +451,39 @@ void layout(HWND hwnd, AppState* st) {
     // its own row; disabled/too-narrow meters are hidden (also via the deferred pass, so show/move stay
     // atomic).
     const int meterLeft = strip.ownRow ? static_cast<int>(vidR.left) : x;
+    // The labels' row, under an own row of meters (MeterLabels.h): one cell per meter shown, its width.
+    const bool labels = strip.ownRow && labelPx > 0;
+    auto labelCell = [&](int slot, int left, int w) {
+        if (labels) st->meterLabelRc[slot] = RECT{left, meterY + meterH, left + w, meterY + meterH + labelPx};
+    };
     int rightX = vidR.right - pad;
     placeMove(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
+    // (A hidden tank keeps its place but shows nothing — no label under it either, as in the bridge.)
+    if (!bufferMeterHidden(st->bufferMeter)) labelCell(kMeterLabelTank, rightX - bufMeterW, bufMeterW);
     rightX -= bufMeterW + pad;
-    struct MtrSlot { HWND h; bool on; int w; };
+    // A meter's width: its kind's (the tray's proportions, scaled with the height) — except a needle look in
+    // an own row, which takes its instrument's own width (miniMeterNaturalWidth), so two meters of one face
+    // match and none is squeezed. Inline, every meter keeps its kind's width: the standard tray as it was.
+    auto widthOf = [&](HWND h, int kind) {
+        if (strip.ownRow && h)
+            if (const int nw = miniMeterNaturalWidth(miniMeterStyle(h), meterH, st->dpi)) return nw;
+        return trayWidth(kTrayMeterW96[kind], meterH, st->dpi);
+    };
+    struct MtrSlot { HWND h; bool on; int kind; };
     const MtrSlot slots[] = {  // rightmost first
-        {st->meterFrames, st->showFrames, trayWidth(kTrayMeterW96[3], meterH, st->dpi)},
-        {st->meterBitrate, st->showBitrate, trayWidth(kTrayMeterW96[2], meterH, st->dpi)},
-        {st->meterSignal, st->showSignal, trayWidth(kTrayMeterW96[1], meterH, st->dpi)},
-        {st->meterSpectrum, st->showSpectrum, trayWidth(kTrayMeterW96[0], meterH, st->dpi)},
+        {st->meterFrames, st->showFrames, 3},
+        {st->meterBitrate, st->showBitrate, 2},
+        {st->meterSignal, st->showSignal, 1},
+        {st->meterSpectrum, st->showSpectrum, 0},
     };
     for (const MtrSlot& s : slots) {
-        if (s.on && rightX - s.w >= meterLeft + pad) {
+        const int w = widthOf(s.h, s.kind);
+        if (s.on && rightX - w >= meterLeft + pad) {
             if (s.h && dwp)
-                dwp = DeferWindowPos(dwp, s.h, nullptr, rightX - s.w, meterY, s.w, meterH,
+                dwp = DeferWindowPos(dwp, s.h, nullptr, rightX - w, meterY, w, meterH,
                                      kSwpMove | SWP_SHOWWINDOW);
-            rightX -= s.w + dp(6, st->dpi);
+            labelCell(s.kind, rightX - w, w);
+            rightX -= w + dp(6, st->dpi);
         } else if (s.h && dwp) {
             dwp = DeferWindowPos(dwp, s.h, nullptr, 0, 0, 0, 0,
                                  kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);

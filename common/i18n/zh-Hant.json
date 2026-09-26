@@ -637,5 +637,9 @@
   "MenuMeterSizeHint": "或拖曳列的上邊緣",
   "MenuMeterBridge": "量表橋接視窗",
   "MeterBridgeTitle": "量表 — RabbitEars",
-  "MenuMeterSetup": "量表設定…"
+  "MenuMeterSetup": "量表設定…",
+  "MenuMeterLabels": "量表標籤",
+  "MeterLabelSpectrum": "頻譜",
+  "MeterLabelSignal": "訊號",
+  "MeterLabelFrames": "影格"
 }

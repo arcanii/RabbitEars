@@ -15,13 +15,15 @@
 // a real VU window has a fixed aspect, and a card stretched across a 4:1 tray meter stops reading as
 // one. Detail comes in by size — the tray's 26-40 px dials get light, arc, red zone, ticks, needle
 // and lamp; numerals and legends appear only where they would be at least ~5 px tall (the Settings
-// preview; a bigger tray, if the meters ever grow). Text smaller than that is a smudge, not detail.
+// preview; a Large or taller tray, the meter bridge). Text smaller than that is a smudge, not detail.
 //
 // Split in two because only the needle moves: buildVuDialStatic renders everything else ONCE per
 // (spec, size) — faceplate, card, lamp field, scale, legends, the unlit PEAK lamp — and the meter
 // blits that cache every frame and adds drawVuDialNeedle on top.
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -61,6 +63,34 @@ struct VuDialLayout {
 float    vuDialPositionOfDb(VuFace face, float db);
 float    vuDialFullScaleDb(VuFace face);   // the scale's top mark: +5 (Backlit), +6 (Silver)
 COLORREF vuDialNeedleColour(VuFace face);  // the face's own needle — what the stock Accent means
+
+// Where a face puts its window in a dial `w` x `h` px — both builders place it here: margins of a fixed
+// share of the height, the window at the face's own aspect (measured off the reference photos), centred,
+// and shrunk to fit a dial too narrow for it.
+constexpr float kVuBacklitAspect = 1.62f;  // the Backlit card, 1.62:1
+constexpr float kVuSilverAspect = 2.45f;   // the Silver window, 2.45:1
+struct VuDialWindow {
+    int mx = 0, my = 0;        // the faceplate either side of the window, and above / below it
+    int openW = 0, openH = 0;  // the window
+};
+inline VuDialWindow vuDialWindow(VuFace face, int w, int h) {
+    const bool silver = face == VuFace::Silver;
+    VuDialWindow r;
+    r.my = std::max(1, static_cast<int>(std::lround(h * (silver ? 0.07f : 0.08f))));
+    r.openH = h - 2 * r.my;
+    r.mx = std::max(1, static_cast<int>(std::lround(h * (silver ? 0.09f : 0.10f))));
+    r.openW = std::min(w - 2 * r.mx,
+                       static_cast<int>(std::lround(r.openH * (silver ? kVuSilverAspect : kVuBacklitAspect))));
+    return r;
+}
+
+// The dial width at which the window has its own proportions: the margins either side and no more
+// faceplate, nothing squeezed. The meters of the own row and the meter bridge are sized by it (through
+// miniMeterNaturalWidth), so two meters of one face match whatever their kind.
+inline int vuDialNaturalWidth(VuFace face, int h) {
+    const VuDialWindow r = vuDialWindow(face, 1 << 20, h);
+    return r.openW + 2 * r.mx;
+}
 
 // Render the frame-invariant layer into `px` (w*h, 0x00RRGGBB, row-major, top-down — the same layout
 // as a 32bpp top-down DIB) and fill `lay`. `dpi` only picks the thinnest line it will draw.

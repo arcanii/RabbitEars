@@ -16,6 +16,8 @@
 
 #include <windows.h>
 
+#include "ui/VuDial.h"  // VuFace, vuDialNaturalWidth — the needle looks' faces
+
 namespace rabbitears {
 
 enum class MeterKind { Spectrum, Signal, Bitrate, Frames };
@@ -33,6 +35,25 @@ enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver };
 // The two needle looks share everything but their face: `bg` is their lamp, they have no cells, and
 // the Meters dialog gives them the same knobs.
 inline bool isVuLook(MeterStyle s) { return s == MeterStyle::Vu || s == MeterStyle::VuSilver; }
+inline VuFace vuFaceOf(MeterStyle s) { return s == MeterStyle::VuSilver ? VuFace::Silver : VuFace::Backlit; }
+
+// The chrome band a meter reserves around its dial: a 1px themed FrameRect plus the rest of the
+// pad. Used for BOTH the content inset AND the glass mask's frame width, so the two can never
+// disagree — the bezel is painted exactly here, which is why it costs zero dial pixels at any DPI
+// and at any meter size (the standard tray's meters are dp(30) tall, taller ones up to dp(120); the
+// Settings previews are dp(86)).
+inline int meterChromePx(UINT dpi) { return MulDiv(2, static_cast<int>(dpi), 96); }
+
+// The width (px) a meter `meterPx` tall takes when its look has a width of its own — a needle look: its
+// instrument at the face's own proportions (vuDialNaturalWidth) inside the meter's chrome — else 0, and
+// it fills whatever width its kind gets (the cell looks, Scope). The own meter row (layout()) and the
+// meter bridge size needle meters by it, so two meters of one face match whatever their kind; the
+// standard tray keeps every meter at its kind's width, as it always has.
+inline int miniMeterNaturalWidth(MeterStyle style, int meterPx, UINT dpi) {
+    const int chrome = meterChromePx(dpi), h = meterPx - 2 * chrome;
+    if (!isVuLook(style) || h < 8) return 0;  // drawVu draws nothing in a dial under 8 px
+    return vuDialNaturalWidth(vuFaceOf(style), h) + 2 * chrome;
+}
 
 // Fully customizable per-meter colour palette. The roles map onto the "how much is
 // lit" math so every look can honour them. `bg == CLR_INVALID` means "follow the theme's

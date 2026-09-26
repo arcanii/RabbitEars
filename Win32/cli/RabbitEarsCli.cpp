@@ -43,6 +43,7 @@
 #include "ui/DockLayout.h"
 #include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
+#include "ui/MiniMeter.h"  // Win32/ui — only its header-inline needle width (the CLI links no GUI code)
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
 #include "ui/VuLamp.h"
@@ -935,6 +936,56 @@ int selftest() {
                "meter tray: the Bitrate history (" + std::to_string(kBitrateHistory) +
                    " samples) outlasts the widest meter's columns (" + std::to_string(mostCols) + " at " +
                    std::to_string(mostPct) + " %)");
+        // Meter labels (ui/MeterLabels.h): an own row gains a row for them under the meters (14 dp — 21 px at
+        // 150 %), and the edge drag and the height cap count it; off (0), every number is the one above. The
+        // standard strip has no room and gets none.
+        const int lab = meterLabelPx(true, 144);
+        const StripMetrics largeLab = stripMetrics(kMeterHeightLarge, 144, 0, 0, lab);
+        expect(lab == 21 && meterLabelPx(false, 144) == 0 && largeLab.ownRow && largeLab.stripPx == 186 &&
+                   largeLab.meterPx == 75 && stripMetrics(kMeterHeightStd, 144, 0, 0, lab).stripPx == 75 &&
+                   stripMetrics(kMeterHeightLarge, 144, 0, 0, 0).stripPx == 165,
+               "meter labels: an own row gains the labels' row under the meters; the standard strip none");
+        expect(meterHeightForStripPx(186, 144, lab) == 50 && meterHeightForDrag(166, false, 144, lab) == 30 &&
+                   meterHeightForDrag(167, false, 144, lab) == 37 && maxMeterHeightDp(144, 150, 0, lab) == 30 &&
+                   maxMeterHeightDp(144, 150, 0) == 40 && !stripMetrics(kMeterHeightMax, 144, 150, 0, lab).ownRow,
+               "meter labels: the edge drag and the height cap count the labels' row");
+    }
+
+    out("== Needle meters' own width (own row + bridge; ui/VuDial.h, ui/MiniMeter.h) ==\n");
+    {
+        // At its own width a face's window has exactly its aspect and exactly its margins either side, at
+        // every dial height, and a pixel narrower squeezes it — the builders place the window by the same
+        // vuDialWindow, so this is where the face is drawn.
+        bool exact = true;
+        std::string where;
+        for (VuFace face : {VuFace::Backlit, VuFace::Silver}) {
+            const float aspect = face == VuFace::Silver ? kVuSilverAspect : kVuBacklitAspect;
+            for (int h = 8; h <= 600; ++h) {
+                const int w = vuDialNaturalWidth(face, h);
+                const VuDialWindow win = vuDialWindow(face, w, h), narrower = vuDialWindow(face, w - 1, h);
+                const bool ok = win.openW == static_cast<int>(std::lround(win.openH * aspect)) &&
+                                w - win.openW == 2 * win.mx && narrower.openW == win.openW - 1;
+                if (!ok && exact) {
+                    exact = false;
+                    where = std::string(face == VuFace::Silver ? "Silver" : "Backlit") + " h=" + std::to_string(h);
+                }
+            }
+        }
+        expect(exact, "needle width: the window at its own aspect, the face's margins either side, no more" +
+                          (exact ? std::string() : " (first miss: " + where + ")"));
+        // A meter: the instrument plus the meter's chrome — at Large, 150 %, Silver 163 px and Backlit 112 px
+        // (the kind widths are 280 / 145 / 240 / 180 px: the Signal meter squeezed a Silver dial, the others
+        // padded it). A look without a width of its own answers 0, and so does a dial too small to draw.
+        const int silver = miniMeterNaturalWidth(MeterStyle::VuSilver, 75, 144),
+                  backlit = miniMeterNaturalWidth(MeterStyle::Vu, 75, 144);
+        const bool othersZero = miniMeterNaturalWidth(MeterStyle::Led, 75, 144) == 0 &&
+                                miniMeterNaturalWidth(MeterStyle::Tube, 75, 144) == 0 &&
+                                miniMeterNaturalWidth(MeterStyle::Lcd, 75, 144) == 0 &&
+                                miniMeterNaturalWidth(MeterStyle::Scope, 75, 144) == 0 &&
+                                miniMeterNaturalWidth(MeterStyle::VuSilver, 12, 144) == 0;
+        expect(silver == 163 && backlit == 112 && othersZero,
+               "needle width: Silver " + std::to_string(silver) + " px, Backlit " + std::to_string(backlit) +
+                   " px at Large, 150 %; the other looks and a too-small dial 0");
     }
 
     out("== TV Guide rows + coverage (buildGuideModel) ==\n");

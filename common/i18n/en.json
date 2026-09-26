@@ -637,5 +637,9 @@
   "MenuMeterSizeHint": "Or drag the strip's top edge",
   "MenuMeterBridge": "Meter bridge window",
   "MeterBridgeTitle": "Meters — RabbitEars",
-  "MenuMeterSetup": "Meter setup…"
+  "MenuMeterSetup": "Meter setup…",
+  "MenuMeterLabels": "Meter labels",
+  "MeterLabelSpectrum": "Spectrum",
+  "MeterLabelSignal": "Signal",
+  "MeterLabelFrames": "Frames"
 }

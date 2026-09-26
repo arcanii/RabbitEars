@@ -86,6 +86,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/VodSync.cpp
     ui/CatchupSync.cpp
     ui/MeterBridge.cpp
+    ui/MeterLabels.cpp
     ui/Dialogs.cpp
     ui/Splash.cpp
     ui/VlcEngine.cpp
@@ -137,7 +138,8 @@ if(RABBITEARS_BUILD_GUI)
     render/RabbitEarsRender.cpp
     ui/MiniMeter.cpp
     ui/VuDial.cpp
-    ui/BufferMeter.cpp)
+    ui/BufferMeter.cpp
+    ui/MeterLabels.cpp)
   target_include_directories(RabbitEarsRender PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_BINARY_DIR}/generated")

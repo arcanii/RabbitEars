@@ -25,6 +25,7 @@
 #include "db/Database.h"         // Database, Channel
 #include "ui/DockLayout.h"       // DockLayout, Panel, DockSide, kPanelCount
 #include "ui/MeterTray.h"        // kMeterHeightStd (AppState), the strip's geometry
+#include "ui/MeterLabels.h"      // kMeterLabelSlots (AppState) — the labels under the meters
 #include "ui/VideoGrid.h"        // ViewMode
 #include "ui/VlcEngine.h"        // VlcEngine
 #include "ui/VlcPlayer.h"        // VlcPlayer
@@ -105,6 +106,7 @@ constexpr int ID_METER_SIZE_STD = 2034;     // the standard 30-dp tray (checked 
 constexpr int ID_METER_SIZE_LARGE = 2035;   // 50 dp
 constexpr int ID_METER_SIZE_XLARGE = 2036;  // 72 dp
 constexpr int ID_METER_BRIDGE = 2037;       // check: the pop-out meter bridge window (ui/MeterBridge)
+constexpr int ID_METER_LABELS = 2038;       // check: each meter's name under it (ui/MeterLabels); in the same gap
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
 constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
@@ -467,6 +469,11 @@ struct AppState {
     int         meterHeightDp = kMeterHeightStd;
     int         stripPx = 0;  // 0 until the first layout()
     RECT        stripEdge{};
+    // Meter labels (setting meter_labels; ui/MeterLabels.h): each meter's name printed under it in the own
+    // row — where layout() put each label (slot order: MeterKind, then the tank; empty = none shown). The
+    // strip's paints print them.
+    bool        meterLabels = false;
+    RECT        meterLabelRc[kMeterLabelSlots]{};
     bool        draggingStrip = false;
     bool        stripDragMoved = false;  // past the 3-dp threshold: only then is the height changed
     int         stripDragStartDp = 0;  // the height when the drag began (a cancelled drag restores it)
@@ -500,6 +507,11 @@ int navWidth(UINT dpi);
 int stripHeight(const AppState* st);
 // Settings ▸ Meters sizes and the strip-edge drag's end: clamp, persist (meter_height), relayout.
 void setMeterHeight(AppState* st, int heightDp);
+// Settings ▸ Meters ▸ Meter labels: persist (meter_labels), relayout the strip and the bridge.
+void setMeterLabels(AppState* st, bool on);
+// The strip's labels (st->meterLabelRc) into `dc` — ctx is the AppState. The shape of paintSkinStrip's
+// overlay, so an animated skin strip prints them in every frame; the plain strip calls it after its fill.
+void paintStripLabels(HDC dc, void* ctx);
 // End a strip-edge drag without keeping it (fullscreen / video only toggled mid-drag): the height it
 // began with, not saved. No-op when no drag is on.
 void cancelStripDrag(AppState* st);

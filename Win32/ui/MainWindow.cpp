@@ -136,6 +136,21 @@ void setMeterHeight(AppState* st, int heightDp) {
     RedrawWindow(st->hwnd, &sr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
 }
 
+void setMeterLabels(AppState* st, bool on) {
+    st->meterLabels = on;
+    st->db.setSetting(L"meter_labels", on ? L"1" : L"0");
+    layout(st->hwnd, st);  // an own row gains (or loses) the labels' row
+    const RECT sr = stripRect(st);
+    RedrawWindow(st->hwnd, &sr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
+    meterBridgeRelayout(st);  // ...and so do the bridge's meters
+}
+
+void paintStripLabels(HDC dc, void* ctx) {
+    const AppState* st = static_cast<const AppState*>(ctx);
+    for (int i = 0; i < kMeterLabelSlots; ++i)
+        if (!IsRectEmpty(&st->meterLabelRc[i])) paintMeterLabel(dc, st->meterLabelRc[i], meterLabelText(i), st->dpi);
+}
+
 // A strip-edge drag ended (released, or capture lost): keep and save the height reached — unless the
 // strip ends as tall as it began (a click, or a drag the window's limits never let show: with the
 // height capped, a drag that changed nothing visible must not save the capped value over the chosen one).
@@ -434,6 +449,7 @@ void createChildren(HWND hwnd, AppState* st) {
     bufferMeterSetOnHiddenChanged(st->bufferMeter, [st](bool hidden) {
         st->db.setSetting(L"buffer_hidden", hidden ? L"1" : L"0");
         meterBridgeRelayout(st);  // the bridge shows the tank only while the tray does
+        if (st->meterLabels) layout(st->hwnd, st);  // ...and its label goes (or comes back) with it
     });
     registerMiniMeterClass(hInst);
     st->meterSpectrum = createMiniMeter(hwnd, hInst, ID_METER_SPECTRUM, st->dpi, MeterKind::Spectrum);
@@ -725,6 +741,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto v = st->db.getSetting(L"meter_frames")) st->showFrames = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_height"); v && !v->empty())
                     st->meterHeightDp = clampMeterHeightDp(_wtoi(v->c_str()));
+                if (auto v = st->db.getSetting(L"meter_labels")) st->meterLabels = (*v == L"1");
                 {  // per-meter look + palette (Settings → Meters…)
                     HWND mtr[4] = {st->meterSpectrum, st->meterSignal, st->meterBitrate,
                                    st->meterFrames};
@@ -864,10 +881,15 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 bool gdiStrip = true;
 #ifdef RABBITEARS_THEME_ENGINE
                 // hdc is BeginPaint's DC — child-clipped by WS_CLIPCHILDREN, so the underglow
-                // lands behind the transport controls, exactly like the plain fill would.
-                if (st->skinStripOn && skin::paintSkinStrip(hdc, strip, st->dpi)) gdiStrip = false;
+                // lands behind the transport controls, exactly like the plain fill would. The
+                // meter labels ride in the frame (the animation tick below prints them too).
+                if (st->skinStripOn && skin::paintSkinStrip(hdc, strip, st->dpi, paintStripLabels, st))
+                    gdiStrip = false;
 #endif
-                if (gdiStrip) FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
+                if (gdiStrip) {
+                    FillRect(hdc, &strip, themeBrush(currentTheme().windowBg));
+                    paintStripLabels(hdc, st);
+                }
                 paintGutters(st, hdc);  // dock dividers live in the gaps between panels
             }
             // Active-pane indicator (Split/PIP) — drawn in ALL modes, including fullscreen /
@@ -1054,7 +1076,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
                     RECT strip{vidR.left, vidR.bottom - stripHeight(st), vidR.right, vidR.bottom};
                     if (HDC dc = GetDCEx(hwnd, nullptr, DCX_CACHE | DCX_CLIPCHILDREN)) {
-                        skin::paintSkinStrip(dc, strip, st->dpi);
+                        skin::paintSkinStrip(dc, strip, st->dpi, paintStripLabels, st);
                         ReleaseDC(hwnd, dc);
                     }
                 }
@@ -1078,12 +1100,14 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // switch), then the height that fills it — no more than the video panel allows NOW (half
                 // of it, the tank fitting its width; a window resized mid-drag counts).
                 const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
+                const int labelPx = meterLabelPx(st->meterLabels, st->dpi);  // an own row's labels' row
                 const int maxDp =
                     maxMeterHeightDp(st->dpi, std::max(1, static_cast<int>(vidR.bottom - vidR.top) / 2),
-                                     std::max(1, static_cast<int>(vidR.right - vidR.left) - 2 * dp(10, st->dpi)));
+                                     std::max(1, static_cast<int>(vidR.right - vidR.left) - 2 * dp(10, st->dpi)),
+                                     labelPx);
                 const int stripPx = st->stripDragStripPx + (st->stripDragY - pt.y);
                 const bool ownRowNow = stripHeight(st) > dp(kStripMinDp, st->dpi);
-                const int want = std::min(meterHeightForDrag(stripPx, ownRowNow, st->dpi), maxDp);
+                const int want = std::min(meterHeightForDrag(stripPx, ownRowNow, st->dpi, labelPx), maxDp);
                 if (want != st->meterHeightDp) {
                     st->meterHeightDp = want;
                     layout(hwnd, st);

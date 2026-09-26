@@ -1939,7 +1939,7 @@
     "id": "MeterNameBitrate",
     "cluster": "DialogMeters",
     "placeholders": [],
-    "comment": ""
+    "comment": "Meters dialog: the bitrate meter's row name. Also its label, printed in capitals under the meter when Settings > Meters > Meter labels is on — keep it short."
   },
   {
     "id": "MeterNameFrameRate",
@@ -2011,7 +2011,7 @@
     "id": "MeterDataFlowCheckbox",
     "cluster": "DialogMeters",
     "placeholders": [],
-    "comment": ""
+    "comment": "Meters dialog checkbox: show the buffer (data-flow) tank. Also its label, printed in capitals under the tank when Settings > Meters > Meter labels is on — keep it short."
   },
   {
     "id": "MeterDataFlowNote",
@@ -4150,5 +4150,29 @@
     "cluster": "Menu",
     "placeholders": [],
     "comment": "Meters submenu, the first item: opens the Meters setup dialog (which meters show, their looks, colours and feel)."
+  },
+  {
+    "id": "MenuMeterLabels",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, a check item: print each meter's name (Spectrum, Signal, Bitrate, Frames, Data flow) under it. They show when the meters have a row of their own (Large and up) and in the meter bridge window; the standard tray has no room for them."
+  },
+  {
+    "id": "MeterLabelSpectrum",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": "Meter label (Settings > Meters > Meter labels), printed in capitals under the audio spectrum meter. Keep it SHORT: it must fit under a small meter."
+  },
+  {
+    "id": "MeterLabelSignal",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": "Meter label, printed in capitals under the signal-strength (stream health) meter. Keep it SHORT."
+  },
+  {
+    "id": "MeterLabelFrames",
+    "cluster": "Transport",
+    "placeholders": [],
+    "comment": "Meter label, printed in capitals under the frame-rate meter. Keep it SHORT."
   }
 ]

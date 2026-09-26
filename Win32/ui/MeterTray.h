@@ -33,6 +33,8 @@ constexpr int kTrayTankW96 = 115;
 constexpr int kStripMinDp = 50;     // the transport row — and the whole strip at the standard height
 constexpr int kMeterRowTopDp = 10;  // own row: the space above the meters (the transport row's own
                                     // 10 dp above its buttons separates them below)
+constexpr int kMeterLabelDp = 14;   // own row: the labels' row under the meters, while they are on
+                                    // (Settings ▸ Meters ▸ Meter labels; ui/MeterLabels.h)
 
 inline int trayDp(int v, UINT dpi) { return MulDiv(v, static_cast<int>(dpi), 96); }
 
@@ -60,17 +62,21 @@ struct StripMetrics {
 // The standard strip: 50 dp, the meters 30 dp and inline.
 inline StripMetrics standardStrip(UINT dpi) { return {trayDp(kStripMinDp, dpi), trayDp(kMeterHeightStd, dpi), false}; }
 
-// Own row: the strip's height around meters `meterPx` tall.
-inline int ownRowStripPx(int meterPx, UINT dpi) {
-    return trayDp(kMeterRowTopDp, dpi) + meterPx + trayDp(kStripMinDp, dpi);
+// The labels' row under an own row of meters: kMeterLabelDp while the labels are on, else nothing. Every
+// own-row function below takes it as `labelPx` (0 = no labels, the default: the strip as before).
+inline int meterLabelPx(bool labelsOn, UINT dpi) { return labelsOn ? trayDp(kMeterLabelDp, dpi) : 0; }
+
+// Own row: the strip's height around meters `meterPx` tall (and their labels' row).
+inline int ownRowStripPx(int meterPx, UINT dpi, int labelPx = 0) {
+    return trayDp(kMeterRowTopDp, dpi) + meterPx + labelPx + trayDp(kStripMinDp, dpi);
 }
 
 // The tallest meters (px) the limits allow in an own row: `maxStripPx` > 0 caps the strip (half the
 // video panel — the video keeps the rest), `maxRowPx` > 0 is the row's width, which the tank (always
 // shown) must fit. 0 = no limit (INT_MAX-like).
-inline int ownRowMeterLimitPx(UINT dpi, int maxStripPx, int maxRowPx) {
+inline int ownRowMeterLimitPx(UINT dpi, int maxStripPx, int maxRowPx, int labelPx = 0) {
     int limit = 1 << 30;
-    if (maxStripPx > 0) limit = std::min(limit, maxStripPx - ownRowStripPx(0, dpi));
+    if (maxStripPx > 0) limit = std::min(limit, maxStripPx - ownRowStripPx(0, dpi, labelPx));
     if (maxRowPx > 0)  // the tank's width at h is ~ w115 * h / w30: floor, so it never exceeds the row
         limit = std::min(limit, maxRowPx * trayDp(kMeterHeightStd, dpi) / trayDp(kTrayTankW96, dpi));
     return limit;
@@ -78,8 +84,8 @@ inline int ownRowMeterLimitPx(UINT dpi, int maxStripPx, int maxRowPx) {
 
 // The tallest meter height (dp) whose own-row strip fits the limits whole (for the edge drag's range);
 // kMeterHeightStd when not even one taller than the standard fits.
-inline int maxMeterHeightDp(UINT dpi, int maxStripPx, int maxRowPx) {
-    const int limit = ownRowMeterLimitPx(dpi, maxStripPx, maxRowPx);
+inline int maxMeterHeightDp(UINT dpi, int maxStripPx, int maxRowPx, int labelPx = 0) {
+    const int limit = ownRowMeterLimitPx(dpi, maxStripPx, maxRowPx, labelPx);
     if (limit <= trayDp(kMeterHeightStd, dpi)) return kMeterHeightStd;
     int d = std::min(kMeterHeightMax, MulDiv(limit, 96, static_cast<int>(dpi)));
     while (d > kMeterHeightStd && trayDp(d, dpi) > limit) --d;
@@ -90,20 +96,20 @@ inline int maxMeterHeightDp(UINT dpi, int maxStripPx, int maxRowPx) {
 // height (maxMeterHeightDp), so what is shown is always a height the edge drag can reach and keep. When
 // the limits leave no room for meters taller than the standard ones, it is the standard strip (so a
 // small window keeps the tray it always had).
-inline StripMetrics stripMetrics(int meterDp, UINT dpi, int maxStripPx = 0, int maxRowPx = 0) {
+inline StripMetrics stripMetrics(int meterDp, UINT dpi, int maxStripPx = 0, int maxRowPx = 0, int labelPx = 0) {
     meterDp = clampMeterHeightDp(meterDp);
     const StripMetrics standard = standardStrip(dpi);
     if (meterDp <= kMeterHeightStd) return standard;
-    const int d = std::min(meterDp, maxMeterHeightDp(dpi, maxStripPx, maxRowPx));
+    const int d = std::min(meterDp, maxMeterHeightDp(dpi, maxStripPx, maxRowPx, labelPx));
     if (d <= kMeterHeightStd) return standard;
     const int meterPx = trayDp(d, dpi);
-    return {ownRowStripPx(meterPx, dpi), meterPx, true};
+    return {ownRowStripPx(meterPx, dpi, labelPx), meterPx, true};
 }
 
 // The edge drag: the meter height for a strip `stripPx` tall — the standard one until the strip is tall
 // enough for an own row of meters taller than it (so the edge stays put, then follows the cursor).
-inline int meterHeightForStripPx(int stripPx, UINT dpi) {
-    const int meterPx = stripPx - ownRowStripPx(0, dpi);
+inline int meterHeightForStripPx(int stripPx, UINT dpi, int labelPx = 0) {
+    const int meterPx = stripPx - ownRowStripPx(0, dpi, labelPx);
     if (meterPx <= trayDp(kMeterHeightStd, dpi)) return kMeterHeightStd;
     return clampMeterHeightDp(MulDiv(meterPx, 96, static_cast<int>(dpi)));
 }
@@ -113,11 +119,12 @@ inline int meterHeightForStripPx(int stripPx, UINT dpi) {
 // past the smallest own-row strip to switch, and from an own row as far below it to switch back — so a
 // cursor jittering on the boundary does not flip the whole layout every pixel.
 constexpr int kDragHysteresisDp = 6;
-inline int meterHeightForDrag(int stripPx, bool ownRowNow, UINT dpi) {
-    const int enterPx = ownRowStripPx(trayDp(kMeterHeightStd + 1, dpi), dpi);  // the smallest own-row strip
+inline int meterHeightForDrag(int stripPx, bool ownRowNow, UINT dpi, int labelPx = 0) {
+    // the smallest own-row strip
+    const int enterPx = ownRowStripPx(trayDp(kMeterHeightStd + 1, dpi), dpi, labelPx);
     const int hyst = trayDp(kDragHysteresisDp, dpi);
     if (ownRowNow ? stripPx < enterPx - hyst : stripPx < enterPx + hyst) return kMeterHeightStd;
-    return std::max(kMeterHeightStd + 1, meterHeightForStripPx(stripPx, dpi));
+    return std::max(kMeterHeightStd + 1, meterHeightForStripPx(stripPx, dpi, labelPx));
 }
 
 }  // namespace rabbitears

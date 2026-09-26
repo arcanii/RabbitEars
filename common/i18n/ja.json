@@ -637,5 +637,9 @@
   "MenuMeterSizeHint": "またはバーの上端をドラッグ",
   "MenuMeterBridge": "メーターブリッジ ウィンドウ",
   "MeterBridgeTitle": "メーター — RabbitEars",
-  "MenuMeterSetup": "メーターの設定…"
+  "MenuMeterSetup": "メーターの設定…",
+  "MenuMeterLabels": "メーターのラベル",
+  "MeterLabelSpectrum": "スペクトラム",
+  "MeterLabelSignal": "信号",
+  "MeterLabelFrames": "フレーム"
 }

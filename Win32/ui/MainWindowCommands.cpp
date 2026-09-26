@@ -2079,7 +2079,7 @@ void applyLanguageChange(AppState* st) {
     //    the grid's formats without changing metrics; the guide re-does its formats + caption.
     channelGridUpdateDpi(st->grid, st->dpi);
     if (epgGuideOpen()) epgGuideRefreshLanguage();
-    meterBridgeRefreshLanguage();  // its caption
+    meterBridgeRefreshLanguage();  // its caption and its meters' labels (the strip's repaint in 6.)
     // 6. Repaint the rest, synchronously (RDW_UPDATENOW, as applyActiveSkin does) so the switch lands
     //    in one frame with no flash of stale text: the command bar (Add-Playlist label + wordmark in
     //    the new face) and any owner-drawn surface that reads tr() at paint (e.g. the empty-PIP hint).
@@ -2176,7 +2176,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 tr(StringId::MenuVideoOnly).c_str());  // carries the \tCtrl+Shift+V accelerator hint
 
     // Meters submenu (photoreal stage A): the setup dialog | the three sizes (a height set by dragging
-    // the strip's edge checks none of them) and how to get any other | the pop-out meter bridge.
+    // the strip's edge checks none of them) and how to get any other | the labels, the pop-out bridge.
     HMENU metersMenu = CreatePopupMenu();
     AppendMenuW(metersMenu, MF_STRING, ID_METERS_SETUP, tr(StringId::MenuMeterSetup).c_str());
     AppendMenuW(metersMenu, MF_SEPARATOR, 0, nullptr);
@@ -2188,6 +2188,8 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
                 ID_METER_SIZE_XLARGE, tr(StringId::MenuMeterSizeXLarge).c_str());
     AppendMenuW(metersMenu, MF_STRING | MF_GRAYED, 0, tr(StringId::MenuMeterSizeHint).c_str());
     AppendMenuW(metersMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(metersMenu, MF_STRING | (st->meterLabels ? chk : 0u), ID_METER_LABELS,
+                tr(StringId::MenuMeterLabels).c_str());
     AppendMenuW(metersMenu, MF_STRING | (meterBridgeOpen() ? chk : 0u), ID_METER_BRIDGE,
                 tr(StringId::MenuMeterBridge).c_str());
 
@@ -2413,6 +2415,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_METER_BRIDGE:
             toggleMeterBridge(st);
+            break;
+        case ID_METER_LABELS:
+            setMeterLabels(st, !st->meterLabels);
             break;
         case ID_SYSTEM_SETTINGS:
             onSystemSettings(st);

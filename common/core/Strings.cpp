@@ -700,6 +700,11 @@ constexpr std::array<const char*, N> kEn = {{
     "Meters — RabbitEars",  // MeterBridgeTitle
     // --- Menu ---
     "Meter setup…",  // MenuMeterSetup
+    "Meter labels",  // MenuMeterLabels
+    // --- Transport ---
+    "Spectrum",  // MeterLabelSpectrum
+    "Signal",  // MeterLabelSignal
+    "Frames",  // MeterLabelFrames
 }};
 
 // 日本語
@@ -1390,6 +1395,11 @@ constexpr std::array<const char*, N> kJa = {{
     "メーター — RabbitEars",  // MeterBridgeTitle
     // --- Menu ---
     "メーターの設定…",  // MenuMeterSetup
+    "メーターのラベル",  // MenuMeterLabels
+    // --- Transport ---
+    "スペクトラム",  // MeterLabelSpectrum
+    "信号",  // MeterLabelSignal
+    "フレーム",  // MeterLabelFrames
 }};
 
 // 繁體中文
@@ -2080,6 +2090,11 @@ constexpr std::array<const char*, N> kZhHant = {{
     "量表 — RabbitEars",  // MeterBridgeTitle
     // --- Menu ---
     "量表設定…",  // MenuMeterSetup
+    "量表標籤",  // MenuMeterLabels
+    // --- Transport ---
+    "頻譜",  // MeterLabelSpectrum
+    "訊號",  // MeterLabelSignal
+    "影格",  // MeterLabelFrames
 }};
 
 // 繁體中文（香港）
@@ -2770,6 +2785,11 @@ constexpr std::array<const char*, N> kZhHK = {{
     "量表 — RabbitEars",  // MeterBridgeTitle
     // --- Menu ---
     "量表設定…",  // MenuMeterSetup
+    "量表標籤",  // MenuMeterLabels
+    // --- Transport ---
+    "頻譜",  // MeterLabelSpectrum
+    "訊號",  // MeterLabelSignal
+    "影格",  // MeterLabelFrames
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

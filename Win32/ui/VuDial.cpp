@@ -190,14 +190,12 @@ void setupGraphics(Gdiplus::Graphics& g) {
 // ---- the Backlit face -----------------------------------------------------------------------------
 // Proportions are fractions of the card height H, measured off the reference: a 1.62:1 card, the
 // scale's crown at ~0.43H with the numerals above it, "VU" at ~0.7H, PEAK in the top-right corner.
-constexpr float kBacklitAspect = 1.62f;
+// (The card's aspect and margins: vuDialWindow, VuDial.h.)
 
 void buildBacklit(const VuDialSpec& spec, int w, int h, float minLine, std::vector<uint32_t>& px,
                   VuDialLayout& lay) {
-    const int my = std::max(1, static_cast<int>(std::lround(h * 0.08f)));
-    const int openH = h - 2 * my;
-    const int mx = std::max(1, static_cast<int>(std::lround(h * 0.10f)));
-    const int openW = std::min(w - 2 * mx, static_cast<int>(std::lround(openH * kBacklitAspect)));
+    const VuDialWindow win = vuDialWindow(VuFace::Backlit, w, h);
+    const int my = win.my, openH = win.openH, openW = win.openW;
     if (openH < 6 || openW < 8) return;
     const int ox = (w - openW) / 2, oy = my;
     const float H = static_cast<float>(openH), W = static_cast<float>(openW);
@@ -348,14 +346,12 @@ void buildBacklit(const VuDialSpec& spec, int w, int h, float minLine, std::vect
 }
 
 // ---- the Silver face ------------------------------------------------------------------------------
-constexpr float kSilverAspect = 2.45f;
+// (The window's aspect and margins: vuDialWindow, VuDial.h.)
 
 void buildSilver(const VuDialSpec& spec, int w, int h, float minLine, std::vector<uint32_t>& px,
                  VuDialLayout& lay) {
-    const int my = std::max(1, static_cast<int>(std::lround(h * 0.07f)));
-    const int openH = h - 2 * my;
-    const int mx = std::max(1, static_cast<int>(std::lround(h * 0.09f)));
-    const int openW = std::min(w - 2 * mx, static_cast<int>(std::lround(openH * kSilverAspect)));
+    const VuDialWindow win = vuDialWindow(VuFace::Silver, w, h);
+    const int my = win.my, openH = win.openH, openW = win.openW;
     if (openH < 6 || openW < 8) return;
     const int ox = (w - openW) / 2, oy = my;
     const float H = static_cast<float>(openH);
