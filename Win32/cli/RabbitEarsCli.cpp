@@ -38,6 +38,7 @@
 #include "platform/Encoding.h"
 #include "platform/UrlRedact.h"
 #include "ui/DockLayout.h"
+#include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
 #include "ui/VuLamp.h"
@@ -855,6 +856,248 @@ int selftest() {
             expect(titles(d) == L"Special" && d[0].snippet.find(L"\x02" L"Doctor\x03") != std::wstring::npos,
                    "search/reuse: a word right after a curly quote is found AND marked");
         }
+    }
+
+    out("== TV Guide rows + coverage (buildGuideModel) ==\n");
+    {
+        const std::wstring gpath = dir + L"\\guide_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((gpath + sfx).c_str());
+        const long long now = 1'800'000'000;
+        auto ch = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url, int chno = -1,
+                     Channel::Kind kind = Channel::Kind::Live) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            c.chno = chno;
+            c.kind = kind;
+            return c;
+        };
+        auto pr = [](const wchar_t* cid, long long s, long long e, const wchar_t* t) {
+            Programme p;
+            p.channelId = cid;
+            p.startUtc = s;
+            p.stopUtc = e;
+            p.title = t;
+            p.descr = std::wstring(L"about ") + t;
+            return p;
+        };
+        Database gdb;
+        expect(gdb.open(gpath), "guide: a fresh DB opens");
+        // A: has a guide link. Two feeds of one channel, where channel number, insertion order and
+        // name disagree about which comes first (channel number decides — channelsByPlaylist's
+        // order); a film carrying a guide id; a channel the guide has nothing for; one with no id.
+        const long long pa = gdb.addPlaylist(L"A", L"http://a", true, 1000, L"http://a/epg");
+        gdb.bulkInsertChannels(pa, {ch(L"CNN HD", L"CNN.us@HD", L"http://s/a1", 9),
+                                    ch(L"CNN SD", L"cnn.us@SD", L"http://s/a2", 5),
+                                    ch(L"A Film", L"movie.xx", L"http://s/a3", -1, Channel::Kind::Movie),
+                                    ch(L"BBC", L"BBC.uk", L"http://s/a4"),
+                                    ch(L"Quiet", L"none.xx", L"http://s/a5"),
+                                    ch(L"Plain", L"", L"http://s/a6")},
+                               1000);
+        // B: no guide link; one of its ids is on A's guide. C: disabled, with a guide of its own.
+        const long long pb = gdb.addPlaylist(L"B", L"http://b", true, 1000);
+        gdb.bulkInsertChannels(pb, {ch(L"Local", L"local.xx", L"http://s/b1"),
+                                    ch(L"Zed", L"zzz.xx", L"http://s/b2")},
+                               1000);
+        const long long pc = gdb.addPlaylist(L"C", L"http://c", true, 1000, L"http://c/epg");
+        gdb.bulkInsertChannels(pc, {ch(L"Hidden", L"dis.xx", L"http://s/c1")}, 1000);
+        expect(gdb.bulkInsertProgrammes(pa, {pr(L"cnn.us", now + 3600, now + 7200, L"Late"),
+                                             pr(L"cnn.us", now - 600, now + 3600, L"Early"),
+                                             pr(L"cnn.us", now - 90000, now - 86400, L"Yesterday"),  // out of the window
+                                             pr(L"bbc.uk", now, now + 1800, L"Football"),
+                                             pr(L"movie.xx", now, now + 1800, L"Film Guide"),
+                                             pr(L"zzz.xx", now, now + 1800, L"Zed Show"),
+                                             pr(L"other.xx", now, now + 1800, L"Nobody's")},
+                                        now) == 7,
+               "guide: A's guide stored");
+        expect(gdb.bulkInsertProgrammes(pc, {pr(L"dis.xx", now, now + 1800, L"Disabled Show")}, now) == 1,
+               "guide: C's guide stored");
+        gdb.setPlaylistEnabled(pc, false);
+
+        // The join's channel list is channelsByPlaylist's live, id-carrying channels, in its order.
+        auto viaList = [&](long long pid) {
+            std::vector<std::pair<std::wstring, std::wstring>> v;
+            for (const auto& c : gdb.channelsByPlaylist(pid))
+                if (!c.tvgId.empty() && c.kind == Channel::Kind::Live) v.emplace_back(c.name, c.tvgId);
+            return v;
+        };
+        std::map<long long, std::vector<std::pair<std::wstring, std::wstring>>> viaQuery;
+        long long lastPid = -1;
+        bool grouped = true;  // each playlist's channels arrive together, playlists in id order
+        for (const auto& c : gdb.liveGuideChannels()) {
+            if (c.playlistId < lastPid) grouped = false;
+            lastPid = c.playlistId;
+            viaQuery[c.playlistId].emplace_back(c.name, c.tvgId);
+        }
+        expect(grouped && viaQuery[pa] == viaList(pa) && viaQuery[pb] == viaList(pb) &&
+                   viaQuery[pc] == viaList(pc) && viaQuery[pa].size() == 4,
+               "guide: liveGuideChannels = channelsByPlaylist's live channels with an id, same order");
+
+        const GuideModel m = buildGuideModel(gdb, now);
+        std::wstring got;
+        for (const auto& r : m.rows) {
+            got += (got.empty() ? L"" : L" | ") + r.channelName + L" [" + r.channelId + L"]:";
+            for (const auto& p : r.programmes) got += L" " + p.title;
+        }
+        expect(got == L"BBC [BBC.uk]: Football | CNN SD [cnn.us@SD]: Early Late",
+               "guide: rows by name; the lower channel number names a shared id; films, the disabled "
+               "playlist and the out-of-window show left out (got " + utf8FromWide(got) + ")");
+        expect(!m.rows.empty() && m.rows[0].programmes[0].descr == L"about Football",
+               "guide: a programme's description reaches its block");
+        const GuideCoverage& cv = m.coverage;
+        expect(cv.valid && cv.withId == 5 && cv.shown == 2 && cv.noProgrammes == 1 && cv.inNoLinkPlaylists == 2 &&
+                   cv.guideUnmatched == 2,
+               "guide: coverage — 5 ids, 2 shown, 1 without programmes, 2 in the unlinked playlist, "
+               "2 guide channels matching none (the film's and other.xx; zzz.xx is B's) (got " +
+                   std::to_string(cv.withId) + "/" + std::to_string(cv.shown) + "/" +
+                   std::to_string(cv.noProgrammes) + "/" + std::to_string(cv.inNoLinkPlaylists) + "/" +
+                   std::to_string(cv.guideUnmatched) + ")");
+    }
+
+    out("== Guide stored on another connection (Win32's store worker) ==\n");
+    {
+        using State = Database::ProgrammeSearchState;
+        const std::wstring rpath = dir + L"\\store2_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((rpath + sfx).c_str());
+        const long long now = 1'800'000'000;
+        auto pr = [](const wchar_t* cid, long long s, const wchar_t* t) {
+            Programme p;
+            p.channelId = cid;
+            p.startUtc = s;
+            p.stopUtc = s + 600;
+            p.title = t;
+            return p;
+        };
+        auto titles = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + h.programme.title;
+            return s;
+        };
+        auto chan = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            return c;
+        };
+        Database ui;  // the app's connection: it searches, and remembers what it learnt about the index
+        expect(ui.open(rpath), "store2: the app's connection opens");
+        const long long p1 = ui.addPlaylist(L"P1", L"http://r1", true, 1000, L"http://r1/epg");
+        const long long p2 = ui.addPlaylist(L"P2", L"http://r2", true, 1000, L"http://r2/epg");
+        ui.bulkInsertChannels(p1, {chan(L"One", L"one.xx", L"http://r/1")}, 1000);
+        ui.bulkInsertChannels(p2, {chan(L"Two", L"two.xx", L"http://r/2")}, 1000);
+        expect(ui.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Alpha Show")}, now) == 1 &&
+                   ui.rebuildProgrammeIndex() && ui.refreshProgrammeSearchChannels() &&
+                   titles(ui.searchProgrammes(L"alpha", now, 50)) == L"Alpha Show" &&
+                   ui.programmeSearchState() == State::Ready,
+               "store2: the app's connection has searched, and remembers Ready");
+
+        Database worker;  // the store worker's connection
+        expect(worker.open(rpath, nullptr, /*upgradeSchema=*/false), "store2: a worker connection opens");
+        // The worker stores; its rebuild has not run yet. The new first row takes alpha's freed id, so
+        // the old index would answer "alpha" with Beta Show — through the app's connection, which was
+        // never told. It must notice the other connection's commit by itself.
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Beta Show"),
+                                                pr(L"one.xx", now + 900, L"Gamma Show")}, now) == 2,
+               "store2: the worker stores a new guide");
+        expect(ui.programmeSearchState() == State::NeedsRebuild,
+               "store2: the app's connection sees the index went stale (another connection committed)");
+        expect(ui.searchProgrammes(L"alpha", now, 50).empty() &&
+                   titles(ui.searchProgrammes(L"beta", now, 50)) == L"Beta Show",
+               "store2: meanwhile its search reads the new guide, not the stale index (LIKE)");
+        expect(worker.rebuildProgrammeIndex() && ui.programmeSearchState() == State::Ready &&
+                   titles(ui.searchProgrammes(L"show", now, 50)) == L"Beta Show|Gamma Show",
+               "store2: after the worker's rebuild, Ready again, and the index answers");
+
+        // An error that ends the whole transaction (here a trigger's RAISE(ROLLBACK); for real, a full
+        // disk) must stop the store: nothing after it may commit on its own in autocommit.
+        expect(worker.bulkInsertProgrammes(p2, {pr(L"two.xx", now + 200, L"Delta Show")}, now) == 1,
+               "store2: P2's guide stored");
+        {
+            sqlite3* raw = nullptr;
+            sqlite3_open(utf8FromWide(rpath).c_str(), &raw);
+            const bool made = raw && sqlite3_exec(raw,
+                                                  "CREATE TRIGGER boom BEFORE INSERT ON epg_programmes"
+                                                  " WHEN NEW.title='BOOM' BEGIN SELECT RAISE(ROLLBACK,'boom'); END",
+                                                  nullptr, nullptr, nullptr) == SQLITE_OK;
+            sqlite3_close(raw);
+            expect(made, "store2: (fixture) a trigger that rolls the transaction back");
+        }
+        const std::wstring refreshedBefore = worker.getSetting(L"epg_refreshed_" + std::to_wstring(p1)).value_or(L"");
+        const int boom = worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Zeta Show"),
+                                                          pr(L"one.xx", now + 200, L"BOOM"),
+                                                          pr(L"one.xx", now + 300, L"Eta Show")}, now + 5);
+        std::wstring p1Titles;
+        for (const auto& p : worker.programmesInWindow(p1, 0, now + 100000))
+            p1Titles += (p1Titles.empty() ? L"" : L"|") + p.title;
+        expect(boom == 0 && p1Titles == L"Beta Show|Gamma Show" &&
+                   worker.getSetting(L"epg_refreshed_" + std::to_wstring(p1)).value_or(L"") == refreshedBefore,
+               "store2: a rolled-back store leaves the old guide whole — no rows after it committed alone (got " +
+                   utf8FromWide(p1Titles) + ")");
+        expect(worker.lastError().find(L"boom") != std::wstring::npos,
+               "store2: and says why (lastError)");
+        expect(worker.bulkInsertProgrammes(p2, {pr(L"two.xx", now + 400, L"Theta Show")}, now) == 1,
+               "store2: the connection is not left inside a transaction — the next store works");
+
+        // Failures that end only their STATEMENT must still roll the whole guide back: the old guide's
+        // DELETE, and the refresh-time write (a stamp left unchanged could match the old index's).
+        auto rawExec = [&](const char* sql) {
+            sqlite3* raw = nullptr;
+            sqlite3_open(utf8FromWide(rpath).c_str(), &raw);
+            const bool ok = raw && sqlite3_exec(raw, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+            sqlite3_close(raw);
+            return ok;
+        };
+        auto p1Now = [&]() {
+            std::wstring t;
+            for (const auto& p : worker.programmesInWindow(p1, 0, now + 100000)) t += (t.empty() ? L"" : L"|") + p.title;
+            return t;
+        };
+        expect(rawExec("CREATE TRIGGER nodel BEFORE DELETE ON epg_programmes WHEN OLD.title='Gamma Show'"
+                       " BEGIN SELECT RAISE(ABORT,'nodel'); END"),
+               "store2: (fixture) a DELETE that fails on its own");
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Kappa Show")}, now + 6) == 0 &&
+                   p1Now() == L"Beta Show|Gamma Show" && worker.lastError().find(L"nodel") != std::wstring::npos,
+               "store2: a failed DELETE stores nothing — no new rows on top of the old guide (got " +
+                   utf8FromWide(p1Now()) + ")");
+        expect(rawExec("DROP TRIGGER nodel") &&
+                   rawExec("CREATE TRIGGER noset BEFORE UPDATE ON settings WHEN NEW.key LIKE 'epg_refreshed_%'"
+                           " BEGIN SELECT RAISE(ABORT,'noset'); END"),
+               "store2: (fixture) a refresh-time write that fails on its own");
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Kappa Show")}, now + 7) == 0 &&
+                   p1Now() == L"Beta Show|Gamma Show" &&
+                   worker.getSetting(L"epg_refreshed_" + std::to_wstring(p1)).value_or(L"") == refreshedBefore &&
+                   worker.lastError().find(L"noset") != std::wstring::npos,
+               "store2: a failed refresh-time write stores nothing, and says why (got " + utf8FromWide(p1Now()) + ")");
+        expect(rawExec("DROP TRIGGER noset") &&
+                   rawExec("CREATE TRIGGER nomu BEFORE INSERT ON epg_programmes WHEN NEW.title='Mu Show'"
+                           " BEGIN SELECT RAISE(ABORT,'nomu'); END"),
+               "store2: (fixture) rows that fail on their own");
+        // Every row failing keeps what there was; SOME failing stores the rest and says why.
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Mu Show"),
+                                                pr(L"one.xx", now + 200, L"Mu Show")}, now + 8) == 0 &&
+                   p1Now() == L"Beta Show|Gamma Show" && worker.lastError().find(L"nomu") != std::wstring::npos,
+               "store2: a batch whose every row fails stores nothing — the old guide stays (got " +
+                   utf8FromWide(p1Now()) + ")");
+        const int partial = worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Mu Show"),
+                                                             pr(L"one.xx", now + 200, L"Nu Show")}, now + 9);
+        const std::wstring afterPartial = p1Now();  // (read first: expect's arguments have no set order)
+        expect(partial == 1 && afterPartial == L"Nu Show" && worker.lastError().find(L"nomu") != std::wstring::npos,
+               "store2: a row failing on its own is skipped, the rest stored, the failure named (got " +
+                   utf8FromWide(afterPartial) + ")");
+        expect(rawExec("DROP TRIGGER nomu"), "store2: (fixture) dropped");
+        // A playlist deleted while its guide downloaded: nothing lands — not even a refresh time.
+        const long long gone = 987654;
+        expect(worker.bulkInsertProgrammes(gone, {pr(L"one.xx", now + 100, L"Lambda Show")}, now) == 0 &&
+                   worker.bulkInsertProgrammes(gone, {}, now) == 0 &&
+                   !worker.getSetting(L"epg_refreshed_" + std::to_wstring(gone)).has_value() &&
+                   !worker.lastError().empty(),
+               "store2: a store for a deleted playlist lands nothing — not even a refresh time, even when empty");
+        // An empty feed for a real playlist IS stored — the old guide replaced by nothing — with no error.
+        expect(worker.bulkInsertProgrammes(p2, {}, now + 10) == 0 && worker.lastError().empty() &&
+                   worker.programmesInWindow(p2, 0, now + 100000).empty(),
+               "store2: an empty guide is stored (0, no error), as before");
     }
 
     out("== Channel search (schema v11, FTS5 + triggers) ==\n");
@@ -3636,6 +3879,92 @@ int epgSearchBench(const std::wstring& dbPath, std::vector<std::wstring> terms) 
     return rebuilt ? 0 : 1;
 }
 
+// The TV Guide's first open on a REAL library: opens `dbPath` — pass a COPY, never the live database
+// (opening it runs any schema upgrade) — and times what onEpgGuide's build runs, best of 3: the join's
+// channel query (liveGuideChannels), every enabled playlist's programme window, and the whole
+// buildGuideModel; plus, once, the channelsByPlaylist listing the build used before. Checks the two
+// agree for every enabled playlist — the same live, id-carrying channels in the same order — or the
+// guide's rows would name different channels. `nowUtc` 0 = the current time. Prints counts and
+// timings only — nothing from the library itself.
+int guideBench(const std::wstring& dbPath, long long nowUtc) {
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::time_point t0) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    };
+    auto fmt = [](double v) {
+        char b[32];
+        snprintf(b, sizeof b, "%.1f", v);
+        return std::string(b);
+    };
+    Database db;
+    std::wstring err;
+    const auto tOpen = Clock::now();
+    if (!db.open(dbPath, &err)) {
+        line(L"open failed: " + err);
+        return 1;
+    }
+    out("open (incl. any schema upgrade): " + fmt(ms(tOpen)) + " ms\n");
+    const long long now = nowUtc > 0 ? nowUtc : static_cast<long long>(time(nullptr));
+    std::vector<Playlist> enabled;
+    for (auto& pl : db.listPlaylists())
+        if (pl.enabled) enabled.push_back(pl);
+
+    double best = 1e9;
+    std::vector<Database::GuideChannel> chans;
+    for (int r = 0; r < 3; ++r) {
+        const auto t0 = Clock::now();
+        chans = db.liveGuideChannels();
+        best = std::min(best, ms(t0));
+    }
+    out("liveGuideChannels: " + std::to_string(chans.size()) + " channels in " + fmt(best) + " ms\n");
+
+    bool same = true;
+    size_t listed = 0;
+    const auto tList = Clock::now();
+    for (const auto& pl : enabled) {
+        std::vector<std::pair<std::wstring, std::wstring>> a, b;
+        for (const auto& c : db.channelsByPlaylist(pl.id)) {
+            ++listed;
+            if (!c.tvgId.empty() && c.kind == Channel::Kind::Live) a.emplace_back(c.name, c.tvgId);
+        }
+        for (const auto& c : chans)
+            if (c.playlistId == pl.id) b.emplace_back(c.name, c.tvgId);
+        if (a != b) {
+            same = false;
+            out("  playlist " + std::to_string(pl.id) + ": DIFFERENT (" + std::to_string(a.size()) + " via the list, " +
+                std::to_string(b.size()) + " via the query)\n");
+        }
+    }
+    out("channelsByPlaylist (the old way, all " + std::to_string(listed) + " rows, once): " + fmt(ms(tList)) +
+        " ms incl. the comparison\n");
+    out(std::string("same channels, same order: ") + (same ? "yes" : "NO") + "\n");
+
+    best = 1e9;
+    size_t progs = 0;
+    for (int r = 0; r < 3; ++r) {
+        const auto t0 = Clock::now();
+        progs = 0;
+        for (const auto& pl : enabled)
+            progs += db.programmesInWindow(pl.id, now - kGuideWindowPastSec, now + kGuideWindowAheadSec).size();
+        best = std::min(best, ms(t0));
+    }
+    out("programmesInWindow: " + std::to_string(progs) + " programmes in " + fmt(best) + " ms\n");
+
+    best = 1e9;
+    GuideModel m;
+    for (int r = 0; r < 3; ++r) {
+        const auto t0 = Clock::now();
+        m = buildGuideModel(db, now);
+        best = std::min(best, ms(t0));
+    }
+    size_t shown = 0;
+    for (const auto& row : m.rows) shown += row.programmes.size();
+    out("buildGuideModel: " + std::to_string(m.rows.size()) + " rows, " + std::to_string(shown) +
+        " programmes in " + fmt(best) + " ms\n");
+    outw(L"coverage: " + m.coverageLog + L"\n");
+    return same ? 0 : 1;
+}
+
 // Does a real-sized VOD import degrade the EXISTING live-TV UI? Win32/docs/XTREAM_VOD.md
 // calls this the epic's biggest risk and says to measure it BEFORE the sync ships: 43,599
 // movies is ~4x the owner's library, landing in the same `channels` table that already
@@ -3808,6 +4137,8 @@ int wmain(int argc, wchar_t** argv) {
         for (int i = 3; i < argc; ++i) terms.emplace_back(argv[i]);
         return epgSearchBench(argv[2], terms);
     }
+    if (argc >= 3 && std::wstring(argv[1]) == L"--guidebench")
+        return guideBench(argv[2], argc >= 4 ? _wtoi64(argv[3]) : 0);
     if (argc >= 2 && std::wstring(argv[1]) == L"--benchdb") {
         // Defaults are the owner's real numbers: 43,599 movies beside a 442-channel list.
         const int mv = argc >= 3 ? _wtoi(argv[2]) : 43599;
@@ -3840,6 +4171,8 @@ int wmain(int argc, wchar_t** argv) {
         "  RabbitEarsCli --tvgids [epg url|file]\n"
         "  RabbitEarsCli --epgsearch <db> [term...]  (programme search on a COPY of a real\n"
         "                                          library: upgrade, rebuild, search timings)\n"
+        "  RabbitEarsCli --guidebench <db> [now]  (the TV Guide's build on a COPY of a real\n"
+        "                                          library: its queries and the whole build)\n"
         "  RabbitEarsCli --benchdb [movies] [live]  (does a VOD import slow the live-TV UI?\n"
         "                                            defaults 43599 movies / 442 live)\n"
         "  RabbitEarsCli --xtream [url] [--raw]  (probe an Xtream provider; url defaults\n"

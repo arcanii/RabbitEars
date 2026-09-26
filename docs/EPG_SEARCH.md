@@ -39,10 +39,12 @@ adversarially reviewed against the code before the owner saw it; its corrections
   corner cell, in memory with ASCII-only case folding (`Win32/ui/EpgGuideControl.cpp`, `WM_CHAR`;
   typing works anywhere in the guide window). That corner cell is **painted, not an EDIT**, which is
   why the owner saw no caret.
-- `bulkInsertProgrammes` (`Database.cpp:1336`) replaces ONE playlist's guide wholesale inside one
+- `bulkInsertProgrammes` (`common/db/Database.cpp`) replaces ONE playlist's guide wholesale inside one
   `BEGIN IMMEDIATE` transaction; both platforms call it once per guide playlist, on the **UI thread**
   (Win32 `onEpgDone`; mac on the main queue, `MainWindowController.mm:3397–3408`). It and the playlist
   delete's `ON DELETE CASCADE` are the only writers of `epg_programmes` (grep, both platforms).
+  *(As of the design. Since 0.2.21-dev Win32 calls it on a worker's own connection — see "Keeping the
+  index true" below.)*
 - **FTS5 is not compiled into our SQLite** on either platform. The amalgamation (3.53.2) defines
   `SQLITE_CORE` (`sqlite3.c:26`), which compiles FTS5 out unless `SQLITE_ENABLE_FTS5` is set
   (`sqlite3.c:241080`); the root `CMakeLists.txt:81` `sqlite3` target sets only
@@ -172,9 +174,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS epg_fts_descr USING fts5(
   refresh**, after `onEpgDone` has stored every playlist ("Indexing the guide for search…"), not inside
   `bulkInsertProgrammes`, where N guide playlists would mean N full rebuilds; and (b) **before the first
   search of a burst of typing** when `programmeSearchState()` says `NeedsRebuild` ("Preparing search…").
+  - **As built since 0.2.21-dev:** (a) runs on Refresh Guide's store WORKER (`Win32/ui/EpgStore`), on its
+    own connection, after that worker's per-playlist stores — so the app's connection is no longer the
+    only writer of `epg_programmes`. Two changes keep search true across that: `programmeSearchState()`
+    forgets what it learnt whenever `PRAGMA data_version` moves (another connection committed — between
+    the worker's store and its rebuild the stamp no longer matches, and search answers with LIKE), and
+    `searchProgrammes` reads its stamp and both statements in ONE read snapshot. (b) is skipped while
+    that worker runs (`epgStoreRunning()`) — it is about to rebuild anyway.
 - **`programmeSearchState()`** compares the stamp (`COUNT` + `MAX(id)` + the settings: **7 ms** on the
   real guide) once, then remembers the answer until this object changes `epg_programmes`
-  (`bulkInsertProgrammes`, `deletePlaylist`) or is reopened. That one check covers the first search after
+  (`bulkInsertProgrammes`, `deletePlaylist`) or is reopened — and, since 0.2.21-dev, until ANOTHER
+  connection commits or checkpoints (`PRAGMA data_version`; see "As built" above). That one check covers the first search after
   upgrading (v10 created the tables empty and cleared any stamp), a playlist deleted (count changed), a
   refresh by an older build or by the mac app, and a failed rebuild. **Selftest-pinned**, including that
   a fresh connection reads a saved stamp as current (no rebuild per launch).

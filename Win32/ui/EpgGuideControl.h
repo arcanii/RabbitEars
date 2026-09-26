@@ -4,7 +4,7 @@
 // laid out along the time axis). A custom Direct2D control mirroring the device/
 // paint/scroll idioms of ChannelGridControl, but 2-D (horizontal time scroll + a
 // vertical channel scroll). It is a pure renderer over the rows it is handed —
-// MainWindow assembles them from the DB (programmesInWindow joined to channels).
+// the host builds them from the DB (buildGuideModel, ui/GuideModel.h).
 #pragma once
 
 #include <functional>
@@ -14,25 +14,9 @@
 
 #include <windows.h>
 
+#include "ui/GuideModel.h"  // GuideRow, GuideCoverage, the guide's time window
+
 namespace rabbitears {
-
-// The time window the host builds guide rows for, relative to "now" (MainWindowCommands onEpgGuide).
-// Shared so the guide can tell whether rebuilding its rows could ever bring a search result into them.
-constexpr long long kGuideWindowPastSec = 6 * 3600;    // a little history
-constexpr long long kGuideWindowAheadSec = 72 * 3600;  // three days ahead
-
-struct GuideProgramme {
-    std::wstring title;
-    std::wstring descr;         // shown when the block is clicked
-    long long    startUtc = 0;  // unix epoch seconds (UTC); rendered in local time
-    long long    stopUtc = 0;
-};
-
-struct GuideRow {
-    std::wstring                channelId;    // tvg-id — resolves to a recordable stream (may be empty)
-    std::wstring                channelName;
-    std::vector<GuideProgramme> programmes;  // sorted by startUtc
-};
 
 // One programme-search result as the guide lists it (the host converts Database::ProgrammeHit —
 // docs/EPG_SEARCH.md). Marked text wraps each match in U+0002 … U+0003.
@@ -46,20 +30,6 @@ struct GuideSearchHit {
                                // description's start
     long long    startUtc = 0, stopUtc = 0;
     bool         inTitle = false;
-};
-
-// What the toolbar's coverage line says — "Guide data for {shown} of {withId} channels with a guide
-// ID" — and the explanation a click on it opens. The host counts it while building the rows
-// (onEpgGuide), per enabled playlist — a channel in two playlists counts in each — and the parts add
-// up: withId = shown + inNoLinkPlaylists + noProgrammes.
-struct GuideCoverage {
-    bool valid = false;         // false = no coverage line
-    int  shown = 0;             // guide ids with a row (programmes in the window), per playlist
-    int  withId = 0;            // the live channels' distinct guide ids (normalised tvg-ids)
-    int  inNoLinkPlaylists = 0; // ids without a row, in playlists with no guide link
-    int  noProgrammes = 0;      // ids without a row, in playlists that HAVE a guide link
-    int  guideUnmatched = 0;    // the guide's channels (programmes in the window) matching NONE of
-                                // the user's channels, in any playlist
 };
 
 // The coverage line itself ("Guide data for N of M channels with a guide ID"), and the explanation

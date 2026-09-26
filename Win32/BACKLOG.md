@@ -45,17 +45,36 @@ Open items this work left or found (none blocking):
   (U+01A0–U+0233 bar Ș Ț) and U+1E00–U+1EF9 — are FOUND but left unmarked; the stroke letters (Ł, Ø …)
   fold here but not in FTS5 (`common/core/SearchFold.h` header). A LIKE-fallback result (1–2 typed
   characters) is marked accent-blind while LIKE matched accents exactly.
-- **Past programmes in search** are hidden (decision §7.4); with catch-up (below) they could come back
-  as playable results.
-- **The loading box is TOPMOST** and now stays up through the ~1 s UI-thread store, so if the owner
-  switches apps during that second it floats over them until the store ends. Cosmetic; the real fix is
-  storing off the UI thread (own connection — see "TV Guide off-thread" below).
+- ✅ **Past programmes in search** (hidden by decision §7.4) come back in 0.2.21-dev (uncommitted) on the
+  channels whose archive still holds them — "Already aired — catch-up", playable (catch-up, below).
+- ✅ **FIXED in 0.2.21-dev (committed 2026-09-26): the loading box floated over other apps** — for the WHOLE
+  refresh, not just the store (it is TOPMOST so it stays above the TV Guide window). Now MainWindow's
+  WM_ACTIVATEAPP drops it while another app is in front, as the PIP policy does; and the store itself is
+  off the UI thread (`Win32/ui/EpgStore`, HANDOVER "0.2.21-dev").
+- **Found by the 0.2.21 reviews, pre-existing, not fixed:** (a) a Refresh Guide result (WM_APP_EPG_DONE /
+  _STORED) that arrives while the user has a modal dialog open shows its own modal results box, whose
+  close re-enables the main window under the outer modal (`showInfoDialog`, Dialogs.cpp) — the
+  refresh's ~10 s download was always that window; (b) `applyPipTopmost` demotes with HWND_NOTOPMOST
+  alone, which puts the PIP at the top of the ordinary windows — possibly above the app just switched
+  to (the loading box now inserts itself below that app's window; the PIP could do the same, once the
+  owner has looked); (c) `deletePlaylist` is void and ignores its step result, so a delete that times
+  out behind another connection's write lock still reports "Playlist deleted".
 - **A second guide source** is what the calendar needs. Today: one `epg_url` per playlist, and
   `bulkInsertProgrammes` wipes the whole playlist's programmes on every refresh — a second source would
   need per-source rows (or merging) and a channel-id mapping (a third-party XMLTV rarely uses the
   provider's tvg-ids).
-- **Catch-up:** 298 of the owner's 15,345 live channels expose `tv_archive` (1–3 days) — past search
-  results could be made playable there. Not scoped.
+- ✅ **Catch-up — built in 0.2.21-dev (uncommitted; HANDOVER item (2), eight review rounds)**: 299 of the
+  owner's 15,345 live streams keep an archive (1–3 days). Left open, reviewed and noted:
+  - **Player events carry no stream generation** (pre-existing, found by the catch-up review, L2):
+    `VlcPlayer::handleVlcEvent` posts (event, pane) only, so an event the PREVIOUS stream fired after the
+    user started a new one — posted before the worker detached the old player's events — is handled as
+    the new stream's: a late Error marks the NEW channel dead (`setDeadStatus`), a late EndReached says
+    "Not in the archive" for the new catch-up. Sketch: a request counter bumped on the UI thread in
+    `play()`, carried in the Play command, stored by the worker after `doStop` detaches the old events,
+    packed into the event's LPARAM high 32 bits (x64/ARM64 only), dropped on the UI side when it is not
+    the pane's latest. Touches every channel's playback — its own reviewed change.
+  - **A catch-up restarts from its start** on a re-buffer (buffer slider), a PIP swap or split→single
+    (L3; films do the same) — a resume position would need the archive's own time base.
 - **Multi-URL `x-tvg-url`:** an M3U header may list several guide URLs comma-separated; stored as one
   `epg_url` it fails with "Invalid URL.". Not seen on the owner's playlists — unverified how common.
 - **libVLC noise:** an HLS FAST channel (`*.wurl.com`) logs `local stream N error: Cancellation (0x8)`
@@ -77,7 +96,26 @@ Open items this work left or found (none blocking):
   upgrade at 410k channels) — no mac code change needed; mac 0.2.17 (no FTS5) cannot write channels to
   a v11 database. `docs/CHANNEL_SEARCH.md`. Also new and additive: `distinctLiveGuideIds`,
   `liveGuideIds`, `countUncoveredChannelNames`, `channelSearchIndexed`, `open(…, upgradeSchema)`; and
-  `MainWindowController.mm`'s search comment (~line 1290, "triple-LIKE") is now stale.
+  `MainWindowController.mm`'s search comment (~line 1290, "triple-LIKE") is now stale. (5) **0.2.21-dev
+  changes `common/db` (MSVC-compiled only):** new `liveGuideChannels()` — mac's
+  `TvGuideWindowController buildRows` has the same 1.2 s `channelsByPlaylist` listing Win32 just
+  removed, AND joins films too (no `kind` filter, so a film carrying a tvg-id can name a guide row);
+  `programmeSearchState()` now re-checks when `PRAGMA data_version` moves; `searchProgrammes` runs in one
+  read transaction (skipped if the caller has one open); `bulkInsertProgrammes` keeps the old guide and
+  returns 0 when an error ends its transaction (it used to carry on in autocommit), when the DELETE, the
+  refresh-time write or the COMMIT fails, when every row fails, or when the playlist no longer exists —
+  and sets `lastError()` (0 with an EMPTY lastError = a guide with no valid programmes, stored, as before;
+  see its comment in Database.h). (6) **Catch-up (0.2.21-dev) is additive in `common/`:** a new table
+  `channel_archive` created on EVERY open (a mac build will create it too — empty, harmless); new
+  `XtreamClient` functions (`xtreamTimeshiftUrl`, `xtreamLiveStreamId`, `parseXtreamLiveArchive`,
+  `xtreamServerUtcOffset`, `XtreamAccount::timezone/serverLocalTime`); `Database::replaceChannelArchive`,
+  `channelArchiveDays`, `liveChannelUrls`, `GuideChannel::id/archiveDays`, `ProgrammeHit::archive*`,
+  and `searchProgrammes(…, bool withArchive = false, bool* truncatedPast = nullptr)` (defaults =
+  unchanged behaviour; with archive the aired block has its own limit, in one pass by a window function —
+  a subquery with explicit column aliases), `liveChannelUrls(pid, username = L"")`; the search's archive
+  pick is the LONGEST archive among a guide id's channels (`refreshProgrammeSearchChannels`). 14 i18n
+  keys. mac needs none of it; a mac catch-up would call those plus its own tz lookup (Win32 uses C++20
+  tzdb) and should mirror `Win32/ui/CatchupSync` (which zone to trust, when a list may replace flags).
 
 ---
 
@@ -574,6 +612,12 @@ resume-last-channel, named saved layouts, import/export favourites, Show-in-Guid
   lossless stream copy (`ts`/`mkv`/`mp4` mux, no re-encode).
 - **Background dead-link checker** — so "Hide unavailable" isn't purely passive: probe channels
   off-thread, write `dead_status`, throttle + cache. Pairs with the existing `setDeadStatus` DAO.
+- ✅ **RESOLVED in 0.2.21-dev (committed 2026-09-26) — without a thread.** The first open was 1.4 s on the owner's
+  guide; `RabbitEarsCli --guidebench` on a copy of the library showed 1.2 s of it was
+  `channelsByPlaylist` listing all 410,596 channels to find the 4,795 with a guide id — the "cheaper
+  first win" DID exist, on the channel side. `Database::liveGuideChannels()` (4.3 ms) brought the build to
+  225 ms; that is not worth an async open. The refresh's STORE, the other stall, is now on a worker
+  (`Win32/ui/EpgStore`). HANDOVER "0.2.21-dev" has the numbers. The history below is kept for context.
 - **⛔ TV Guide off-thread — DEFERRED, and the backlog's premise below is WRONG.** Two findings from
   the 0.2.14 investigation, both verified against the code and the live DB:
   1. **The "cheaper first win" described below does not exist.** `programmesInWindow` ALREADY bounds

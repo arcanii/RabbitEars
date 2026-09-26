@@ -1586,7 +1586,8 @@ HWND showLoadingDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstrin
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2;
     const int y = pr.top + ((pr.bottom - pr.top) - H) / 2;
-    // Topmost so it stays visible over the (large, non-topmost) TV Guide window during a fetch.
+    // Topmost so it stays visible over the (large, non-topmost) TV Guide window during a fetch — while
+    // RabbitEars is in front: MainWindow's WM_ACTIVATEAPP drops it to non-topmost meanwhile.
     HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, L"RabbitEarsLoading",
                                title.empty() ? tr(i18n::StringId::LoadingWindowTitle).c_str() : title.c_str(),
                                WS_POPUP | WS_CAPTION, x, y,
@@ -1621,7 +1622,7 @@ void updateLoadingDialog(HWND dlg, const std::wstring& message) {
     SetWindowTextW(msg, message.c_str());
     // Make sure the line is painted before returning (UpdateWindow flushes any update region the
     // SetWindowTextW left): a caller may set a line and then block the UI thread — the guide
-    // refresh's store runs on it — and the line has to be on screen before that.
+    // refresh's recording-rule pass runs on it — and the line has to be on screen before that.
     UpdateWindow(msg);
 }
 

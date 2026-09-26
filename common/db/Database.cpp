@@ -1490,20 +1490,43 @@ int Database::bulkInsertProgrammes(long long playlistId, const std::vector<Progr
                                    long long nowEpoch) {
     if (!db_) return 0;
     programmeIndexKnown_ = -1;  // whatever happens below, the search index must be re-checked
+    lastError_.clear();         // so a 0 below with no error means "no valid programmes", not a stale one
+    auto fail = [this]() {      // why, for lastError(); returning 0 then lets ~Tx roll everything back
+        lastError_ = wideFromUtf8(sqlite3_errmsg(db_));
+        return 0;
+    };
     Tx tx(db_);
-    if (!tx) return 0;  // contended writer: the guide was not replaced
+    if (!tx) return fail();  // contended writer: the guide was not replaced
+    {  // A playlist deleted while its guide downloaded gets nothing — not even a refresh time.
+        Stmt q(db_, "SELECT 1 FROM playlists WHERE id=?");
+        if (!q) return fail();
+        q.bindInt(1, playlistId);
+        if (!q.step()) {
+            lastError_ = L"no such playlist";
+            return 0;
+        }
+    }
+    // ⚠ Some errors end the WHOLE transaction, not just the statement (SQLITE_FULL, IOERR, NOMEM, a
+    // trigger's RAISE(ROLLBACK)): everything since BEGIN is undone — the DELETE included — and the
+    // connection is back in autocommit, where each INSERT after it would COMMIT ON ITS OWN, on top of
+    // the restored old guide. So a failed row is skipped only while the transaction is still open.
+    // Every other failure — the DELETE, the timestamp, every row — rolls the whole guide back.
     {  // A refresh replaces this playlist's guide wholesale — the feed is authoritative.
         Stmt del(db_, "DELETE FROM epg_programmes WHERE playlist_id=?");
-        if (del) { del.bindInt(1, playlistId); del.stepDone(); }
+        if (!del) return fail();
+        del.bindInt(1, playlistId);
+        if (del.stepDone() != SQLITE_DONE) return fail();
     }
     Stmt ins(db_,
              "INSERT INTO epg_programmes("
              "playlist_id,channel_id,start_utc,stop_utc,title,sub_title,descr,category,"
              "episode_num,icon_url) VALUES(?,?,?,?,?,?,?,?,?,?)");
-    if (!ins) return 0;
-    int n = 0;
+    if (!ins) return fail();
+    int n = 0, tried = 0;
+    std::wstring firstRowError;
     for (const Programme& p : programmes) {
         if (!p.isValid()) continue;
+        ++tried;
         ins.reset();
         ins.bindInt(1, playlistId);
         ins.bindText(2, p.channelId);
@@ -1515,11 +1538,30 @@ int Database::bulkInsertProgrammes(long long playlistId, const std::vector<Progr
         ins.bindText(8, p.category);
         ins.bindText(9, p.episodeNum);
         ins.bindText(10, p.iconUrl);
-        if (ins.stepDone() == SQLITE_DONE) ++n;
+        if (ins.stepDone() == SQLITE_DONE) {
+            ++n;
+            continue;
+        }
+        if (sqlite3_get_autocommit(db_)) return fail();  // the transaction is gone (above)
+        if (firstRowError.empty()) firstRowError = wideFromUtf8(sqlite3_errmsg(db_));
     }
-    // Record the refresh time so the UI can show "guide updated N ago" (part of the Tx).
-    setSetting(L"epg_refreshed_" + std::to_wstring(playlistId), std::to_wstring(nowEpoch));
-    if (!tx.commit()) return 0;  // rolled back: no programmes stored, and no refresh timestamp
+    // Not one row landed (e.g. the playlist was deleted meanwhile — each row fails its foreign key):
+    // keep the old guide rather than commit its DELETE and a refresh time for nothing.
+    if (tried > 0 && n == 0) {
+        lastError_ = firstRowError;
+        return 0;
+    }
+    {  // Record the refresh time so the UI can show "guide updated N ago" (part of the Tx). Not through
+       // setSetting, which reports nothing: without it the index stamp could match the old guide's.
+        Stmt q(db_, "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+        if (!q) return fail();
+        q.bindText(1, L"epg_refreshed_" + std::to_wstring(playlistId));
+        q.bindText(2, std::to_wstring(nowEpoch));
+        if (q.stepDone() != SQLITE_DONE) return fail();
+    }
+    if (!tx.commit()) return fail();  // rolled back: no programmes stored, and no refresh timestamp
+    if (n < tried) lastError_ = firstRowError;  // stored, but not all of it: say why the rest was not
     return n;
 }
 
@@ -1594,12 +1636,24 @@ std::wstring Database::programmeIndexStamp() {
     return s;
 }
 
+long long Database::dataVersion() {
+    Stmt q(db_, "PRAGMA data_version");
+    return (q && q.step()) ? q.intCol(0) : -1;
+}
+
 Database::ProgrammeSearchState Database::programmeSearchState() {
     if (!db_ || schemaVersion_ < 10) return ProgrammeSearchState::Unavailable;
+    // What was learnt holds only while no OTHER connection has committed since: PRAGMA data_version
+    // moves when one does (this connection's own commits leave it alone). Win32 stores a guide
+    // refresh on a worker's connection, and between that store's commit and its index rebuild's the
+    // index is stale — a remembered Ready would read it. Unreadable (-1): check every time.
+    const long long dv = dataVersion();
+    if (dv < 0 || dv != programmeIndexDataVersion_) programmeIndexKnown_ = -1;
     if (programmeIndexKnown_ < 0) {
         const std::wstring now = programmeIndexStamp();
         const auto saved = getSetting(L"epg_fts_stamp");
         programmeIndexKnown_ = (!now.empty() && saved && *saved == now) ? 1 : 0;
+        programmeIndexDataVersion_ = dv;
     }
     return programmeIndexKnown_ == 1 ? ProgrammeSearchState::Ready
                                      : ProgrammeSearchState::NeedsRebuild;
@@ -1608,20 +1662,36 @@ Database::ProgrammeSearchState Database::programmeSearchState() {
 bool Database::rebuildProgrammeIndex() {
     if (!db_ || schemaVersion_ < 10) return false;
     Tx tx(db_);
-    if (!tx) return false;  // contended writer: nothing changed, the old stamp still stands
+    if (!tx) {  // contended writer: nothing changed, the old stamp still stands
+        lastError_ = wideFromUtf8(sqlite3_errmsg(db_));
+        return false;
+    }
     if (!exec("INSERT INTO epg_fts_title(epg_fts_title) VALUES('rebuild')")) return false;
     if (!exec("INSERT INTO epg_fts_descr(epg_fts_descr) VALUES('rebuild')")) return false;
     const std::wstring stamp = programmeIndexStamp();  // same transaction: what was just indexed
-    if (stamp.empty()) return false;
+    if (stamp.empty()) {
+        lastError_ = L"could not read the index stamp: " + wideFromUtf8(sqlite3_errmsg(db_));
+        return false;
+    }
     {
         Stmt q(db_, "INSERT INTO settings(key,value) VALUES('epg_fts_stamp',?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value");
-        if (!q) return false;
-        q.bindText(1, stamp);
-        if (q.stepDone() != SQLITE_DONE) return false;
+        if (q) q.bindText(1, stamp);
+        if (!q || q.stepDone() != SQLITE_DONE) {
+            lastError_ = wideFromUtf8(sqlite3_errmsg(db_));
+            return false;
+        }
     }
-    if (!tx.commit()) return false;
+    // Read before COMMIT: inside this IMMEDIATE transaction no other connection can commit, and this
+    // connection's own commit does not move it — read after, another connection's commit in between
+    // would be absorbed into "current" unseen.
+    const long long dv = dataVersion();
+    if (!tx.commit()) {
+        lastError_ = wideFromUtf8(sqlite3_errmsg(db_));
+        return false;
+    }
     programmeIndexKnown_ = 1;
+    programmeIndexDataVersion_ = dv;
     return true;
 }
 
@@ -1649,8 +1719,8 @@ bool Database::refreshProgrammeSearchChannels() {
     // them through channelsByPlaylist took 1.1 s.
     if (!exec("BEGIN")) return false;
     // Per (playlist, id) keep the FIRST LIVE channel in channelsByPlaylist's own order — the one the
-    // guide's row join keeps (onEpgGuide's byBase.emplace, live channels only), so a result names and
-    // plays the same channel its guide row does.
+    // guide's row join keeps (Win32 buildGuideModel, through liveGuideChannels), so a result names the
+    // same channel, and carries the same tvg-id, as its guide row.
     const bool ok =
         exec("DELETE FROM temp.guide_channels") &&
         exec("INSERT INTO temp.guide_channels(playlist_id,cid,name,tvg_id)"
@@ -1690,6 +1760,26 @@ std::vector<std::wstring> Database::liveGuideIds() {
                     .c_str());
     if (!q) return out;
     while (q.step()) out.push_back(q.textCol(0));
+    return out;
+}
+
+std::vector<Database::GuideChannel> Database::liveGuideChannels() {
+    std::vector<GuideChannel> out;
+    if (!db_) return out;
+    // The unary + on kind keeps the planner on idx_channels_tvgid, as in distinctLiveGuideIds; without
+    // it, it walks every live row (idx_channels_live) or the playlist's rows to find the few with an
+    // id. After playlist_id, the ORDER BY is channelsByPlaylist's with its leading `kind` dropped
+    // (constant here) — keep the two in step, or the guide's rows name a different channel.
+    Stmt q(db_, "SELECT playlist_id, name, tvg_id FROM channels WHERE tvg_id>'' AND +kind=0"
+                " ORDER BY playlist_id, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id");
+    if (!q) return out;
+    while (q.step()) {
+        GuideChannel c;
+        c.playlistId = q.intCol(0);
+        c.name = q.textCol(1);
+        c.tvgId = q.textCol(2);
+        out.push_back(std::move(c));
+    }
     return out;
 }
 
@@ -1919,6 +2009,19 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
     if (term.empty()) return out;
     // The search needs its channel table even when the caller never loaded one (then: no results).
     if (!exec(kSearchChannelTable)) return out;
+    // ONE read snapshot for the index check below and both statements after it: another connection
+    // (Win32's guide-store worker) may commit programmes at any moment, and ids are reused, so a
+    // commit between the stamp check and step 1, or between steps 1 and 2, would pair a ranked id with
+    // a different programme — or read an index built from the old ones. A DEFERRED transaction that
+    // only reads takes no lock a writer waits on (WAL). Skipped if the caller has one open already.
+    struct ReadSnapshot {
+        sqlite3* db = nullptr;
+        ~ReadSnapshot() {
+            if (db) sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr);
+        }
+    } snapshot;
+    if (sqlite3_get_autocommit(db_) && sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr) == SQLITE_OK)
+        snapshot.db = db_;
 
     // Trigram cannot match under 3 characters, and a stale index must never be READ: a reused rowid
     // would return the wrong programme (a single-guide refresh restarts ids at 1), and reading a
@@ -1985,9 +2088,8 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
     }
     if (ranked.empty()) return out;
 
-    // 2. The winners' rows. A separate statement, so in principle another connection could commit
-    //    between the two — none in this process writes epg_programmes (only bulkInsertProgrammes and
-    //    deletePlaylist's cascade do, on the caller's connection), and a missing id is skipped below.
+    // 2. The winners' rows — in the same read snapshot as step 1 (above), so no other connection's
+    //    commit lands between the two. A missing id is still skipped below.
     std::string idList;
     for (const auto& r : ranked) {
         if (!idList.empty()) idList += ',';

@@ -48,6 +48,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
 #include "ui/DeadLinkSweep.h"
+#include "ui/EpgStore.h"
 #include "ui/VodSync.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
@@ -922,6 +923,27 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // WM_ACTIVATE) is the right signal: it fires when focus crosses an APPLICATION boundary,
             // so clicking between our own windows — the PIP popup included — never demotes it.
             if (st) applyPipTopmost(st, wParam != FALSE);
+            // The same for Refresh Guide's loading box: TOPMOST so it floats over the TV Guide window
+            // (a separate top-level one), but only while RabbitEars is in front — it is up for the
+            // whole refresh (~10 s on the owner's guide), and floated over every other app meanwhile.
+            if (st && st->loadingDlg && IsWindow(st->loadingDlg)) {
+                if (wParam != FALSE) {
+                    SetWindowPos(st->loadingDlg, HWND_TOPMOST, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                } else {
+                    // HWND_NOTOPMOST alone puts it at the TOP of the ordinary windows — above the app
+                    // the user just switched to, if that one is already in front. So place it right
+                    // below that app's window instead, when it is an ordinary (non-topmost) one.
+                    SetWindowPos(st->loadingDlg, HWND_NOTOPMOST, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    HWND fg = GetForegroundWindow();
+                    DWORD fgPid = 0;
+                    if (fg) GetWindowThreadProcessId(fg, &fgPid);
+                    if (fg && fgPid != GetCurrentProcessId() &&
+                        !(GetWindowLongPtrW(fg, GWL_EXSTYLE) & WS_EX_TOPMOST))
+                        SetWindowPos(st->loadingDlg, fg, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
+            }
             return 0;
         case WM_TIMER:
             if (st && wParam == kSchedulerTimer) {
@@ -1634,6 +1656,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_APP_EPG_DONE:
             onEpgDone(st, reinterpret_cast<EpgResult*>(lParam));
             return 0;
+        case WM_APP_EPG_STORED:
+            onEpgStored(st);
+            return 0;
         case WM_SETTINGCHANGE:
             applyDarkChrome(hwnd);
             InvalidateRect(hwnd, nullptr, TRUE);
@@ -1667,6 +1692,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // teardown (which takes real time) to reach a checkpoint before anyone waits on them.
             cancelDeadLinkSweep();
             cancelVodSync();
+            cancelEpgStore();  // stops between its transactions: the join below waits for the one in progress
             armExitWatchdog(4000);  // bound teardown so a stuck libVLC release can't wedge exit
 #ifdef RABBITEARS_THEME_ENGINE
             KillTimer(hwnd, kSkinAnimTimer);
@@ -1691,6 +1717,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // handle (atomic across process death) and post to a window that is already gone.
             shutdownDeadLinkSweep();
             shutdownVodSync();
+            // The guide refresh's store (ui/EpgStore) is no network worker — cancelled above, it
+            // finishes the one transaction in progress (a playlist's guide, or the search index:
+            // 0.8–1.5 s each on the owner's) — but it is a writer on its own connection, so it goes
+            // here too: after the players, before the unlanded-status flush below that its lock
+            // would contend with.
+            shutdownEpgStore();
             // Last chance for a schedule decision whose write was lost (AppState::
             // unsyncedScheduleStatus). The overlay that protected it lives in memory, so a
             // "cancelled" airing that never reached the DB would otherwise still be Pending on the

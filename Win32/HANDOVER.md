@@ -31,7 +31,316 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.20 SHIPPED, auto-update LIVE** (`APP_VERSION` 0.2.20 — bump before the next cut) · macOS **0.2.17**
+## Current state — **v0.2.20 SHIPPED, auto-update LIVE** · **0.2.21-dev** (`APP_VERSION` 0.2.21, bumped 2026-09-25) · macOS **0.2.17**
+
+### ⏸ STATE 2026-09-26 — where 0.2.21-dev stands. READ THIS FIRST.
+
+**Item (1), the guide stalls, is COMMITTED (2026-09-26, the commit on top of `da8048d`, local — not pushed
+yet): the owner's four live checks passed.** Its code is exactly tree `792dabc…`, built from a clean export
+on BOTH theme flags with `--selftest` ALL PASS before committing; its docs are these. **Items (2) and (3)
+are NOT committed:** the working tree holds **(2) catch-up playback — done: the round-2 findings fixed in
+six more review rounds (3–8, 2026-09-26), awaiting the owner's seven checks**, and **(3) photoreal stage A
+— built, three review rounds, the owner's checks next**. The working tree builds clean with BOTH theme
+flags, `--selftest` ALL PASS (**853**), `gen_i18n --check` OK (**639** keys). Git TREES (unreferenced
+objects — `git gc` may prune them in ~2 weeks) snapshot it:
+- **`792dabc5e22f47ba71ddc58150b7ecadb0d7cf7f` = item (1) ALONE** — now committed (above).
+- **`f5092c449e9b0261e2cc70b97a9d5a3654e72d3a` = the whole working tree after catch-up round 8** (1 + 2 + 3-partial; the docs —
+  this block — were finished just after it, so for docs trust the working tree) — a safety copy; restore any file with `git show f5092c4:<path>`. (`ee04e3d…` = the tree at
+  the 2026-09-25 pause, before rounds 3–8.)
+- **`25eeae7b4aa3775a1c20c6c2012fb97a30a878b9` = items 1 + 2 + these docs, BEFORE stage A's code (2026-09-26)**
+  — stage A then edited `MainWindow.cpp`, `MainWindowCommands.cpp`, `MainWindowInternal.h`, CMake, the
+  i18n files… which catch-up ALSO changed. **Cut item (2)'s commit from THIS tree, not from the working
+  tree** (the recipe below, applied to `25eeae7`'s files: `git show 25eeae7:<path>`).
+- **Cutting item (2)'s commit** (after (1) is committed): the working tree MINUS item (3) — revert, in a
+  temporary index, `Win32/ui/MiniMeter.*`, `Win32/ui/BufferMeter.*` (the mirrors), `Win32/render/RabbitEarsRender.cpp`
+  (`--meter-height`), `Win32/docs/PHOTOREAL.md` to HEAD, leave out `Win32/ui/MeterBridge.*`, and drop the
+  LAST SEVEN entries of `common/i18n/keys.json` / `en` / `ja` / `zh-Hant.json` (`MenuMetersSubmenu` …
+  `MeterBridgeTitle` — the catch-up keys, `StatusVodSyncFetchingCatchup` last, sit BEFORE them) then
+  regenerate `Strings.*` for that cut; build + selftest THAT state before committing — set the item-(3)
+  files aside (copies in the scratchpad), make the working tree the cut, build both flags, selftest,
+  commit it, then put them back (a worktree elsewhere hits the share's "dubious ownership").
+
+**Order for the next session:** (a) ✅ done — item (1) committed; (b) the
+owner's seven catch-up checks (dev profile, `scripts\run-profile.ps1 -Exe build\check-0221-catchup\RabbitEars.exe`)
+→ commit (2) as above; (c) finish (3) stage A (the list under (3)); (d) the cleanups (4).
+
+**The owner's order (2026-09-25): (1) the guide stalls, (2) catch-up playback, (3) the photoreal
+meters, (4) the small cleanups** (multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation"
+noise, the mac flags). The photoreal decisions are answered (PHOTOREAL.md, "The owner's answers"):
+meters AND skins, all three size options, new selectable looks, skins drive meters. Still open from
+0.2.18: the six "Lost schedule-status writes" owner checks.
+
+### 🛠️ 0.2.21-dev — the detail (2026-09-25, catch-up updated 2026-09-26)
+
+**(1) Guide stalls — COMMITTED 2026-09-26 (the owner's four live checks passed):**
+- **First open 1.4 s → ~0.25 s — by a query, not a thread.** Measured on a copy of the owner's library
+  (`RabbitEarsCli --guidebench <copy> [now]`, new): 1.2 s of the build was `channelsByPlaylist(pl.id)`
+  listing and NOCASE-sorting all 410,596 rows to find the 4,795 live channels with a guide id. New
+  `Database::liveGuideChannels()` reads just those through `idx_channels_tvgid`: **4.3 ms**, the same
+  channels in the same order (checked on the real library by the bench, and by a selftest). The whole
+  build — now `buildGuideModel` in `Win32/ui/GuideModel.{h,cpp}` (no window code, so the CLI runs it) —
+  is **225 ms** for 2,476 rows / 107k programmes, 187 ms of it the programme query; coverage counts
+  identical to the 0.2.20 log. **Deliberately NOT threaded:** ~0.2 s behind the loading box does not pay
+  for an async open ("Show in TV Guide" and the search's jump rely on the guide existing when
+  `onEpgGuide` returns). BACKLOG's "no cheaper first win exists" was wrong: the cost was the channel
+  list, never `programmesInWindow`.
+- **Refresh: store + search index OFF the UI thread** — `Win32/ui/EpgStore.{h,cpp}`: a joinable worker
+  with its own connection (`upgradeSchema=false`) runs `bulkInsertProgrammes` per playlist, then
+  `rebuildProgrammeIndex` — each its own short transaction with a 250 ms pause between, so a UI-thread
+  write waiting on the lock gets in (past busy_timeout, 5 s, it would be LOST). The UI thread keeps the
+  rule pass and the results (`onEpgStored` → `finishEpgRefresh`). The owner's ~2.5 s freeze (store
+  0.8–1.3 s + index 1.5 s) is gone as a freeze — but a UI-thread WRITE made during one of those
+  transactions (a scheduler status write, a playlist delete) still waits for it, up to ~1.5 s.
+  `cancelEpgStore()` in WM_DESTROY stops it between transactions; it is joined after the players.
+  While it runs, the guide search does not rebuild a stale index itself (`epgStoreRunning()`), it
+  answers with LIKE.
+- **Search stays correct while another connection writes** (common/, additive): `programmeSearchState()`
+  now also forgets what it learnt when `PRAGMA data_version` moves (another connection committed), and
+  `searchProgrammes` runs its stamp check and both statements in ONE read snapshot — before, the app's
+  connection was the only writer of `epg_programmes`, and a remembered Ready would have read the old
+  index against the new programmes (ids are reused) between the worker's store and its rebuild.
+- **`bulkInsertProgrammes` no longer commits a broken guide** (pre-existing, found by review): after an
+  error that ended the transaction (full disk, I/O, a trigger's RAISE(ROLLBACK)) it carried on in
+  autocommit, committing the rest of the guide on top of the restored old one; a failed DELETE committed
+  the new rows beside the old ones; a failed refresh-time write left the timestamp unchanged, so the
+  search index's stamp could match the OLD index; a playlist deleted mid-refresh committed an empty guide
+  and an orphan `epg_refreshed_<id>`. Now each of those — and a batch whose every row fails — keeps the
+  old guide and says why in `lastError()`. A row failing on its own is still skipped (the rest commit,
+  as before), now with the first failure in `lastError()`. `Database.h` spells out the two meanings of 0.
+  The refresh dialog now reports a store that failed as a failure — it used to say "0 programmes".
+- **The loading box is topmost only while RabbitEars is in front** (WM_ACTIVATEAPP, as the PIP; when
+  demoted it is placed just below the app switched to, not above it).
+- **Verified:** both theme flags build; `--selftest` ALL PASS (779, was 750); mutation-tested — removing
+  the data_version check, the ended-transaction stop in the row loop, the failed-DELETE stop, the
+  failed-refresh-time stop, the every-row-failed rollback, the no-such-playlist check, the partial
+  store's error, or liveGuideChannels' channel-number order each fails its test. NOT covered by a test:
+  the read snapshot in `searchProgrammes` (a commit cannot be landed between two statements from the
+  single-threaded selftest) and anything in `Win32/ui/EpgStore` (GUI code; the CLI does not link it).
+  Three adversarial review rounds, every finding fixed; round 3's fixes were mutation-tested but not
+  re-reviewed. The first design (one transaction for store + index, `replaceGuides`) was dropped on
+  round 1's findings: it held the write lock for the sum of both (UI writes lost past 5 s) and could
+  still read stale.
+- **Known limits (reviewed, left):** the loading-box demotion falls back to plain HWND_NOTOPMOST when
+  `GetForegroundWindow()` is NULL or topmost (Alt+Tab, the taskbar) mid-switch; a refresh's results
+  box arriving inside a user-opened modal (BACKLOG, EPG section).
+- **Owner checks (dev profile):** (1) Settings ▸ Refresh Guide: the window stays usable through
+  "Saving…" / "Indexing…" (move it, scroll the channel list); the same results dialog; the log's
+  `EPG timings … store N ms` and `EPG search index rebuild: N ms`. (2) During a refresh, switch to
+  another app: the loading box must NOT float over it; switch back: it is on top again (also over an
+  open TV Guide). (3) Open the TV Guide: the log's `TV guide first-open: DB+build N ms` (was 1221).
+  (4) Search in the guide during and right after a refresh: sensible results either way.
+
+**(2) Catch-up playback — DONE, UNCOMMITTED; the round-2 findings FIXED (rounds 3–8, 2026-09-26, at
+the end of this item); awaiting the owner's live test.**
+- **Data:** "Sync movies from provider" (`Win32/ui/VodSync` `syncArchive`) also fetches `get_live_streams`
+  (up to three attempts), maps each archived stream id to the playlist's live channels (`xtreamLiveStreamId` —
+  `/U/P/ID`, `/live/U/P/ID.ext`; movie/series ids are other namespaces) and replaces that playlist's
+  flags in `channel_archive` (common/db: channel id → days, ON DELETE CASCADE, created on open with no
+  schema version — older builds never read it); the server's zone + offset go to settings
+  `archive_tz_<pid>` / `archive_utc_offset_<pid>`. Its failures never change the film sync's result: the
+  status line gains " · catch-up channels: N" and/or " · catch-up info not updated (why)".
+- **Play:** `playCatchup` (MainWindowData.cpp) — the playlist's login + the channel's stream id +
+  `xtreamTimeshiftUrl` with the server's offset ON THE PROGRAMME'S DAY (`Win32/platform/TimeZone`,
+  C++20 tzdb; the stored offset if the zone is unknown). A Channel copy with id 0: no last-channel,
+  no dead-link verdict. An archive that ends/fails before Playing → "Not in the archive: …".
+- **UI:** the guide popup (and right-click menus) offer "Play from the start" for a programme that has
+  started, while the archive reaches its start (`guideCanPlayFromStart`) — the default button once it
+  has ended; a guide row plays from the FIRST channel sharing its guide id that keeps an archive
+  (`GuideRow::archiveChannel`); the guide search lists ended programmes on archive channels after the
+  upcoming ones under "Already aired — catch-up" (`searchProgrammes(…, withArchive)`) — a click selects
+  one, double-click / Enter opens its popup; ↺ after the name in the channel list (`channelGridSetArchive`).
+- **Reviewed (two adversarial reviews, core + UI), every finding fixed:** series episodes (kind 0 on an
+  Xtream playlist — 351k of the owner's 366k "live" rows) no longer read by the sync (`liveChannelUrls`
+  skips /series/ and /movie/); the server clock is written only when present and within −12…+14 h (a
+  probe without it can no longer turn every URL hours off); up to three attempts at the live list, a
+  60 s window, no write after a cancel; stream ids only from URLs carrying the playlist's own login;
+  Schedule… not offered for an ended programme; a catch-up SURVIVES the PIP swap, split→single and a
+  re-buffer (`paneHasStream` / `playPaneStream`); Record during a catch-up says why it cannot; the
+  "Nothing played from the archive" line is hedged (a busy line looks the same as an empty archive)
+  and its played-flag is kept for the posting pane; a click on an old aired result selects it
+  (double-click/Enter opens — opening on the first click let the second land on a popup button); ↺
+  markers follow playlist add/delete (channel ids are reused); the search's "past" split uses the
+  time the search ran. 13 i18n keys then (14 with round 3's StatusVodSyncFetchingCatchup; 638 in all now).
+- **Verified (round 2; rounds 3–8 below):** both theme flags build; `--selftest` ALL PASS (810 then); mutation-tested — removing the
+  stream id's 15-digit limit, the login check, the offset bounds, the archive pick's channel order, the
+  "channel keeps an archive" filter on past results, or the parser's stream-id check each fails its
+  test. The
+  catch-up block pins the URL shape, the stream-id rules (a user named "movie" — at the PARSER only, see
+  L1 below — the login check, no overflow), the date math across midnight/year and both offset signs, the offset rounding (CEST,
+  Newfoundland −3:30, Nepal +5:45) and bounds, the account clock (31 February refused), the archive
+  parser's spellings and failures, the table's per-playlist replace + cascade, the archive pick among
+  two siblings (guide row and search agree), and search ordering on both paths. NOT testable here:
+  everything in the player/guide UI, and the provider itself.
+- **Owner checks (dev profile, NOTHING else playing or recording — one connection):** (1) Settings ▸
+  Channels ▸ Sync movies from provider: the status ends " · catch-up channels: N" (~299); the log has
+  `VOD sync: catch-up for …: 299 of 15345 live streams keep an archive; N library channels flagged;
+  server clock Europe/Amsterdam, UTC+7200 s`. (2) ↺ after those channels' names in the list. (3) TV
+  Guide: click a programme that aired earlier today on a ↺ channel → "Play from the start" (the default
+  button) → **it must start at the programme's own beginning, not two hours off** — the one check that
+  settles the server-local time zone; a scrub bar should appear. (4) The programme airing now → "Play
+  from the start" (start over): what happens at the live point? (5) Guide search for something that
+  aired yesterday → "Already aired — catch-up" → double-click → Play from the start. (6) Record during a
+  catch-up → the message. (7) A channel whose archive is empty for that time → "Nothing played from the
+  archive: …".
+- **The owner's decisions:** catch-up in ALL FOUR places — the guide's aired programmes ("Play from the
+  start"), "start over" on the airing one, past results in the guide search (as far back as the
+  channel's archive), and a catch-up marker in the channel list. The archive flags come WITH "Sync
+  movies from provider" (same no-playback gate; nothing automatic).
+- **Probed on the owner's line (owner-approved, line idle; `active_cons` 0 of 1):**
+  - `get_live_streams`: 15,345 streams, **299 with `tv_archive=1`** (`tv_archive_duration` days 1/2/3:
+    62/99/138); all 299 are in the library by stream id (the last path segment of the channel's URL),
+    282 of them with a guide id. Fields: `added, category_id, category_ids, custom_sid, direct_source,
+    epg_channel_id, is_adult, name, num, stream_icon, stream_id, stream_type, tv_archive,
+    tv_archive_duration`. **5.3 MB in 13.5 s — and it failed twice first** (a 60 s read timeout, then a
+    connection reset): the sync must survive that and keep the previous flags.
+  - Server clock: `server_info.timezone` Europe/Amsterdam; `time_now` − `timestamp_now` = +7,200 s (CEST);
+    the server's `timestamp_now` agreed with this PC's clock to ±1 s.
+  - **`{origin}/timeshift/{user}/{pass}/{minutes}/{YYYY-MM-DD:HH-MM}/{stream_id}.ts`, start in SERVER-LOCAL
+    time, returns MPEG-TS** (HTTP 200 `video/mp2t`, the data starting mid-packet — sync byte at offset
+    4) on 2 of 3 archive channels tried. The third (stream 891261, 3-day archive) answered EVERY form
+    (path .ts local/UTC, path .m3u8, `streaming/timeshift.php`) with HTTP 200, `text/html`, 0 bytes — an
+    advertised archive with nothing recorded then; the app must say "not in this channel's archive"
+    rather than hang. The live URL of that channel played (control). `/live/…m3u8?utc=` returned the
+    LIVE playlist (ignored). **Unverified:** that server-local — not UTC — is the time the archive is
+    keyed on (both return data, two hours apart); the owner watching one programme settles it.
+  - Probe scripts (never print the login): the session scratchpad's `catchup_probe.py`, `live_probe.py`,
+    `ts_variants.py` — not in the repo (the scratchpad is per-session: gone).
+- **✅ The round-2 review's findings — FIXED (2026-09-26), six more review rounds (3–8).**
+  - **M1 — an open (or hidden) TV Guide kept pre-sync archive data** (owner check 3 would have failed).
+    Now `GuideArchivePicks` (`Win32/ui/GuideModel`: re-reads `liveGuideChannels`, ~4 ms, keyed by
+    playlist + normalised tvg-id; `GuideRow::playlistId`, `GuideSearchHit::playlistId`) and
+    `epgGuideUpdateArchive` patch every row and listed result IN PLACE (no rebuild: scroll, filter and
+    focus stay; nothing reallocates, so a handler inside a popup's/menu's modal loop is safe — they all
+    copy first), end the search session, and re-search a results list ON SCREEN quietly, on a timer of
+    its own (`kArchiveTimer` → `researchInPlace`: no "Preparing search…", the selection and the scroll kept
+    exactly — a vanished one gives way to the first item if that is in view; a key or click meanwhile acts on the list as
+    shown — riding the search debounce, as round 4 did, made Enter open the FIRST result; it waits out a
+    double-click on the list, skips a hidden guide, and never rebuilds the search index — LIKE until the
+    next session — via `onSearchBegin(mayRebuild=false)`). Driven by a NEW message,
+    `WM_APP_VOD_ARCHIVE` (WM_APP+12), posted by the worker the moment a playlist's flags are written —
+    before the films, which can take minutes (the ↺ markers and `playCatchup`'s `st->archiveDays` used to
+    lag until WM_APP_VOD_DONE: a guide opened mid-sync offered "Play from the start" and then refused).
+    The push lives in `refreshArchiveMarkers` itself, and only when `channelArchiveDays()` changed
+    (usually just the first sync) — so `refreshNav` (a playlist added or deleted) reaches an open guide too.
+  - **M2 — the zone NAME overrode the measured offset unchecked.** `Win32/ui/CatchupSync`
+    (pure, in the CLI too): `serverZoneAgrees` (the zone's offset at the probe's timestamp, ±120 s for a
+    probe straddling a DST change, equals the measured one) and `serverZoneToStore` — with a measurement,
+    the probe's zone if it agrees, else the STORED one if it agrees (a probe naming a wrong zone, or
+    none, does not undo a right one), else "" and the offset decides; without one, a name is stored only
+    where nothing usable was (never over a kept or refused one; a stored name unknown to this PC's
+    time-zone database counts as none). The clock is now written FIRST in `syncArchive`, whatever the list download
+    does (it is the probe's, and the kept flags play with it).
+  - **L1** `liveChannelUrls(pid, username)`: first path segment `series`/`movie` exactly (GLOB,
+    case-sensitive) + at least three more '/'; for a user NAMED "series"/"movie" (the only logins that can
+    lose a live URL to it — a live URL starts with `live` or the user name) that word's clause is off.
+    Same 14,996 rows on the owner's library, 141 ms (was 87 ms by NOT LIKE) — on the sync worker.
+  - **L4** `matchArchiveFlags`: the list's answer stands whenever at least one of the playlist's URLs
+    reads as a live stream of its login ("archives elsewhere on the line, none here" clears the flags);
+    only when NONE reads (a panel spelling the login with '+' in paths, another line's playlist) are the
+    old flags kept — "catch-up info not updated (none of this playlist's channel URLs reads as a live
+    stream of its login)". Round 3 had kept them whenever nothing matched — review 3 showed that could
+    keep dead flags forever.
+  - **L5** the archive pick is the sibling with the LONGEST archive, the first in channel order on a tie —
+    `foldArchive` (GuideModel) and `ROW_NUMBER … ORDER BY a.days DESC, <channel order>`
+    (`refreshProgrammeSearchChannels`); a random-flag cross-check on the owner's 4,795 guide channels
+    found 0 differences (review 3).
+  - **L6** `searchProgrammes(…, withArchive, bool* truncatedPast = nullptr)`: the aired block has a
+    `limit` of its own, in ONE pass (a window function numbers the two blocks apart; a second query cost
+    the whole match again). On a library copy with 300 archive channels: "news" 38 ms, "the" 75 ms, "to"
+    66 ms (without catch-up 22 / 41 / 49 ms; a specific word 0.3–0.5 ms either way). With no archive
+    channel in the set (`archiveInSearch_`, noted by `refreshProgrammeSearchChannels`) it is exactly the
+    search without. The guide: "Upcoming programmes found: N" counts the upcoming ones only; a cut aired
+    block says "Showing the first N — type more to narrow it" under its own heading.
+  - **Nits:** the sync's catch-up phase says "Asking your provider which channels keep catch-up…"
+    (`StatusVodSyncFetchingCatchup`, 638 keys); the PIP-swap log says "catch-up" / "(empty)" instead of
+    `#0`; the VideoProc comment says `paneHasStream`; the first `utcOffsetAt` (tz database load) measured
+    **7 ms** — left on the UI thread.
+  - **Tests added (843 now):** live-kind /series/ and /movie/ rows, logins "Movie"/"series" (short URLs,
+    trailing slash, a '/' in the query), 29 February 2026 refused / 2028 read, the login through
+    `parseXtreamPlaylistUrl` (query '+' vs path '%20'/'+'), the match rule both ways, zone agree/refuse
+    incl. the DST instant 2026-10-25 01:00Z, `serverZoneToStore`'s six cases, the longest/tie picks in
+    guide + search + `GuideArchivePicks` (by row and by search hit), per-block limits and "more" flags on
+    both search paths (and the one-flag fallback), no-archive = plain search. **Mutation-tested (24
+    mutations over rounds 3–8, all caught; a 25th — judging a zone name "known here" at the probe's
+    unchecked timestamp instead of now — cannot be caught on MSVC, whose tz database answers even at a
+    microsecond stamp: kept as a defensive change).** The clock's log line says what the URLs will read the
+    server's clock by (the zone, the measured or stored offset, or UTC) and why a zone named is not used.
+  - **Left, noted (BACKLOG):** **L2** — late player events carry no stream generation (VlcPlayer
+    `handleVlcEvent` posts (event, pane) only), so an event of the PREVIOUS stream processed after a new
+    play marks/messages the new one: pre-existing for channels (a late Error marks the NEW channel dead),
+    for catch-up the "Not in the archive" line. Fix sketch: a UI-thread request counter bumped in
+    `play()`, carried in the Play command, stored by the worker AFTER the old player's events are
+    detached, packed into the event's LPARAM high bits, and compared on the UI side. **L3** — a
+    re-buffer / PIP swap / split→single restarts a catch-up from its start (films do the same).
+    Not tested (GUI): `epgGuideUpdateArchive`, WM_APP_VOD_ARCHIVE, `researchInPlace`, the headings.
+- **Build copy for the owner:** `build\check-0221-catchup\` — REFRESHED after round 8
+  (`scripts\run-profile.ps1 -Exe build\check-0221-catchup\RabbitEars.exe`).
+
+**(3) Photoreal — stage A (meter SIZE) — BUILT 2026-09-26, uncommitted; the owner's two decisions TAKEN
+(own row; bridge stays owned); three review rounds; not yet run in the app — the owner's checks next.** The owner chose all three size routes; stage A builds them, stages B (new photoreal looks:
+LED lenses whose cells scale with the meter, physical light) and C (skins as materials, skins driving
+meters) follow — PHOTOREAL.md.
+- **Built:** `Win32/ui/MeterTray.h` (header-only, also used by RabbitEarsRender and the CLI): the meter
+  height (`meter_height`, 30..120 dp) → the strip and the tray widths (`trayWidth` = the 30-dp width ×
+  height/30). **At 30 dp the meters sit inline in the 50-dp strip, exactly as before; taller, they get a
+  ROW OF THEIR OWN above the transport row** (the owner's choice 1b, 2026-09-26): strip = 10 dp + meters +
+  the 50-dp transport row, capped at half the video panel, the meters no taller than lets the tank (always
+  shown) fit the row's width; when the limits leave no room for meters taller than standard, the standard
+  strip. In the own row the meters run from the panel's left edge, the seek bar no longer yields to the
+  tank, the status label takes the transport row's width. The edge drag maps the strip's top edge to a
+  height (`meterHeightForStripPx`): the standard strip until an own row of taller meters fits (a detent of
+  ~41 dp), then the edge follows the cursor; its range is `maxMeterHeightDp`. `layout()` uses it and records `st->stripEdge` (the strip's top 4 dp); the strip
+  paints use `stripHeight(st)`. **The drag** on that band (IDC_SIZENS; a 3-dp threshold before anything
+  changes; paced repaint of the strip AND its meters; `setMeterHeight` persists on release; a double-click
+  resets to 30; fullscreen / video-only mid-drag cancels it to the starting height — `cancelStripDrag`).
+  **Settings ▸ Meters** is a submenu: Meter setup… (`MenuMeterSetup`, a NEW key → 639), Standard / Large /
+  Extra large (2034–2036, checked at 30/50/72), a grayed drag hint, Meter bridge window (2037, checked
+  while open). **The bridge** (`Win32/ui/MeterBridge`, now in CMake and compiled): restored after the main
+  window shows (not on a wake launch); normal rect saved/restored through Get/SetWindowPlacement, a
+  saved rect used only if ≥ 120×60 dp of it is on a work area; its tank follows the tray tank's hidden
+  state and its own Hide goes to the tray's `buffer_hidden`; nothing shown when no meter is on; meters no
+  taller than 120 dp; relayout + repaint after the Meters dialog; theme (with RDW_FRAME) and caption
+  follow skin / language switches. **Mirrors:** `bufferMeterSetMirror` now starts the twin at the tray
+  tank's fill/flow/readout (it used to stay empty through a steady stream); no mirror cycles (a mirror
+  gets none of its own — `isMirror`). MiniMeter's class got `CS_HREDRAW | CS_VREDRAW` (a size change
+  repaints a meter whole; moves are unaffected).
+- **Verified (round 1):** both theme flags build; `--selftest` ALL PASS (847 — 4 new: the standard height IS
+  the historical tray at 96–192 dpi, the Large/XL numbers, the cap, the clamp; 851 with 1b's); the 56 standard-height renders
+  **byte-identical** to before (checked twice). RabbitEarsRender now renders the strip at any
+  `--meter-height` (and hides meters that do not fit beside the transport controls, as layout() does);
+  `--bench-paint` times every look's tick+paint per frame (144 dpi, ms): at 120 dp Tube Bitrate 5.8,
+  Tube Frames 5.1, LED/LCD ≤ 1.9, VU ~0.04, the tank 0.7; the owner's tray (LED Spectrum, Tube Signal,
+  LCD Bitrate, VU Frames + tank) ≈ 2.2 ms/frame at 72 dp, 3.4 at 120. Review round 1 (8 findings + nits)
+  acted on except the two below; **its fixes are NOT yet re-reviewed**.
+- **✅ The owner's decisions (2026-09-26):** (1) the width problem — inline, a taller tray ran out of width
+  beside the transport controls (the owner's four meters + tank need 481 / 784 / 1115 dp at 30 / 50 / 72;
+  on a 1920 screen at 150 % Large showed 2 meters, XL 1, and the tank could cover the buffer slider) →
+  **1b, an own meter row at Large+** (built; on an 1100-dp panel Large shows all four + the tank, XL drops
+  Spectrum; sheet `stageA_ownrow_sheet.png`). (2) **The bridge stays an OWNED window.**
+- **Review round 2 (acted on):** the bridge no longer drifts in size across launches on a monitor of
+  another scaling (created ON its monitor — workspace→screen by the monitor's work-area offset — and
+  `Bridge::placing` keeps the placed size through SetWindowPlacement's WM_DPICHANGED); the drag's paced
+  repaint UpdateWindow()s only the five meters (not the video tiles — their erase flashed black); a
+  capped strip shows a whole-dp height (`maxMeterHeightDp`) the drag can keep; hysteresis at the
+  standard↔own-row switch (`meterHeightForDrag`, 6 dp either way); `finishStripDrag` saves only when the
+  strip's height really changed (a capped window's drag no longer overwrites the chosen height); the
+  drag's range follows a window resized mid-drag; limits of at least 1 px. **Mutation-tested:** the
+  whole-dp cap, the hysteresis, the tank limit (all caught). `--bench-paint` also at glass 69 %: +5–10 %.
+- **Verified after round 3's fixes:** both flags; `--selftest` ALL PASS (853); the 56 standard renders
+  byte-identical (checked after every round).
+- **Owner checks (dev profile, AFTER the catch-up checks; copy `build\check-0221-meters\`):** (1) Standard:
+  the strip exactly as today. (2) Settings ▸ Meters ▸ Large / Extra large: the meters move to a row above
+  the buttons (all four + the tank at Large on a wide window); Standard: back to today's strip. (3) Drag the
+  strip's top edge (↕ cursor) up: nothing for ~40 dp, then the meters take their own row and follow the
+  cursor; down past a small margin: the standard strip; the height survives a restart; double-click the
+  edge: Standard. (4) Meters ▸ Meter bridge window: a resizable window of the same meters, scaling with
+  it; closed stays closed, open reopens at its place at the next launch; dragged to the other monitor it
+  keeps its size. (5) The bridge follows the tray: the Meters dialog's on/off, looks, palette, glass; the
+  tank's right-click Hide on either hides both. (6) Open the bridge DURING playback: its tank is full at
+  once. (7) A skin and a language switch with the bridge open. (8) XL + the bridge open while playing: the
+  UI stays smooth.
+- **Next:** the owner's checks → commit (after items 1 and 2) → stage B (scaled LED/LCD/Tube cells as NEW
+  looks — also the Tube look's cost at size).
 
 ### ✅ 0.2.20 — SHIPPED (2026-09-25), both appcasts LIVE @ `528cd9a`
 
@@ -1266,96 +1575,103 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first** — the top "Current state" block (0.2.20, 0.2.19 and the EPG work)
-> — plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic, parked on owner
-> decisions). Older release history is in `Win32/HANDOVER-ARCHIVE.md`; check it before re-trying an idea.
+> **Read `Win32/HANDOVER.md` first — its top block "⏸ STATE 2026-09-26" is the state of the
+> work and the order to resume in**, then the "0.2.21-dev — the detail" block under it; plus
+> `Win32/BACKLOG.md` (EPG section) and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the owner's six
+> decisions are ANSWERED at its bottom). Older history: `Win32/HANDOVER-ARCHIVE.md`.
 >
-> **State:** **0.2.20 is SHIPPED and auto-update is LIVE** (full `0.2.20.441`, tag `v0.2.20` @ `74a3b9a`,
-> appcasts @ `528cd9a`). `APP_VERSION` is still **0.2.20** — bump it (`cmake/AppVersion.cmake:11`, ask
-> the owner) before the next cut. macOS is at 0.2.17. **0.2.20** = the TV Guide's coverage line
-> (+ the "not in the guide" note in its search), all-day programme times, the Set Guide URL
-> playlist-link warning, dark guide scroll bars, and **channel search on FTS5 — schema v11, kept by
-> TRIGGERS** (`docs/CHANNEL_SEARCH.md`: FTS5-less builds ≤ 0.2.18 can no longer write channels to a v11
-> database; the owner accepted that).
-> **The owner's two EPG requests** — full-text search in the guide and a calendar of future airings:
-> **steps 1 and 2 SHIPPED in 0.2.19** — step 1 = guide-refresh progress + timings, Set Guide URL
-> extracting the address from pasted text, provider logins masked in the diagnostic log; step 2
-> (`0892cf4`) = ONE search box in the TV Guide for channels and programmes, FTS5 + schema v10 in
-> `common/` (`docs/EPG_SEARCH.md` is the design and as-built record), plus `35b8826` (Greek/Romanian
-> case folding in recording rules). **Step 3, the calendar, is parked**: the owner's provider
-> publishes only ~6 h of future guide and its Xtream API none — HANDOVER's "What the investigation
-> found" has every measurement. BACKLOG's EPG section lists the follow-ups. The repo has TWO writers
-> (the mac team pushes to `main`), so run `git fetch`, `git status` and `git log origin/main..` first,
-> and verify `git ls-remote origin refs/heads/main` == HEAD immediately before building anything for
-> a release.
+> **State:** 0.2.20 is SHIPPED and auto-update is LIVE (tag `v0.2.20` @ `74a3b9a`, appcasts @ `528cd9a`).
+> macOS is at 0.2.17. **0.2.21-dev: item (1) is COMMITTED** (on top of `da8048d`, with the `APP_VERSION`
+> 0.2.21 bump); items (2) and (3) are in the working tree, uncommitted — it builds clean, `--selftest` ALL
+> PASS (853), `gen_i18n --check` OK (639 keys):
+> 1. **Guide stalls — COMMITTED 2026-09-26** (the owner's four checks passed). First open 1.4 s → ~0.25 s by a narrow query
+>    (`Database::liveGuideChannels`, `Win32/ui/GuideModel`; not threaded, on purpose); Refresh Guide's
+>    store + search-index rebuild on a worker with its own connection (`Win32/ui/EpgStore`), search kept
+>    correct across connections (`PRAGMA data_version`, one read snapshot), `bulkInsertProgrammes` no
+>    longer commits a broken guide.
+> 2. **Catch-up playback — DONE, eight review rounds; awaiting the owner's seven checks** in
+>    `build\check-0221-catchup\` (HANDOVER item (2) lists them), THEN committed — cut WITHOUT item (3)'s
+>    files (the STATE block says how). Xtream `tv_archive` flags come with "Sync movies from provider"
+>    (`channel_archive` table, no schema bump; `WM_APP_VOD_ARCHIVE` the moment they are written), timeshift
+>    URLs in the server's own time zone (`Win32/platform/TimeZone`, C++20 tzdb; the zone kept only while it
+>    agrees with the measured clock — `Win32/ui/CatchupSync`), "Play from the start" in the guide
+>    popup/menus, past results in the guide search (their own block and limit, one pass), ↺ in the channel
+>    list. The server-local vs UTC keying is settled only by the owner watching one programme (check 3).
+>    Known limits left: L2 (player events carry no stream generation — pre-existing, BACKLOG), L3.
+> 3. **Photoreal stage A (meter SIZE) — half written.** Meter mirrors (`miniMeterSetMirror`,
+>    `bufferMeterSetMirror`) and `Win32/ui/MeterBridge.{h,cpp}` exist (the bridge NOT yet in CMake, never
+>    compiled); `RabbitEarsRender --meter-height DP` works; 7 i18n keys added. HANDOVER's item (3) has the
+>    exact TODO: strip height from `meterHeightDp`, scaled widths, the strip-top-edge drag, the "Meters"
+>    submenu (ids 2034–2037), bridge startup/relayout/theme hooks. Stages B (new photoreal looks) and C
+>    (skins as materials, skins drive meters) follow.
+> 4. **Cleanups** — not started (multi-URL `x-tvg-url`, marking gaps, libVLC "Cancellation" noise, mac flags).
 >
-> **Shipped without a full owner run:** in 0.2.20 nothing of note (all seven owner checks passed; the
-> Mac has not yet run the new `sign-release.sh` defaults — 0.2.20 was signed with the long form); in
-> 0.2.19 the search's filter chip, the jump from a result and
-> typing over the grid (nothing reported against them), and the recording-rules fold (selftest only);
-> in 0.2.18 the search debounce, the lost schedule-status-write fix (HANDOVER's "Lost schedule-status
-> writes" block has six owner checks — the ordinary scheduled-recording path first), the Light-skin
-> meter fixes, and the "PEAK lamp lights whenever the needle is in the red" rule. Owner-seen and
-> liked: the tank readout and the VU dials ("look amazing"), the guide search results.
+> The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
+> `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
+> refs/heads/main` == HEAD immediately before building anything for a release.
 >
 > **Tools that change how visual work is done:**
-> * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip]` renders every meter look, the
->   tank and every skinned strip to PNG from the REAL paint code, byte-reproducibly. Render before
->   and after every visual change, compare with a pixel diff, read the PNGs yourself, and hand the
->   owner a labelled before/after sheet. The "150dpi" sheets are 156 % scaling.
-> * `powershell -File scripts\run-profile.ps1 [-Refresh]` runs the dev build BESIDE the installed app
->   as profile "dev" (`Win32/platform/Profile.h`) on a snapshot of the real library — it never touches
->   the wake task or WinSparkle. The owner checks things live this way. **This sandbox cannot drive
->   the GUI (computer-use for RabbitEars was declined): the owner drives the screen — tell them where
->   to look.** The owner runs at 150 % scaling; their tray is LED Spectrum, Tube Signal, LCD Bitrate
->   and a VU Frame-rate meter with a cyan lamp, glass 69 %.
+> * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip] [--meter-height DP]` renders every
+>   meter look, the tank and every skinned strip to PNG from the REAL paint code, byte-reproducibly.
+>   Render before and after every visual change, compare, read the PNGs yourself, and hand the owner a
+>   labelled before/after sheet. The "150dpi" sheets are 156 % scaling.
+> * `powershell -File scripts\run-profile.ps1 [-Refresh] [-Exe <copy>\RabbitEars.exe]` runs a build
+>   BESIDE the installed app as profile "dev" on a snapshot of the real library. Give the owner a COPY
+>   of the build (`build\check-…\`: the exe, libvlc*.dll, WinSparkle.dll, plugins\) so your next build
+>   does not collide with their test (LNK1168). **This sandbox cannot drive the GUI — the owner drives
+>   the screen; tell them where to look.** The owner runs at 150 %; their tray is LED Spectrum, Tube
+>   Signal, LCD Bitrate and a VU Frame-rate meter with a cyan lamp, glass 69 %.
+> * `RabbitEarsCli --guidebench <copy> [now]` / `--epgsearch <copy>` time the guide build and searches
+>   on a COPY of the real library (never the live DB — opening it can migrate it).
 >
-> **The photoreal epic, next:** Phase 0 (the render tool), Phase 1 (six defects) and the VU
-> instruments (`Win32/ui/VuDial` — backlit "VU needle" + "Silver VU", built to the owner's reference
-> photos) have shipped. The rest waits on the owner's decisions at the bottom of PHOTOREAL.md — **the
-> size question matters most**: the tray dials are 26–39 px tall, and their numerals need ~50 px, so
-> a taller meter tray is what would put the scale's numbers in the tray.
->
-> **The one number that matters for perf:** the owner's real library is **411,149 rows**, not the
-> ~44k the design assumed; `--benchdb`'s defaults still model the small shape. Measure against the
-> real one. **Still unexercised:** schema v9's row merge on anyone else's library, and the VOD sync's
-> DELETE path (the SECOND sync; "0 removed" is healthy).
+> **The one number that matters for perf:** the owner's library is **411,149 rows** (366k "live" — mostly
+> Xtream SERIES EPISODES, which are kind 0 too; only 4,795 carry a tvg-id). Measure against it.
 >
 > **Traps that have cost real time:**
-> * **A confident comment is not a verified fact.** Verify or weaken it — every adversarial review
->   this session still found over-claiming comments.
-> * **`common/` is shared with mac** (Apple clang, which you cannot compile here): keep shared changes
->   additive; a new enum value mac switches on needs its mac `switch` case in the same commit; grep
->   `mac/` first; prefer flagging over editing their tree. Meter looks and skins are Win32-only.
-> * **Launching an exe from `G:` through the SHELL** (`Start-Process`, Explorer) raises a blocking
->   "Open File – Security Warning" — it looks like a hang. Use CreateProcess (`run-profile.ps1` does).
-> * **`LNK1168`** = RabbitEars is running. Close it with `WM_CLOSE` (`CloseMainWindow`), never a
->   force-kill (an in-progress recording loses its moov atom). If it will not close, a dialog is
->   probably open in it — ask the owner to close it.
-> * **Splitting uncommitted work into several commits:** snapshot the working state as a git tree with
->   a temporary index (`GIT_INDEX_FILE=… git read-tree HEAD; git add <paths>; git write-tree`) before
->   the next change touches the same files; later `git read-tree <tree>` + `git commit`.
-> * **Editing files via inline Python in bash heredocs** mangled `\r` once (a `\\r` became a CR) and
->   stray brackets twice — write the script to a file, and scan edited files for control characters.
-> * **Command ids:** pick from a genuine gap (the computed ranges `ID_DOCK_BASE` 2051–2062,
->   `ID_LAYOUT_*_BASE` 2079–2098, `ID_THEME_SKIN_BASE` 2100+ have no literal to grep).
-> * **Release:** bump ONLY `APP_VERSION` in `cmake/AppVersion.cmake` line 11 (leave the `if(APPLE)`
->   override). Three installers (`build-installer.cmd`, `… arm64`, `… universal`), two appcasts, always
->   `-Tag v<ver>`. Push before tagging; verify `ls-remote` == HEAD before building. **Signing on the
->   Mac** needs `SIGN_UPDATE` pointed at `build-mac*/sparkle/bin/sign_update` and
->   `SIGN_UPDATE_ARGS="--account SQLTerminal"` (HANDOVER's release recipe); verify each signature on
->   Windows against `Updater.cpp`'s public key before publishing.
-> * **Provider logins are secrets.** Every Xtream URL carries one (query or path). The Win32 log now
->   masks them (`Win32/platform/UrlRedact`, `LogSecrets.h`); never print a URL from the DB or a log
->   in a tool result without masking it first, and never put one in a doc or commit.
+> * **A confident comment is not a verified fact** — every review this session still found over-claims,
+>   including in HANDOVER itself. Verify or weaken.
+> * **`common/` is shared with mac** (Apple clang, not compilable here): additive changes only; grep
+>   `mac/` first; flag rather than edit their tree. Meter looks and skins are Win32-only.
+> * **Inline Python in bash heredocs mangles escapes** — `\\n` arrives as a newline, `\\0` as a NUL,
+>   `\\r\\n` as a CR. Write scripts to a FILE with the Write tool (raw strings) or use the Edit tool; make
+>   multi-part patches assert every anchor before writing anything.
+> * **MSVC evaluates `expect(cond, msg)` arguments in no fixed order** — compute the state first when the
+>   message quotes it. A background `python` run buffers its output until it exits (`python -u`).
+> * **Never pipe `--selftest` into `Select-Object -First`/`head`** — the pipeline stops reading but the
+>   process runs on, and the NEXT selftest shares its fixture DBs: a page of bogus [FAIL]s. Write it to a
+>   file (`*> st.txt`) and read the file.
+> * **Reviewers:** tell background review agents in so many words never to open anything under
+>   `%LOCALAPPDATA%\RabbitEars*` — one opened the live DB (read-only) when told only "copies".
+> * **SQLite:** an error can end the WHOLE transaction (SQLITE_FULL/IOERR, RAISE(ROLLBACK)) — check
+>   `sqlite3_get_autocommit` before carrying on, or later statements commit on their own. Another
+>   connection's commit moves `PRAGMA data_version`; the app's connection is no longer the only writer of
+>   `epg_programmes` (EpgStore). Schema v11 put TRIGGERS on `channels`; workers open with
+>   `upgradeSchema=false`.
+> * **Splitting uncommitted work:** snapshot with a temporary index (`GIT_INDEX_FILE=… git read-tree HEAD;
+>   git add <paths>; git write-tree`); to commit a tree: `GIT_INDEX_FILE=… git read-tree <tree>`, then
+>   `git commit` with that index (and check `git diff --cached --stat` first).
+> * **Mutation-test every new guard's test** (remove it, see the test fail, restore) — the scratchpad
+>   script pattern: patch, `cmake --build build --target RabbitEarsCli`, `--selftest`, restore, rebuild.
+> * **Launching an exe from `G:` through the SHELL** raises a blocking security prompt — use CreateProcess
+>   (`run-profile.ps1` does). **`LNK1168`** = RabbitEars is running: close with `WM_CLOSE`, never kill.
+> * **Command ids:** a genuine gap only (computed ranges 2051–2062, 2079–2098, 2100+ have no literal).
+>   2034–2037 are the Settings ▸ Meters items (photoreal stage A).
+> * **Release:** bump ONLY `APP_VERSION` (`cmake/AppVersion.cmake` line 11). Three installers, two appcasts,
+>   `-Tag v<ver>`; push before tagging; `ls-remote` == HEAD before building; the universal installer can
+>   fail once ("EndUpdateResource … antivirus") — re-run, check ~63 MB. Signing on the Mac:
+>   `scripts/sign-release.sh "<installer>"` (its defaults untried; the long form works). Verify each
+>   signature on Windows over the DOWNLOADED bytes.
+> * **Provider logins are secrets** (query or path — including `/timeshift/USER/PASS/`): never print a URL
+>   from the DB or a log unmasked, never put one in a doc or commit. The log masks them by shape.
 > * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** and verify BOTH flags before committing
->   (build dirs cache the flag; leave the cache at ON).
-> * **i18n:** `common/i18n/*.json` → `python tools/i18n/gen_i18n.py` (never hand-edit
->   `common/core/Strings.*`; `--check` must pass). 595 keys × 4 languages; `zh-HK` is an override
->   layer; append new keys at the END of `keys.json`. CJK is a machine draft.
+>   (leave the cache at ON).
+> * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent) → `python tools/i18n/gen_i18n.py`
+>   (`--check` must pass); never hand-edit `common/core/Strings.*`; append keys at the END of `keys.json`;
+>   638 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine draft; avoid plurals in
+>   English templates (there is no plural support).
 >
-> **Working rules:** every change adversarially reviewed (background agents) + build-verified with
-> BOTH theme flags + `--selftest` ALL PASS before committing; render before/after for anything
-> visual. Commit only when asked; stage specific paths (never `git add -A`); end commit messages with
-> the Co-Authored-By trailer. Hand every runtime check to the owner, and never conclude anything about
-> a class of streams from one channel.
+> **Working rules:** every change adversarially reviewed (background agents) + built with BOTH theme
+> flags + `--selftest` ALL PASS before committing; render before/after for anything visual; hand every
+> runtime check to the owner; never conclude anything about a class of streams from one channel. Commit
+> only when asked; stage specific paths (never `git add -A`); end commit messages with the
+> Co-Authored-By trailer.

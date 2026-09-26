@@ -24,7 +24,9 @@ target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_
 # XtreamRecon.cpp is a deliberately self-contained, deletable probe (--xtream) for
 # gate 1 of the VOD epic — it is NOT the production JSON path. See its header.
 # ---------------------------------------------------------------------------
-add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp)
+# ui/GuideModel.cpp is the TV Guide's row build (no window code) — compiled here too so --selftest
+# and --guidebench run the GUI's own build against a database.
+add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp ui/GuideModel.cpp)
 target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsPlatformWin)
 add_test(NAME selftest COMMAND RabbitEarsCli --selftest)  # peer of mac/'s selftest
 
@@ -72,6 +74,8 @@ if(RABBITEARS_BUILD_GUI)
     ui/MainWindowDock.cpp
     ui/ChannelGridControl.cpp
     ui/EpgGuideControl.cpp
+    ui/EpgStore.cpp
+    ui/GuideModel.cpp
     ui/BufferMeter.cpp
     ui/MiniMeter.cpp
     ui/VuDial.cpp

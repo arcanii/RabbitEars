@@ -290,5 +290,17 @@ are a 0.3.x epic.
 5. **Skins driving meters:** should Steampunk meters look brass, Cyberpunk neon, and so on?
 6. **mac:** is a Win32-only meter overhaul acceptable?
 
+### ✅ The owner's answers (2026-09-25)
+
+1. **Scope: meters AND skins** — the skinned chrome and strip as materials too (Phase 3 is in).
+2. **Size: all three** — a taller meter tray, a pop-out meter bridge, AND a user-resizable tray (Phase 4
+   is in, in all three forms).
+3. **New selectable looks** — the existing looks stay byte-identical; photoreal ones are added beside
+   them (render before/after must show the old looks unchanged).
+4. **Lighting — not asked; assumed:** one above-left key light for every skin (the VU bulb as the second
+   light). Flag it if a skin looks wrong under it.
+5. **Skins drive meters: yes** — a meter's materials and bezel follow the active skin.
+6. **mac — not asked; assumed acceptable:** meter looks and skins are Win32-only already.
+
 Plus two things that would help: the **reference photos/mockups** (not in the repo), and **one real
 screenshot** of the running app, to check the renders against the owner's actual screen and settings.

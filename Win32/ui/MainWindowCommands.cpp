@@ -55,6 +55,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/DockLayout.h"
 #include "ui/EpgGuideControl.h"
 #include "ui/DeadLinkSweep.h"
+#include "ui/EpgStore.h"
 #include "ui/VodSync.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
 #include "ui/MiniMeter.h"
@@ -349,7 +350,8 @@ void onPlaylistDone(AppState* st, PlaylistResult* res) {
 
 // Fetch + store the XMLTV guide for every enabled playlist that carries an EPG URL.
 // Mirrors startPlaylistWorker: the download + gunzip + parse run on a detached worker
-// (busy-guarded), then WM_APP_EPG_DONE stores the parsed programmes on the UI thread.
+// (busy-guarded), then WM_APP_EPG_DONE hands the parsed programmes to the store worker
+// (ui/EpgStore), and WM_APP_EPG_STORED finishes on the UI thread (onEpgStored).
 void onEpgRefresh(AppState* st) {
     if (st->busy) {
         setStatus(st, tr(i18n::StringId::StatusBusyWait));
@@ -449,61 +451,81 @@ void onEpgRefresh(AppState* st) {
     }).detach();
 }
 
-void onEpgDone(AppState* st, EpgResult* res) {
+// The fetch worker is done. Whatever parsed goes to the store worker (ui/EpgStore), which stores it
+// and re-indexes it for the guide's search on its own connection — both used to run here, freezing
+// the window for ~2.5 s on the owner's ~200k programmes. With nothing to store, finish at once. The
+// loading box stays up either way until the results dialog replaces it.
+void finishEpgRefresh(AppState* st, std::unique_ptr<EpgResult> res);
+
+void onEpgDone(AppState* st, EpgResult* raw) {
+    std::unique_ptr<EpgResult> res(raw);
+    bool anyParsed = false;
+    for (const auto& f : res->fetches)
+        if (f.error.empty()) anyParsed = true;
+    if (!anyParsed) {
+        finishEpgRefresh(st, std::move(res));
+        return;
+    }
+    startEpgStore(st->hwnd, std::move(res));  // -> WM_APP_EPG_STORED -> onEpgStored
+}
+
+void onEpgStored(AppState* st) {
+    // Null only for a second STORED about a store already finished — nothing to do. (This
+    // connection's view of the search index needs no telling: programmeSearchState() notices
+    // another connection's commits by itself.)
+    std::unique_ptr<EpgResult> res = takeEpgStoreResult();
+    if (res) finishEpgRefresh(st, std::move(res));
+}
+
+// Log each playlist's outcome, run the recording-rule pass over the new guide, and replace the
+// loading box with the results.
+void finishEpgRefresh(AppState* st, std::unique_ptr<EpgResult> res) {
     using Clock = std::chrono::steady_clock;
     auto msSince = [](Clock::time_point t0) {
         return std::to_wstring(
             std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
     };
     st->busy = false;
-    // The "please wait" box stays up until the results dialog replaces it: the store and the rule
-    // pass below both run HERE, on the UI thread, and with the box already gone a large guide
-    // (190k programmes) left a window that did not respond with nothing on screen to say why.
-    // updateLoadingDialog repaints the line at once, so each step is named before it blocks.
-    const long long now = static_cast<long long>(time(nullptr));
     int okCount = 0, totalProg = 0;
-    std::set<std::wstring> chans;
     std::wstring detail;
     for (auto& f : res->fetches) {
+        // A store that did not finish a playlist stored nothing for it: say so against that playlist
+        // (a technical line, like a download error's) — its connection would not open, or an exception
+        // stopped it there or before. (A store that finished and failed set `error` itself. A cancel
+        // only happens on the way out; no dialog is shown then.)
+        if (f.error.empty() && !f.storeDone && (!res->storeError.empty() || res->aborted))
+            f.error = !res->storeError.empty() ? res->storeError : std::wstring(L"internal error");
         if (!f.error.empty()) {
             detail += f.name + L":  " + f.error + L"\r\n";
             diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error + L" (download took " +
                         std::to_wstring(f.downloadMs) + L" ms)");
             continue;
         }
-        updateLoadingDialog(st->loadingDlg,
-                            trf(i18n::StringId::LoadingSavingProgrammes,
-                                { std::to_wstring(f.programmes.size()), f.name }));
-        const Clock::time_point tStore = Clock::now();
-        const int stored = st->db.bulkInsertProgrammes(f.playlistId, f.programmes, now);
-        const std::wstring storeMs = msSince(tStore);
         ++okCount;
-        totalProg += stored;
-        for (const auto& p : f.programmes) chans.insert(p.channelId);
-        detail += trf(i18n::StringId::EpgDetailProgrammesLine, { f.name, std::to_wstring(stored) });
-        diag::info(L"EPG stored " + std::to_wstring(stored) + L" programmes for \"" + f.name + L"\"");
+        totalProg += f.stored;
+        detail += trf(i18n::StringId::EpgDetailProgrammesLine, { f.name, std::to_wstring(f.stored) });
+        diag::info(L"EPG stored " + std::to_wstring(f.stored) + L" programmes for \"" + f.name + L"\"");
         diag::info(L"EPG timings for \"" + f.name + L"\": download " + std::to_wstring(f.downloadMs) +
                    L" ms (" + std::to_wstring(f.downloadBytes) + L" bytes), gunzip " +
                    std::to_wstring(f.gunzipMs) + L" ms (" + std::to_wstring(f.xmlBytes) +
-                   L" bytes), parse " + std::to_wstring(f.parseMs) + L" ms (" +
-                   std::to_wstring(f.programmes.size()) + L" programmes), store " + storeMs + L" ms");
+                   L" bytes), parse " + std::to_wstring(f.parseMs) + L" ms (" + std::to_wstring(f.parsed) +
+                   L" programmes), store " + std::to_wstring(f.storeMs) + L" ms");
     }
     std::wstring summary =
         okCount > 0 ? trf(i18n::StringId::EpgStoredSummary,
-                          { std::to_wstring(totalProg), std::to_wstring(chans.size()) })
+                          { std::to_wstring(totalProg), std::to_wstring(res->channels) })
                     : tr(i18n::StringId::EpgRefreshFailedSummary);
-    // Re-index for the TV Guide's programme search ONCE, after every playlist's guide is stored — a
-    // rebuild re-indexes the whole table, so doing it per playlist would repeat it (EPG_SEARCH.md §3).
-    // Its own transaction; if it fails, the stamp still says "stale": searches use LIKE until the next
-    // search SESSION, whose onSearchBegin rebuilds it.
-    if (okCount > 0 &&
-        st->db.programmeSearchState() != Database::ProgrammeSearchState::Unavailable) {
-        updateLoadingDialog(st->loadingDlg, tr(i18n::StringId::LoadingIndexingGuide));
-        const Clock::time_point tIndex = Clock::now();
-        const bool indexed = st->db.rebuildProgrammeIndex();
-        diag::info(L"EPG search index rebuild: " + msSince(tIndex) + L" ms" +
-                   (indexed ? L"" : L" — FAILED (the next search session retries): " + st->db.lastError()));
-    }
+    // The TV Guide's programme search index is rebuilt ONCE, after every playlist's guide (EPG_SEARCH.md
+    // §3), by the store worker. If that failed, the stamp says "stale": searches use LIKE until the
+    // next search SESSION, whose onSearchBegin rebuilds it.
+    if (res->aborted)
+        diag::error(L"EPG store: stopped part-way by an exception — any guide it did not reach keeps its "
+                    L"previous programmes, and the next search session rebuilds the search index");
+    if (res->index != EpgResult::Index::NotRun)
+        diag::info(L"EPG search index rebuild: " + std::to_wstring(res->indexMs) + L" ms" +
+                   (res->index == EpgResult::Index::Rebuilt
+                        ? L""
+                        : L" — FAILED (the next search session rebuilds it): " + res->indexError));
     // A fresh guide is exactly when a series rule learns about next week's airings — force it.
     if (okCount > 0) {
         updateLoadingDialog(st->loadingDlg, tr(i18n::StringId::LoadingCheckingRules));
@@ -522,7 +544,6 @@ void onEpgDone(AppState* st, EpgResult* res) {
     showInfoDialog(st->hwnd,
                    reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE)),
                    st->dpi, tr(i18n::StringId::RefreshGuideTitle), summary, detail);
-    delete res;
 }
 
 // Assemble the timeline guide from stored programmes (all enabled playlists) and open
@@ -534,109 +555,33 @@ void scheduleFromGuide(AppState* st, const std::wstring& channelId, const std::w
                        const std::wstring& title, long long startUtc, long long stopUtc);
 
 void onEpgGuide(AppState* st) {
-    // Opening the guide is the SLOW path (reopen — revealEpgGuide — is instant): it runs a
-    // per-playlist programmesInWindow query + grouping synchronously on the UI thread, and the guide
-    // window only appears at the very end. Put a "Loading TV guide…" box up first so the click has an
-    // immediate, visible response (with the busy-spinner cursor) instead of a frozen window the user
+    // Opening the guide is the SLOW path (reopen — revealEpgGuide — is instant): buildGuideModel's
+    // queries + grouping run synchronously on the UI thread (~0.2 s on the owner's 107k-programme
+    // window, measured with --guidebench; 1.2 s more before the channel side read only the channels
+    // carrying a guide id), and the guide window only appears at the very end — "Show in TV Guide"
+    // relies on it existing when this returns. Put a "Loading TV guide…" box up first so the click has
+    // an immediate, visible response (with the busy-spinner cursor) instead of a frozen window the user
     // assumes has hung. The box is painted synchronously (showLoadingDialog ends with UpdateWindow)
     // and torn down on EVERY exit below. It is a LOCAL HWND — it lives only for this synchronous call,
-    // so it must NOT reuse st->loadingDlg (that belongs to the async EPG fetch; borrowing it would
-    // orphan the fetch's box and leave onEpgDone closing the wrong window). No busy guard for the same
-    // reason: the build only READS the DB on the UI thread, so it's safe to run during a fetch/playlist
-    // load, and the fetch's own box is topmost so it still floats over the opened guide.
+    // so it must NOT reuse st->loadingDlg (that belongs to the async EPG refresh; borrowing it would
+    // orphan the refresh's box and leave finishEpgRefresh closing the wrong window). No busy guard for
+    // the same reason: the build only READS the DB, so it's safe to run during a refresh or a playlist
+    // load (mid-store, each playlist's programmes are one query, so each is its guide from before or
+    // after its own transaction — with several guide playlists the open may mix the two until the
+    // next one), and the refresh's own box is topmost so it still floats over the opened guide.
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
     HWND loadDlg = showLoadingDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::TvGuideTitle),
                                      tr(i18n::StringId::LoadingBuildingGuide));
-    // No diag timer exists on this path, so the absolute first-open cost is unmeasured; bracket it
-    // (owner can't profile the GUI from the build sandbox). If builds run past ~2-3 s on real guides,
-    // the fix is a worker with its OWN sqlite connection — see Win32/BACKLOG.md.
+    // Bracket the build for the diag log — the one measurement of it on a user's own library.
     LARGE_INTEGER freq, tBuild0, tBuild1, tShow0, tShow1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&tBuild0);
 
     const long long now = static_cast<long long>(time(nullptr));
-    const long long winStart = now - kGuideWindowPastSec;   // a little history
-    const long long winEnd = now + kGuideWindowAheadSec;    // three days ahead (EpgGuideControl.h)
-    std::vector<GuideRow> rows;
-    // Index channels by their EPG id: iptv-org tvg-ids carry an "@feed" quality suffix
-    // (e.g. "CNN.us@SD") while XMLTV feeds key on the base id ("CNN.us"), so match on the base,
-    // case-insensitively (`normId` — the same normalisation as Database's RE_NORM_TVG).
-    auto normId = [](const std::wstring& s) {
-        std::wstring b = s.substr(0, s.find(L'@'));
-        for (auto& ch : b)
-            if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
-        return b;
-    };
-    // The toolbar's coverage line (GuideCoverage), counted alongside the rows: per playlist, its live
-    // channels' distinct guide ids (one query for all playlists, ~3 ms) split into those with a row,
-    // those without one in a playlist with no guide link, and those without one despite a link; and,
-    // across ALL playlists, the guide's channels that matched none of the user's.
-    GuideCoverage coverage;
-    coverage.valid = true;
-    std::unordered_map<long long, int> idsByPlaylist;
-    for (const auto& [pid, n] : st->db.distinctLiveGuideIds()) idsByPlaylist[pid] = n;
-    std::unordered_set<std::wstring> guideMatched, guideUnmatched;  // normalised guide ids
-    for (const auto& pl : st->db.listPlaylists()) {
-        if (!pl.enabled) continue;
-        const auto idsIt = idsByPlaylist.find(pl.id);
-        const int ids = idsIt == idsByPlaylist.end() ? 0 : idsIt->second;
-        std::unordered_set<std::wstring> rowBases;  // this playlist's ids that got a row
-        auto progs = st->db.programmesInWindow(pl.id, winStart, winEnd);  // ordered channel_id, start
-        if (!progs.empty()) {
-            // LIVE channels only (like the coverage count). Keep the FIRST channel per base — its FULL
-            // tvg-id becomes the row's channelId, which Play/Schedule resolve via channelByTvgId, so
-            // every row stays playable.
-            std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> byBase;  // base -> (name, full tvg-id)
-            for (const auto& c : st->db.channelsByPlaylist(pl.id))
-                if (!c.tvgId.empty() && c.kind == Channel::Kind::Live)
-                    byBase.emplace(normId(c.tvgId), std::make_pair(c.name, c.tvgId));
-            GuideRow cur;
-            std::wstring curId;
-            bool have = false;     // building a row for a channel that IS in this playlist?
-            bool started = false;  // entered any channel group yet? (have can no longer double as this)
-            auto flush = [&] {
-                if (have && !cur.programmes.empty()) rows.push_back(std::move(cur));
-                cur = GuideRow{};
-                have = false;
-            };
-            for (auto& p : progs) {
-                if (!started || p.channelId != curId) {
-                    flush();
-                    curId = p.channelId;
-                    started = true;
-                    const std::wstring base = normId(curId);  // programme.channelId is the EPG base id
-                    auto it = byBase.find(base);
-                    if (it != byBase.end()) {
-                        cur.channelId = it->second.second;  // the channel's FULL tvg-id (Play/Schedule use it)
-                        cur.channelName = it->second.first.empty() ? curId : it->second.first;
-                        have = true;
-                        guideMatched.insert(base);
-                        rowBases.insert(base);
-                    } else {
-                        guideUnmatched.insert(base);
-                    }
-                }
-                if (have) cur.programmes.push_back({p.title, p.descr, p.startUtc, p.stopUtc});
-            }
-            flush();
-        }
-        const int shownHere = static_cast<int>(rowBases.size());  // <= ids: each is one of its live ids
-        const int missing = std::max(0, ids - shownHere);
-        coverage.withId += ids;
-        coverage.shown += std::min(shownHere, ids);
-        (pl.epgUrl.empty() ? coverage.inNoLinkPlaylists : coverage.noProgrammes) += missing;
-    }
-    // "Matching none of yours" means none in ANY enabled playlist — also one with no guide link of its
-    // own, whose channel this guide would serve once linked (so that is not "another provider").
-    std::unordered_set<std::wstring> anyLiveId;
-    for (auto& id : st->db.liveGuideIds()) anyLiveId.insert(std::move(id));
-    for (const auto& id : guideUnmatched)
-        if (!guideMatched.count(id) && !anyLiveId.count(id)) ++coverage.guideUnmatched;
-    const std::wstring coverageLog =
-        std::to_wstring(coverage.shown) + L" of " + std::to_wstring(coverage.withId) +
-        L" guide ids among the live channels have rows; " + std::to_wstring(coverage.inNoLinkPlaylists) +
-        L" without one in playlists with no guide link, " + std::to_wstring(coverage.noProgrammes) +
-        L" despite one; " + std::to_wstring(coverage.guideUnmatched) + L" guide channels matching none";
+    GuideModel model = buildGuideModel(st->db, now);  // the rows, sorted by channel name
+    std::vector<GuideRow>& rows = model.rows;
+    const GuideCoverage& coverage = model.coverage;
+    const std::wstring& coverageLog = model.coverageLog;
     QueryPerformanceCounter(&tBuild1);
     if (rows.empty()) {
         diag::info(L"TV guide: no rows (" + coverageLog + L")");
@@ -648,8 +593,6 @@ void onEpgGuide(AppState* st) {
                            L"\r\n\r\n" + guideCoverageExplanation(coverage));
         return;
     }
-    std::sort(rows.begin(), rows.end(),
-              [](const GuideRow& a, const GuideRow& b) { return a.channelName < b.channelName; });
     GuideCallbacks cb;
     cb.onSchedule = [st](const std::wstring& channelId, const std::wstring& channelName,
                          const std::wstring& title, long long startUtc, long long stopUtc) {
@@ -692,12 +635,16 @@ void onEpgGuide(AppState* st) {
     };
     // Programme search (docs/EPG_SEARCH.md). Begin: load the channel set and, if the index is stale
     // (the first search after upgrading, a deleted playlist, a refresh by an older build, a failed
-    // rebuild after a refresh), rebuild it — the guide is already showing "Preparing search…".
+    // rebuild after a refresh), rebuild it — the guide is already showing "Preparing search…". Not
+    // while Refresh Guide's store worker runs: it rebuilds the index itself once it has stored, and a
+    // rebuild here would wait on its lock and then repeat its work, on the UI thread. Searches use
+    // LIKE until then.
     cb.onSearchBegin = [st]() {
         using Clock = std::chrono::steady_clock;
         const auto t0 = Clock::now();
         bool rebuilt = false;
-        if (st->db.programmeSearchState() == Database::ProgrammeSearchState::NeedsRebuild)
+        if (!epgStoreRunning() &&
+            st->db.programmeSearchState() == Database::ProgrammeSearchState::NeedsRebuild)
             rebuilt = st->db.rebuildProgrammeIndex();
         const bool channels = st->db.refreshProgrammeSearchChannels();
         diag::info(L"guide search session: " +

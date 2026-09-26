@@ -54,6 +54,9 @@ constexpr UINT WM_APP_DEADLINK_DONE = WM_APP + 7;
 // posted to a window that is already tearing down.
 constexpr UINT WM_APP_VOD_PROGRESS = WM_APP + 8;
 constexpr UINT WM_APP_VOD_DONE = WM_APP + 9;
+// Refresh Guide's store worker (ui/EpgStore) -> UI thread: the guide is stored. Carries nothing — the
+// result is read back with takeEpgStoreResult(). +11: the next id after ChannelGridControl's +10.
+constexpr UINT WM_APP_EPG_STORED = WM_APP + 11;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 constexpr UINT_PTR kSupportPromptTimer = 0xA3;  // ONE-SHOT: the "support RabbitEars" tip prompt
 constexpr UINT_PTR kSearchDebounceTimer = 0xA4;  // ONE-SHOT: coalesce a typing burst in the search box
@@ -228,8 +231,8 @@ struct PlaylistResult {
 
 // EPG (Refresh Guide) — one enabled playlist that carries an XMLTV URL, the fetch
 // worker's per-playlist outcome, and the batch posted back to the UI thread. Fetch +
-// parse run off-thread; the DB write (bulkInsertProgrammes) runs on the UI thread,
-// mirroring the playlist-import split.
+// parse run on one worker; the DB write runs on another with its own connection
+// (ui/EpgStore), which fills in the store's half of these before the UI thread sees them again.
 struct EpgTarget {
     long long    id = 0;
     std::wstring name;
@@ -239,14 +242,31 @@ struct EpgFetch {
     long long              playlistId = 0;
     std::wstring           name;
     std::wstring           error;       // empty on success
-    std::vector<Programme> programmes;  // parsed rows (empty on failure)
-    // Where the worker's time went; onEpgDone logs it (beside the store's own time) for a
+    std::vector<Programme> programmes;  // parsed rows (empty on failure; freed once stored)
+    // Where the worker's time went; finishEpgRefresh logs it (beside the store's own time) for a
     // successful fetch, and the download time for a failed one.
     long long              downloadMs = 0, gunzipMs = 0, parseMs = 0;
     size_t                 downloadBytes = 0, xmlBytes = 0;
+    // The store's: how many programmes it was handed (before it freed them), whether its store for
+    // this playlist finished (a failed one also sets `error`), the rows it stored, and how long that
+    // transaction took.
+    size_t                 parsed = 0;
+    bool                   storeDone = false;
+    int                    stored = 0;
+    long long              storeMs = 0;
 };
 struct EpgResult {
     std::vector<EpgFetch> fetches;
+    // The store's (ui/EpgStore): the distinct guide channels across the parsed fetches; why it could
+    // store nothing at all (its connection would not open — empty otherwise); whether an exception
+    // stopped it part-way; and the search index's rebuild (not run: nothing stored, no index, or a
+    // cancel).
+    size_t       channels = 0;
+    std::wstring storeError;
+    bool         aborted = false;
+    enum class Index { NotRun, Rebuilt, Failed } index = Index::NotRun;
+    long long    indexMs = 0;
+    std::wstring indexError;
 };
 
 // One video pane: its own surface window + libVLC player (sharing AppState::engine) + the
@@ -506,6 +526,7 @@ void onOpenFile(AppState* st);
 void onPlaylistDone(AppState* st, PlaylistResult* res);
 void onEpgRefresh(AppState* st);
 void onEpgDone(AppState* st, EpgResult* res);
+void onEpgStored(AppState* st);
 void onEpgGuide(AppState* st);
 void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid);
 void toggleFullscreen(AppState* st);

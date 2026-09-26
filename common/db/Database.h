@@ -193,7 +193,12 @@ public:
     // ---- EPG (programmes) --------------------------------------------------
     // Replace this playlist's stored guide with a freshly-parsed batch, in one
     // transaction (a refresh is authoritative — old rows are cleared first). Also
-    // records an `epg_refreshed_<id>` settings timestamp. Returns rows stored.
+    // records an `epg_refreshed_<id>` settings timestamp. Returns rows stored — and 0 means one of
+    // two things: NOTHING landed, the old guide kept (a contended writer, a failed DELETE /
+    // timestamp / COMMIT, an error that ended the transaction, every row failing, no such playlist —
+    // lastError() says which), or a batch with no valid programmes WAS stored, replacing the old guide
+    // with nothing (lastError() empty). A row that fails on its own is skipped as before; the rest
+    // commit, and lastError() names the first such failure.
     int bulkInsertProgrammes(long long playlistId, const std::vector<Programme>& programmes,
                              long long nowEpoch);
     // The programme airing at `nowEpoch` plus the one after it (0–2 rows) for a
@@ -220,10 +225,12 @@ public:
                        // build's refresh) — call rebuildProgrammeIndex() before relying on search
         Unavailable,   // no index (schema v10 did not land): search answers with a LIKE scan
     };
-    // Cheap after the first call: the stamp (COUNT + MAX(id) over epg_programmes plus the
-    // epg_refreshed_* settings — 7 ms at 193k rows, measured) is compared once, then remembered until
-    // this object changes epg_programmes (bulkInsertProgrammes, deletePlaylist) or is reopened. Nothing
-    // else in the process writes epg_programmes (the sync workers' connections do not).
+    // Usually cheap: the stamp (COUNT + MAX(id) over epg_programmes plus the epg_refreshed_* settings —
+    // 7 ms at 193k rows, measured) is compared, then remembered until this object changes
+    // epg_programmes (bulkInsertProgrammes, deletePlaylist), is reopened, or ANOTHER connection commits
+    // anything or checkpoints (PRAGMA data_version moves) — so while a sync worker is committing, each
+    // call re-reads the stamp. Win32 stores a guide refresh on a worker's own connection, and the index
+    // is stale from that store's commit until the same worker's rebuild commits.
     ProgrammeSearchState programmeSearchState();
     // Rebuild both tables from epg_programmes and record the stamp, in ONE transaction of its own.
     // Seconds on a large guide (~1.5 s at the owner's 193k programmes, measured through this code on
@@ -283,6 +290,18 @@ public:
     // Those ids themselves, across ENABLED playlists — the coverage line's "guide channels matching
     // none of yours" is the guide's channels minus these. Same index, ~3 ms.
     std::vector<std::wstring> liveGuideIds();
+    // Every LIVE channel that carries a guide id, in every playlist (enabled or not): ordered by
+    // playlist, then exactly as channelsByPlaylist orders a playlist's channels — so the first channel
+    // per normalised id here is the one a TV Guide row is named after and carries the tvg-id of (Win32
+    // buildGuideModel; Play then resolves that tvg-id through channelByTvgId). Only the columns the
+    // join needs, through the same tvg-id index as distinctLiveGuideIds, so it reads just the
+    // id-carrying rows: 4.3 ms for the owner's 4,795 among 410k channels, where listing the playlist
+    // through channelsByPlaylist to find them took 1.2 s (both measured, RabbitEarsCli --guidebench).
+    struct GuideChannel {
+        long long    playlistId = 0;
+        std::wstring name, tvgId;  // tvgId as stored (not normalised)
+    };
+    std::vector<GuideChannel> liveGuideChannels();
 
     // ---- Scheduled recordings ----------------------------------------------
     long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
@@ -344,9 +363,13 @@ private:
     bool createChannelSearchIndex();
     bool channelSearchTableExists();         // channels_fts present AND genuinely FTS5
     std::wstring programmeIndexStamp();      // what the index must have been built from
+    long long    dataVersion();              // PRAGMA data_version; -1 = could not read
     // programmeSearchState()'s memory: -1 = not yet checked since this connection last changed
-    // epg_programmes, 0 = stale, 1 = current. Reset by bulkInsertProgrammes and deletePlaylist.
+    // epg_programmes, 0 = stale, 1 = current. Reset by bulkInsertProgrammes and deletePlaylist, and
+    // disregarded once data_version moves off `programmeIndexDataVersion_` (another connection
+    // committed since it was learnt).
     int          programmeIndexKnown_ = -1;
+    long long    programmeIndexDataVersion_ = -1;
 
     sqlite3*     db_ = nullptr;
     std::wstring lastError_;
