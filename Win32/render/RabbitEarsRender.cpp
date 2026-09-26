@@ -29,6 +29,11 @@
 //   --skin ID   render only this skin (repeatable; default: every built-in skin)
 //   --strip-only / --no-strip   only / skip the transport-strip renders (theme-engine builds)
 //   --time MS   the strip animation time in milliseconds (default 1500)
+//   --bench-paint  no PNGs: time the REAL per-frame work (one tick + one paint) of every meter kind and
+//               look, and the tank, at the tray's widths for 30 / 50 / 72 / 120 dp, at 144 dpi (150 %)
+//   --meter-height DP   the tray sheets AND the strips at this meter height, 30..120 (default 30 = the
+//               standard tray; the strip grows and the widths scale with it, as in the app — ui/MeterTray.h);
+//               other heights add _h<DP> to the names
 // Exit code: 0 = every PNG written, 1 = something failed (details on stdout), 2 = bad arguments.
 #include <windows.h>
 
@@ -50,6 +55,7 @@ using std::min;
 #include "core/Strings.h"
 #include "ui/BufferMeter.h"
 #include "ui/MiniMeter.h"
+#include "ui/MeterTray.h"  // the tray geometry layout() uses
 #include "ui/Skin.h"
 #include "ui/Theme.h"
 #ifdef RABBITEARS_THEME_ENGINE
@@ -278,8 +284,15 @@ constexpr int kStyleCount = static_cast<int>(sizeof(kStyles) / sizeof(kStyles[0]
 const MeterKind kKinds[] = {MeterKind::Spectrum, MeterKind::Signal, MeterKind::Bitrate,
                             MeterKind::Frames};
 const wchar_t* kKindNames[] = {L"Spectrum", L"Signal", L"Bitrate", L"Frames"};
-// Tray widths from MainWindowChrome.cpp layout() (96-dpi design values), in kKinds order.
-const int kTrayW96[] = {112, 58, 96, 72};
+// Tray widths: ui/MeterTray.h (kTrayMeterW96 in kKinds order, kTrayTankW96), as layout() uses them.
+// --meter-height: the tray meters' height in dp (the strip and the widths follow it, as in the app). 30
+// = the standard tray — whose sheets keep their names and bytes; any other height adds "_h<dp>".
+int g_meterH96 = kMeterHeightStd;
+std::wstring heightSuffix() {
+    wchar_t s[16] = L"";
+    if (g_meterH96 != kMeterHeightStd) swprintf_s(s, L"_h%d", g_meterH96);
+    return s;
+}
 
 std::wstring wid(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 
@@ -288,15 +301,15 @@ std::wstring wid(const std::string& s) { return std::wstring(s.begin(), s.end())
 // visible.
 void traySheet(const std::string& skin, UINT dpi, float glass) {
     miniMeterSetGlass(glass);
-    const int mh = dp(30, dpi);
-    const int zoom = (dpi <= 96) ? 4 : 3;
+    const int mh = dp(g_meterH96, dpi);
+    const int zoom = std::max(1, ((dpi <= 96) ? 4 : 3) * 30 / g_meterH96);
     const int gap = 8, labelW = 70, top = 34, rowLabelH = 16;
     int colW[4], totalW = labelW;
     for (int k = 0; k < 4; ++k) {
-        colW[k] = dp(kTrayW96[k], dpi);
+        colW[k] = trayWidth(kTrayMeterW96[k], mh, dpi);
         totalW += colW[k] * zoom + gap;
     }
-    const int bufW = dp(115, dpi);
+    const int bufW = trayWidth(kTrayTankW96, mh, dpi);
     totalW = std::max(totalW, labelW + 2 * (bufW * zoom + gap));
     const int rowH = mh * zoom + rowLabelH + gap;
     const int H = top + kStyleCount * rowH + rowH + 10;
@@ -336,8 +349,8 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
         cv.put(b, labelW + bufW * zoom + gap, y + rowLabelH, zoom);
     }
     wchar_t name[128];
-    swprintf_s(name, L"tray_%ls_%udpi_glass%02d.png", wid(skin).c_str(), dpi,
-               static_cast<int>(glass * 100 + 0.5f));
+    swprintf_s(name, L"tray_%ls_%udpi_glass%02d%ls.png", wid(skin).c_str(), dpi,
+               static_cast<int>(glass * 100 + 0.5f), heightSuffix().c_str());
     writePng(cv.snapshot(), name);
 }
 
@@ -388,23 +401,46 @@ std::wstring adapterName() {
 void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style, const wchar_t* tag,
                const std::wstring& adapterTag) {
     miniMeterSetGlass(glass);
-    const int W = dp(1100, dpi), H = dp(50, dpi);  // stripH() == dp(50)
-    Canvas cv(W, H, 0x00FF00FFu);                  // magenta = "strip failed to paint"
+    // The strip at this meter height, as layout() makes it for a video panel 1100 dp wide (and tall
+    // enough not to cap it): inline at the standard height, an own row of meters above the transport
+    // row when taller (MeterTray.h).
+    const int W = dp(1100, dpi), pad = dp(10, dpi);
+    const StripMetrics sm = stripMetrics(g_meterH96, dpi, 0, W - 2 * pad);
+    const int H = sm.stripPx;       // == MainWindow stripHeight()
+    Canvas cv(W, H, 0x00FF00FFu);  // magenta = "strip failed to paint"
     const bool ok = skin::paintSkinStrip(cv.dc, RECT{0, 0, W, H}, dpi);
     GdiFlush();
-    const int meterH = dp(30, dpi), meterY = (H - meterH) / 2, pad = dp(10, dpi);
+    const int meterH = sm.meterPx;
+    const int meterY = sm.ownRow ? dp(kMeterRowTopDp, dpi) : (H - meterH) / 2;
+    // Where layout()'s transport controls end, left to right from the strip's edge (play, stop, record,
+    // the volume icon + slider, fullscreen, the buffer label + slider — no VOD seek cluster here): inline,
+    // a meter that would reach left of it (+ pad) is HIDDEN in the app, so it is left out here too. An
+    // own row has only the panel's left edge to its left.
+    const int bw = dp(34, dpi), ig = dp(4, dpi);
+    int controlsEnd = pad;
+    controlsEnd += bw + ig;
+    controlsEnd += bw + ig;
+    controlsEnd += bw + pad;
+    controlsEnd += dp(20, dpi) + dp(2, dpi);
+    controlsEnd += dp(126, dpi) + pad;
+    controlsEnd += dp(34, dpi) + pad * 2;
+    controlsEnd += dp(84, dpi) + dp(2, dpi);
+    controlsEnd += dp(110, dpi) + pad * 2;
+    const int meterLeft = sm.ownRow ? 0 : controlsEnd;
     int rightX = W - pad;
-    const int bufW = dp(115, dpi);
+    const int bufW = trayWidth(kTrayTankW96, meterH, dpi);
     cv.put(renderBuffer(bufW, meterH, dpi, 360, false, L"12.4 Mb/s"), rightX - bufW, meterY, 1);
     rightX -= bufW + pad;
     const int order[] = {3, 2, 1, 0};  // rightmost first: Frames, Bitrate, Signal, Spectrum
     for (int k : order) {
-        const int w = dp(kTrayW96[k], dpi);
+        const int w = trayWidth(kTrayMeterW96[k], meterH, dpi);
+        if (rightX - w < meterLeft + pad) continue;  // does not fit: hidden, as in layout()
         cv.put(renderMini(kKinds[k], style, w, meterH, dpi, 90, 16), rightX - w, meterY, 1);
         rightX -= w + dp(6, dpi);
     }
     wchar_t name[160];
-    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls.png", wid(skin).c_str(), dpi, tag, adapterTag.c_str());
+    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls.png", wid(skin).c_str(), dpi, tag, adapterTag.c_str(),
+               heightSuffix().c_str());
     writePng(cv.snapshot(), name);
     if (!ok) fail((std::wstring(L"paintSkinStrip returned false for ") + name).c_str());
     // A 3x zoom of just the right-hand tray, where the meters sit on the strip.
@@ -423,8 +459,8 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
             tray.px[static_cast<size_t>(y) * tray.w + x] = full.px[static_cast<size_t>(y) * W + trayX + x];
     Canvas z(tray.w * 3, H * 3, 0);
     z.put(tray, 0, 0, 3);
-    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls_trayzoom3.png", wid(skin).c_str(), dpi, tag,
-               adapterTag.c_str());
+    swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls_trayzoom3.png", wid(skin).c_str(), dpi, tag,
+               adapterTag.c_str(), heightSuffix().c_str());
     writePng(z.snapshot(), name);
 }
 #endif  // RABBITEARS_THEME_ENGINE
@@ -453,8 +489,77 @@ std::vector<std::string> allSkins() {
 
 LRESULT CALLBACK ParentProc(HWND h, UINT m, WPARAM w, LPARAM l) { return DefWindowProcW(h, m, w, l); }
 
+// --bench-paint: what a meter costs the UI thread per animation frame (its onTick + onPaint, 30 per
+// second in the app) at each size — the median of `frames` frames after a warm-up, in ms.
+void benchPaint(UINT dpi) {
+    const int heights[] = {30, 50, 72, 120};
+    constexpr int kWarm = 40, kFrames = 60;
+    auto median = [](std::vector<double> v) {
+        std::sort(v.begin(), v.end());
+        return v.empty() ? 0.0 : v[v.size() / 2];
+    };
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    auto nowMs = [&]() {
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        return static_cast<double>(t.QuadPart) * 1000.0 / static_cast<double>(f.QuadPart);
+    };
+    wprintf(L"per-frame tick+paint, ms (median of %d), dpi %u, glass %.2f; columns: meter height 30 / 50 / 72 / 120 dp\n",
+            kFrames, dpi, miniMeterGlass());
+    for (int k = 0; k < 4; ++k)
+        for (int s = 0; s < kStyleCount; ++s) {
+            wprintf(L"  %-8ls %-7ls", kKindNames[k], kStyleNames[s]);
+            for (int h : heights) {
+                const int mh = dp(h, dpi), w = trayWidth(kTrayMeterW96[k], mh, dpi);
+                HWND m = createMiniMeter(g_parent, g_inst, 100, dpi, kKinds[k]);
+                if (!m) {
+                    fail(L"createMiniMeter failed");
+                    continue;
+                }
+                SetWindowPos(m, nullptr, 0, 0, w, mh, SWP_NOZORDER | SWP_NOACTIVATE);
+                miniMeterSetStyle(m, kStyles[s]);
+                std::vector<double> t;
+                for (int i = 0; i < kWarm + kFrames; ++i) {
+                    feedMini(m, kKinds[k], i, 16);
+                    const double t0 = nowMs();
+                    SendMessageW(m, WM_TIMER, kMeterTimerId, 0);
+                    SendMessageW(m, WM_PAINT, 0, 0);
+                    if (i >= kWarm) t.push_back(nowMs() - t0);
+                }
+                DestroyWindow(m);
+                wprintf(L"  %7.3f", median(t));
+            }
+            wprintf(L"\n");
+        }
+    wprintf(L"  %-16ls", L"Tank");
+    for (int h : heights) {
+        const int mh = dp(h, dpi), w = trayWidth(kTrayTankW96, mh, dpi);
+        HWND b = createBufferMeter(g_parent, g_inst, 200, dpi);
+        if (!b) {
+            fail(L"createBufferMeter failed");
+            continue;
+        }
+        SetWindowPos(b, nullptr, 0, 0, w, mh, SWP_NOZORDER | SWP_NOACTIVATE);
+        bufferMeterSetMetrics(b, L"12.4 Mb/s");
+        std::vector<double> t;
+        for (int i = 0; i < kWarm + kFrames; ++i) {
+            bufferMeterSetHealth(b, 100);
+            bufferMeterSetFlow(b, 0.65f, 0.0f);
+            const double t0 = nowMs();
+            SendMessageW(b, WM_TIMER, kMeterTimerId, 0);
+            SendMessageW(b, WM_PAINT, 0, 0);
+            if (i >= kWarm) t.push_back(nowMs() - t0);
+        }
+        DestroyWindow(b);
+        wprintf(L"  %7.3f", median(t));
+    }
+    wprintf(L"\n");
+}
+
 int usage() {
-    wprintf(L"usage: RabbitEarsRender [outdir] [--skin ID]... [--strip-only | --no-strip] [--time MS]\n");
+    wprintf(L"usage: RabbitEarsRender [outdir] [--skin ID]... [--strip-only | --no-strip] [--time MS]"
+            L" [--meter-height DP] [--bench-paint]\n");
     return 2;
 }
 
@@ -463,7 +568,7 @@ int usage() {
 int wmain(int argc, wchar_t** argv) {
     std::wstring outDir = L"render-out";
     std::vector<std::string> skins;
-    bool stripOnly = false, noStrip = false;
+    bool stripOnly = false, noStrip = false, benchOnly = false;
     ULONGLONG timeMs = 1500;
     bool haveOut = false;
     for (int i = 1; i < argc; ++i) {
@@ -474,6 +579,8 @@ int wmain(int argc, wchar_t** argv) {
             for (const wchar_t c : std::wstring(argv[++i]))
                 id.push_back(c < 0x80 ? static_cast<char>(c) : '?');
             skins.push_back(id);
+        } else if (a == L"--bench-paint") {
+            benchOnly = true;
         } else if (a == L"--strip-only") {
             stripOnly = true;
         } else if (a == L"--no-strip") {
@@ -482,6 +589,11 @@ int wmain(int argc, wchar_t** argv) {
             const std::wstring v = argv[++i];
             if (v.empty() || v.find_first_not_of(L"0123456789") != std::wstring::npos) return usage();
             timeMs = static_cast<ULONGLONG>(_wtoi64(v.c_str()));
+        } else if (a == L"--meter-height" && i + 1 < argc) {
+            const std::wstring v = argv[++i];
+            if (v.empty() || v.find_first_not_of(L"0123456789") != std::wstring::npos) return usage();
+            g_meterH96 = _wtoi(v.c_str());
+            if (g_meterH96 < kMeterHeightMin || g_meterH96 > kMeterHeightMax) return usage();
         } else if (a == L"--help" || a == L"-h" || a == L"/?") {
             usage();
             return 0;
@@ -534,6 +646,15 @@ int wmain(int argc, wchar_t** argv) {
                                nullptr, nullptr, g_inst, nullptr);
     registerMiniMeterClass(g_inst);
     registerBufferMeterClass(g_inst);
+    if (benchOnly) {
+        selectSkin(skins.front());
+        for (float glass : {0.0f, 0.69f}) {  // glass off, and at the owner's 69 %
+            miniMeterSetGlass(glass);
+            benchPaint(144);
+        }
+        Gdiplus::GdiplusShutdown(gtok);
+        return g_failures ? 1 : 0;
+    }
 
 #ifdef RABBITEARS_THEME_ENGINE
     // uTime for every strip is exactly timeMs: t0 is latched at 0, then the clock reads timeMs.

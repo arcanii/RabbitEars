@@ -281,6 +281,8 @@ void advect_phase(Fluid& f, float dt, float t) {
 // ---- state -----------------------------------------------------------------
 
 struct MeterState {
+    HWND mirror = nullptr;   // bufferMeterSetMirror (UI thread only)
+    bool isMirror = false;   // this tank IS another's mirror (it then gets none of its own: no cycles)
     Fluid fluid;
     float target = 0.0f;   // fill 0..1 (buffer health)
     float phase = 0.0f;    // sim time (wave + shimmer clock)
@@ -974,6 +976,7 @@ void bufferMeterSetHealth(HWND meter, int percent) {
         st->metrics[0] = L'\0';
     }
     if (!st->hidden) startTimer(meter, st);
+    if (st->mirror) bufferMeterSetHealth(st->mirror, percent);
 }
 
 void bufferMeterSetFlow(HWND meter, float flowRate, float trouble) {
@@ -983,6 +986,7 @@ void bufferMeterSetFlow(HWND meter, float flowRate, float trouble) {
     // Latch the strongest recent trouble; step() decays it between samples.
     st->troubleTarget = std::max(st->troubleTarget, std::clamp(trouble, 0.0f, 1.0f));
     if (!st->hidden) startTimer(meter, st);
+    if (st->mirror) bufferMeterSetFlow(st->mirror, flowRate, trouble);
 }
 
 void bufferMeterSetMetrics(HWND meter, const wchar_t* text) {
@@ -990,6 +994,27 @@ void bufferMeterSetMetrics(HWND meter, const wchar_t* text) {
     if (!st) return;
     lstrcpynW(st->metrics, text ? text : L"", 40);
     if (!st->hidden) InvalidateRect(meter, nullptr, FALSE);
+    if (st->mirror) bufferMeterSetMetrics(st->mirror, text);
+}
+
+void bufferMeterSetMirror(HWND meter, HWND mirror) {
+    MeterState* st = stateOf(meter);
+    if (!st || mirror == meter || st->isMirror) return;
+    MeterState* m = mirror ? stateOf(mirror) : nullptr;
+    if (mirror && (!m || m->mirror)) return;  // not a tank, or one that mirrors onward
+    if (st->mirror && st->mirror != mirror)
+        if (MeterState* old = stateOf(st->mirror)) old->isMirror = false;
+    st->mirror = mirror;
+    if (!m) return;
+    m->isMirror = true;
+    // Start the twin where this tank IS: its fill is set only on Opening/Buffering/Playing events, so a
+    // bridge opened during a steady stream would otherwise stay empty until the next one.
+    m->target = st->target;
+    m->flowTarget = st->flowTarget;
+    m->troubleTarget = st->troubleTarget;
+    lstrcpynW(m->metrics, st->metrics, 40);
+    if (!m->hidden && (m->target > 0 || totalFluid(m->fluid) > 0.4f)) startTimer(mirror, m);
+    InvalidateRect(mirror, nullptr, FALSE);
 }
 
 void bufferMeterSetHidden(HWND meter, bool hidden) {
@@ -999,6 +1024,11 @@ void bufferMeterSetHidden(HWND meter, bool hidden) {
     if (hidden) stopTimer(meter, st);
     else if (st->target > 0 || totalFluid(st->fluid) > 0.4f) startTimer(meter, st);
     InvalidateRect(meter, nullptr, FALSE);
+}
+
+bool bufferMeterHidden(HWND meter) {
+    const MeterState* st = stateOf(meter);
+    return st && st->hidden;
 }
 
 void bufferMeterSetOnHiddenChanged(HWND meter, std::function<void(bool)> cb) {

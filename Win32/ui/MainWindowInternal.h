@@ -24,6 +24,7 @@
 #include "core/XmltvParser.h"    // Programme (EpgFetch)
 #include "db/Database.h"         // Database, Channel
 #include "ui/DockLayout.h"       // DockLayout, Panel, DockSide, kPanelCount
+#include "ui/MeterTray.h"        // kMeterHeightStd (AppState), the strip's geometry
 #include "ui/VideoGrid.h"        // ViewMode
 #include "ui/VlcEngine.h"        // VlcEngine
 #include "ui/VlcPlayer.h"        // VlcPlayer
@@ -99,6 +100,11 @@ constexpr int ID_METER_SPECTRUM = 2030;  // mini-meter control ids
 constexpr int ID_METER_SIGNAL = 2031;
 constexpr int ID_METER_BITRATE = 2032;
 constexpr int ID_METER_FRAMES = 2033;
+// Settings → Meters submenu (photoreal stage A) — 2034..2037, a genuine gap below ID_METERS_SETUP.
+constexpr int ID_METER_SIZE_STD = 2034;     // the standard 30-dp tray (checked while the height is 30)
+constexpr int ID_METER_SIZE_LARGE = 2035;   // 50 dp
+constexpr int ID_METER_SIZE_XLARGE = 2036;  // 72 dp
+constexpr int ID_METER_BRIDGE = 2037;       // check: the pop-out meter bridge window (ui/MeterBridge)
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
 constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
@@ -453,6 +459,19 @@ struct AppState {
     bool        draggingGutter = false;
     DockLayout::Gutter dragGutter{};
     ULONGLONG   gutterFlushTick = 0;  // last paced sync-repaint flush during a gutter drag
+    // Meter size (photoreal stage A, ui/MeterTray.h): the meter height (setting meter_height, dp) and
+    // what layout() made of it — the strip's and the meters' height in px (inline at the standard
+    // height, else a row of their own; capped so the video keeps half its panel and the tank fits) and
+    // the strip's top-edge band, where a drag sets the height (a double-click resets it). stripEdge is
+    // empty while the strip is hidden (fullscreen, video only).
+    int         meterHeightDp = kMeterHeightStd;
+    int         stripPx = 0;  // 0 until the first layout()
+    RECT        stripEdge{};
+    bool        draggingStrip = false;
+    bool        stripDragMoved = false;  // past the 3-dp threshold: only then is the height changed
+    int         stripDragStartDp = 0;  // the height when the drag began (a cancelled drag restores it)
+    int         stripDragY = 0;        // the cursor's y when the drag began
+    int         stripDragStripPx = 0;  // the strip's height then (px) — the drag moves its top edge
     // Drag-to-redock: a small grip per region, a translucent drop-zone overlay, and
     // the in-flight drag target.
     HWND        gripNav = nullptr, gripVideo = nullptr, gripGrid = nullptr;
@@ -477,7 +496,13 @@ AppState* stateOf(HWND h);
 void setStatus(AppState* st, const std::wstring& s);
 int cmdBarH(UINT dpi);
 int navWidth(UINT dpi);
-int stripH(UINT dpi);
+// The transport strip's height as layout() last made it (it follows the meter height, MeterTray.h).
+int stripHeight(const AppState* st);
+// Settings ▸ Meters sizes and the strip-edge drag's end: clamp, persist (meter_height), relayout.
+void setMeterHeight(AppState* st, int heightDp);
+// End a strip-edge drag without keeping it (fullscreen / video only toggled mid-drag): the height it
+// began with, not saved. No-op when no drag is on.
+void cancelStripDrag(AppState* st);
 int capW(UINT dpi);
 int measureText(HWND hwnd, HFONT font, const std::wstring& s);
 void applyDarkChrome(HWND hwnd);

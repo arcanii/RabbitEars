@@ -690,6 +690,17 @@ enum class StringId {
     StatusCatchupNotUpdated,
     StatusCatchupNoRecord,
     StatusVodSyncFetchingCatchup,
+    // --- Menu ---
+    MenuMetersSubmenu,
+    MenuMeterSizeStandard,
+    MenuMeterSizeLarge,
+    MenuMeterSizeXLarge,
+    MenuMeterSizeHint,
+    MenuMeterBridge,
+    // --- Dialogs ---
+    MeterBridgeTitle,
+    // --- Menu ---
+    MenuMeterSetup,
     Count  // sentinel — MUST stay last
 };
 

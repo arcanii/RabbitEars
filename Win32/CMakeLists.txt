@@ -85,6 +85,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/DeadLinkSweep.cpp
     ui/VodSync.cpp
     ui/CatchupSync.cpp
+    ui/MeterBridge.cpp
     ui/Dialogs.cpp
     ui/Splash.cpp
     ui/VlcEngine.cpp

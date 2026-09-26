@@ -51,6 +51,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/EpgStore.h"
 #include "ui/VodSync.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
+#include "ui/MeterBridge.h"
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -116,7 +117,58 @@ void setStatus(AppState* st, const std::wstring& s) {
 
 int cmdBarH(UINT dpi) { return dp(46, dpi); }
 int navWidth(UINT dpi) { return dp(240, dpi); }
-int stripH(UINT dpi) { return dp(50, dpi); }
+int stripHeight(const AppState* st) { return st->stripPx > 0 ? st->stripPx : dp(kStripMinDp, st->dpi); }
+
+// The transport strip's rect as layout() last placed it (client coords).
+RECT stripRect(const AppState* st) {
+    const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
+    return RECT{vidR.left, vidR.bottom - stripHeight(st), vidR.right, vidR.bottom};
+}
+
+void setMeterHeight(AppState* st, int heightDp) {
+    heightDp = clampMeterHeightDp(heightDp);
+    st->db.setSetting(L"meter_height", std::to_wstring(heightDp));
+    st->meterHeightDp = heightDp;
+    layout(st->hwnd, st);
+    // The strip is painted by the parent: repaint it and the controls and meters on it now (the video
+    // panes above it repaint themselves at their new size).
+    const RECT sr = stripRect(st);
+    RedrawWindow(st->hwnd, &sr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE);
+}
+
+// A strip-edge drag ended (released, or capture lost): keep and save the height reached — unless the
+// strip ends as tall as it began (a click, or a drag the window's limits never let show: with the
+// height capped, a drag that changed nothing visible must not save the capped value over the chosen one).
+void finishStripDrag(AppState* st) {
+    if (st->stripDragMoved && stripHeight(st) != st->stripDragStripPx) {
+        setMeterHeight(st, st->meterHeightDp);
+        return;
+    }
+    if (st->meterHeightDp != st->stripDragStartDp) {
+        st->meterHeightDp = st->stripDragStartDp;
+        layout(st->hwnd, st);
+    }
+}
+
+// A press on the strip's top edge: the drag starts (WM_LBUTTONDOWN — or a WM_LBUTTONDBLCLK whose first
+// click was a drag, below).
+void beginStripDrag(AppState* st, POINT pt) {
+    st->draggingStrip = true;
+    st->stripDragMoved = false;
+    st->stripDragStartDp = st->meterHeightDp;
+    st->stripDragY = pt.y;
+    st->stripDragStripPx = stripHeight(st);
+    SetCapture(st->hwnd);
+}
+
+void cancelStripDrag(AppState* st) {
+    if (!st->draggingStrip) return;
+    st->draggingStrip = false;  // before ReleaseCapture: its WM_CAPTURECHANGED must not commit it
+    st->stripDragMoved = false;  // a cancelled drag is no drag (the edge's WM_LBUTTONDBLCLK reads it)
+    ReleaseCapture();
+    st->meterHeightDp = st->stripDragStartDp;
+    layout(st->hwnd, st);
+}
 int capW(UINT dpi) { return dp(46, dpi); }
 
 int measureText(HWND hwnd, HFONT font, const std::wstring& s) {
@@ -183,6 +235,7 @@ void applyActiveSkin(HWND hwnd, AppState* st, bool repaint) {
     TreeView_SetBkColor(st->nav, th.panelBg);
     TreeView_SetTextColor(st->nav, th.textPrimary);
     if (epgGuideOpen()) epgGuideRefreshTheme();  // its own top-level window: the redraw below misses it
+    meterBridgeRefreshTheme();                     // likewise the pop-out meter bridge
     if (repaint)
         RedrawWindow(hwnd, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -378,8 +431,10 @@ void createChildren(HWND hwnd, AppState* st) {
                                  10, hwnd, nullptr, hInst, nullptr);
     registerBufferMeterClass(hInst);
     st->bufferMeter = createBufferMeter(hwnd, hInst, ID_BUFFER, st->dpi);
-    bufferMeterSetOnHiddenChanged(st->bufferMeter,
-                                  [st](bool hidden) { st->db.setSetting(L"buffer_hidden", hidden ? L"1" : L"0"); });
+    bufferMeterSetOnHiddenChanged(st->bufferMeter, [st](bool hidden) {
+        st->db.setSetting(L"buffer_hidden", hidden ? L"1" : L"0");
+        meterBridgeRelayout(st);  // the bridge shows the tank only while the tray does
+    });
     registerMiniMeterClass(hInst);
     st->meterSpectrum = createMiniMeter(hwnd, hInst, ID_METER_SPECTRUM, st->dpi, MeterKind::Spectrum);
     st->meterSignal = createMiniMeter(hwnd, hInst, ID_METER_SIGNAL, st->dpi, MeterKind::Signal);
@@ -668,6 +723,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto v = st->db.getSetting(L"meter_signal")) st->showSignal = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_bitrate")) st->showBitrate = (*v == L"1");
                 if (auto v = st->db.getSetting(L"meter_frames")) st->showFrames = (*v == L"1");
+                if (auto v = st->db.getSetting(L"meter_height"); v && !v->empty())
+                    st->meterHeightDp = clampMeterHeightDp(_wtoi(v->c_str()));
                 {  // per-meter look + palette (Settings → Meters…)
                     HWND mtr[4] = {st->meterSpectrum, st->meterSignal, st->meterBitrate,
                                    st->meterFrames};
@@ -803,7 +860,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // "blank grid" footprints and the strip's top edge shows vertical seams.
                 // WS_CLIPCHILDREN keeps this fill behind the meter/button children on top.
                 const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
-                RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
+                RECT strip{vidR.left, vidR.bottom - stripHeight(st), vidR.right, vidR.bottom};
                 bool gdiStrip = true;
 #ifdef RABBITEARS_THEME_ENGINE
                 // hdc is BeginPaint's DC — child-clipped by WS_CLIPCHILDREN, so the underglow
@@ -995,7 +1052,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (st->skinStripOn && !st->fullscreen && !st->videoOnly && !IsIconic(hwnd) &&
                     IsWindowVisible(hwnd)) {
                     const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
-                    RECT strip{vidR.left, vidR.bottom - stripH(st->dpi), vidR.right, vidR.bottom};
+                    RECT strip{vidR.left, vidR.bottom - stripHeight(st), vidR.right, vidR.bottom};
                     if (HDC dc = GetDCEx(hwnd, nullptr, DCX_CACHE | DCX_CLIPCHILDREN)) {
                         skin::paintSkinStrip(dc, strip, st->dpi);
                         ReleaseDC(hwnd, dc);
@@ -1009,6 +1066,44 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (st->panelDragActive && (wParam & MK_LBUTTON)) {
                 updateDockTarget(hwnd, st, pt);  // move the drop-zone highlight
+                return 0;
+            }
+            if (st->draggingStrip && (wParam & MK_LBUTTON)) {
+                // A click with a wiggle is not a drag: nothing changes (or is saved) under 3 dp of travel —
+                // else a click after a window shrink would save the capped height over the chosen one.
+                if (!st->stripDragMoved && std::abs(st->stripDragY - pt.y) < dp(3, st->dpi)) return 0;
+                st->stripDragMoved = true;
+                // The strip's top edge follows the cursor (up = taller): the standard strip until it is
+                // tall enough for an own row of taller meters (MeterTray.h, with hysteresis at that
+                // switch), then the height that fills it — no more than the video panel allows NOW (half
+                // of it, the tank fitting its width; a window resized mid-drag counts).
+                const RECT vidR = st->panelRects[static_cast<int>(Panel::Video)];
+                const int maxDp =
+                    maxMeterHeightDp(st->dpi, std::max(1, static_cast<int>(vidR.bottom - vidR.top) / 2),
+                                     std::max(1, static_cast<int>(vidR.right - vidR.left) - 2 * dp(10, st->dpi)));
+                const int stripPx = st->stripDragStripPx + (st->stripDragY - pt.y);
+                const bool ownRowNow = stripHeight(st) > dp(kStripMinDp, st->dpi);
+                const int want = std::min(meterHeightForDrag(stripPx, ownRowNow, st->dpi), maxDp);
+                if (want != st->meterHeightDp) {
+                    st->meterHeightDp = want;
+                    layout(hwnd, st);
+                    // Paced like the gutter drag below: the parent (the strip) at ~60 Hz; the meters
+                    // repaint themselves at their new size (their classes redraw on a resize).
+                    const ULONGLONG nowTick = GetTickCount64();
+                    if (nowTick - st->gutterFlushTick >= 15) {
+                        st->gutterFlushTick = nowTick;
+                        RedrawWindow(hwnd, nullptr, nullptr, RDW_UPDATENOW | RDW_NOCHILDREN | RDW_NOERASE);
+                        // ...and the resized meters on the strip — only them: their paints are queued, and
+                        // lower priority than the mouse moves that keep coming (the gutter drag's comment).
+                        // NOT the video tiles (their erase fills black over the picture — that flash).
+                        // (The status line and the seek controls too: they widen or appear over what the
+                        // inline meters leave when the layout switches.)
+                        for (HWND h : {st->bufferMeter, st->meterSpectrum, st->meterSignal, st->meterBitrate,
+                                       st->meterFrames, st->status, st->btnSeekBack, st->seekBar, st->btnSeekFwd,
+                                       st->timeLabel})
+                            if (h && IsWindowVisible(h)) UpdateWindow(h);
+                    }
+                }
                 return 0;
             }
             if (st->draggingGutter && (wParam & MK_LBUTTON)) {
@@ -1073,11 +1168,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         case WM_LBUTTONDOWN: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            // "The last press was a drag on the strip's edge" describes THIS press from here on (the
+            // edge's WM_LBUTTONDBLCLK reads it): a press anywhere else is not one.
+            st->stripDragMoved = false;
             if (!st->fullscreen) {
                 if (const DockLayout::Gutter* g = gutterAt(st, pt)) {
                     st->draggingGutter = true;
                     st->dragGutter = *g;  // copy: node ptr + nodeRect stay valid through the drag
                     SetCapture(hwnd);
+                    return 0;
+                }
+                // The strip's top edge: drag the meter height.
+                if (!st->videoOnly && PtInRect(&st->stripEdge, pt)) {
+                    beginStripDrag(st, pt);
                     return 0;
                 }
             }
@@ -1108,6 +1211,15 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_LBUTTONDBLCLK: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (!st->fullscreen && !st->videoOnly && PtInRect(&st->stripEdge, pt)) {
+                // A double-click on the edge: back to the standard tray — but only a real one. Windows
+                // makes a press within the double-click time of the LAST press a DBLCLK, so grabbing the
+                // edge again right after a drag (the first "click" was that drag — stripDragMoved) is a
+                // new drag, not a reset that would save 30 over the height just chosen.
+                if (st->stripDragMoved) beginStripDrag(st, pt);
+                else setMeterHeight(st, kMeterHeightStd);
+                return 0;
+            }
             if (pt.y < cmdBarH(st->dpi)) {
                 bool onButton = false;
                 for (const BtnRect& b : cmdButtonRects(hwnd, st)) onButton |= PtInRect(&b.rc, pt) != 0;
@@ -1119,6 +1231,12 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_LBUTTONUP:
             if (st->panelDragActive) {
                 endPanelDrag(hwnd, st, /*commit=*/true);
+                return 0;
+            }
+            if (st->draggingStrip) {
+                st->draggingStrip = false;  // before ReleaseCapture: its WM_CAPTURECHANGED must not end it again
+                ReleaseCapture();
+                finishStripDrag(st);
                 return 0;
             }
             if (st->draggingGutter) {
@@ -1136,6 +1254,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // Capture stolen mid-drag (Alt-Tab, UAC, Win+L, another app foregrounding)
             // — end any drag cleanly so a divider / panel can't stick to the cursor.
             if (st->panelDragActive) endPanelDrag(hwnd, st, /*commit=*/false);
+            if (st->draggingStrip) {  // keep the height reached (as the gutter drag keeps its ratio)
+                st->draggingStrip = false;
+                finishStripDrag(st);
+            }
             if (st->draggingGutter) {
                 st->draggingGutter = false;
                 persistDock(st);
@@ -1151,6 +1273,10 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ScreenToClient(hwnd, &cp);
                 if (const DockLayout::Gutter* g = gutterAt(st, cp)) {
                     SetCursor(LoadCursorW(nullptr, g->vertical ? IDC_SIZENS : IDC_SIZEWE));
+                    return TRUE;
+                }
+                if (!st->videoOnly && PtInRect(&st->stripEdge, cp)) {
+                    SetCursor(LoadCursorW(nullptr, IDC_SIZENS));
                     return TRUE;
                 }
             }
@@ -2306,6 +2432,9 @@ int runApp(HINSTANCE hInst, int nCmdShow, bool scheduledWake, bool restart) {
     // the scheduler tick fires and records exactly as if the app had been open all along.
     ShowWindow(hwnd, scheduledWake ? SW_SHOWMINNOACTIVE : nCmdShow);
     UpdateWindow(hwnd);
+    // The meter bridge, if it was open when the app last closed — after the main window, which owns it
+    // and places it; not on an unattended wake-launch (the setting keeps it for the next normal one).
+    if (!scheduledWake && st->db.isOpen()) restoreMeterBridge(st);
     if (splash) closeSplash(splash);  // main window is up (already closed on the first-run path)
     if (scheduledWake) diag::info(L"started by the recording wake task (minimized, unattended)");
 

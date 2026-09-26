@@ -235,6 +235,7 @@ void layout(HWND hwnd, AppState* st) {
     GetClientRect(hwnd, &rc);
     const int W = rc.right, H = rc.bottom;
     const int cmdH = cmdBarH(st->dpi);
+    st->stripEdge = RECT{};  // set below when the strip is shown
 
     // Batch every child move into one atomic BeginDeferWindowPos pass so a resize /
     // splitter drag repaints the panes together instead of child-by-child. The
@@ -311,7 +312,6 @@ void layout(HWND hwnd, AppState* st) {
     // tree; the transport strip rides at the bottom of the Video panel. Divider gutters
     // between regions are painted + dragged by the parent (WM_PAINT / WM_LBUTTONDOWN).
     const int contentTop = cmdH;
-    const int sHt = stripH(st->dpi);
     const RECT content{0, contentTop, W, H};
     const int gutterW = dp(5, st->dpi);
     const int minPanel = dp(140, st->dpi);
@@ -320,13 +320,22 @@ void layout(HWND hwnd, AppState* st) {
     const RECT navR = rects[static_cast<int>(Panel::Nav)];
     const RECT vidR = rects[static_cast<int>(Panel::Video)];
     const RECT gridR = rects[static_cast<int>(Panel::Grid)];
+    const int vidW = static_cast<int>(vidR.right - vidR.left);
+    // The strip and its meters, from the meter height (MeterTray.h): at the standard height the
+    // historical 50-dp strip with the meters inline; taller, the meters in a row of their own above the
+    // transport row — no taller than half the video panel, and the tank fitting the row's width.
+    // (At least 1 px each: 0 means "no limit" — a panel squeezed to nothing must not get the full height.)
+    const StripMetrics strip =
+        stripMetrics(st->meterHeightDp, st->dpi, std::max(1, static_cast<int>(vidR.bottom - vidR.top) / 2),
+                     std::max(1, vidW - 2 * dp(10, st->dpi)));
+    const int sHt = strip.stripPx;
+    st->stripPx = strip.stripPx;
 
     place(st->nav, navR.left, navR.top, static_cast<int>(navR.right - navR.left),
           static_cast<int>(navR.bottom - navR.top));
     place(st->grid, gridR.left, gridR.top, static_cast<int>(gridR.right - gridR.left),
           static_cast<int>(gridR.bottom - gridR.top));
 
-    const int vidW = static_cast<int>(vidR.right - vidR.left);
     const int videoAreaH = std::max(0, static_cast<int>(vidR.bottom - vidR.top) - sHt);
     // Lay the video panes across the video area per the current view mode (Single fills it, Split
     // tiles a grid; the PIP pane is a floating top-level window placed by positionFloatingPip()).
@@ -373,7 +382,14 @@ void layout(HWND hwnd, AppState* st) {
     placeGrip(st->gripGrid, gridR);
 
     const int stripY = vidR.top + videoAreaH;
-    const int pad = dp(10, st->dpi), btnH = dp(30, st->dpi), by = stripY + (sHt - btnH) / 2;
+    // The strip's top edge: a drag here sets the meter height (MainWindow.cpp). Nothing else sits in
+    // it — the controls and the meters start 10 dp down (inline the buttons centre in the 50-dp row; an
+    // own row of meters starts kMeterRowTopDp down).
+    st->stripEdge = RECT{vidR.left, stripY, vidR.right, stripY + dp(4, st->dpi)};
+    // The transport row: the whole strip at the standard height, its bottom 50 dp below an own meter row.
+    const int transportH = strip.ownRow ? dp(kStripMinDp, st->dpi) : sHt;
+    const int transportY = stripY + sHt - transportH;
+    const int pad = dp(10, st->dpi), btnH = dp(30, st->dpi), by = transportY + (transportH - btnH) / 2;
     const int bw = dp(34, st->dpi), ig = dp(4, st->dpi);  // square icon buttons, tight cluster
     const int cx = vidR.left;
     int x = cx + pad;
@@ -390,8 +406,10 @@ void layout(HWND hwnd, AppState* st) {
     const int bufLabelW = dp(84, st->dpi), bufBarW = dp(110, st->dpi);
     placeMove(st->bufLabel, x, by, bufLabelW, btnH); x += bufLabelW + dp(2, st->dpi);
     placeMove(st->bufBar, x, by, bufBarW, btnH); x += bufBarW + pad * 2;
-    const int meterH = dp(30, st->dpi), meterY = stripY + (sHt - meterH) / 2;
-    const int bufMeterW = dp(115, st->dpi);  // the fluid tank: half its old width, to match the tray
+    const int meterH = strip.meterPx;
+    const int meterY = strip.ownRow ? stripY + dp(kMeterRowTopDp, st->dpi) : stripY + (sHt - meterH) / 2;
+    // The fluid tank: half its old width, to match the tray — and, like every meter, scaled with the height.
+    const int bufMeterW = trayWidth(kTrayTankW96, meterH, st->dpi);
     // VOD scrub bar + "12:34 / 1:45:07". st->seekShown is set by updateSeekUi() from the
     // ACTIVE pane's seekability, so this is dead layout on every live channel — the strip
     // is byte-identical to 0.2.15 unless a seekable stream is playing. It claims width
@@ -408,7 +426,8 @@ void layout(HWND hwnd, AppState* st) {
     // the scrub bar's visibility exactly — a stream that cannot seek must not offer to skip.
     const int skipW = bw;  // same square as the other transport buttons
     const int seekClusterW = skipW + ig + seekW + ig + skipW + seekGap + timeW;
-    const int trayLimit = vidR.right - pad - bufMeterW - pad;
+    // Right of the controls: the tank (inline), or the panel's edge (the meters have their own row).
+    const int trayLimit = strip.ownRow ? vidR.right - pad : vidR.right - pad - bufMeterW - pad;
     const bool showSeek = st->seekShown && (x + seekClusterW <= trayLimit);
     const UINT seekSwp = showSeek ? (kSwpMove | SWP_SHOWWINDOW)
                                   : (kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
@@ -425,20 +444,22 @@ void layout(HWND hwnd, AppState* st) {
     if (st->timeLabel && dwp)
         dwp = DeferWindowPos(dwp, st->timeLabel, nullptr, xTime, by, timeW, btnH, seekSwp);
     if (showSeek) x += seekClusterW + pad;
-    // Meter tray, laid out right-to-left within the Video panel; disabled/too-narrow
-    // meters are hidden (also via the deferred pass, so show/move stay atomic).
+    // Meter tray, laid out right-to-left within the Video panel — beside the controls (inline), or across
+    // its own row; disabled/too-narrow meters are hidden (also via the deferred pass, so show/move stay
+    // atomic).
+    const int meterLeft = strip.ownRow ? static_cast<int>(vidR.left) : x;
     int rightX = vidR.right - pad;
     placeMove(st->bufferMeter, rightX - bufMeterW, meterY, bufMeterW, meterH);
     rightX -= bufMeterW + pad;
     struct MtrSlot { HWND h; bool on; int w; };
     const MtrSlot slots[] = {  // rightmost first
-        {st->meterFrames, st->showFrames, dp(72, st->dpi)},
-        {st->meterBitrate, st->showBitrate, dp(96, st->dpi)},
-        {st->meterSignal, st->showSignal, dp(58, st->dpi)},
-        {st->meterSpectrum, st->showSpectrum, dp(112, st->dpi)},
+        {st->meterFrames, st->showFrames, trayWidth(kTrayMeterW96[3], meterH, st->dpi)},
+        {st->meterBitrate, st->showBitrate, trayWidth(kTrayMeterW96[2], meterH, st->dpi)},
+        {st->meterSignal, st->showSignal, trayWidth(kTrayMeterW96[1], meterH, st->dpi)},
+        {st->meterSpectrum, st->showSpectrum, trayWidth(kTrayMeterW96[0], meterH, st->dpi)},
     };
     for (const MtrSlot& s : slots) {
-        if (s.on && rightX - s.w >= x + pad) {
+        if (s.on && rightX - s.w >= meterLeft + pad) {
             if (s.h && dwp)
                 dwp = DeferWindowPos(dwp, s.h, nullptr, rightX - s.w, meterY, s.w, meterH,
                                      kSwpMove | SWP_SHOWWINDOW);
@@ -448,7 +469,8 @@ void layout(HWND hwnd, AppState* st) {
                                  kSwpMove | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
         }
     }
-    placeMove(st->status, x, by, std::max(0, rightX - pad - x), btnH);
+    const int statusRight = strip.ownRow ? static_cast<int>(vidR.right) - pad : rightX - pad;
+    placeMove(st->status, x, by, std::max(0, statusRight - x), btnH);
 
     if (dwp) EndDeferWindowPos(dwp);
     positionFloatingPip(st);  // place the PIP popup (a top-level window) in screen coords

@@ -629,5 +629,13 @@
   "StatusCatchupChannels": " · 可回看頻道：{0}",
   "StatusCatchupNotUpdated": " · 回看資訊未更新（{0}）",
   "StatusCatchupNoRecord": "無法從存檔錄製 — 請以直播方式播放頻道再錄製。",
-  "StatusVodSyncFetchingCatchup": "正在向供應商查詢可回看的頻道…"
+  "StatusVodSyncFetchingCatchup": "正在向供應商查詢可回看的頻道…",
+  "MenuMetersSubmenu": "量表",
+  "MenuMeterSizeStandard": "標準大小",
+  "MenuMeterSizeLarge": "大",
+  "MenuMeterSizeXLarge": "特大",
+  "MenuMeterSizeHint": "或拖曳列的上邊緣",
+  "MenuMeterBridge": "量表橋接視窗",
+  "MeterBridgeTitle": "量表 — RabbitEars",
+  "MenuMeterSetup": "量表設定…"
 }

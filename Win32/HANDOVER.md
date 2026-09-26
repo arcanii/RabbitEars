@@ -33,39 +33,47 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ## Current state — **v0.2.20 SHIPPED, auto-update LIVE** · **0.2.21-dev** (`APP_VERSION` 0.2.21, bumped 2026-09-25) · macOS **0.2.17**
 
-### ⏸ STATE 2026-09-26 — where 0.2.21-dev stands. READ THIS FIRST.
+### ⏸ STATE 2026-09-26 (late evening) — where 0.2.21-dev stands. READ THIS FIRST.
 
-**Item (1), the guide stalls, is COMMITTED as `53c0464` (2026-09-26, on top of `da8048d`; local — not pushed
-yet): the owner's four live checks passed.** Its code is exactly tree `792dabc…`, built from a clean export
-on BOTH theme flags with `--selftest` ALL PASS before committing; its docs are these. **Item (2), catch-up
-playback, is COMMITTED too (2026-09-26, the commit after `53c0464`, local — not pushed yet), labelled
-"(experimental)"** — the owner's choice after their live test (item (2) below: the timing is right; no
-scrub bar). Cut from `25eeae7` without item (3), built from a clean export on BOTH flags with `--selftest`
-ALL PASS before committing. **Item (3) is NOT committed:** the working tree holds **(3) photoreal stage A
-— built, three review rounds, the owner's checks next** (`build\check-0221-meters\`). The working tree builds clean with BOTH theme
-flags, `--selftest` ALL PASS (**853**), `gen_i18n --check` OK (**639** keys). Git TREES (unreferenced
-objects — `git gc` may prune them in ~2 weeks) snapshot it:
-- **`792dabc5e22f47ba71ddc58150b7ecadb0d7cf7f` = item (1) ALONE** — now committed (above).
-- **`f5092c449e9b0261e2cc70b97a9d5a3654e72d3a` = the whole working tree after catch-up round 8** (1 + 2 + 3-partial; the docs —
-  this block — were finished just after it, so for docs trust the working tree) — a safety copy; restore any file with `git show f5092c4:<path>`. (`ee04e3d…` = the tree at
-  the 2026-09-25 pause, before rounds 3–8.)
-- **`25eeae7b4aa3775a1c20c6c2012fb97a30a878b9` = items 1 + 2 + these docs, BEFORE stage A's code (2026-09-26)**
-  — stage A then edited `MainWindow.cpp`, `MainWindowCommands.cpp`, `MainWindowInternal.h`, CMake, the
-  i18n files… which catch-up ALSO changed. **Cut item (2)'s commit from THIS tree, not from the working
-  tree** (the recipe below, applied to `25eeae7`'s files: `git show 25eeae7:<path>`).
-- ✅ **Done** — item (2) was cut this way (plus the "(experimental)" labels, which came after `25eeae7`):
-  the working tree MINUS item (3) — revert, in a
-  temporary index, `Win32/ui/MiniMeter.*`, `Win32/ui/BufferMeter.*` (the mirrors), `Win32/render/RabbitEarsRender.cpp`
-  (`--meter-height`), `Win32/docs/PHOTOREAL.md` to HEAD, leave out `Win32/ui/MeterBridge.*`, and drop the
-  LAST SEVEN entries of `common/i18n/keys.json` / `en` / `ja` / `zh-Hant.json` (`MenuMetersSubmenu` …
-  `MeterBridgeTitle` — the catch-up keys, `StatusVodSyncFetchingCatchup` last, sit BEFORE them) then
-  regenerate `Strings.*` for that cut; build + selftest THAT state before committing — set the item-(3)
-  files aside (copies in the scratchpad), make the working tree the cut, build both flags, selftest,
-  commit it, then put them back (a worktree elsewhere hits the share's "dubious ownership").
+**Committed AND pushed — origin/main = `10174c4` (the owner pushed, 2026-09-26):**
+- **`53c0464` — item (1), the guide stalls** (the owner's four live checks passed): first open 1.4 s → ~0.25 s,
+  Refresh Guide's store + index rebuild off the UI thread, search correct across connections,
+  `bulkInsertProgrammes` never commits a broken guide; `APP_VERSION` 0.2.21.
+- **`10174c4` — item (2), catch-up playback, labelled "(experimental)"** — the owner's choice after their live
+  test (the timing is right — the server-local keying is confirmed; no scrubbing; checks 5–7 not run).
+  **The 0.2.21 release notes must call catch-up experimental.**
+- Each was built from a clean `git archive` export of exactly the committed tree, BOTH theme flags,
+  `--selftest` ALL PASS (779 / 843), before it was committed (see the trap list: the working tree may not
+  be swapped in place).
 
-**Order for the next session:** (a) ✅ item (1) committed; (b) ✅ item (2) committed (experimental);
-(c) (3) stage A — the owner's eight checks (item (3)), then commit; (d) the cleanups (4). Push when the
-owner says (nothing pushed since `da8048d`).
+**Committed, NOT pushed — item (3), photoreal stage A (meter SIZE): the commit after `10174c4` (2026-09-26)**
+(22 files — 20 of code, HANDOVER + PHOTOREAL: `Win32/ui/MeterTray.h`, `Win32/ui/MeterBridge.{h,cpp}`, the strip-edge drag + the Settings ▸ Meters
+submenu in `MainWindow*.cpp` / `MainWindowInternal.h`, the mirrors in `MiniMeter` / `BufferMeter`,
+`RabbitEarsRender` `--meter-height` / `--bench-paint`, CMake, 8 i18n keys, the tray tests, these docs). Three
+review rounds and a small fourth, every finding acted on. **Re-verified on exactly the committed code
+(2026-09-26, late):** BOTH flags build with 0 warnings (OFF from a clean `git archive` export); `--selftest` ALL
+PASS (**853** each); `gen_i18n --check` OK (**639** keys); the 56 standard-height renders byte-identical to
+HEAD's (a clean export of `10174c4` rendered beside it). **The owner's check (dev profile, the copy
+`build\check-0221-meters\`):** *"Large Meter look very good"* (screenshot: the own row above the transport
+buttons, all four meters + the tank, the VU numerals legible); the other checks were not reported one by one —
+the owner asked to commit. ⚠️ The copy handed over the session before was STALE (built before `10174c4`'s
+"(experimental)" labels); it was refreshed from the verified build before the owner ran it — check a copy's
+exe against the build (hash) before handing it over. **Known in this commit, fixed by the next:** at Extra
+large and in a large bridge, the Bitrate meter's LED/LCD/Tube looks leave an empty band on the dial's left
+(the history kept 64 samples: 20 px at 72 dp, 250 px at 120 dp, at 150 %).
+
+**Order for the next session:** (a) ✅ stage A committed — the Bitrate history fix follows as its own commit; (b) photoreal stage B — new
+selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's cost at
+size: ~5 ms a frame per meter at 120 dp), then stage C — skins as materials, skins driving meters
+(PHOTOREAL.md); (c) the cleanups (4) — multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise,
+the mac flags — and the small finds in BACKLOG (the status line stuck on "Buffering 100%", catch-up
+scrubbing, player events without a stream generation); (d) the 0.2.21 release when the owner says.
+
+Snapshot trees from this work (unreferenced objects — `git gc` may prune them in ~2 weeks; all historical
+now): `792dabc…` = item (1) as committed; `25eeae7…` = items 1 + 2 before stage A (item (2)'s commit was cut
+from it); `517e92e…` / `45b9a3a…` = the stage-A working tree before its commit (the second with the handover's
+safety-copy note; its code is exactly what was committed); `f5092c4…` / `ee04e3d…` = earlier whole-tree safety
+copies.
 
 **The owner's order (2026-09-25): (1) the guide stalls, (2) catch-up playback, (3) the photoreal
 meters, (4) the small cleanups** (multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation"
@@ -290,8 +298,8 @@ round-2 findings FIXED (rounds 3–8, at the end of this item).**
 - **Build copy for the owner:** `build\check-0221-catchup\` — REFRESHED after round 8
   (`scripts\run-profile.ps1 -Exe build\check-0221-catchup\RabbitEars.exe`).
 
-**(3) Photoreal — stage A (meter SIZE) — BUILT 2026-09-26, uncommitted; the owner's two decisions TAKEN
-(own row; bridge stays owned); three review rounds; not yet run in the app — the owner's checks next.** The owner chose all three size routes; stage A builds them, stages B (new photoreal looks:
+**(3) Photoreal — stage A (meter SIZE) — COMMITTED 2026-09-26 (after `10174c4`; not pushed); the owner's two
+decisions TAKEN (own row; bridge stays owned); three review rounds; the owner, live: Large "very good".** The owner chose all three size routes; stage A builds them, stages B (new photoreal looks:
 LED lenses whose cells scale with the meter, physical light) and C (skins as materials, skins driving
 meters) follow — PHOTOREAL.md.
 - **Built:** `Win32/ui/MeterTray.h` (header-only, also used by RabbitEarsRender and the CLI): the meter
@@ -353,8 +361,8 @@ meters) follow — PHOTOREAL.md.
   tank's right-click Hide on either hides both. (6) Open the bridge DURING playback: its tank is full at
   once. (7) A skin and a language switch with the bridge open. (8) XL + the bridge open while playing: the
   UI stays smooth.
-- **Next:** the owner's checks → commit (after items 1 and 2) → stage B (scaled LED/LCD/Tube cells as NEW
-  looks — also the Tube look's cost at size).
+- **Next:** the Bitrate history fix (its own commit) → stage B (scaled LED/LCD/Tube cells as NEW looks — also
+  the Tube look's cost at size).
 
 ### ✅ 0.2.20 — SHIPPED (2026-09-25), both appcasts LIVE @ `528cd9a`
 
@@ -1011,6 +1019,9 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 
 ## Git state
 
+**As of 2026-09-26:** `main` @ `10174c4` (pushed; = local HEAD); tags through **`v0.2.20`** @ `74a3b9a`;
+**the next tag is `v0.2.21`**. Everything below this line is history.
+
 Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** — `0.2.15-dev` was
 merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
 only branch local and remote. (All five were verified fully merged with zero unmerged commits and no
@@ -1589,87 +1600,87 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first — its top block "⏸ STATE 2026-09-26" is the state of the
-> work and the order to resume in**, then the "0.2.21-dev — the detail" block under it; plus
-> `Win32/BACKLOG.md` (EPG section) and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the owner's six
-> decisions are ANSWERED at its bottom). Older history: `Win32/HANDOVER-ARCHIVE.md`.
+> **Read `Win32/HANDOVER.md` first — its top block "⏸ STATE 2026-09-26 (evening)" is the state of the
+> work and the order to resume in**, then the "0.2.21-dev — the detail" block under it (item (3) is the
+> open one); plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the owner's
+> decisions are ANSWERED there, stage A's too). Older history: `Win32/HANDOVER-ARCHIVE.md`.
 >
-> **State:** 0.2.20 is SHIPPED and auto-update is LIVE (tag `v0.2.20` @ `74a3b9a`, appcasts @ `528cd9a`).
-> macOS is at 0.2.17. **0.2.21-dev: item (1) is COMMITTED as `53c0464`** (on top of `da8048d`, with the `APP_VERSION`
-> 0.2.21 bump); items (2) and (3) are in the working tree, uncommitted — it builds clean, `--selftest` ALL
-> PASS (853), `gen_i18n --check` OK (639 keys):
-> 1. **Guide stalls — COMMITTED 2026-09-26** (the owner's four checks passed). First open 1.4 s → ~0.25 s by a narrow query
->    (`Database::liveGuideChannels`, `Win32/ui/GuideModel`; not threaded, on purpose); Refresh Guide's
->    store + search-index rebuild on a worker with its own connection (`Win32/ui/EpgStore`), search kept
->    correct across connections (`PRAGMA data_version`, one read snapshot), `bulkInsertProgrammes` no
->    longer commits a broken guide.
-> 2. **Catch-up playback — COMMITTED 2026-09-26, labelled "(experimental)"** (the owner's live test:
->    the timing is right; no scrubbing — BACKLOG). Xtream `tv_archive` flags come with "Sync movies from provider"
->    (`channel_archive` table, no schema bump; `WM_APP_VOD_ARCHIVE` the moment they are written), timeshift
->    URLs in the server's own time zone (`Win32/platform/TimeZone`, C++20 tzdb; the zone kept only while it
->    agrees with the measured clock — `Win32/ui/CatchupSync`), "Play from the start" in the guide
->    popup/menus, past results in the guide search (their own block and limit, one pass), ↺ in the channel
->    list. The server-local keying is confirmed (the owner watched a programme start at its start).
->    Known limits left: no scrubbing, L2 (player events carry no stream generation — pre-existing,
->    BACKLOG), L3. The 0.2.21 release notes must call catch-up experimental.
-> 3. **Photoreal stage A (meter SIZE) — half written.** Meter mirrors (`miniMeterSetMirror`,
->    `bufferMeterSetMirror`) and `Win32/ui/MeterBridge.{h,cpp}` exist (the bridge NOT yet in CMake, never
->    compiled); `RabbitEarsRender --meter-height DP` works; 7 i18n keys added. HANDOVER's item (3) has the
->    exact TODO: strip height from `meterHeightDp`, scaled widths, the strip-top-edge drag, the "Meters"
->    submenu (ids 2034–2037), bridge startup/relayout/theme hooks. Stages B (new photoreal looks) and C
->    (skins as materials, skins drive meters) follow.
-> 4. **Cleanups** — not started (multi-URL `x-tvg-url`, marking gaps, libVLC "Cancellation" noise, mac flags).
+> **State:** 0.2.20 is SHIPPED and auto-update is LIVE (tag `v0.2.20` @ `74a3b9a`). macOS is at 0.2.17.
+> **0.2.21-dev on `main`, pushed (origin/main = `10174c4`):** `53c0464` = the guide stalls (first open
+> 1.4 s → 0.25 s, Refresh Guide's store off the UI thread); `10174c4` = **catch-up playback, labelled
+> "(experimental)"** (Xtream `tv_archive` flags with "Sync movies from provider", timeshift URLs on the
+> server's clock, "Play from the start" in the TV Guide, aired results in the guide search, ↺ in the
+> channel list; the owner confirmed the timing; no scrubbing — BACKLOG). **The 0.2.21 release notes must
+> call catch-up experimental.**
+> **The working tree = HEAD + photoreal stage A (meter SIZE), uncommitted, built and reviewed:** one meter
+> height (`meter_height`, 30–120 dp; 30 = today's tray, byte-identical) — at Large/XL the meters get a row
+> of their own above the transport buttons (`Win32/ui/MeterTray.h`, the owner's choice); drag the strip's
+> top edge; Settings ▸ Meters submenu (ids 2034–2037); the pop-out meter bridge (`Win32/ui/MeterBridge`,
+> OWNED window — the owner's choice). BOTH flags build, `--selftest` ALL PASS (853), 639 i18n keys.
+> **First: the owner's eight stage-A checks** on `build\check-0221-meters\` (HANDOVER item (3)), then
+> commit it; then stage B (scaled photoreal looks), stage C (skins as materials), the cleanups.
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
 > refs/heads/main` == HEAD immediately before building anything for a release.
 >
 > **Tools that change how visual work is done:**
-> * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip] [--meter-height DP]` renders every
->   meter look, the tank and every skinned strip to PNG from the REAL paint code, byte-reproducibly.
->   Render before and after every visual change, compare, read the PNGs yourself, and hand the owner a
->   labelled before/after sheet. The "150dpi" sheets are 156 % scaling.
+> * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip | --strip-only] [--meter-height DP]
+>   [--bench-paint]` renders every meter look, the tank and every skinned strip to PNG from the REAL paint
+>   code, byte-reproducibly (the strip at any meter height, as layout() lays it out); `--bench-paint` times
+>   every look's per-frame tick+paint at 30/50/72/120 dp. Render before and after every visual change,
+>   byte-compare the unchanged ones, read the PNGs yourself, and hand the owner a labelled sheet (Pillow is
+>   installed). The "150dpi" sheets are 156 % scaling.
 > * `powershell -File scripts\run-profile.ps1 [-Refresh] [-Exe <copy>\RabbitEars.exe]` runs a build
->   BESIDE the installed app as profile "dev" on a snapshot of the real library. Give the owner a COPY
->   of the build (`build\check-…\`: the exe, libvlc*.dll, WinSparkle.dll, plugins\) so your next build
->   does not collide with their test (LNK1168). **This sandbox cannot drive the GUI — the owner drives
->   the screen; tell them where to look.** The owner runs at 150 %; their tray is LED Spectrum, Tube
->   Signal, LCD Bitrate and a VU Frame-rate meter with a cyan lamp, glass 69 %.
+>   BESIDE the installed app as profile "dev" on a snapshot of the real library (its log:
+>   `%LOCALAPPDATA%\RabbitEarsProfiles\dev\rabbitears.log`). Give the owner a COPY of the build
+>   (`build\check-…\`: the exe, libvlc*.dll, WinSparkle.dll, plugins\) so your next build does not collide
+>   with their test (LNK1168); two copies cannot run at once (one profile). **This sandbox cannot drive the
+>   GUI — the owner drives the screen; tell them exactly where to look** (e.g. catch-up: none of their
+>   favourites keeps an archive — use "UK - BBC 1 UHD" in |UK| GENERAL). The owner runs at 150 %; their tray
+>   is LED Spectrum, Tube Signal, LCD Bitrate and a VU Frame-rate meter with a cyan lamp, glass 69 %.
 > * `RabbitEarsCli --guidebench <copy> [now]` / `--epgsearch <copy>` time the guide build and searches
->   on a COPY of the real library (never the live DB — opening it can migrate it).
+>   on a COPY of the real library (never the live DB — opening it can migrate it). A previous session's
+>   scratchpad may still hold a copy (`guide-bench.db`); copy it into yours.
 >
 > **The one number that matters for perf:** the owner's library is **411,149 rows** (366k "live" — mostly
 > Xtream SERIES EPISODES, which are kind 0 too; only 4,795 carry a tvg-id). Measure against it.
 >
 > **Traps that have cost real time:**
-> * **A confident comment is not a verified fact** — every review this session still found over-claims,
->   including in HANDOVER itself. Verify or weaken.
+> * **A confident comment is not a verified fact** — every review still found over-claims, including in
+>   HANDOVER and in commit messages. Verify or weaken (count the mutations, recompute the numbers).
 > * **`common/` is shared with mac** (Apple clang, not compilable here): additive changes only; grep
 >   `mac/` first; flag rather than edit their tree. Meter looks and skins are Win32-only.
-> * **Inline Python in bash heredocs mangles escapes** — `\\n` arrives as a newline, `\\0` as a NUL,
->   `\\r\\n` as a CR. Write scripts to a FILE with the Write tool (raw strings) or use the Edit tool; make
->   multi-part patches assert every anchor before writing anything.
+> * **The working tree may NOT be overwritten in place** (the permission classifier blocks
+>   `git checkout-index -a -f` / restoring a tree over it, even with a snapshot). To build or commit a tree
+>   that is not the working tree: `git archive <tree> | tar -x -C <scratch>\src`, copy `build\libvlc_pkg`
+>   into `<scratch>\build\libvlc_pkg` (no download), configure + build both flags there, selftest; commit
+>   with a temporary index: `GIT_INDEX_FILE=<tmp> git read-tree HEAD; git --work-tree=<scratch>\src add -A;
+>   git write-tree` (check it), `git commit`, then `git read-tree HEAD` for the real index.
+> * **Inline Python in bash heredocs mangles escapes** — `\\n` arrives as a newline, `\\0` as a NUL; a
+>   literal `\n` inside a patch's C++ string becomes a real newline. Write scripts to a FILE with the Write
+>   tool (raw strings) or use the Edit tool; make multi-part patches assert every anchor before writing,
+>   and normalise CRLF/LF inside the patch helper (files here are mixed). `PYTHONIOENCODING=utf-8` to print
+>   channel names.
 > * **MSVC evaluates `expect(cond, msg)` arguments in no fixed order** — compute the state first when the
 >   message quotes it. A background `python` run buffers its output until it exits (`python -u`).
 > * **Never pipe `--selftest` into `Select-Object -First`/`head`** — the pipeline stops reading but the
 >   process runs on, and the NEXT selftest shares its fixture DBs: a page of bogus [FAIL]s. Write it to a
->   file (`*> st.txt`) and read the file.
+>   file (`*> st.txt`) and read the file. `Remove-Item` on scratch folders is blocked — use fresh ones.
 > * **Reviewers:** tell background review agents in so many words never to open anything under
->   `%LOCALAPPDATA%\RabbitEars*` — one opened the live DB (read-only) when told only "copies".
+>   `%LOCALAPPDATA%\RabbitEars*`, never to build or edit; give them a diff file of just the round.
 > * **SQLite:** an error can end the WHOLE transaction (SQLITE_FULL/IOERR, RAISE(ROLLBACK)) — check
->   `sqlite3_get_autocommit` before carrying on, or later statements commit on their own. Another
->   connection's commit moves `PRAGMA data_version`; the app's connection is no longer the only writer of
->   `epg_programmes` (EpgStore). Schema v11 put TRIGGERS on `channels`; workers open with
->   `upgradeSchema=false`.
-> * **Splitting uncommitted work:** snapshot with a temporary index (`GIT_INDEX_FILE=… git read-tree HEAD;
->   git add <paths>; git write-tree`); to commit a tree: `GIT_INDEX_FILE=… git read-tree <tree>`, then
->   `git commit` with that index (and check `git diff --cached --stat` first).
-> * **Mutation-test every new guard's test** (remove it, see the test fail, restore) — the scratchpad
->   script pattern: patch, `cmake --build build --target RabbitEarsCli`, `--selftest`, restore, rebuild.
+>   `sqlite3_get_autocommit` before carrying on. Another connection's commit moves `PRAGMA data_version`;
+>   the app's connection is not the only writer of `epg_programmes` (EpgStore). Schema v11 put TRIGGERS on
+>   `channels`; workers open with `upgradeSchema=false`. A subquery's column names are implementation-
+>   defined — alias them (`AS`).
+> * **Mutation-test every new guard's test** (break it, see the test fail, restore) — the scratchpad
+>   script pattern: patch, `cmake --build build --target RabbitEarsCli`, `--selftest` to a file, restore,
+>   rebuild. GUI-only code (the drag, menus, the bridge) has no selftest — say so.
 > * **Launching an exe from `G:` through the SHELL** raises a blocking security prompt — use CreateProcess
 >   (`run-profile.ps1` does). **`LNK1168`** = RabbitEars is running: close with `WM_CLOSE`, never kill.
-> * **Command ids:** a genuine gap only (computed ranges 2051–2062, 2079–2098, 2100+ have no literal).
->   2034–2037 are the Settings ▸ Meters items (photoreal stage A).
+> * **Command ids:** a genuine gap only (computed ranges 2051–2062, 2079–2098, 2100+ have no literal);
+>   2034–2037 are the Settings ▸ Meters items. WM_APP+12 is WM_APP_VOD_ARCHIVE (+10 is ChannelGrid's).
 > * **Release:** bump ONLY `APP_VERSION` (`cmake/AppVersion.cmake` line 11). Three installers, two appcasts,
 >   `-Tag v<ver>`; push before tagging; `ls-remote` == HEAD before building; the universal installer can
 >   fail once ("EndUpdateResource … antivirus") — re-run, check ~63 MB. Signing on the Mac:
@@ -1679,13 +1690,14 @@ Paste this verbatim to start a fresh session with working context restored:
 >   from the DB or a log unmasked, never put one in a doc or commit. The log masks them by shape.
 > * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** and verify BOTH flags before committing
 >   (leave the cache at ON).
-> * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent) → `python tools/i18n/gen_i18n.py`
->   (`--check` must pass); never hand-edit `common/core/Strings.*`; append keys at the END of `keys.json`;
->   638 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine draft; avoid plurals in
->   English templates (there is no plural support).
+> * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent, exactly `json.dumps(…, indent=2)` layout) →
+>   `python tools/i18n/gen_i18n.py` (`--check` must pass); never hand-edit `common/core/Strings.*`; append
+>   keys at the END of `keys.json`; 639 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine
+>   draft; avoid plurals in English templates (there is no plural support).
 >
 > **Working rules:** every change adversarially reviewed (background agents) + built with BOTH theme
-> flags + `--selftest` ALL PASS before committing; render before/after for anything visual; hand every
-> runtime check to the owner; never conclude anything about a class of streams from one channel. Commit
-> only when asked; stage specific paths (never `git add -A`); end commit messages with the
-> Co-Authored-By trailer.
+> flags + `--selftest` ALL PASS before committing; render before/after for anything visual (the existing
+> looks must stay byte-identical — the owner's rule); hand every runtime check to the owner with exact
+> steps; never conclude anything about a class of streams from one channel. Commit only when asked; stage
+> specific paths (never `git add -A` on the real index); end commit messages with the Co-Authored-By
+> trailer.

@@ -1,11 +1,11 @@
 # Photorealistic skins & meters — design notes (DRAFT)
 
-> **Status (2026-09-23):** **Phase 0 is DONE** — the headless render tool `RabbitEarsRender` exists and
-> is verified. **Phase 1 is DONE in the working tree, NOT committed, and not yet seen by the owner** —
-> the six defects below are fixed, with a before/after sheet for the owner's eye (see "Phase 1" below).
-> **The VU instruments** — the owner's two reference photos built as the Backlit "VU needle" and
-> the new "Silver VU" — are DONE in the working tree too (see "The VU instruments").
-> **The rest of Phases 2–4 is a PROPOSAL awaiting six owner decisions** (bottom of this file).
+> **Status (2026-09-25):** Phase 0 (the render tool), Phase 1 (the six defects) and the VU instruments
+> SHIPPED in 0.2.18 (`3c14828` and before; the "uncommitted" notes in the sections below are from
+> 2026-09-23 and out of date). **The owner answered the six decisions** (bottom of this file): meters AND
+> skins, all three size routes, new selectable looks, skins drive meters. **Stage A — meter SIZE — is
+> COMMITTED (2026-09-26)** (see "Stage A" at the bottom and Win32/HANDOVER.md's 0.2.21-dev item (3)).
+> Then stage B (Phase 2: photoreal looks) and stage C (Phase 3: skins as materials).
 >
 > The owner's ask: *"for our next version, can we improve the UI? Make the skins and meters more
 > photorealistic?"*
@@ -301,6 +301,34 @@ are a 0.3.x epic.
    light). Flag it if a skin looks wrong under it.
 5. **Skins drive meters: yes** — a meter's materials and bezel follow the active skin.
 6. **mac — not asked; assumed acceptable:** meter looks and skins are Win32-only already.
+
+## Stage A — meter SIZE (committed 2026-09-26)
+
+The three size routes as ONE mechanism plus a window:
+- **One meter height** (`meter_height`, dp; 30 = today's tray, which must stay byte-identical): at 30 the
+  meters sit inline in the 50-dp strip; taller, they get a row of their own above the transport row (strip
+  = 10 dp + the meters + 50 dp, at most half the video panel, the tank fitting the row — `Win32/ui/MeterTray.h`);
+  every meter's width and the tank's scale by height/30 — the Standard / Large / Extra-large presets are
+  30 / 50 / 72 dp (Settings ▸ Meters ▸ …), and
+  **dragging the strip's top edge** sets any height between (the strip's top ~4 dp are main-window client
+  area — the skin strip paints into the main window's DC, so no child window is in the way).
+- **The meter bridge** (`Win32/ui/MeterBridge`): a separate resizable window with the tray's meters in
+  one row, as large as the window; its meters are MIRRORS of the tray's (`miniMeterSetMirror` /
+  `bufferMeterSetMirror` — data, resets, look, palette, tuning), so nothing that feeds meters changes.
+- **What the size buys, today, with no paint change** (`RabbitEarsRender --meter-height 72`): at 72 dp
+  (113 px at 150 %) the VU dials show their numerals, PEAK and legends; at 50 dp and 100 % they are clean
+  but under the numeral threshold. The LED/LCD looks keep a fixed small cell pitch and read as a fine
+  mesh when tall — **stage B's first job**: cells (and lens detail) that scale with the meter, as a NEW
+  selectable look (the owner's rule: existing looks stay byte-identical).
+- **Built 2026-09-26** (Win32/ui/MeterTray.h, the strip-edge drag, Settings ▸ Meters, the bridge compiled
+  and wired) — the standard height renders byte-identical. **The width limit** (found building it): inline,
+  a taller tray runs out of width beside the transport controls, so at Large / Extra large most meters
+  hide on a 1920-px screen at 150 % — **the owner chose (2026-09-26) a row of their own above the transport
+  row at Large+** (built: `MeterTray.h`; the standard height stays inline, byte-identical), and to keep the
+  bridge an owned window. Paint cost per frame, measured (`RabbitEarsRender
+  --bench-paint`): the fixed-pitch Tube look reaches ~5–6 ms per meter at 120 dp — stage B's scaled cells
+  address it; until then the bridge's meters stop at 120 dp.
+- Status and the exact TODO: Win32/HANDOVER.md, 0.2.21-dev item (3).
 
 Plus two things that would help: the **reference photos/mockups** (not in the repo), and **one real
 screenshot** of the running app, to check the renders against the owner's actual screen and settings.

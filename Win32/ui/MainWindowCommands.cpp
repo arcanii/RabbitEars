@@ -58,6 +58,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "ui/EpgStore.h"
 #include "ui/VodSync.h"
 #include "ui/GlassMask.h"  // glassStrengthSettingKey — persisted meter glass strength
+#include "ui/MeterBridge.h"
 #include "ui/MiniMeter.h"
 #include "ui/Splash.h"
 #include "ui/Theme.h"
@@ -780,6 +781,7 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
 
 void toggleFullscreen(AppState* st) {
     HWND hwnd = st->hwnd;
+    cancelStripDrag(st);  // the strip is about to hide (or come back): a drag on its edge ends here
     st->fullscreen = !st->fullscreen;
     if (st->fullscreen) {
         // Real fullscreen: remember the window, drop the frame to a borderless
@@ -816,6 +818,7 @@ void toggleVideoOnly(AppState* st) {
     // so "Video only" from the fullscreen right-click menu lands in windowed video-only instead of
     // doing nothing. toggleFullscreen clears st->fullscreen, so the toggle below then proceeds.
     if (st->fullscreen) toggleFullscreen(st);
+    cancelStripDrag(st);
     st->videoOnly = !st->videoOnly;
     layout(st->hwnd, st);
     InvalidateRect(st->hwnd, nullptr, TRUE);
@@ -2042,6 +2045,7 @@ void onMeters(AppState* st) {
     }
     syncSpectrumTap(st);   // enabling/disabling spectrum starts/stops the capture tap
     layout(st->hwnd, st);  // show/hide meters per the new enables
+    meterBridgeRelayout(st);  // the bridge shows the tray's set (and its tank only while the tray's shows)
 }
 
 // Apply a UI-language change LIVE (no restart). Everything the app draws falls into two camps: text
@@ -2075,6 +2079,7 @@ void applyLanguageChange(AppState* st) {
     //    the grid's formats without changing metrics; the guide re-does its formats + caption.
     channelGridUpdateDpi(st->grid, st->dpi);
     if (epgGuideOpen()) epgGuideRefreshLanguage();
+    meterBridgeRefreshLanguage();  // its caption
     // 6. Repaint the rest, synchronously (RDW_UPDATENOW, as applyActiveSkin does) so the switch lands
     //    in one frame with no flash of stale text: the command bar (Add-Playlist label + wordmark in
     //    the new face) and any owner-drawn surface that reads tr() at paint (e.g. the empty-PIP hint).
@@ -2170,6 +2175,22 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(viewMenu, MF_STRING | (st->videoOnly ? chk : 0u), ID_VIDEO_ONLY,
                 tr(StringId::MenuVideoOnly).c_str());  // carries the \tCtrl+Shift+V accelerator hint
 
+    // Meters submenu (photoreal stage A): the setup dialog | the three sizes (a height set by dragging
+    // the strip's edge checks none of them) and how to get any other | the pop-out meter bridge.
+    HMENU metersMenu = CreatePopupMenu();
+    AppendMenuW(metersMenu, MF_STRING, ID_METERS_SETUP, tr(StringId::MenuMeterSetup).c_str());
+    AppendMenuW(metersMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(metersMenu, MF_STRING | (st->meterHeightDp == kMeterHeightStd ? chk : 0u), ID_METER_SIZE_STD,
+                tr(StringId::MenuMeterSizeStandard).c_str());
+    AppendMenuW(metersMenu, MF_STRING | (st->meterHeightDp == kMeterHeightLarge ? chk : 0u), ID_METER_SIZE_LARGE,
+                tr(StringId::MenuMeterSizeLarge).c_str());
+    AppendMenuW(metersMenu, MF_STRING | (st->meterHeightDp == kMeterHeightXLarge ? chk : 0u),
+                ID_METER_SIZE_XLARGE, tr(StringId::MenuMeterSizeXLarge).c_str());
+    AppendMenuW(metersMenu, MF_STRING | MF_GRAYED, 0, tr(StringId::MenuMeterSizeHint).c_str());
+    AppendMenuW(metersMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(metersMenu, MF_STRING | (meterBridgeOpen() ? chk : 0u), ID_METER_BRIDGE,
+                tr(StringId::MenuMeterBridge).c_str());
+
     // Layout submenu: reset | dock moves | save/apply/delete named layouts.
     HMENU layoutMenu = CreatePopupMenu();
     AppendMenuW(layoutMenu, MF_STRING, ID_LAYOUT_RESET, tr(StringId::MenuLayoutResetDefault).c_str());
@@ -2228,7 +2249,7 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(viewMenu), tr(StringId::MenuView).c_str());
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), tr(StringId::MenuLayout).c_str());
-    AppendMenuW(m, MF_STRING, ID_METERS_SETUP, tr(StringId::MenuMeters).c_str());
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(metersMenu), tr(StringId::MenuMetersSubmenu).c_str());
     AppendMenuW(m, MF_STRING, ID_SYSTEM_SETTINGS, tr(StringId::MenuSystemSettings).c_str());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(langMenu), tr(StringId::MenuLanguage).c_str());
@@ -2380,6 +2401,18 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_METERS_SETUP:
             onMeters(st);
+            break;
+        case ID_METER_SIZE_STD:
+            setMeterHeight(st, kMeterHeightStd);
+            break;
+        case ID_METER_SIZE_LARGE:
+            setMeterHeight(st, kMeterHeightLarge);
+            break;
+        case ID_METER_SIZE_XLARGE:
+            setMeterHeight(st, kMeterHeightXLarge);
+            break;
+        case ID_METER_BRIDGE:
+            toggleMeterBridge(st);
             break;
         case ID_SYSTEM_SETTINGS:
             onSystemSettings(st);

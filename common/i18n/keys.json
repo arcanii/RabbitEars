@@ -4102,5 +4102,53 @@
     "cluster": "Status",
     "placeholders": [],
     "comment": "Movie-sync phase before the films: asking the provider (its live channel list, several MB, can take a minute or more) which channels keep a catch-up archive. Not the user's own channel list."
+  },
+  {
+    "id": "MenuMetersSubmenu",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Settings menu: the submenu holding the meter setup, the meter sizes and the meter bridge window (no ellipsis — it opens a submenu; MenuMeterSetup is the setup dialog's item inside it)."
+  },
+  {
+    "id": "MenuMeterSizeStandard",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, radio: the meter strip at its standard height (as before)."
+  },
+  {
+    "id": "MenuMeterSizeLarge",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, radio: taller meters (the strip grows with them)."
+  },
+  {
+    "id": "MenuMeterSizeXLarge",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, radio: the tallest preset."
+  },
+  {
+    "id": "MenuMeterSizeHint",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, a disabled hint under the sizes: any height can be set by dragging the top edge of the strip the meters sit in."
+  },
+  {
+    "id": "MenuMeterBridge",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, a check item: a separate, resizable window showing the meters large (the 'meter bridge')."
+  },
+  {
+    "id": "MeterBridgeTitle",
+    "cluster": "Dialogs",
+    "placeholders": [],
+    "comment": "Title bar of the meter bridge window."
+  },
+  {
+    "id": "MenuMeterSetup",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, the first item: opens the Meters setup dialog (which meters show, their looks, colours and feel)."
   }
 ]

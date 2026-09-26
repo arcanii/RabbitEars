@@ -101,6 +101,13 @@ void miniMeterReset(HWND meter);
 
 void miniMeterSetDpi(HWND meter, UINT dpi);
 
+// Mirror everything this meter is given — its data (every push/set above, the spectrum included),
+// resets, and its look, palette and tuning — onto `mirror`, a second meter of the same kind elsewhere
+// (the pop-out meter bridge), so no caller feeds two meters. Not its DPI (each window has its own).
+// nullptr unlinks. THREAD-SAFE against the spectrum push: set and cleared under the meter's lock, so
+// once this returns with nullptr no forward to the old mirror is in flight — unlink BEFORE destroying it.
+void miniMeterSetMirror(HWND meter, HWND mirror);
+
 // ---- Look & palette (Settings → Meters…) -----------------------------------
 void miniMeterSetStyle(HWND meter, MeterStyle style);
 void miniMeterSetPalette(HWND meter, const MeterPalette& palette);

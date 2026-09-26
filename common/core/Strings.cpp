@@ -689,6 +689,17 @@ constexpr std::array<const char*, N> kEn = {{
     " · catch-up info not updated ({0})",  // StatusCatchupNotUpdated
     "Recording from the archive isn't available — play the channel live to record it.",  // StatusCatchupNoRecord
     "Asking your provider which channels keep catch-up…",  // StatusVodSyncFetchingCatchup
+    // --- Menu ---
+    "Meters",  // MenuMetersSubmenu
+    "Standard size",  // MenuMeterSizeStandard
+    "Large",  // MenuMeterSizeLarge
+    "Extra large",  // MenuMeterSizeXLarge
+    "Or drag the strip's top edge",  // MenuMeterSizeHint
+    "Meter bridge window",  // MenuMeterBridge
+    // --- Dialogs ---
+    "Meters — RabbitEars",  // MeterBridgeTitle
+    // --- Menu ---
+    "Meter setup…",  // MenuMeterSetup
 }};
 
 // 日本語
@@ -1368,6 +1379,17 @@ constexpr std::array<const char*, N> kJa = {{
     " · 見逃し再生の情報は更新されませんでした（{0}）",  // StatusCatchupNotUpdated
     "アーカイブからの録画はできません。録画するにはチャンネルをライブで再生してください。",  // StatusCatchupNoRecord
     "見逃し再生に対応したチャンネルをプロバイダーに確認しています…",  // StatusVodSyncFetchingCatchup
+    // --- Menu ---
+    "メーター",  // MenuMetersSubmenu
+    "標準サイズ",  // MenuMeterSizeStandard
+    "大",  // MenuMeterSizeLarge
+    "特大",  // MenuMeterSizeXLarge
+    "またはバーの上端をドラッグ",  // MenuMeterSizeHint
+    "メーターブリッジ ウィンドウ",  // MenuMeterBridge
+    // --- Dialogs ---
+    "メーター — RabbitEars",  // MeterBridgeTitle
+    // --- Menu ---
+    "メーターの設定…",  // MenuMeterSetup
 }};
 
 // 繁體中文
@@ -2047,6 +2069,17 @@ constexpr std::array<const char*, N> kZhHant = {{
     " · 回看資訊未更新（{0}）",  // StatusCatchupNotUpdated
     "無法從存檔錄製 — 請以直播方式播放頻道再錄製。",  // StatusCatchupNoRecord
     "正在向供應商查詢可回看的頻道…",  // StatusVodSyncFetchingCatchup
+    // --- Menu ---
+    "量表",  // MenuMetersSubmenu
+    "標準大小",  // MenuMeterSizeStandard
+    "大",  // MenuMeterSizeLarge
+    "特大",  // MenuMeterSizeXLarge
+    "或拖曳列的上邊緣",  // MenuMeterSizeHint
+    "量表橋接視窗",  // MenuMeterBridge
+    // --- Dialogs ---
+    "量表 — RabbitEars",  // MeterBridgeTitle
+    // --- Menu ---
+    "量表設定…",  // MenuMeterSetup
 }};
 
 // 繁體中文（香港）
@@ -2726,6 +2759,17 @@ constexpr std::array<const char*, N> kZhHK = {{
     " · 回看資訊未更新（{0}）",  // StatusCatchupNotUpdated
     "無法從存檔錄製 — 請以直播方式播放頻道再錄製。",  // StatusCatchupNoRecord
     "正在向供應商查詢可回看的頻道…",  // StatusVodSyncFetchingCatchup
+    // --- Menu ---
+    "量表",  // MenuMetersSubmenu
+    "標準大小",  // MenuMeterSizeStandard
+    "大",  // MenuMeterSizeLarge
+    "特大",  // MenuMeterSizeXLarge
+    "或拖曳列的上邊緣",  // MenuMeterSizeHint
+    "量表橋接視窗",  // MenuMeterBridge
+    // --- Dialogs ---
+    "量表 — RabbitEars",  // MeterBridgeTitle
+    // --- Menu ---
+    "量表設定…",  // MenuMeterSetup
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

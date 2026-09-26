@@ -84,6 +84,8 @@ struct MiniMeterState {
 
     // Spectrum (fed off the audio thread through `pending`, under `mtx`).
     std::mutex mtx;
+    HWND       mirror = nullptr;  // miniMeterSetMirror: set/cleared under `mtx`; read under it off-thread
+    bool       isMirror = false;  // this meter IS another's mirror (UI thread): it gets none of its own
     float      pending[kMaxBands] = {};
     int        pendingN = 0;
     bool       hasPending = false;
@@ -759,6 +761,9 @@ void registerMiniMeterClass(HINSTANCE hInst) {
     if (done) return;
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
+    // Repaint whole on a resize — only a SIZE change triggers it (moving does not): the meter-height
+    // drag and the meter bridge resize a meter that may not be animating (nothing playing).
+    wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInst;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -797,6 +802,24 @@ void miniMeterPushSpectrum(HWND meter, const float* bands, int count) {
     std::memcpy(st->pending, bands, sizeof(float) * count);
     st->pendingN = count;
     st->hasPending = true;
+    // Forwarded under THIS meter's lock, so miniMeterSetMirror(nullptr) waits for it (lock order is
+    // always source then mirror; a mirror has no mirror of its own).
+    if (st->mirror) miniMeterPushSpectrum(st->mirror, bands, count);
+}
+
+void miniMeterSetMirror(HWND meter, HWND mirror) {
+    MiniMeterState* st = stateOf(meter);
+    if (!st || mirror == meter || st->isMirror) return;
+    // No cycles (A -> B -> A would recurse and re-lock A's mutex): a mirror never mirrors onward.
+    MiniMeterState* m = mirror ? stateOf(mirror) : nullptr;
+    if (mirror && (!m || m->mirror)) return;
+    MiniMeterState* old = st->mirror && st->mirror != mirror ? stateOf(st->mirror) : nullptr;
+    {
+        std::lock_guard<std::mutex> lk(st->mtx);
+        st->mirror = mirror;
+    }
+    if (old) old->isMirror = false;
+    if (m) m->isMirror = true;
 }
 
 void miniMeterSetSignal(HWND meter, float strength, float trouble) {
@@ -804,6 +827,7 @@ void miniMeterSetSignal(HWND meter, float strength, float trouble) {
     if (!st) return;
     st->sigTarget = std::clamp(strength, 0.0f, 1.0f);
     st->sigTrouble = std::clamp(trouble, 0.0f, 1.0f);
+    if (st->mirror) miniMeterSetSignal(st->mirror, strength, trouble);
 }
 
 void miniMeterPushBitrate(HWND meter, double bytesPerSec) {
@@ -818,6 +842,7 @@ void miniMeterPushBitrate(HWND meter, double bytesPerSec) {
     const float ebb = std::clamp(0.995f - st->tuning.breathing * 0.02f, 0.95f, 0.999f);
     st->histMax = std::max(v, st->histMax * ebb);  // breathing knob (0.5 = classic 0.985)
     if (st->histMax < 1.0f) st->histMax = 1.0f;
+    if (st->mirror) miniMeterPushBitrate(st->mirror, bytesPerSec);
 }
 
 void miniMeterSetFrames(HWND meter, int fps, int dropsDelta) {
@@ -825,6 +850,7 @@ void miniMeterSetFrames(HWND meter, int fps, int dropsDelta) {
     if (!st) return;
     st->fps = std::max(0, fps);
     if (dropsDelta > 0) st->flare = 1.0f;
+    if (st->mirror) miniMeterSetFrames(st->mirror, fps, dropsDelta);
 }
 
 void miniMeterReset(HWND meter) {
@@ -843,6 +869,7 @@ void miniMeterReset(HWND meter) {
     st->fps = 0;
     st->flare = 0.0f;
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+    if (st->mirror) miniMeterReset(st->mirror);
 }
 
 void miniMeterSetDpi(HWND meter, UINT dpi) {
@@ -855,6 +882,7 @@ void miniMeterSetStyle(HWND meter, MeterStyle style) {
     if (!st) return;
     st->style = style;
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+    if (st->mirror) miniMeterSetStyle(st->mirror, style);
 }
 
 void miniMeterSetPalette(HWND meter, const MeterPalette& palette) {
@@ -862,6 +890,7 @@ void miniMeterSetPalette(HWND meter, const MeterPalette& palette) {
     if (!st) return;
     st->palette = palette;
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+    if (st->mirror) miniMeterSetPalette(st->mirror, palette);
 }
 
 COLORREF meterPanelColor(const MeterPalette& p, MeterStyle style, const Theme& th) {
@@ -931,6 +960,7 @@ void miniMeterSetTuning(HWND meter, const MeterTuning& tuning) {
     if (!st) return;
     st->tuning = tuning;
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
+    if (st->mirror) miniMeterSetTuning(st->mirror, tuning);
 }
 
 MeterTuning miniMeterTuning(HWND meter) {

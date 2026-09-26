@@ -42,6 +42,7 @@
 #include "ui/CatchupSync.h"  // Win32/ui — the provider sync's catch-up decisions
 #include "ui/DockLayout.h"
 #include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
+#include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
 #include "ui/VuLamp.h"
@@ -859,6 +860,65 @@ int selftest() {
             expect(titles(d) == L"Special" && d[0].snippet.find(L"\x02" L"Doctor\x03") != std::wstring::npos,
                    "search/reuse: a word right after a curly quote is found AND marked");
         }
+    }
+
+    out("== Meter tray geometry (photoreal stage A, ui/MeterTray.h) ==\n");
+    {
+        // The standard height IS the historical tray, to the pixel, at every common scaling: the 50-dp
+        // strip, the 30-dp meters, the unscaled widths — the owner's rule (existing looks unchanged).
+        bool standardSame = true;
+        std::string where;
+        for (UINT dpi : {96u, 120u, 144u, 150u, 168u, 192u}) {
+            const StripMetrics m = stripMetrics(kMeterHeightStd, dpi);
+            bool ok = m.stripPx == MulDiv(50, static_cast<int>(dpi), 96) && m.meterPx == MulDiv(30, static_cast<int>(dpi), 96);
+            for (int w : {112, 58, 96, 72, 115}) ok = ok && trayWidth(w, m.meterPx, dpi) == MulDiv(w, static_cast<int>(dpi), 96);
+            // A cap never shrinks the standard strip (its floor is the standard strip itself).
+            const StripMetrics capped = stripMetrics(kMeterHeightStd, dpi, 10);
+            ok = ok && capped.stripPx == m.stripPx && capped.meterPx == m.meterPx;
+            if (!ok) {
+                standardSame = false;
+                where += " " + std::to_string(dpi);
+            }
+        }
+        expect(standardSame, "meter tray: the standard height is the historical tray at every dpi (differs at:" +
+                                 where + ")");
+        // Taller: an own row — 10 dp, the meters, the 50-dp transport row (150 %: 15 + h + 75 px).
+        const StripMetrics large = stripMetrics(kMeterHeightLarge, 144), xl = stripMetrics(kMeterHeightXLarge, 144);
+        expect(large.ownRow && large.stripPx == 165 && large.meterPx == 75 && xl.ownRow && xl.stripPx == 198 &&
+                   xl.meterPx == 108 && trayWidth(115, xl.meterPx, 144) == 415 && !stripMetrics(30, 144).ownRow,
+               "meter tray: taller than standard, the meters take a row of their own above the transport row; "
+               "the widths scale with the height (150 %)");
+        const StripMetrics cap = stripMetrics(kMeterHeightMax, 144, 150);
+        expect(cap.ownRow && cap.stripPx == 150 && cap.meterPx == 60 && stripMetrics(kMeterHeightMax, 144).stripPx == 270,
+               "meter tray: capped at half the video panel, the meters take what the strip leaves");
+        // The tank (always shown) fits the row: 300 px wide -> meters <= 300 * 45 / 173 = 78 px, tank 300.
+        const StripMetrics narrow = stripMetrics(kMeterHeightXLarge, 144, 0, 300);
+        expect(narrow.ownRow && narrow.meterPx == 78 && trayWidth(115, narrow.meterPx, 144) <= 300,
+               "meter tray: the meters stop where the tank would no longer fit the panel's width");
+        const StripMetrics tooSmall = stripMetrics(kMeterHeightLarge, 144, 100), tooNarrow = stripMetrics(50, 144, 0, 150);
+        expect(!tooSmall.ownRow && tooSmall.stripPx == 75 && tooSmall.meterPx == 45 && !tooNarrow.ownRow,
+               "meter tray: no room for meters taller than standard -> the standard strip");
+        expect(clampMeterHeightDp(10) == kMeterHeightMin && clampMeterHeightDp(500) == kMeterHeightMax &&
+                   stripMetrics(10, 96).stripPx == 50 && stripMetrics(500, 96).meterPx == 120,
+               "meter tray: heights outside 30..120 dp are clamped");
+        // The edge drag: the standard strip until it can hold an own row of taller meters, then the height
+        // that fills it; its range stops where the strip or the tank would no longer fit.
+        expect(meterHeightForStripPx(75, 144) == 30 && meterHeightForStripPx(135, 144) == 30 &&
+                   meterHeightForStripPx(165, 144) == 50 && meterHeightForStripPx(2000, 144) == 120,
+               "meter tray: the drag keeps the standard strip until an own row fits, then follows the edge");
+        expect(maxMeterHeightDp(144, 0, 0) == 120 && maxMeterHeightDp(144, 150, 0) == 40 &&
+                   maxMeterHeightDp(144, 100, 0) == 30 && maxMeterHeightDp(144, 0, 300) == 52 &&
+                   stripMetrics(maxMeterHeightDp(144, 150, 300), 144, 150, 300).meterPx == trayDp(40, 144),
+               "meter tray: the drag's range — what fits whole, strip and tank");
+        // A capped strip shows a whole-dp height the drag can reach: 46 px (between dp 30 = 45 and dp 31 =
+        // 47 at 150 %) is no own row; 60 px shows exactly dp 40.
+        expect(!stripMetrics(kMeterHeightMax, 144, 136).ownRow && stripMetrics(kMeterHeightMax, 144, 137).meterPx == 47,
+               "meter tray: a capped own row is always a whole-dp height (no 46-px row the drag cannot keep)");
+        // Hysteresis at the standard <-> own-row switch (150 %: the smallest own row is 137 px, 9 px margin).
+        expect(meterHeightForDrag(145, false, 144) == 30 && meterHeightForDrag(146, false, 144) == 37 &&
+                   meterHeightForDrag(129, true, 144) == 31 && meterHeightForDrag(127, true, 144) == 30 &&
+                   meterHeightForDrag(200, true, 144) == 73,
+               "meter tray: the drag switches layouts only past a margin either way (no flip-flop on the edge)");
     }
 
     out("== TV Guide rows + coverage (buildGuideModel) ==\n");

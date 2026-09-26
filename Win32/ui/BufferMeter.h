@@ -32,9 +32,13 @@ void bufferMeterSetFlow(HWND meter, float flowRate, float trouble);
 void bufferMeterSetMetrics(HWND meter, const wchar_t* text);
 // Hide/show the visualizer; while hidden the sim is paused (no CPU).
 void bufferMeterSetHidden(HWND meter, bool hidden);
+bool bufferMeterHidden(HWND meter);  // pass a tank (it reads the window's state pointer); false for none
 // Notified when the user toggles hide via the right-click menu (for persistence).
 void bufferMeterSetOnHiddenChanged(HWND meter, std::function<void(bool)> cb);
 void bufferMeterSetDpi(HWND meter, UINT dpi);
+// Mirror this tank's health, flow and readout onto `mirror` (the pop-out meter bridge's tank), so no
+// caller feeds two; nullptr unlinks. Not its hidden state or DPI. UI thread only.
+void bufferMeterSetMirror(HWND meter, HWND mirror);
 
 // ---- LED grid geometry -----------------------------------------------------
 // Factored out of the renderer, and header-inline, for ONE reason: the renderer lives in an

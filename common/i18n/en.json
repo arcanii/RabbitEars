@@ -629,5 +629,13 @@
   "StatusCatchupChannels": " · catch-up channels: {0}",
   "StatusCatchupNotUpdated": " · catch-up info not updated ({0})",
   "StatusCatchupNoRecord": "Recording from the archive isn't available — play the channel live to record it.",
-  "StatusVodSyncFetchingCatchup": "Asking your provider which channels keep catch-up…"
+  "StatusVodSyncFetchingCatchup": "Asking your provider which channels keep catch-up…",
+  "MenuMetersSubmenu": "Meters",
+  "MenuMeterSizeStandard": "Standard size",
+  "MenuMeterSizeLarge": "Large",
+  "MenuMeterSizeXLarge": "Extra large",
+  "MenuMeterSizeHint": "Or drag the strip's top edge",
+  "MenuMeterBridge": "Meter bridge window",
+  "MeterBridgeTitle": "Meters — RabbitEars",
+  "MenuMeterSetup": "Meter setup…"
 }
