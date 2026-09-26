@@ -35,8 +35,9 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ### ⏸ STATE 2026-09-26 (late evening) — where 0.2.21-dev stands. READ THIS FIRST.
 
-**Committed AND pushed — origin/main = `f2ec7af` (the owner pushed, 2026-09-26): the two below, then `b5e141d`,
-`6ffc91b`, `f2ec7af` (item (3), further down); then two more commits on top, NOT pushed (the end of this block).**
+**Committed AND pushed — origin/main = `98cde52` (the owner pushed, 2026-09-26/27): the two below, then `b5e141d`,
+`6ffc91b`, `f2ec7af`, `62502ee`, `98cde52` (item (3), further down); then one more commit on top, NOT pushed (the
+volume compensation, the end of this block).**
 - **`53c0464` — item (1), the guide stalls** (the owner's four live checks passed): first open 1.4 s → ~0.25 s,
   Refresh Guide's store + index rebuild off the UI thread, search correct across connections,
   `bulkInsertProgrammes` never commits a broken guide; `APP_VERSION` 0.2.21.
@@ -111,7 +112,7 @@ screenshot: Large, four Silver VUs + labels):** (1) Large, four identical needle
 back; (4) the bridge's labels follow a resize; (5) 日本語 and a skin switch with labels on; (6) the standard size
 as before. The owner then asked for the meters **touching (no gap)** — the next commit.
 
-**Committed, NOT pushed — two commits after `f2ec7af`: (i) the meters touching, then (ii) the audio needle; the
+**Committed and pushed — `62502ee` (i) the meters touching, then `98cde52` (ii) the audio needle; the
 owner's checks ALL PASSED (copy `build\check-0221-audio\`, 2026-09-26):**
 - **(i) The own row's meters touch** (the owner: "we can make them touching (no gap)"): `MeterTray.h`
   `trayMeterGapPx` — 0 in an own row, 6 dp inline as always (the standard tray byte-identical); the tank keeps
@@ -135,15 +136,25 @@ owner's checks ALL PASSED (copy `build\check-0221-audio\`, 2026-09-26):**
   is AFTER the app's volume (process loopback after the session volume libVLC's WASAPI output sets), so the
   needle reads the programme only at 100 %; (4) leaving fullscreen: no kick; (5) Sens shifts it; (6) labels
   under touching meters stay separate.
-- **Next (a decision for the owner):** make the needle independent of the listening volume — add back what the
-  volume took (libVLC 3's mmdevice sets the session volume to v³, v = volume/100, so -60·log10(v) dB — from
-  memory of VLC's source, NOT verified here: measure it on a steady programme at 100 % and 50 % first; the cube
-  law predicts 18 dB) — or keep it following what is heard.
+- **Committed, NOT pushed — the commit after `98cde52`: the owner's decision (2026-09-26), the needle shows the
+  PROGRAMME's level whatever the volume slider.** Built (tree `7f51bca`): the capture thread finds this process's audio session on the default render
+  device (console role) every ~2 s (`findOurSession`: sessions whose `IAudioSessionControl2::GetProcessId` is
+  ours, the loudest active one) and reads its `ISimpleAudioVolume` volume + mute EVERY window (`volumeOf`), and
+  the level becomes `programmeDbfs` = the captured level minus 20·log10(volume), capped at full scale (+3.01 dBFS),
+  the floor when muted / under -100 dB. So it reads the session's REAL volume — libVLC's volume law (believed v³)
+  does not matter. The bands (cell looks) stay as captured. The log says the session volume on every 0.5-dB
+  change ("our audio session's volume is … — the audio meter adds back … dB"). **Verified:** BOTH flags 0
+  warnings; `--selftest` ALL PASS (**862**; 7 mutations of `programmeDbfs` over two rounds, all caught). Reviewed:
+  its medium — a volume read only every 0.5 s made the needle kick (peg) on every slider move — fixed by
+  reading the volume every window; lows acted on (the console role, the -100 dB threshold, softer comments);
+  not re-reviewed. **The owner's checks — ALL FOUR PASSED (2026-09-27, copy `build\check-0221-volume\`):** (1) a steady programme, the slider 100 % →
+  50 % → 20 %: the needle holds (the log shows the volume and the dB added back); (2) move the slider quickly:
+  no kick; (3) mute: the needle rests; (4) the LED spectrum bars still shrink with the volume (unchanged —
+  compensate them too only if the owner asks).
 
-**Order for the next session:** (a) ✅ everything through `f2ec7af` pushed; the meters-touching and audio-needle
-commits after it NOT pushed — the volume-compensation decision above; the owner's glance at a cell-look Bitrate
-meter at Extra large (the Bitrate fix's check, still not run: their tray is all VU); push (`git ls-remote` first
-— the mac team pushes to `main` too); (b) photoreal
+**Order for the next session:** (a) ✅ everything through `98cde52` pushed; the volume-compensation commit after it
+NOT pushed — push it (`git ls-remote` first — the mac team pushes to `main` too); still open: the owner's glance at
+a cell-look Bitrate meter at Extra large (the Bitrate fix's check, not run: their tray is all VU); (b) photoreal
 stage B — new selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's
 cost at size: a Tube Bitrate ~10–15 ms a frame at 120 dp), then stage C — skins as materials, skins driving meters
 (PHOTOREAL.md); (c) the cleanups (4) — multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise,

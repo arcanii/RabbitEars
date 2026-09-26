@@ -16,6 +16,7 @@
 
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
+#include <audiopolicy.h>  // IAudioSessionManager2 — our session's volume (the audio meter's level)
 #include <mmdeviceapi.h>
 #include <mmreg.h>
 #include <objidl.h>  // IAgileObject — the async-activation completion handler must be agile
@@ -32,6 +33,70 @@ constexpr int    kFftSize = 1024;   // ~21ms window at 48kHz
 constexpr int    kRate = 48000;
 constexpr int    kChannels = 2;
 constexpr double kPi = 3.14159265358979323846;
+
+// The volume of an audio session (0..1; 0 while muted), or -1 when it cannot be read.
+float volumeOf(ISimpleAudioVolume* vol) {
+    float v = 1.0f;
+    BOOL mute = FALSE;
+    if (!vol || FAILED(vol->GetMasterVolume(&v)) || FAILED(vol->GetMute(&mute)) || !std::isfinite(v)) return -1.0f;
+    return mute ? 0.0f : std::clamp(v, 0.0f, 1.0f);
+}
+
+// THIS process's audio session on the default render device — the console role, as libVLC's output
+// picks its device — whose volume Windows applies to what the loopback captures: its ISimpleAudioVolume
+// (the caller releases it), or null when there is none (then nothing is compensated). Of several sessions
+// of ours, the loudest ACTIVE one (else the loudest). Found every ~2 s on the capture thread (COM is
+// initialised there); the volume itself is read from it every window, so a moved slider counts at once.
+ISimpleAudioVolume* findOurSession(IMMDeviceEnumerator* en) {
+    ISimpleAudioVolume* best = nullptr;
+    IMMDevice* dev = nullptr;
+    if (!en || FAILED(en->GetDefaultAudioEndpoint(eRender, eConsole, &dev)) || !dev) return best;
+    IAudioSessionManager2* mgr = nullptr;
+    if (SUCCEEDED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&mgr))) &&
+        mgr) {
+        IAudioSessionEnumerator* sessions = nullptr;
+        if (SUCCEEDED(mgr->GetSessionEnumerator(&sessions)) && sessions) {
+            int count = 0;
+            if (FAILED(sessions->GetCount(&count))) count = 0;
+            const DWORD pid = GetCurrentProcessId();
+            float bestVol = -1.0f;
+            bool bestActive = false;
+            for (int i = 0; i < count; ++i) {
+                IAudioSessionControl* ctl = nullptr;
+                if (FAILED(sessions->GetSession(i, &ctl)) || !ctl) continue;
+                IAudioSessionControl2* ctl2 = nullptr;
+                DWORD spid = 0;
+                if (SUCCEEDED(ctl->QueryInterface(__uuidof(IAudioSessionControl2), reinterpret_cast<void**>(&ctl2))) &&
+                    ctl2) {
+                    if (SUCCEEDED(ctl2->GetProcessId(&spid)) && spid == pid) {
+                        ISimpleAudioVolume* vol = nullptr;
+                        if (SUCCEEDED(ctl->QueryInterface(__uuidof(ISimpleAudioVolume), reinterpret_cast<void**>(&vol))) &&
+                            vol) {
+                            const float v = volumeOf(vol);
+                            AudioSessionState state = AudioSessionStateInactive;
+                            const bool active = SUCCEEDED(ctl->GetState(&state)) && state == AudioSessionStateActive;
+                            // An active session beats any inactive one; among equals, the louder.
+                            if (v >= 0.0f && ((active && !bestActive) || (active == bestActive && v > bestVol))) {
+                                if (best) best->Release();
+                                best = vol;  // keeps the QueryInterface reference
+                                vol = nullptr;
+                                bestVol = v;
+                                bestActive = active;
+                            }
+                            if (vol) vol->Release();
+                        }
+                    }
+                    ctl2->Release();
+                }
+                ctl->Release();
+            }
+            sessions->Release();
+        }
+        mgr->Release();
+    }
+    dev->Release();
+    return best;
+}
 
 // In-place iterative radix-2 Cooley-Tukey FFT.
 void fft(float* re, float* im, int n) {
@@ -248,6 +313,13 @@ void SpectrumTap::run() {
         // louder one's RMS is what a VU meter on the programme would read — before any Hann
         // weighting, which only the FFT wants).
         double sumL = 0.0, sumR = 0.0;
+        // Our session's volume (programmeDbfs adds back what it took off the level).
+        IMMDeviceEnumerator* devices = nullptr;
+        CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                         reinterpret_cast<void**>(&devices));
+        ISimpleAudioVolume* ourSession = nullptr;
+        ULONGLONG nextSessionFind = 0;
+        float loggedVolDb = 1.0f;  // (no volume is > 0 dB: the first reading is logged)
         std::vector<float> re(kFftSize), im(kFftSize);
         float bands[SpectrumTap::kBands];
         bool firstWindow = true;
@@ -295,8 +367,31 @@ void SpectrumTap::run() {
                             const float db = 20.0f * std::log10(mx + 1e-9f);
                             bands[b] = std::clamp((db + 72.0f) / 60.0f, 0.0f, 1.0f);
                         }
+                        // Our session: found every ~2 s (device or session changes), its volume read every
+                        // window — a moved slider counts at once, never a stale volume kicking the needle.
+                        const ULONGLONG now = GetTickCount64();
+                        if (now >= nextSessionFind) {
+                            nextSessionFind = now + 2000;
+                            if (ourSession) ourSession->Release();
+                            ourSession = findOurSession(devices);
+                        }
+                        const float v = volumeOf(ourSession);
+                        const float sessionVol = v < 0.0f ? 1.0f : v;  // none found: nothing compensated
+                        const float volDb = sessionVol > kQuietestVolume ? 20.0f * std::log10(sessionVol) : -999.0f;
+                        if (std::fabs(volDb - loggedVolDb) >= 0.5f) {  // a change of half a dB or more
+                            loggedVolDb = volDb;
+                            wchar_t b[128];
+                            if (volDb > -999.0f)
+                                swprintf_s(b, L"SpectrumTap: our audio session's volume is %.4f — the audio meter "
+                                              L"adds back %.1f dB", sessionVol, -volDb);
+                            else
+                                swprintf_s(b, L"SpectrumTap: our audio session is muted or silent — the audio "
+                                              L"meter's needle rests");
+                            diag::info(b);
+                        }
                         // (fmax: a NaN on one channel does not silence the other.)
-                        if (sink_) sink_(bands, rmsDbfs(std::fmax(sumL, sumR), kFftSize));
+                        if (sink_)
+                            sink_(bands, programmeDbfs(rmsDbfs(std::fmax(sumL, sumR), kFftSize), sessionVol));
                         sumL = sumR = 0.0;
                         if (firstWindow) {
                             diag::info(L"SpectrumTap: first audio window analysed (audio is flowing)");
@@ -309,6 +404,8 @@ void SpectrumTap::run() {
             }
         }
         client->Stop();
+        if (ourSession) ourSession->Release();
+        if (devices) devices->Release();
     }
 
     if (capture) capture->Release();

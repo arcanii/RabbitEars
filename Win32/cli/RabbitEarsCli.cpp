@@ -44,7 +44,7 @@
 #include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
 #include "ui/MiniMeter.h"  // Win32/ui — only its header-inline math: needle width, audio reading (no GUI code)
-#include "audio/SpectrumTap.h"  // Win32/audio — only its header-inline level (rmsDbfs; no capture here)
+#include "audio/SpectrumTap.h"  // Win32/audio — only its header-inline level math (rmsDbfs, programmeDbfs)
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
 #include "ui/VuLamp.h"
@@ -976,6 +976,25 @@ int selftest() {
                    SpectrumTap::rmsDbfs(std::nan(""), 1024) == SpectrumTap::kSilenceDbfs,  // never a NaN level
                "audio level: a full-scale sine reads " + std::to_string(full) + " dBFS, one at -18 dBFS reads " +
                    std::to_string(align) + "; silence the floor");
+        // The programme's level: the capture comes after our session's volume (the owner saw the needle drop
+        // with the slider), so what the volume took off is added back — a session volume of 0.5 gives +6 dB,
+        // 0.125 +18 dB, 0.002 +54 dB; 1 changes nothing; never past full scale (+3.01 dBFS, a full-scale square
+        // wave); muted, under -100 dB (1e-5), or silence itself: the floor.
+        const float half = SpectrumTap::programmeDbfs(-20.0f, 0.5f), eighth = SpectrumTap::programmeDbfs(-20.0f, 0.125f),
+                    faint = SpectrumTap::programmeDbfs(-74.0f, 0.002f);
+        const float silenceF = SpectrumTap::kSilenceDbfs;
+        expect(SpectrumTap::programmeDbfs(-20.0f, 1.0f) == -20.0f && std::fabs(half + 13.9794f) < 0.01f &&
+                   std::fabs(eighth + 1.9382f) < 0.01f && std::fabs(faint + 20.0206f) < 0.01f &&
+                   SpectrumTap::programmeDbfs(-20.0f, 1.5f) == -20.0f &&
+                   SpectrumTap::programmeDbfs(-20.0f, 0.01f) == SpectrumTap::kFullScaleDbfs &&
+                   SpectrumTap::programmeDbfs(-100.0f, 2e-5f) > -10.0f &&
+                   SpectrumTap::programmeDbfs(-100.0f, 5e-6f) == silenceF &&
+                   SpectrumTap::programmeDbfs(-20.0f, 0.0f) == silenceF &&
+                   SpectrumTap::programmeDbfs(silenceF, 0.5f) == silenceF &&
+                   SpectrumTap::programmeDbfs(-20.0f, std::nanf("")) == silenceF,
+               "audio level: the programme's, whatever the volume — -20 dBFS heard at a session volume of 0.5 "
+               "reads " + std::to_string(half) + ", at 0.125 " + std::to_string(eighth) +
+                   "; capped at full scale; muted: the floor");
         // The needle's reading: 0 VU at -18 dBFS; the Sens knob evenly in dB (0.5 unity, 1.0 +12 dB, 0.25 -6 dB,
         // 0 -12 dB).
         const float zero = vuReadingOfDbfs(-18.0f, 0.5f), up = vuReadingOfDbfs(-18.0f, 1.0f),

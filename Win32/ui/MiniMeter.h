@@ -110,7 +110,7 @@ MeterKind miniMeterKind(HWND meter);
 // control's animation timer on the UI thread.
 void miniMeterPushSpectrum(HWND meter, const float* bands, int count);
 
-// Spectrum, too: the programme's level in dBFS (SpectrumTap::rmsDbfs), for the audio meter's NEEDLE —
+// Spectrum, too: the programme's level in dBFS (SpectrumTap::programmeDbfs), for the audio meter's NEEDLE —
 // a needle look on the Spectrum meter reads it as a VU meter does (vuReadingOfDbfs); the cell looks keep
 // drawing the bands. Without it (a feed that never pushes one) the needle falls back to the bands' mean.
 // THREAD-SAFE, like miniMeterPushSpectrum: the loudest level pushed between two ticks is the one read.
@@ -118,7 +118,7 @@ void miniMeterPushLevel(HWND meter, float dbfs);
 
 // The audio needle's reading in VU for a level in dBFS: 0 VU at kVuReferenceDbfs (the EBU digital
 // alignment level), the Sens knob shifting it evenly in dB — ±kVuSensSpanDb at its ends, 0 at 0.5 — so a
-// quiet source (or a low volume) can be brought up as far as a loud one brought down.
+// quiet source can be brought up as far as a loud one brought down.
 constexpr float kVuReferenceDbfs = -18.0f;
 constexpr float kVuSensSpanDb = 12.0f;
 inline float vuReadingOfDbfs(float dbfs, float sensitivity) {

@@ -34,13 +34,28 @@ public:
         return static_cast<float>(std::max(db, static_cast<double>(kSilenceDbfs)));
     }
 
+    // The PROGRAMME's level, not what is heard: the owner saw the needle drop with the app's volume slider,
+    // so the capture comes after the volume Windows applies to our audio session (which libVLC's output is
+    // believed to set from the slider — the code reads the session's real volume, so it does not depend on
+    // that). The captured level `db` is raised by what `sessionVolume` (0..1) took off, never past full
+    // scale (a full-scale square wave, +3.01 dBFS, is as loud as a programme can be). A session muted or
+    // under -100 dB leaves nothing to raise: the floor, as silence is. Pure, so --selftest pins it.
+    static constexpr float kFullScaleDbfs = 3.0103f;
+    static constexpr float kQuietestVolume = 1e-5f;  // -100 dB
+    static float programmeDbfs(float db, float sessionVolume) {
+        if (db <= kSilenceDbfs || !(sessionVolume > kQuietestVolume)) return kSilenceDbfs;  // (a NaN volume too)
+        if (sessionVolume >= 1.0f) return db;
+        return std::min(db - 20.0f * std::log10(sessionVolume), kFullScaleDbfs);
+    }
+
     SpectrumTap() = default;
     ~SpectrumTap();
     SpectrumTap(const SpectrumTap&) = delete;
     SpectrumTap& operator=(const SpectrumTap&) = delete;
 
-    // `sink` receives a pointer to kBands floats (0..1) and the window's level (rmsDbfs)
-    // each analysis window (~21 ms). It is invoked on the capture thread, so it must be
+    // `sink` receives a pointer to kBands floats (0..1) and the window's level — the
+    // programme's (rmsDbfs, then programmeDbfs by our session's volume, read every window)
+    // — each analysis window (~21 ms). The bands are as captured (after the volume). It is invoked on the capture thread, so it must be
     // cheap and thread-safe (miniMeterPushSpectrum / miniMeterPushLevel are exactly
     // that). Safe to call start() twice (no-op if already running).
     void start(std::function<void(const float* bands, float levelDbfs)> sink);
