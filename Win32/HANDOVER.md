@@ -33,7 +33,61 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ## Current state — **v0.2.20 SHIPPED, auto-update LIVE** · **0.2.21-dev** (`APP_VERSION` 0.2.21, bumped 2026-09-25) · macOS **0.2.17**
 
-### ⏸ STATE 2026-09-26 (late evening) — where 0.2.21-dev stands. READ THIS FIRST.
+### ⏸ STATE 2026-09-27 — where 0.2.21-dev stands. READ THIS FIRST.
+
+**0.2.21-dev on `main`** — every item below is committed, reviewed, built with BOTH theme flags, `--selftest` ALL
+PASS, and **checked live by the owner**:
+
+| commit | what | pushed |
+|---|---|---|
+| `53c0464` | TV Guide first open 1.4 s → 0.25 s; Refresh Guide's store + index off the UI thread | ✅ |
+| `10174c4` | catch-up playback, labelled **"(experimental)"** — the 0.2.21 release notes MUST say so | ✅ |
+| `b5e141d` | photoreal stage A: meter SIZE — Standard / Large / Extra large, the strip-edge drag, the meter bridge | ✅ |
+| `6ffc91b` | tall Bitrate meters fill their dial (a 256-sample history) | ✅ |
+| `f2ec7af` | needle meters at one size (own row + bridge); optional meter labels (Settings ▸ Meters ▸ Meter labels) | ✅ |
+| `62502ee` | an own row's meters touch (the tank keeps its gap; the bridge the same) | ✅ |
+| `98cde52` | the Spectrum meter's NEEDLE reads the programme's RMS level (0 VU = −18 dBFS, Sens ±12 dB) | ✅ |
+| `a592ee9` | …compensating our audio session's volume (process loopback is post-volume — owner-confirmed) | **no** |
+
+origin/main = `98cde52` (the owner pushes). `a592ee9` and the docs commit after it are NOT pushed.
+`--selftest`: **862** checks. i18n: **643** keys × 4. The owner's latest test copy: `build\check-0221-volume\`
+(= `a592ee9`'s code). The owner's dev profile last had all four meters on **LED** at Extra large (earlier: four
+Silver VUs at Large with labels).
+
+**Next, in the owner's order:** (a) push `a592ee9` + the docs (`git ls-remote` first — the mac team pushes to
+`main` too); (b) **photoreal stage B** — NEW selectable looks whose LED/LCD/Tube cells scale with the meter (also
+the Tube look's cost at size: a Tube-look Bitrate at 120 dp is ~10 ms a frame at 100 %/150 %, ~15 ms at 115 %);
+(c) stage C — skins as materials, skins driving meters (PHOTOREAL.md); (d) the cleanups (4) — multi-URL
+`x-tvg-url`, marking gaps, the libVLC "Cancellation" noise, the mac flags — and BACKLOG's small finds (the status
+line stuck on "Buffering 100%", catch-up scrubbing, player events without a stream generation, a hint for Meter
+labels at the standard size); (e) the **0.2.21 release** when the owner says — its notes: catch-up experimental;
+Large / Extra large meters, the meter bridge, labels; the Spectrum needle now reads the volume.
+
+**For stage B (a code map made this session — verify before relying on it):**
+- A look = `enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver }` (`Win32/ui/MiniMeter.h`) — append new
+  looks LAST (the Meters dialog's combo index == the enum value). Tokens: `meterStyleToString` /
+  `meterStyleFromString` (MiniMeter.cpp) — ⚠️ its `default:` writes `"led"`, so a new value without a case is saved
+  as LED. Every switch on the style: `drawCell`, the `onPaint` dispatch, `vuFaceOf`, `meterPanelColor`,
+  `meterDrawnPalette`, the codecs; Dialogs.cpp `kMtrLookCount`, `kLooks[]`, `knobApplies`, `knobsForRow`,
+  `knobLabelFor`; RabbitEarsRender `kStyles[]` + `kStyleNames[]` (no static_assert ties them). New i18n name keys
+  (appended). Nothing in `common/` except the generated catalog.
+- Today's cells: pitch `max(dpx(3),2)` — DPI only, so a taller meter only gets MORE rows; every cell is a
+  `FillRect` every frame; Tube adds 3 anti-aliased GDI+ ellipses + 3 brushes per LIT cell (the cost). VuDial's
+  pattern to copy: a static layer rendered once per (size, DPI, spec) into a pixel buffer, only moving parts per
+  frame.
+- ⚠️ **Byte-identity catch:** a new look adds a ROW to the tray and preview sheets, so those PNG files change as
+  files — prove the old looks unchanged per cell (crop), or render the new looks into separate files. And since
+  `98cde52` the VU/Silver-on-Spectrum renders differ from older baselines (the needle reads the level): take the
+  "before" renders from the current HEAD.
+
+**Facts established this session:** WASAPI process loopback captures AFTER our session's volume (the owner saw
+the needle drop with the slider; `a592ee9` reads the session's real volume and adds it back). At tall render
+heights the Silver VU's "VU" legends can differ by a few anti-aliased pixels between runs (GDI+ text) — the
+standard renders never draw them. `--bench-paint` runs at 144 dpi only, the CHEAPEST case for the fixed-pitch
+looks. A copy handed to the owner once was STALE — hash-check a copy's exe against the build before handing it
+over.
+
+### 0.2.21-dev — the commits in detail (2026-09-26/27)
 
 **Committed AND pushed — origin/main = `98cde52` (the owner pushed, 2026-09-26/27): the two below, then `b5e141d`,
 `6ffc91b`, `f2ec7af`, `62502ee`, `98cde52` (item (3), further down); then one more commit on top, NOT pushed (the
@@ -78,9 +132,9 @@ the Bitrate band of the LED/LCD/Tube rows. **Cost** (ms a frame, the min of two 
 Tube-look Bitrate at 120 dp): 5.7 → 10.7 (100 %), 6.8 → 15.5 (115 %), 5.9 → 9.6 (150 %); LED/LCD at 120 dp
 1.4–1.9 → 2.5–4.3; Standard / Large unchanged; the owner's set at 72 dp 2.10 → 2.13. Two adversarial review
 rounds, no high/medium, every finding acted on (round 2's comment and test-bound tweaks built, selftested and
-mutation-tested, not re-reviewed). **Owner check — NOT yet run (copy `build\check-0221-bitrate\`):** Extra
-large, and a large bridge window: the Bitrate meter's dial fills edge to edge (give it ~30 s of playback at
-150 % — a full history); open the bridge DURING playback: its Bitrate graph matches the tray's at once.
+mutation-tested, not re-reviewed). **The owner's check — PASSED (2026-09-27, all four meters LED at Extra large,
+the `check-0221-volume` copy): *"Bitrate is good"*** — the dial fills edge to edge. (Not reported separately: the
+bridge opened during playback showing the tray's graph at once.)
 
 **Committed and pushed — `f2ec7af`: needle meters at one size + meter labels (the owner's asks
 after seeing Large, 2026-09-26: *"should the meters all be the same size? We should have labels as an option"*).**
@@ -153,8 +207,8 @@ owner's checks ALL PASSED (copy `build\check-0221-audio\`, 2026-09-26):**
   compensate them too only if the owner asks).
 
 **Order for the next session:** (a) ✅ everything through `98cde52` pushed; the volume-compensation commit after it
-NOT pushed — push it (`git ls-remote` first — the mac team pushes to `main` too); still open: the owner's glance at
-a cell-look Bitrate meter at Extra large (the Bitrate fix's check, not run: their tray is all VU); (b) photoreal
+NOT pushed — push it (`git ls-remote` first — the mac team pushes to `main` too); every owner check of this run
+has passed (the Bitrate fix's too, 2026-09-27); (b) photoreal
 stage B — new selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's
 cost at size: a Tube Bitrate ~10–15 ms a frame at 120 dp), then stage C — skins as materials, skins driving meters
 (PHOTOREAL.md); (c) the cleanups (4) — multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise,
@@ -1114,8 +1168,9 @@ Authenticode + portable-zip. `HANDOVER.md` stays focused on **current state**.
 
 ## Git state
 
-**As of 2026-09-26:** `main` @ `10174c4` (pushed; = local HEAD); tags through **`v0.2.20`** @ `74a3b9a`;
-**the next tag is `v0.2.21`**. Everything below this line is history.
+**As of 2026-09-27:** origin/main @ `98cde52`; local `main` two commits ahead (`a592ee9` + the handover docs
+commit), NOT pushed; tags through **`v0.2.20`** @ `74a3b9a`; **the next tag is `v0.2.21`**. The current state is
+the "⏸ STATE" block at the top. Everything below this line is history.
 
 Owner-owned repo `github.com/arcanii/RabbitEars`. **Development is on `main`** — `0.2.15-dev` was
 merged and deleted, and the four stale mac-side PR branches were pruned with it, so `main` is now the
@@ -1163,6 +1218,9 @@ owner asks; stage **specific paths** (the owner keeps adding `art/*.png` — nev
 commit messages with the Co-Authored-By trailer.
 
 ## Immediate next steps (pick up here)
+
+> **Superseded — the current next steps are in the "⏸ STATE" block at the top.** What follows is the 0.2.16-era
+> record, kept for history.
 
 ### 📦 What went into 0.2.16 (2026-07-27 → 28) — six commits, all now released
 
@@ -1695,25 +1753,22 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first — its top block "⏸ STATE 2026-09-26 (evening)" is the state of the
-> work and the order to resume in**, then the "0.2.21-dev — the detail" block under it (item (3) is the
-> open one); plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the owner's
-> decisions are ANSWERED there, stage A's too). Older history: `Win32/HANDOVER-ARCHIVE.md`.
+> **Read `Win32/HANDOVER.md` first — its top block "⏸ STATE 2026-09-27" is the state of the work, the
+> order to resume in, and a code map for photoreal stage B**; the "0.2.21-dev — the commits in detail" block
+> under it is the record. Plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the
+> owner's decisions are ANSWERED there). Older history: `Win32/HANDOVER-ARCHIVE.md`.
 >
 > **State:** 0.2.20 is SHIPPED and auto-update is LIVE (tag `v0.2.20` @ `74a3b9a`). macOS is at 0.2.17.
-> **0.2.21-dev on `main`, pushed (origin/main = `10174c4`):** `53c0464` = the guide stalls (first open
-> 1.4 s → 0.25 s, Refresh Guide's store off the UI thread); `10174c4` = **catch-up playback, labelled
-> "(experimental)"** (Xtream `tv_archive` flags with "Sync movies from provider", timeshift URLs on the
-> server's clock, "Play from the start" in the TV Guide, aired results in the guide search, ↺ in the
-> channel list; the owner confirmed the timing; no scrubbing — BACKLOG). **The 0.2.21 release notes must
-> call catch-up experimental.**
-> **The working tree = HEAD + photoreal stage A (meter SIZE), uncommitted, built and reviewed:** one meter
-> height (`meter_height`, 30–120 dp; 30 = today's tray, byte-identical) — at Large/XL the meters get a row
-> of their own above the transport buttons (`Win32/ui/MeterTray.h`, the owner's choice); drag the strip's
-> top edge; Settings ▸ Meters submenu (ids 2034–2037); the pop-out meter bridge (`Win32/ui/MeterBridge`,
-> OWNED window — the owner's choice). BOTH flags build, `--selftest` ALL PASS (853), 639 i18n keys.
-> **First: the owner's eight stage-A checks** on `build\check-0221-meters\` (HANDOVER item (3)), then
-> commit it; then stage B (scaled photoreal looks), stage C (skins as materials), the cleanups.
+> **0.2.21-dev on `main`, all owner-verified live:** the guide stalls (`53c0464`); catch-up playback,
+> labelled "(experimental)" (`10174c4` — **the 0.2.21 release notes must call it experimental**); photoreal
+> stage A — Standard / Large / Extra large meters in a row of their own, the strip-edge drag, the pop-out
+> meter bridge (`b5e141d`); tall Bitrate meters filling their dial (`6ffc91b`); needle meters at one size +
+> optional meter labels (`f2ec7af`); an own row's meters touching (`62502ee`); the Spectrum needle reading the
+> programme's RMS level (`98cde52`) whatever the volume slider (`a592ee9`). origin/main = `98cde52`;
+> `a592ee9` + the handover docs commit after it are NOT pushed — the owner pushes. `--selftest` 862, 643 i18n
+> keys. **Next: photoreal stage B** — NEW selectable looks whose LED/LCD/Tube cells scale with the meter (the
+> existing looks stay byte-identical — the owner's rule); then stage C (skins as materials), the cleanups,
+> the 0.2.21 release when the owner says.
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
@@ -1733,8 +1788,9 @@ Paste this verbatim to start a fresh session with working context restored:
 >   (`build\check-…\`: the exe, libvlc*.dll, WinSparkle.dll, plugins\) so your next build does not collide
 >   with their test (LNK1168); two copies cannot run at once (one profile). **This sandbox cannot drive the
 >   GUI — the owner drives the screen; tell them exactly where to look** (e.g. catch-up: none of their
->   favourites keeps an archive — use "UK - BBC 1 UHD" in |UK| GENERAL). The owner runs at 150 %; their tray
->   is LED Spectrum, Tube Signal, LCD Bitrate and a VU Frame-rate meter with a cyan lamp, glass 69 %.
+>   favourites keeps an archive — use "UK - BBC 1 UHD" in |UK| GENERAL). The owner runs at 150 % and changes
+>   their meters as they test (last: all four LED at Extra large; before that four Silver VUs at Large with
+>   labels). **Hash-check a copy's exe against the build before handing it over** — a stale copy went out once.
 > * `RabbitEarsCli --guidebench <copy> [now]` / `--epgsearch <copy>` time the guide build and searches
 >   on a COPY of the real library (never the live DB — opening it can migrate it). A previous session's
 >   scratchpad may still hold a copy (`guide-bench.db`); copy it into yours.
@@ -1752,7 +1808,10 @@ Paste this verbatim to start a fresh session with working context restored:
 >   that is not the working tree: `git archive <tree> | tar -x -C <scratch>\src`, copy `build\libvlc_pkg`
 >   into `<scratch>\build\libvlc_pkg` (no download), configure + build both flags there, selftest; commit
 >   with a temporary index: `GIT_INDEX_FILE=<tmp> git read-tree HEAD; git --work-tree=<scratch>\src add -A;
->   git write-tree` (check it), `git commit`, then `git read-tree HEAD` for the real index.
+>   git write-tree` (check it), `git commit`, then `git read-tree HEAD` for the real index. Snapshot the
+>   working tree the same way (`GIT_INDEX_FILE=<tmp> git read-tree HEAD; git add -A; git write-tree`) before
+>   a risky step, and to split one working tree into two commits (commit the earlier snapshot tree first
+>   through a temporary index — `git read-tree <tree>; git commit` — then stage the rest by name).
 > * **Inline Python in bash heredocs mangles escapes** — `\\n` arrives as a newline, `\\0` as a NUL; a
 >   literal `\n` inside a patch's C++ string becomes a real newline. Write scripts to a FILE with the Write
 >   tool (raw strings) or use the Edit tool; make multi-part patches assert every anchor before writing,
@@ -1772,11 +1831,17 @@ Paste this verbatim to start a fresh session with working context restored:
 >   defined — alias them (`AS`).
 > * **Mutation-test every new guard's test** (break it, see the test fail, restore) — the scratchpad
 >   script pattern: patch, `cmake --build build --target RabbitEarsCli`, `--selftest` to a file, restore,
->   rebuild. GUI-only code (the drag, menus, the bridge) has no selftest — say so.
+>   rebuild. GUI-only code (the drag, menus, the bridge) has no selftest — say so. Check a mutant is not
+>   EQUIVALENT (a downstream clamp once masked one — add the case only the guard catches). Pure math that the
+>   GUI uses goes header-inline so the CLI can test it (MeterTray.h, MiniMeter.h, VuDial.h, SpectrumTap.h).
+> * **Pixel diffs:** Pillow's `getbbox()` on an RGBA difference looks at ALPHA only — convert to RGB first
+>   (it once reported "identical" for different images). PowerShell: `"h$h:"` is a scope-qualified variable —
+>   write `"h$($h):"`.
 > * **Launching an exe from `G:` through the SHELL** raises a blocking security prompt — use CreateProcess
 >   (`run-profile.ps1` does). **`LNK1168`** = RabbitEars is running: close with `WM_CLOSE`, never kill.
 > * **Command ids:** a genuine gap only (computed ranges 2051–2062, 2079–2098, 2100+ have no literal);
->   2034–2037 are the Settings ▸ Meters items. WM_APP+12 is WM_APP_VOD_ARCHIVE (+10 is ChannelGrid's).
+>   2034–2038 are the Settings ▸ Meters items (2038 = Meter labels); 2039–2043 are still free.
+>   WM_APP+12 is WM_APP_VOD_ARCHIVE (+10 is ChannelGrid's).
 > * **Release:** bump ONLY `APP_VERSION` (`cmake/AppVersion.cmake` line 11). Three installers, two appcasts,
 >   `-Tag v<ver>`; push before tagging; `ls-remote` == HEAD before building; the universal installer can
 >   fail once ("EndUpdateResource … antivirus") — re-run, check ~63 MB. Signing on the Mac:
@@ -1788,8 +1853,9 @@ Paste this verbatim to start a fresh session with working context restored:
 >   (leave the cache at ON).
 > * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent, exactly `json.dumps(…, indent=2)` layout) →
 >   `python tools/i18n/gen_i18n.py` (`--check` must pass); never hand-edit `common/core/Strings.*`; append
->   keys at the END of `keys.json`; 639 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine
->   draft; avoid plurals in English templates (there is no plural support).
+>   keys at the END of `keys.json`; 643 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine
+>   draft; avoid plurals in English templates (there is no plural support). A key's `comment` is what the
+>   translator sees — when a string gains a second use (e.g. a dialog name printed as a meter label), say so.
 >
 > **Working rules:** every change adversarially reviewed (background agents) + built with BOTH theme
 > flags + `--selftest` ALL PASS before committing; render before/after for anything visual (the existing
