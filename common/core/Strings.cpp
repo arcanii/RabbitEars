@@ -673,6 +673,22 @@ constexpr std::array<const char*, N> kEn = {{
     "Channels in the guide matching none of yours: {0}. If that is most of the guide, its link may be for another provider or region (right-click the playlist ▸ Set Guide URL…).",  // GuideCoverageUnmatched
     "Playlist entries without a guide ID (tvg-id) — series episodes, movies, many event channels — never appear in the guide.",  // GuideCoverageNoId
     "Also in your channel list, not in the guide: {0}",  // GuideSearchMoreChannels
+    "Play from the start (experimental)",  // ProgrammePlayFromStartButton
+    "Already aired — catch-up (experimental)",  // GuideSearchCatchupHeading
+    "Yesterday",  // GuideSearchYesterday
+    // --- Dialogs ---
+    "Catch-up",  // CatchupTitle
+    "Can't play this from the archive",  // CatchupUnavailableHeading
+    "This channel keeps no archive to play it from, or its provider is not an Xtream line. Settings ▸ Channels ▸ Sync movies from provider updates which channels keep one.",  // CatchupNoArchive
+    "This programme hasn't started yet — there is nothing in the archive to play.",  // CatchupNotStarted
+    "{0} keeps an archive of {1} day(s) — this programme is older than that.",  // CatchupTooOld
+    // --- Status ---
+    "{0}: {1} (catch-up)",  // CatchupNowPlayingName
+    "Nothing played from the archive: {0} — the provider may have nothing recorded for that time, or the line is busy",  // StatusCatchupNotInArchive
+    " · catch-up channels: {0}",  // StatusCatchupChannels
+    " · catch-up info not updated ({0})",  // StatusCatchupNotUpdated
+    "Recording from the archive isn't available — play the channel live to record it.",  // StatusCatchupNoRecord
+    "Asking your provider which channels keep catch-up…",  // StatusVodSyncFetchingCatchup
 }};
 
 // 日本語
@@ -1336,6 +1352,22 @@ constexpr std::array<const char*, N> kJa = {{
     "どのチャンネルとも一致しない番組表のチャンネル: {0}。番組表の大半がそうなら、リンクが別のプロバイダーや地域のものかもしれません（プレイリストを右クリック ▸ 番組表URLを設定…）。",  // GuideCoverageUnmatched
     "ガイド ID（tvg-id）のないプレイリスト項目（シリーズのエピソード、映画、多くのイベントチャンネル）は番組表に表示されません。",  // GuideCoverageNoId
     "チャンネル一覧にもあり、番組表にないもの: {0}",  // GuideSearchMoreChannels
+    "最初から再生（試験的）",  // ProgrammePlayFromStartButton
+    "放送済み — 見逃し再生（試験的）",  // GuideSearchCatchupHeading
+    "昨日",  // GuideSearchYesterday
+    // --- Dialogs ---
+    "見逃し再生",  // CatchupTitle
+    "アーカイブから再生できません",  // CatchupUnavailableHeading
+    "このチャンネルには再生できるアーカイブがないか、プロバイダーが Xtream 回線ではありません。アーカイブのあるチャンネルは「設定 ▸ チャンネル ▸ プロバイダーから映画を同期」で更新されます。",  // CatchupNoArchive
+    "この番組はまだ始まっていません。アーカイブに再生できるものはありません。",  // CatchupNotStarted
+    "{0} のアーカイブは {1} 日分です。この番組はそれより前のものです。",  // CatchupTooOld
+    // --- Status ---
+    "{0}: {1}（見逃し再生）",  // CatchupNowPlayingName
+    "アーカイブから再生できませんでした: {0} — その時間の録画がないか、回線が使用中の可能性があります",  // StatusCatchupNotInArchive
+    " · 見逃し再生チャンネル: {0}",  // StatusCatchupChannels
+    " · 見逃し再生の情報は更新されませんでした（{0}）",  // StatusCatchupNotUpdated
+    "アーカイブからの録画はできません。録画するにはチャンネルをライブで再生してください。",  // StatusCatchupNoRecord
+    "見逃し再生に対応したチャンネルをプロバイダーに確認しています…",  // StatusVodSyncFetchingCatchup
 }};
 
 // 繁體中文
@@ -1999,6 +2031,22 @@ constexpr std::array<const char*, N> kZhHant = {{
     "節目表中與您的任何頻道都不相符的頻道：{0}。如果節目表大多如此，其連結可能屬於其他供應商或地區（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideCoverageUnmatched
     "沒有節目表 ID（tvg-id）的播放清單項目 — 影集集數、電影、許多活動頻道 — 不會出現在節目表中。",  // GuideCoverageNoId
     "頻道清單中也有、但不在節目表中：{0}",  // GuideSearchMoreChannels
+    "從頭播放（實驗性）",  // ProgrammePlayFromStartButton
+    "已播出 — 回看（實驗性）",  // GuideSearchCatchupHeading
+    "昨天",  // GuideSearchYesterday
+    // --- Dialogs ---
+    "回看",  // CatchupTitle
+    "無法從存檔播放",  // CatchupUnavailableHeading
+    "此頻道沒有可播放的存檔，或其供應商不是 Xtream 線路。可透過「設定 ▸ 頻道 ▸ 從供應商同步電影」更新哪些頻道有存檔。",  // CatchupNoArchive
+    "此節目尚未開始，存檔中沒有可播放的內容。",  // CatchupNotStarted
+    "{0} 的存檔保留 {1} 天，此節目早於此範圍。",  // CatchupTooOld
+    // --- Status ---
+    "{0}：{1}（回看）",  // CatchupNowPlayingName
+    "無法從存檔播放：{0} — 供應商可能沒有該時段的錄製內容，或線路忙碌中",  // StatusCatchupNotInArchive
+    " · 可回看頻道：{0}",  // StatusCatchupChannels
+    " · 回看資訊未更新（{0}）",  // StatusCatchupNotUpdated
+    "無法從存檔錄製 — 請以直播方式播放頻道再錄製。",  // StatusCatchupNoRecord
+    "正在向供應商查詢可回看的頻道…",  // StatusVodSyncFetchingCatchup
 }};
 
 // 繁體中文（香港）
@@ -2662,6 +2710,22 @@ constexpr std::array<const char*, N> kZhHK = {{
     "節目表中與您的任何頻道都不相符的頻道：{0}。如果節目表大多如此，其連結可能屬於其他供應商或地區（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",  // GuideCoverageUnmatched
     "沒有節目表 ID（tvg-id）的播放清單項目 — 影集集數、電影、許多活動頻道 — 不會出現在節目表中。",  // GuideCoverageNoId
     "頻道清單中也有、但不在節目表中：{0}",  // GuideSearchMoreChannels
+    "從頭播放（實驗性）",  // ProgrammePlayFromStartButton
+    "已播出 — 回看（實驗性）",  // GuideSearchCatchupHeading
+    "昨天",  // GuideSearchYesterday
+    // --- Dialogs ---
+    "回看",  // CatchupTitle
+    "無法從存檔播放",  // CatchupUnavailableHeading
+    "此頻道沒有可播放的存檔，或其供應商不是 Xtream 線路。可透過「設定 ▸ 頻道 ▸ 從供應商同步電影」更新哪些頻道有存檔。",  // CatchupNoArchive
+    "此節目尚未開始，存檔中沒有可播放的內容。",  // CatchupNotStarted
+    "{0} 的存檔保留 {1} 天，此節目早於此範圍。",  // CatchupTooOld
+    // --- Status ---
+    "{0}：{1}（回看）",  // CatchupNowPlayingName
+    "無法從存檔播放：{0} — 供應商可能沒有該時段的錄製內容，或線路忙碌中",  // StatusCatchupNotInArchive
+    " · 可回看頻道：{0}",  // StatusCatchupChannels
+    " · 回看資訊未更新（{0}）",  // StatusCatchupNotUpdated
+    "無法從存檔錄製 — 請以直播方式播放頻道再錄製。",  // StatusCatchupNoRecord
+    "正在向供應商查詢可回看的頻道…",  // StatusVodSyncFetchingCatchup
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

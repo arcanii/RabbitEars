@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/XtreamClient.h"
 
+#include <cwchar>
+
 #include "platform/Encoding.h"
 
 namespace rabbitears {
@@ -63,6 +65,26 @@ std::wstring percentDecodeQuery(const std::wstring& s) {
     return wideFromUtf8(bytes);
 }
 
+// %XX decoding for a PATH segment ('+' is a literal '+' there, unlike in a query).
+std::wstring percentDecodePath(const std::wstring& s) {
+    auto hex = [](wchar_t c) -> int {
+        if (c >= L'0' && c <= L'9') return c - L'0';
+        if (c >= L'a' && c <= L'f') return c - L'a' + 10;
+        if (c >= L'A' && c <= L'F') return c - L'A' + 10;
+        return -1;
+    };
+    std::string bytes;
+    bytes.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == L'%' && i + 2 < s.size()) {
+            const int h = hex(s[i + 1]), l = hex(s[i + 2]);
+            if (h >= 0 && l >= 0) { bytes += static_cast<char>(h * 16 + l); i += 2; continue; }
+        }
+        bytes += utf8FromWide(std::wstring(1, s[i]));
+    }
+    return wideFromUtf8(bytes);
+}
+
 // Percent-encode everything outside the unreserved set. Deliberately the SAME conservative
 // set for a query value and a path segment: it is valid in both, and the alternative — a
 // per-position allow-list — is how a credential ends up correct in one URL and broken in the
@@ -98,6 +120,61 @@ bool looksLikeExtension(const std::wstring& e) {
 }
 
 std::wstring toW(const JsonValue& v) { return v.asWString(); }
+
+// Days since 1970-01-01 for a proleptic Gregorian date, and back (H. Hinnant's civil algorithms) —
+// plain arithmetic, so no gmtime_s / gmtime_r / timegm platform split in the shared core.
+long long daysFromCivil(long long y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    const long long era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + static_cast<long long>(doe) - 719468;
+}
+void civilFromDays(long long z, long long& y, unsigned& m, unsigned& d) {
+    z += 719468;
+    const long long era = (z >= 0 ? z : z - 146096) / 146097;
+    const unsigned doe = static_cast<unsigned>(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp < 10 ? mp + 3 : mp - 9;
+    y = static_cast<long long>(yoe) + era * 400 + (m <= 2);
+}
+
+// "YYYY-MM-DD HH:MM:SS" read as if it were UTC (server_info.time_now); 0 unless it is exactly that.
+long long epochOfWallClock(const std::wstring& s) {
+    if (s.size() != 19 || s[4] != L'-' || s[7] != L'-' || s[10] != L' ' || s[13] != L':' || s[16] != L':')
+        return 0;
+    auto num = [&](size_t at, size_t n, long long& v) {
+        v = 0;
+        for (size_t i = at; i < at + n; ++i) {
+            if (s[i] < L'0' || s[i] > L'9') return false;
+            v = v * 10 + (s[i] - L'0');
+        }
+        return true;
+    };
+    long long y, mo, d, h, mi, se;
+    if (!num(0, 4, y) || !num(5, 2, mo) || !num(8, 2, d) || !num(11, 2, h) || !num(14, 2, mi) || !num(17, 2, se))
+        return 0;
+    static const int kDays[] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (mo < 1 || mo > 12 || d < 1 || d > kDays[mo - 1] || h > 23 || mi > 59 || se > 60) return 0;
+    if (mo == 2 && d == 29 && !(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0))) return 0;
+    return daysFromCivil(y, static_cast<unsigned>(mo), static_cast<unsigned>(d)) * 86400 + h * 3600 + mi * 60 + se;
+}
+
+// An epoch as the timeshift URL's "YYYY-MM-DD:HH-MM" (the epoch already shifted to the server's clock).
+std::wstring wallClockMinute(long long t) {
+    long long days = t / 86400, secs = t % 86400;
+    if (secs < 0) { secs += 86400; --days; }
+    long long y;
+    unsigned m, d;
+    civilFromDays(days, y, m, d);
+    wchar_t b[32];
+    swprintf(b, 32, L"%04lld-%02u-%02u:%02lld-%02lld", y, m, d, secs / 3600, (secs % 3600) / 60);
+    return b;
+}
 
 }  // namespace
 
@@ -181,7 +258,60 @@ bool parseXtreamAccount(const std::string& body, XtreamAccount& out, std::wstrin
     out.expiresAt = ui["exp_date"].asInt64(0);           // quoted epoch
     out.maxConnections = ui["max_connections"].asInt(0);  // quoted number
     out.serverTime = root["server_info"]["timestamp_now"].asInt64(0);
+    out.timezone = toW(root["server_info"]["timezone"]);
+    out.serverLocalTime = epochOfWallClock(toW(root["server_info"]["time_now"]));
     return true;
+}
+
+bool xtreamServerUtcOffset(const XtreamAccount& a, int* offsetSec) {
+    if (!offsetSec || a.serverTime <= 0 || a.serverLocalTime <= 0) return false;
+    const long long d = a.serverLocalTime - a.serverTime;
+    const long long q = 900;  // round to the quarter hour, half away from zero
+    const long long r = (d >= 0 ? d + q / 2 : d - q / 2) / q * q;
+    if (r < -12 * 3600 || r > 14 * 3600) return false;
+    *offsetSec = static_cast<int>(r);
+    return true;
+}
+
+std::wstring xtreamTimeshiftUrl(const XtreamCreds& c, long long streamId, long long startUtc, int minutes,
+                                int serverUtcOffsetSec) {
+    if (!c.valid() || streamId <= 0 || minutes <= 0 || startUtc <= 0) return {};
+    return c.origin + L"/timeshift/" + encodeComponent(c.username) + L"/" + encodeComponent(c.password) + L"/" +
+           std::to_wstring(minutes) + L"/" + wallClockMinute(startUtc + serverUtcOffsetSec) + L"/" +
+           std::to_wstring(streamId) + L".ts";
+}
+
+long long xtreamLiveStreamId(const std::wstring& streamUrl, const XtreamCreds* creds) {
+    const std::wstring origin = originOf(streamUrl);
+    if (origin.empty()) return 0;
+    std::wstring path = streamUrl.substr(origin.size());
+    const size_t cut = path.find_first_of(L"?#");
+    if (cut != std::wstring::npos) path.erase(cut);
+    std::vector<std::wstring> seg;  // the non-empty path segments
+    for (size_t i = 0; i < path.size();) {
+        const size_t slash = path.find(L'/', i);
+        const size_t end = slash == std::wstring::npos ? path.size() : slash;
+        if (end > i) seg.push_back(path.substr(i, end - i));
+        i = end + 1;
+    }
+    // {user}/{pass}/{id} or live/{user}/{pass}/{id} — and nothing else: movie/, series/ and timeshift/
+    // URLs have more segments (a username that happens to be "movie" is still a username).
+    if (!(seg.size() == 3 || (seg.size() == 4 && seg[0] == L"live"))) return 0;
+    if (creds) {
+        const size_t u = seg.size() - 3;
+        if (percentDecodePath(seg[u]) != creds->username || percentDecodePath(seg[u + 1]) != creds->password)
+            return 0;
+    }
+    std::wstring last = seg.back();
+    const size_t dot = last.find(L'.');
+    if (dot != std::wstring::npos) last.erase(dot);
+    if (last.empty() || last.size() > 15) return 0;
+    long long id = 0;
+    for (wchar_t ch : last) {
+        if (ch < L'0' || ch > L'9') return 0;
+        id = id * 10 + (ch - L'0');
+    }
+    return id;
 }
 
 bool parseXtreamCategories(const std::string& body, std::vector<XtreamCategory>& out,
@@ -206,6 +336,32 @@ bool parseXtreamCategories(const std::string& body, std::vector<XtreamCategory>&
         c.name = toW(v["category_name"]);
         if (c.id.empty()) continue;  // a category with no id cannot be referenced by an item
         out.push_back(std::move(c));
+    }
+    return true;
+}
+
+bool parseXtreamLiveArchive(const std::string& body, std::vector<XtreamArchive>& out, size_t* total,
+                            std::wstring* err) {
+    out.clear();
+    if (total) *total = 0;
+    JsonValue root;
+    std::string perr;
+    if (!parseJson(body, root, &perr)) {
+        if (err) *err = wideFromUtf8(perr);
+        return false;
+    }
+    if (!root.isArray()) {
+        if (err) *err = L"expected an array of live streams";
+        return false;
+    }
+    if (total) *total = root.size();
+    for (const JsonValue& v : root.elements()) {
+        // tv_archive: 1 / "1" / true (asBool reads every spelling); the duration is in days, quoted or not.
+        if (!v["tv_archive"].asBool(false)) continue;
+        XtreamArchive a;
+        a.streamId = v["stream_id"].asInt64(0);
+        a.days = v["tv_archive_duration"].asInt(0);
+        if (a.streamId > 0 && a.days > 0) out.push_back(a);
     }
     return true;
 }

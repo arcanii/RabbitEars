@@ -615,5 +615,19 @@
   "GuideCoverageNoProgrammes": "有節目表 ID，但節目表中沒有從現在到三天後的節目：{0}。",
   "GuideCoverageUnmatched": "節目表中與您的任何頻道都不相符的頻道：{0}。如果節目表大多如此，其連結可能屬於其他供應商或地區（在播放清單上按右鍵 ▸ 設定節目表 URL…）。",
   "GuideCoverageNoId": "沒有節目表 ID（tvg-id）的播放清單項目 — 影集集數、電影、許多活動頻道 — 不會出現在節目表中。",
-  "GuideSearchMoreChannels": "頻道清單中也有、但不在節目表中：{0}"
+  "GuideSearchMoreChannels": "頻道清單中也有、但不在節目表中：{0}",
+  "ProgrammePlayFromStartButton": "從頭播放（實驗性）",
+  "GuideSearchCatchupHeading": "已播出 — 回看（實驗性）",
+  "GuideSearchYesterday": "昨天",
+  "CatchupTitle": "回看",
+  "CatchupUnavailableHeading": "無法從存檔播放",
+  "CatchupNoArchive": "此頻道沒有可播放的存檔，或其供應商不是 Xtream 線路。可透過「設定 ▸ 頻道 ▸ 從供應商同步電影」更新哪些頻道有存檔。",
+  "CatchupNotStarted": "此節目尚未開始，存檔中沒有可播放的內容。",
+  "CatchupTooOld": "{0} 的存檔保留 {1} 天，此節目早於此範圍。",
+  "CatchupNowPlayingName": "{0}：{1}（回看）",
+  "StatusCatchupNotInArchive": "無法從存檔播放：{0} — 供應商可能沒有該時段的錄製內容，或線路忙碌中",
+  "StatusCatchupChannels": " · 可回看頻道：{0}",
+  "StatusCatchupNotUpdated": " · 回看資訊未更新（{0}）",
+  "StatusCatchupNoRecord": "無法從存檔錄製 — 請以直播方式播放頻道再錄製。",
+  "StatusVodSyncFetchingCatchup": "正在向供應商查詢可回看的頻道…"
 }

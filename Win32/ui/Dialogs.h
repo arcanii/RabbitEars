@@ -82,13 +82,16 @@ void closeLoadingDialog(HWND dlg);
 // Action chosen in the programme popup (see programmeDialog).
 // RecordSeries creates a standing rule that records every future airing whose title matches
 // this programme's, on this channel (see common/core/RecordingRules).
-enum class ProgrammeAction { None, Play, Schedule, RecordSeries };
+enum class ProgrammeAction { None, Play, Schedule, RecordSeries, PlayFromStart };
 
 // Modal programme popup shown when a TV Guide entry is clicked: the programme `title` +
-// `info` (channel / time / description) with Play channel / Schedule… / Close buttons.
-// Returns the chosen action (None on Close/Esc).
+// `info` (channel / time / description) with Play channel / Schedule… / Close buttons — and, with
+// `fromStart`, a "Play from the start" button (catch-up; the default button when `fromStartDefault`,
+// i.e. for a programme that has already ended); without `canSchedule` (it has ended) no Schedule…
+// button. Returns the chosen action (None on Close/Esc).
 ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
-                                const std::wstring& info);
+                                const std::wstring& info, bool fromStart = false, bool fromStartDefault = false,
+                                bool canSchedule = true);
 
 // Modal categories checklist (Settings → Categories…). `allGroups` is every
 // distinct group title; `checked` is in/out — the initially-checked groups on

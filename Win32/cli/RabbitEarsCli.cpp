@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_set>
 #include <string>
@@ -36,7 +37,9 @@
 #include "core/XmltvParser.h"
 #include "db/Database.h"
 #include "platform/Encoding.h"
+#include "platform/TimeZone.h"
 #include "platform/UrlRedact.h"
+#include "ui/CatchupSync.h"  // Win32/ui — the provider sync's catch-up decisions
 #include "ui/DockLayout.h"
 #include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
 #include "core/DeadLinkCheck.h"
@@ -1098,6 +1101,415 @@ int selftest() {
         expect(worker.bulkInsertProgrammes(p2, {}, now + 10) == 0 && worker.lastError().empty() &&
                    worker.programmesInWindow(p2, 0, now + 100000).empty(),
                "store2: an empty guide is stored (0, no error), as before");
+    }
+
+    out("== Catch-up (Xtream archives: stream ids, timeshift URLs, channel_archive, past results) ==\n");
+    {
+        // Stream ids: live forms only — a film's or an episode's id is another namespace.
+        expect(xtreamLiveStreamId(L"http://h:80/u/p/12345") == 12345 &&
+                   xtreamLiveStreamId(L"http://h/live/u/p/678.ts") == 678 &&
+                   xtreamLiveStreamId(L"http://h/live/u/p/42.m3u8?token=x") == 42,
+               "catchup: live stream ids — /u/p/ID, /live/u/p/ID.ext, a query ignored");
+        expect(xtreamLiveStreamId(L"http://h/movie/u/p/99.mp4") == 0 &&
+                   xtreamLiveStreamId(L"http://h/series/u/p/5.mkv") == 0 &&
+                   xtreamLiveStreamId(L"http://h/timeshift/u/p/60/2026-09-24:10-00/123.ts") == 0 &&
+                   xtreamLiveStreamId(L"http://h/u/p/abc") == 0 && xtreamLiveStreamId(L"http://h/a/b/c/d") == 0 &&
+                   xtreamLiveStreamId(L"http://h/u/p/1234567890123456") == 0 &&  // 16 digits: no overflow
+                   xtreamLiveStreamId(L"not a url") == 0,
+               "catchup: not live stream ids — movie, series, timeshift, non-numeric, too long, other shapes");
+        {
+            XtreamCreds mine;
+            mine.origin = L"http://h";
+            mine.username = L"movie";  // a username that is also a path word
+            mine.password = L"p+w";
+            expect(xtreamLiveStreamId(L"http://h/movie/p+w/77") == 77 &&
+                       xtreamLiveStreamId(L"http://h/movie/p%2Bw/77", &mine) == 77 &&
+                       xtreamLiveStreamId(L"http://h/live/movie/p+w/78.ts", &mine) == 78 &&
+                       xtreamLiveStreamId(L"http://h/other/p+w/77", &mine) == 0 &&
+                       xtreamLiveStreamId(L"http://h/movie/nope/77", &mine) == 0,
+                   "catchup: stream ids — a user named \"movie\"; with a login, only URLs carrying it (decoded)");
+        }
+        // Timeshift URLs: the start on the SERVER's clock, the login encoded for a path.
+        XtreamCreds cr;
+        cr.origin = L"http://h:8080";
+        cr.username = L"us+er";
+        cr.password = L"p@ss";
+        expect(xtreamTimeshiftUrl(cr, 891260, 1790325000, 55, 7200) ==
+                   L"http://h:8080/timeshift/us%2Ber/p%40ss/55/2026-09-25:10-30/891260.ts",
+               "catchup: timeshift URL — server-local start (+2 h), login path-encoded");
+        expect(xtreamTimeshiftUrl(cr, 7, 1798759800, 30, 3600).find(L"/2027-01-01:00-30/") != std::wstring::npos &&
+                   xtreamTimeshiftUrl(cr, 7, 1798759800, 30, -18000).find(L"/2026-12-31:18-30/") != std::wstring::npos,
+               "catchup: timeshift URL — across midnight and the year, both directions");
+        expect(xtreamTimeshiftUrl(cr, 0, 1798759800, 30, 0).empty() && xtreamTimeshiftUrl(cr, 7, 1798759800, 0, 0).empty() &&
+                   xtreamTimeshiftUrl(XtreamCreds{}, 7, 1798759800, 30, 0).empty(),
+               "catchup: timeshift URL — empty without an id, a duration or a login");
+        // The server's clock from the account probe.
+        XtreamAccount acct;
+        expect(parseXtreamAccount(R"({"user_info":{"auth":1,"status":"Active"},"server_info":{"timezone":)"
+                                  R"("Europe/Amsterdam","time_now":"2026-07-27 14:39:34","timestamp_now":1785155974}})",
+                                  acct) &&
+                   acct.timezone == L"Europe/Amsterdam" && acct.serverLocalTime == 1785163174,
+               "catchup: account — the server's time zone and wall clock");
+        auto offsetOf = [](long long local, long long utc) {
+            XtreamAccount a;
+            a.serverLocalTime = local;
+            a.serverTime = utc;
+            int o = 99999;
+            return xtreamServerUtcOffset(a, &o) ? o : 99999;
+        };
+        const long long T = 1785155974;
+        expect(offsetOf(T + 7200, T) == 7200 && offsetOf(T + 7201, T) == 7200 && offsetOf(T + 7199, T) == 7200 &&
+                   offsetOf(T - 12600, T) == -12600 && offsetOf(T + 20700, T) == 20700 && offsetOf(T, T) == 0,
+               "catchup: offset — rounded to the quarter hour: CEST, a second either side, Newfoundland -3:30, "
+               "Nepal +5:45, UTC");
+        expect(offsetOf(T + 20 * 3600, T) == 99999 && offsetOf(T - 13 * 3600, T) == 99999 &&
+                   offsetOf(0, T) == 99999 && offsetOf(T, 0) == 99999,
+               "catchup: offset — none past -12 h / +14 h, or without both readings (the stored one is kept)");
+        XtreamAccount noClock;
+        expect(parseXtreamAccount(R"({"user_info":{"auth":1},"server_info":{"time_now":"yesterday",)"
+                                  R"("timestamp_now":1785155974}})", noClock) &&
+                   noClock.serverLocalTime == 0 && offsetOf(noClock.serverLocalTime, noClock.serverTime) == 99999,
+               "catchup: account — an unreadable time_now gives no offset, not garbage");
+        XtreamAccount feb31;
+        expect(parseXtreamAccount(R"({"user_info":{"auth":1},"server_info":{"time_now":"2026-02-31 10:00:00"}})",
+                                  feb31) &&
+                   feb31.serverLocalTime == 0,
+               "catchup: account — a date that does not exist (31 February) is refused");
+        XtreamAccount feb29, leap29;
+        expect(parseXtreamAccount(R"({"user_info":{"auth":1},"server_info":{"time_now":"2026-02-29 10:00:00"}})",
+                                  feb29) &&
+                   parseXtreamAccount(R"({"user_info":{"auth":1},"server_info":{"time_now":"2028-02-29 10:00:00"}})",
+                                      leap29) &&
+                   feb29.serverLocalTime == 0 && leap29.serverLocalTime == 1835431200,
+               "catchup: account — 29 February only in a leap year (2026 refused, 2028 read)");
+        // Which streams keep an archive — every spelling the panels use.
+        std::vector<XtreamArchive> arch;
+        size_t total = 0;
+        expect(parseXtreamLiveArchive(R"([{"stream_id":1,"tv_archive":1,"tv_archive_duration":"3"},)"
+                                      R"({"stream_id":"2","tv_archive":"1","tv_archive_duration":2},)"
+                                      R"({"stream_id":3,"tv_archive":0,"tv_archive_duration":"3"},)"
+                                      R"({"stream_id":4,"tv_archive":1,"tv_archive_duration":0},)"
+                                      R"({"stream_id":0,"tv_archive":1,"tv_archive_duration":2},)"
+                                      R"({"stream_id":5,"tv_archive":true,"tv_archive_duration":"1"}])",
+                                      arch, &total) &&
+                   total == 6 && arch.size() == 3 && arch[0].streamId == 1 && arch[0].days == 3 &&
+                   arch[1].streamId == 2 && arch[1].days == 2 && arch[2].streamId == 5 && arch[2].days == 1,
+               "catchup: get_live_streams — archived streams by any spelling; no archive, 0 days or no id skipped");
+        expect(!parseXtreamLiveArchive("<html>502</html>", arch) && !parseXtreamLiveArchive(R"({"a":1})", arch),
+               "catchup: get_live_streams — an error page or an object FAILS (not \"no archives\")");
+        // The server's zone on the PROGRAMME's day (Win32/platform/TimeZone, the C++20 tz database).
+        int summer = 0, winter = 0, ny = 0, sydney = 0, unknown = 12345;
+        const bool tzOk = utcOffsetAt(L"Europe/Amsterdam", 1790325000, &summer) &&  // 2026-09-25
+                          utcOffsetAt(L"Europe/Amsterdam", 1796083200, &winter) &&  // 2026-12-01
+                          utcOffsetAt(L"America/New_York", 1796083200, &ny) &&
+                          utcOffsetAt(L"Australia/Sydney", 1796083200, &sydney);
+        expect(tzOk && summer == 7200 && winter == 3600 && ny == -18000 && sydney == 39600,
+               "catchup: time zones — CEST/CET, New York winter, Sydney summer (got " + std::to_string(summer) + "/" +
+                   std::to_string(winter) + "/" + std::to_string(ny) + "/" + std::to_string(sydney) + ")");
+        expect(!utcOffsetAt(L"Mars/Olympus_Mons", 1796083200, &unknown) && !utcOffsetAt(L"", 0, &unknown) &&
+                   !utcOffsetAt(L"Europe/Zürich", 0, &unknown) && unknown == 12345,
+               "catchup: time zones — an unknown, empty or non-ASCII name is refused, the offset untouched");
+        // The zone the sync keeps (M2): one that agrees with the clock the probe measured.
+        const int cest = 7200, cet = 3600;
+        const long long summerT = 1790325000, winterT = 1796083200, dstEnd = 1792890000;  // 2026-10-25 01:00Z
+        expect(serverZoneAgrees(L"Europe/Amsterdam", summerT, cest) && serverZoneAgrees(L"Europe/Amsterdam", winterT, cet) &&
+                   !serverZoneAgrees(L"Europe/Amsterdam", summerT, cet) &&
+                   !serverZoneAgrees(L"America/New_York", summerT, cest) &&
+                   !serverZoneAgrees(L"Mars/Olympus_Mons", summerT, cest) && !serverZoneAgrees(L"", summerT, 0),
+               "catchup: server zone — agrees at CEST and CET, not with another offset, zone, an unknown or no name");
+        expect(serverZoneAgrees(L"Europe/Amsterdam", dstEnd, cest) && serverZoneAgrees(L"Europe/Amsterdam", dstEnd, cet) &&
+                   serverZoneAgrees(L"Europe/Amsterdam", dstEnd - 60, cet) &&
+                   !serverZoneAgrees(L"Europe/Amsterdam", dstEnd + 3600, cest),
+               "catchup: server zone — at the daylight-saving change either offset agrees (two minutes' grace), "
+               "an hour on only the new one");
+        using Zone = std::optional<std::wstring>;
+        const Zone never;  // nothing stored yet
+        expect(serverZoneToStore(L"Europe/Amsterdam", never, summerT, &cest) == Zone(L"Europe/Amsterdam") &&
+                   serverZoneToStore(L"America/New_York", never, summerT, &cest) == Zone(L"") &&
+                   serverZoneToStore(L"America/New_York", Zone(L"Asia/Tokyo"), summerT, &cest) == Zone(L"") &&
+                   serverZoneToStore(L"Mars/Olympus_Mons", never, summerT, &cest) == Zone(L""),
+               "catchup: zone to store, measured — the probe's zone if it agrees; \"\" (the offset decides) if it "
+               "disagrees or is unknown here, and no stored one agrees");
+        expect(serverZoneToStore(L"America/New_York", Zone(L"Europe/Amsterdam"), summerT, &cest) ==
+                       Zone(L"Europe/Amsterdam") &&
+                   serverZoneToStore(L"Mars/Olympus_Mons", Zone(L"Europe/Amsterdam"), summerT, &cest) ==
+                       Zone(L"Europe/Amsterdam"),
+               "catchup: zone to store, measured — a probe naming a wrong zone keeps the stored one the clock agrees with");
+        expect(serverZoneToStore(L"Europe/Amsterdam", Zone(L"Europe/Paris"), summerT, &cest) == Zone(L"Europe/Amsterdam") &&
+                   serverZoneToStore(L"", Zone(L"Mars/Olympus_Mons"), summerT, &cest) == Zone(L""),
+               "catchup: zone to store, measured — an agreeing probe wins over another stored zone; a stored name "
+               "unknown here is refused");
+        expect(serverZoneToStore(L"Europe/Amsterdam", Zone(L"Mars/Olympus_Mons"), summerT, nullptr) ==
+                   Zone(L"Europe/Amsterdam"),
+               "catchup: zone to store, nothing measured — a stored name unknown here counts as none (replaced)");
+        // (Without a measurement a name is judged "known here" at the current time, not at the probe's
+        // unchecked timestamp — defensive only: MSVC's tz database answers even at a microsecond stamp,
+        // so no test here can tell the two apart.)
+        expect(serverZoneToStore(L"Mars/Olympus_Mons", Zone(L"Mars/Olympus_Mons"), summerT, nullptr) == Zone(L"") &&
+                   serverZoneToStore(L"", Zone(L"Mars/Olympus_Mons"), summerT, nullptr) == never,
+               "catchup: zone to store, nothing measured — an unknown probed name stores \"\", nothing probed "
+               "leaves an unknown stored one");
+        expect(serverZoneToStore(L"", Zone(L"Europe/Amsterdam"), summerT, &cest) == Zone(L"Europe/Amsterdam") &&
+                   serverZoneToStore(L"", Zone(L"America/New_York"), summerT, &cest) == Zone(L"") &&
+                   serverZoneToStore(L"", Zone(L""), summerT, &cest) == never && serverZoneToStore(L"", never, summerT, &cest) == never,
+               "catchup: zone to store, measured, the probe naming none — the STORED zone is checked again");
+        expect(serverZoneToStore(L"Europe/Amsterdam", never, summerT, nullptr) == Zone(L"Europe/Amsterdam") &&
+                   serverZoneToStore(L"Mars/Olympus_Mons", never, summerT, nullptr) == Zone(L"") &&
+                   serverZoneToStore(L"America/New_York", Zone(L""), summerT, nullptr) == never &&
+                   serverZoneToStore(L"America/New_York", Zone(L"Europe/Amsterdam"), summerT, nullptr) == never &&
+                   serverZoneToStore(L"", never, summerT, nullptr) == never,
+               "catchup: zone to store, nothing measured — a name only where none was stored, never over a kept "
+               "or refused one");
+
+        // channel_archive, the guide rows and past search results.
+        const std::wstring cpath = dir + L"\\catchup_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((cpath + sfx).c_str());
+        const long long now = 1'800'000'000;
+        auto ch = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url, int chno = -1,
+                     Channel::Kind kind = Channel::Kind::Live) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            c.chno = chno;
+            c.kind = kind;
+            return c;
+        };
+        auto pr = [](const wchar_t* cid, long long s, long long e, const wchar_t* t) {
+            Programme p;
+            p.channelId = cid;
+            p.startUtc = s;
+            p.stopUtc = e;
+            p.title = t;
+            return p;
+        };
+        Database cdb;
+        expect(cdb.open(cpath) && cdb.channelArchiveReady(), "catchup: channel_archive exists on a fresh DB");
+        const long long p1 = cdb.addPlaylist(L"P1", L"http://h/get.php?username=u&password=p", true, 1000,
+                                             L"http://h/xmltv.php");
+        const long long p2 = cdb.addPlaylist(L"P2", L"http://h2/pl", true, 1000);
+        cdb.bulkInsertChannels(p1, {ch(L"CNN HD", L"CNN.us@HD", L"http://h/u/p/101", 1),
+                                    ch(L"CNN", L"cnn.us", L"http://h/u/p/102", 2),
+                                    ch(L"BBC", L"bbc.uk", L"http://h/live/u/p/103.ts", 3),
+                                    ch(L"A Film", L"", L"http://h/movie/u/p/101.mp4", -1, Channel::Kind::Movie)},
+                               1000);
+        cdb.bulkInsertChannels(p2, {ch(L"Other", L"oth.xx", L"http://h2/u/p/201")}, 1000);
+        long long cnnHd = 0, cnn = 0, bbc = 0, other = 0;
+        const auto urls = cdb.liveChannelUrls(p1);
+        for (const auto& [id, url] : urls) {
+            const long long sid = xtreamLiveStreamId(url);
+            if (sid == 101) cnnHd = id;
+            if (sid == 102) cnn = id;
+            if (sid == 103) bbc = id;
+        }
+        for (const auto& row : cdb.liveChannelUrls(p2)) other = row.first;
+        expect(urls.size() == 3 && cnnHd && cnn && bbc && other,
+               "catchup: liveChannelUrls — the playlist's live channels (not its film), found by stream id");
+        {
+            // Series episodes and films filed as live (an Xtream playlist's episodes are kind 0) are left
+            // out by the first path segment, case-sensitively — a login that is itself "Movie" or
+            // "series" keeps its live URLs, which have one segment fewer.
+            const long long p3 = cdb.addPlaylist(L"P3", L"http://h3/get.php?username=series&password=p", true, 1000);
+            cdb.bulkInsertChannels(p3, {ch(L"Short Movie", L"", L"http://h3/Movie/p/301"),
+                                        ch(L"Short series", L"", L"http://h3/series/p/302"),
+                                        ch(L"Long movie", L"", L"http://h3/live/movie/p/303.ts"),
+                                        ch(L"Trailing slash", L"", L"http://h3/series/p/304/"),
+                                        ch(L"Slash in the query", L"", L"http://h3/series/p/305?t=a/b"),
+                                        ch(L"An episode", L"", L"http://h3/series/u/p/5.mkv"),
+                                        ch(L"A film as live", L"", L"http://h3/movie/u/p/9.mp4")},
+                                   1000);
+            auto sidsOf = [&](const std::wstring& user) {
+                std::set<long long> sids;
+                for (const auto& [id, url] : cdb.liveChannelUrls(p3, user)) sids.insert(xtreamLiveStreamId(url));
+                return sids;
+            };
+            const std::set<long long> anyone = sidsOf(L""), named = sidsOf(L"series");
+            expect(anyone == std::set<long long>{301, 302, 303},
+                   "catchup: liveChannelUrls — series/…/…/… and movie/…/…/… left out; a login \"Movie\" or "
+                   "\"series\" keeps its short live URLs (the old NOT LIKE dropped them) (got " +
+                       std::to_string(anyone.size()) + ")");
+            expect(named == std::set<long long>{0, 301, 302, 303, 304, 305},
+                   "catchup: liveChannelUrls — told the user is \"series\", its trailing-slash and query URLs "
+                   "are kept (its word's filter off: the episodes come back for the parser to refuse, as 0; "
+                   "the films stay out) (got " + std::to_string(named.size()) + ")");
+            cdb.deletePlaylist(p3);
+        }
+        {
+            // Matching the list to the playlist (matchArchiveFlags): its own login only. The list's answer
+            // stands when it names no archive at all, or when the playlist's URLs read as that login's
+            // (L4); only a list naming archives while NONE of the URLs reads keeps the stored flags.
+            XtreamCreds mine;
+            expect(parseXtreamPlaylistUrl(L"http://h/get.php?username=u&password=p", mine), "catchup: (fixture) login");
+            auto sorted = [](std::vector<std::pair<long long, int>> v) {
+                std::sort(v.begin(), v.end());
+                return v;
+            };
+            const ArchiveMatch some = matchArchiveFlags(urls, {{101, 1}, {102, 3}, {999, 2}}, mine);
+            std::vector<std::pair<long long, int>> want{{cnnHd, 1}, {cnn, 3}};
+            expect(some.usable && sorted(some.flags) == sorted(want),
+                   "catchup: archive match — the playlist's channels by stream id, an unknown stream ignored");
+            const ArchiveMatch none = matchArchiveFlags(urls, {{999, 2}, {998, 1}}, mine);
+            expect(none.usable && none.flags.empty(),
+                   "catchup: archive match — archives only elsewhere on the line, URLs that read: the answer "
+                   "\"none here\" stands (every flag cleared)");
+            const ArchiveMatch empty = matchArchiveFlags(urls, {}, mine);
+            expect(empty.usable && empty.flags.empty(),
+                   "catchup: archive match — a list with no archive at all IS an answer (every flag cleared)");
+            XtreamCreds theirs = mine;
+            theirs.username = L"someone";
+            const ArchiveMatch foreign = matchArchiveFlags(urls, {{101, 1}, {102, 3}}, theirs);
+            expect(!foreign.usable && foreign.flags.empty(),
+                   "catchup: archive match — no URL reads as this login's: NOT usable (the stored flags are kept)");
+            const ArchiveMatch foreignNone = matchArchiveFlags(urls, {}, theirs);
+            expect(foreignNone.usable && foreignNone.flags.empty(),
+                   "catchup: archive match — a list naming no archive at all is an answer, whatever the URLs");
+            // The login crosses from the playlist URL's QUERY ('+' = space) to the stream URLs' PATH
+            // ('+' is a '+'): "%20" there is the same user; "+" is not (a panel that writes it so keeps
+            // its old flags, by the rule above).
+            XtreamCreds enc;
+            expect(parseXtreamPlaylistUrl(L"http://h/get.php?username=a+b&password=p%2Fq", enc),
+                   "catchup: (fixture) an encoded login");
+            const ArchiveMatch spelt = matchArchiveFlags(
+                {{1, L"http://h/a%20b/p%2Fq/77"}, {2, L"http://h/a+b/p%2Fq/78"}}, {{77, 1}, {78, 2}}, enc);
+            expect(spelt.usable && spelt.flags == std::vector<std::pair<long long, int>>{{1, 1}},
+                   "catchup: archive match — the login decoded as a path: %20 matches a query's '+', a path '+' does not");
+            expect(!matchArchiveFlags({{2, L"http://h/a+b/p%2Fq/78"}}, {{78, 2}}, enc).usable,
+                   "catchup: archive match — a playlist spelling the login only with '+': NOT usable (flags kept)");
+        }
+        expect(cdb.replaceChannelArchive(p1, {{cnn, 3}, {other, 2}, {bbc, 0}}) &&
+                   cdb.channelArchiveDays() == std::unordered_map<long long, int>{{cnn, 3}},
+               "catchup: replaceChannelArchive — this playlist's channels only, 0 days skipped");
+        bool cnnHdNone = false, cnnThree = false;
+        for (const auto& g : cdb.liveGuideChannels()) {
+            if (g.id == cnnHd && g.archiveDays == 0) cnnHdNone = true;
+            if (g.id == cnn && g.archiveDays == 3) cnnThree = true;
+        }
+        expect(cnnHdNone && cnnThree, "catchup: liveGuideChannels carries each channel's archive days");
+
+        expect(cdb.bulkInsertProgrammes(p1, {pr(L"cnn.us", now - 3 * 3600, now - 2 * 3600, L"Morning Show"),
+                                             pr(L"cnn.us", now - 26 * 3600, now - 25 * 3600, L"Yesterday Show"),
+                                             pr(L"cnn.us", now - 5 * 3600, now - 4 * 3600, L"Noon Show"),
+                                             pr(L"cnn.us", now - 5 * 86400, now - 5 * 86400 + 3600, L"Old Show"),
+                                             pr(L"cnn.us", now - 600, now + 1200, L"Airing Show"),
+                                             pr(L"cnn.us", now + 3600, now + 7200, L"Later Show"),
+                                             pr(L"bbc.uk", now - 3 * 3600, now - 2 * 3600, L"Past Bbc Show")},
+                                        now) == 7,
+               "catchup: fixture guide stored");
+        const GuideModel gm = buildGuideModel(cdb, now);
+        bool rowOk = false;
+        for (const auto& r : gm.rows)
+            if (r.channelName == L"CNN HD" && r.archiveChannel == cnn && r.archiveDays == 3) rowOk = true;
+        expect(rowOk, "catchup: the guide row is named after CNN HD and plays catch-up from its sibling CNN");
+
+        auto titles = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + h.programme.title;
+            return s;
+        };
+        expect(cdb.rebuildProgrammeIndex() && cdb.refreshProgrammeSearchChannels(), "catchup: search ready");
+        const auto plain = cdb.searchProgrammes(L"show", now, 50);
+        expect(titles(plain) == L"Airing Show|Later Show",
+               "catchup: without archive, search keeps hiding what has ended (got " + utf8FromWide(titles(plain)) + ")");
+        const auto withPast = cdb.searchProgrammes(L"show", now, 50, nullptr, true);
+        expect(titles(withPast) == L"Airing Show|Later Show|Morning Show|Noon Show|Yesterday Show",
+               "catchup: with archive — upcoming first, then ended ones inside the archive, most recent "
+               "first; not past it, not on a channel without one (got " + utf8FromWide(titles(withPast)) + ")");
+        expect(!withPast.empty() && withPast[0].archiveChannelId == cnn && withPast[0].archiveDays == 3,
+               "catchup: a hit names the channel whose archive plays it");
+        const auto likePath = cdb.searchProgrammes(L"Sh", now, 50, nullptr, true);  // 2 characters: LIKE
+        expect(titles(likePath) == L"Airing Show|Later Show|Morning Show|Noon Show|Yesterday Show",
+               "catchup: the LIKE path orders and filters the same way (got " + utf8FromWide(titles(likePath)) + ")");
+
+        // Each block of results has its own limit (L6): a word common among upcoming programmes still
+        // shows aired ones.
+        {
+            bool trunc = false, truncLike = false;
+            const auto one = cdb.searchProgrammes(L"show", now, 1, &trunc, true);
+            const auto oneLike = cdb.searchProgrammes(L"Sh", now, 1, &truncLike, true);
+            expect(titles(one) == L"Airing Show|Morning Show" && trunc && titles(oneLike) == L"Airing Show|Morning Show" &&
+                       truncLike,
+                   "catchup: a limit per block — the first upcoming AND the latest aired, 'more' said (got " +
+                       utf8FromWide(titles(one)) + " / " + utf8FromWide(titles(oneLike)) + ")");
+            bool truncNo = true;
+            const auto plainOne = cdb.searchProgrammes(L"show", now, 1, &truncNo);
+            expect(titles(plainOne) == L"Airing Show" && truncNo,
+                   "catchup: without archive, one block and one limit, as before");
+            bool upMore = true, pastMore = false, upMoreLike = true, pastMoreLike = false;
+            const auto two = cdb.searchProgrammes(L"show", now, 2, &upMore, true, &pastMore);
+            const auto twoLike = cdb.searchProgrammes(L"Sh", now, 2, &upMoreLike, true, &pastMoreLike);
+            expect(titles(two) == L"Airing Show|Later Show|Morning Show|Noon Show" && !upMore && pastMore &&
+                       titles(twoLike) == titles(two) && !upMoreLike && pastMoreLike,
+                   "catchup: each block says 'more' of itself — all upcoming shown, the aired cut (got " +
+                       utf8FromWide(titles(two)) + ")");
+            bool eitherMore = false, eitherMoreLike = false;
+            cdb.searchProgrammes(L"show", now, 2, &eitherMore, true);
+            cdb.searchProgrammes(L"Sh", now, 2, &eitherMoreLike, true);
+            expect(eitherMore && eitherMoreLike,
+                   "catchup: without truncatedPast, 'truncated' says so of the aired block too (both paths)");
+        }
+
+        // Two siblings keep an archive: the one keeping the LONGEST plays (CNN, 3 days, beside CNN HD's
+        // 1 — L5), in the guide's row and in search alike; on a tie, the first in channel order (CNN HD).
+        auto rowPick = [&]() {
+            GuideArchivePick p;
+            long long pid = 0;
+            for (const auto& r : buildGuideModel(cdb, now).rows)
+                if (r.channelName == L"CNN HD") {
+                    p = {r.archiveChannel, r.archiveDays};
+                    pid = r.playlistId;
+                }
+            return std::make_pair(p, pid);
+        };
+        expect(cdb.replaceChannelArchive(p1, {{cnn, 3}, {cnnHd, 1}}) && cdb.refreshProgrammeSearchChannels(),
+               "catchup: both CNN feeds keep an archive");
+        const auto [longest, rowPlaylist] = rowPick();
+        const auto both = cdb.searchProgrammes(L"morning", now, 50, nullptr, true);
+        expect(longest.channel == cnn && longest.days == 3 && rowPlaylist == p1 && both.size() == 1 &&
+                   both[0].archiveChannelId == cnn && both[0].archiveDays == 3,
+               "catchup: of two archived siblings, the longest archive plays — guide row and search agree");
+        expect(cdb.replaceChannelArchive(p1, {{cnn, 2}, {cnnHd, 2}}) && cdb.refreshProgrammeSearchChannels(),
+               "catchup: both CNN feeds keep two days");
+        const GuideArchivePick tie = rowPick().first;
+        const auto tieHits = cdb.searchProgrammes(L"morning", now, 50, nullptr, true);
+        expect(tie.channel == cnnHd && tie.days == 2 && tieHits.size() == 1 && tieHits[0].archiveChannelId == cnnHd,
+               "catchup: on a tie, the first in channel order plays — guide row and search agree");
+        // An open guide takes new flags in place (M1): the picks re-read from the database are the ones a
+        // rebuilt guide would make — by the row's or the result's FULL tvg-id, per playlist.
+        expect(cdb.replaceChannelArchive(p1, {{cnn, 3}, {cnnHd, 1}}), "catchup: the flags change under an open guide");
+        {
+            const GuideArchivePicks picks(cdb);
+            const GuideArchivePick byRow = picks.pick(p1, L"CNN.us@HD"), byBase = picks.pick(p1, L"cnn.us");
+            const GuideArchivePick rebuilt = rowPick().first;
+            expect(byRow.channel == rebuilt.channel && byRow.days == rebuilt.days && byRow.channel == cnn &&
+                       byBase.channel == cnn && picks.pick(p2, L"CNN.us@HD").channel == 0 &&
+                       picks.pick(p1, L"bbc.uk").channel == 0,
+                   "catchup: GuideArchivePicks — what a rebuild would pick, by full or base id; none elsewhere");
+            // …and what a new search session would: by the hit's own playlist and channel id.
+            expect(cdb.refreshProgrammeSearchChannels(), "catchup: (fixture) a new search session");
+            const auto hit = cdb.searchProgrammes(L"morning", now, 50, nullptr, true);
+            const GuideArchivePick byHit =
+                hit.size() == 1 ? picks.pick(hit[0].playlistId, hit[0].channelTvgId) : GuideArchivePick{};
+            expect(hit.size() == 1 && byHit.channel == hit[0].archiveChannelId && byHit.days == hit[0].archiveDays &&
+                       byHit.channel == cnn,
+                   "catchup: GuideArchivePicks — a search result's pick, by its playlist and tvg-id, is the search's");
+        }
+        expect(cdb.replaceChannelArchive(p1, {{cnn, 2}, {cnnHd, 2}}) &&
+                   GuideArchivePicks(cdb).pick(p1, L"cnn.us").channel == cnnHd,
+               "catchup: GuideArchivePicks — on a tie, the first in channel order, as a rebuild picks");
+        expect(cdb.replaceChannelArchive(p1, {}) && cdb.channelArchiveDays().empty(),
+               "catchup: an empty replacement clears the playlist's flags");
+        {
+            bool more = true, morePast = true;
+            const auto none = cdb.refreshProgrammeSearchChannels()
+                                  ? cdb.searchProgrammes(L"show", now, 50, &more, true, &morePast)
+                                  : std::vector<Database::ProgrammeHit>{};
+            expect(titles(none) == L"Airing Show|Later Show" && !more && !morePast,
+                   "catchup: no channel keeps an archive — with catch-up, the search as without (got " +
+                       utf8FromWide(titles(none)) + ")");
+        }
+        expect(cdb.replaceChannelArchive(p1, {{cnn, 2}}) && cdb.channelArchiveDays().size() == 1, "catchup: set again");
+        cdb.deletePlaylist(p1);
+        expect(cdb.channelArchiveDays().empty(), "catchup: a deleted playlist's flags go with its channels (cascade)");
     }
 
     out("== Channel search (schema v11, FTS5 + triggers) ==\n");
@@ -3853,7 +4265,17 @@ int epgSearchBench(const std::wstring& dbPath, std::vector<std::wstring> terms) 
             best = std::min(best, ms(t0));
         }
         outw(L"  search \"" + t + L"\": ");
-        out(std::to_string(n) + (more ? "+" : "") + " results in " + fmt(best) + " ms\n");
+        out(std::to_string(n) + (more ? "+" : "") + " results in " + fmt(best) + " ms");
+        // With catch-up, as the TV Guide searches: a second block for what has aired on archive channels.
+        double bestPast = 1e9;
+        size_t nPast = 0;
+        bool morePast = false;
+        for (int r = 0; r < 5; ++r) {
+            const auto t0 = Clock::now();
+            nPast = db.searchProgrammes(t, now, 200, &morePast, /*withArchive=*/true).size();
+            bestPast = std::min(bestPast, ms(t0));
+        }
+        out("; with catch-up " + std::to_string(nPast) + (morePast ? "+" : "") + " in " + fmt(bestPast) + " ms\n");
     }
     // The main window's channel search, as applySearch runs it (the grid cap + its probe row), and
     // the guide search's "Also in your channel list, not in the guide" count (here with no guide rows).

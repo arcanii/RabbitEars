@@ -35,6 +35,7 @@ HWND g_guide = nullptr;
 constexpr int  kIdSearch = 102;  // the toolbar's search box (EDIT) — channels and programmes
 constexpr UINT_PTR kSearchTimer = 1;  // 200 ms debounce of the search, like the main search
 constexpr UINT_PTR kFlashTimer = 2;   // ends the highlight on a block a search result jumped to
+constexpr UINT_PTR kArchiveTimer = 3; // the catch-up flags changed: re-search the list on screen quietly
 constexpr UINT kSearchDebounceMs = 200;
 constexpr UINT kFlashMs = 2500;
 
@@ -124,13 +125,15 @@ struct GuideState {
     bool showResults = false;     // the results list replaces the grid
     std::wstring searchedText;    // what `hits` and the channel matches answer
     std::vector<GuideSearchHit> hits;
-    bool hitsTruncated = false;
+    bool hitsTruncated = false;   // more UPCOMING programmes matched than `hits` holds
+    bool pastTruncated = false;   // catch-up: more aired ones matched than it holds
     int  channelCount = 0;        // guide rows whose channel name matches searchedText
     std::wstring channelNames;    // the first of them, " · "-joined, for the Channels item
     int  moreChannels = 0;        // matching names in the channel list NOT in the guide (onCountChannelNames)
     std::vector<ResultItem> items;
     int  resultsH = 0;            // content height of `items`
     int  resultsScrollY = 0;
+    DWORD resultsDownTick = 0;    // the last left button down on the results list (researchInPlace)
     int  resultSel = -1;          // index into items (a selectable one), -1 = none
     int  resultHover = -1;
     int  resultHdrH = 28;
@@ -145,6 +148,7 @@ struct GuideState {
     // click jumped to, so a WM_LBUTTONDBLCLK within the system's double-click time can open it.
     GuideSearchHit jumped;
     bool           jumpedValid = false;
+    long long      searchNowUtc = 0;  // the "now" the current hits were searched at (runSearch)
     DWORD          jumpedTick = 0;
     // A left click on the Channels item likewise leaves the list at once; the second half of a
     // double-click on it lands on the grid and must not open whatever programme is under the cursor.
@@ -407,6 +411,7 @@ std::wstring dayLabel(long long epoch, long long nowUtc) {
     const long long d = localDay(epoch), today = localDay(nowUtc);
     if (d == today) return tr(i18n::StringId::GuideSearchToday);
     if (d == localDay(nowUtc + 24 * 3600)) return tr(i18n::StringId::GuideSearchTomorrow);
+    if (d == localDay(nowUtc - 24 * 3600)) return tr(i18n::StringId::GuideSearchYesterday);  // catch-up
     const std::time_t t = static_cast<std::time_t>(epoch);
     std::tm tmv{};
     localtime_s(&tmv, &t);
@@ -425,9 +430,10 @@ std::wstring dayLabel(long long epoch, long long nowUtc) {
 bool threeLines(const GuideSearchHit& g) { return !g.inTitle && !g.snippet.empty(); }
 
 // Lay the results out as a flat list (see ItemKind): the matching channels first, then the
-// programmes under their count, a heading per local day. The hits arrive title matches first, then
-// description-only matches (each soonest first), so the second block gets a heading of its own and its
-// days start again under it. A programme already airing is filed under TODAY even if it began before
+// programmes under their count, a heading per local day. The hits arrive upcoming (and airing) first —
+// title matches, then description-only matches, each soonest first — then those that have ENDED
+// (catch-up), likewise split, most recent first: each block gets a heading of its own and its days
+// start again under it. A programme already airing is filed under TODAY even if it began before
 // midnight. While "Preparing search…" shows, that is the whole list.
 void buildItems(GuideState* st) {
     // The selection names an ITEM; a rebuild of the same results (a DPI or language change) can add
@@ -451,6 +457,12 @@ void buildItems(GuideState* st) {
         y += h;
         st->items.push_back(std::move(it));
     };
+    // The block heading counts the UPCOMING programmes; the aired ones (catch-up) are a block of their
+    // own, with a limit of their own, under their own heading below.
+    size_t upcoming = 0;
+    for (const GuideSearchHit& g : st->hits)
+        if (g.stopUtc > st->searchNowUtc) ++upcoming;
+    const size_t aired = st->hits.size() - upcoming;
     if (st->preparing) {
         add(ItemKind::Section, tr(i18n::StringId::GuideSearchPreparing), -1, st->resultHdrH);
     } else {
@@ -463,22 +475,34 @@ void buildItems(GuideState* st) {
             add(ItemKind::Note, trf(i18n::StringId::GuideSearchMoreChannels, {std::to_wstring(st->moreChannels)}),
                 -1, st->resultHdrH);
         std::wstring status;
-        if (st->hits.empty()) status = trf(i18n::StringId::GuideSearchNone, {st->searchedText});
+        if (upcoming == 0) status = trf(i18n::StringId::GuideSearchNone, {st->searchedText});
         else if (st->hitsTruncated)
-            status = trf(i18n::StringId::GuideSearchShowingFirst, {std::to_wstring(st->hits.size())});
-        else status = trf(i18n::StringId::GuideSearchCount, {std::to_wstring(st->hits.size())});
+            status = trf(i18n::StringId::GuideSearchShowingFirst, {std::to_wstring(upcoming)});
+        else status = trf(i18n::StringId::GuideSearchCount, {std::to_wstring(upcoming)});
         add(ItemKind::Section, std::move(status), -1, st->resultHdrH);
     }
     long long lastDay = -1;
-    bool descrBlock = false;
+    bool descrBlock = false, pastBlock = false;
     for (size_t i = 0; !st->preparing && i < st->hits.size(); ++i) {
         const GuideSearchHit& g = st->hits[i];
+        // Catch-up: the hits that have already ended come last (the host asks for them after the
+        // upcoming ones), under a heading of their own — their own title / description split inside.
+        const bool past = g.stopUtc <= st->searchNowUtc;  // as the host split them (not a later nowUtc)
+        if (past && !pastBlock) {
+            add(ItemKind::Section, tr(i18n::StringId::GuideSearchCatchupHeading), -1, st->resultHdrH);
+            if (st->pastTruncated)
+                add(ItemKind::Note, trf(i18n::StringId::GuideSearchShowingFirst, {std::to_wstring(aired)}), -1,
+                    st->resultHdrH);
+            pastBlock = true;
+            descrBlock = false;
+            lastDay = -1;
+        }
         if (!g.inTitle && !descrBlock) {
             add(ItemKind::Section, tr(i18n::StringId::GuideSearchInDescriptions), -1, st->resultHdrH);
             descrBlock = true;
             lastDay = -1;
         }
-        const long long when = std::max(g.startUtc, st->nowUtc);
+        const long long when = past ? g.startUtc : std::max(g.startUtc, st->nowUtc);
         const long long d = localDay(when);
         if (d != lastDay) {
             add(ItemKind::Heading, dayLabel(when, st->nowUtc), -1, st->resultHdrH);
@@ -539,10 +563,12 @@ void revealSelection(HWND hwnd, GuideState* st, bool movingUp = false) {
 
 void moveSelection(HWND hwnd, GuideState* st, int delta) {
     if (st->items.empty()) return;
-    int i = st->resultSel < 0 ? firstSelectable(st) : st->resultSel;
+    const bool fromNothing = st->resultSel < 0;  // nothing selected (researchInPlace can leave that)
+    int i = fromNothing ? firstSelectable(st) : st->resultSel;
     if (i < 0) return;
     const int step = delta > 0 ? 1 : -1;
-    for (int left = std::abs(delta); left > 0;) {
+    // From nothing, landing on the first item is the first step down: ↓ selects it, not the second.
+    for (int left = std::abs(delta) - (fromNothing && delta > 0 ? 1 : 0); left > 0;) {
         int j = i + step;
         while (j >= 0 && j < static_cast<int>(st->items.size()) && !selectable(st->items[static_cast<size_t>(j)]))
             j += step;
@@ -635,16 +661,20 @@ void runSearch(HWND hwnd, GuideState* st) {
         setShowResults(hwnd, st, true);
         UpdateWindow(hwnd);
         auto begin = st->cb.onSearchBegin;  // a copy, defensively: a host could re-enter showEpgGuide
-        begin();
+        begin(/*mayRebuild=*/true);
         st->preparing = false;
     }
     st->sessionReady = true;
     findChannels(st, text);
     st->hitsTruncated = false;
+    st->pastTruncated = false;
     // The host searches from the current time; the badge and the day headings must agree with it
     // (st->nowUtc otherwise dates from whenever the guide was built or revealed).
     st->nowUtc = static_cast<long long>(time(nullptr));
-    st->hits = st->cb.onSearch ? st->cb.onSearch(text, &st->hitsTruncated) : std::vector<GuideSearchHit>{};
+    // The same "now" for the host's query and for buildItems' "already aired" split below.
+    st->searchNowUtc = st->nowUtc;
+    st->hits = st->cb.onSearch ? st->cb.onSearch(text, st->searchNowUtc, &st->hitsTruncated, &st->pastTruncated)
+                               : std::vector<GuideSearchHit>{};
     st->hitsGeneration = st->rowsGeneration;
     st->searchedText = text;
     buildItems(st);
@@ -995,15 +1025,24 @@ const GuideProgramme* programmeAt(HWND hwnd, GuideState* st, int x, int y, int* 
     return nullptr;
 }
 
-// The programme popup (Play / Schedule / Record series) — shared by a grid click and a search result.
+// The programme popup (Play from the start where the archive allows / Play / Schedule — not for one that
+// has ended — / Record series) — shared by a grid click and a search result.
 void openProgramme(HWND hwnd, GuideState* st, const std::wstring& channelId, const std::wstring& channelName,
-                   const std::wstring& title, const std::wstring& descr, long long startUtc, long long stopUtc) {
+                   const std::wstring& title, const std::wstring& descr, long long startUtc, long long stopUtc,
+                   long long archiveChannel, int archiveDays) {
     std::wstring info = channelName + L"\r\n" +
                         timeRange(startUtc, stopUtc) + L"\r\n";
     if (!descr.empty()) info += L"\r\n" + descr;
     const GuideCallbacks cb = st->cb;  // a copy: an action can re-enter showEpgGuide
-    const ProgrammeAction act = programmeDialog(hwnd, st->hInst, st->dpi, title, info);
-    if (act == ProgrammeAction::Play && cb.onPlay)
+    const long long now = static_cast<long long>(time(nullptr));
+    const bool fromStart =
+        cb.onPlayFromStart && guideCanPlayFromStart(archiveChannel, archiveDays, startUtc, now);
+    // A programme that has ended cannot be scheduled (the scheduler would only mark it Missed).
+    const ProgrammeAction act = programmeDialog(hwnd, st->hInst, st->dpi, title, info, fromStart,
+                                                /*fromStartDefault=*/stopUtc <= now, /*canSchedule=*/stopUtc > now);
+    if (act == ProgrammeAction::PlayFromStart && fromStart)
+        cb.onPlayFromStart(archiveChannel, title, startUtc, stopUtc);
+    else if (act == ProgrammeAction::Play && cb.onPlay)
         cb.onPlay(channelId, channelName);
     else if (act == ProgrammeAction::Schedule && cb.onSchedule)
         cb.onSchedule(channelId, channelName, title, startUtc, stopUtc);
@@ -1019,7 +1058,8 @@ void onClick(HWND hwnd, GuideState* st, int x, int y) {
     const std::wstring channelId = st->rows[r].channelId, channelName = st->rows[r].channelName,
                        title = p->title, descr = p->descr;
     const long long startUtc = p->startUtc, stopUtc = p->stopUtc;
-    openProgramme(hwnd, st, channelId, channelName, title, descr, startUtc, stopUtc);
+    openProgramme(hwnd, st, channelId, channelName, title, descr, startUtc, stopUtc, st->rows[r].archiveChannel,
+                  st->rows[r].archiveDays);
 }
 
 // Find a search hit in the grid's rows: its row index in `rows`, or -1 when the rows this window was
@@ -1069,7 +1109,13 @@ void jumpToHit(HWND hwnd, GuideState* st, GuideSearchHit hit, bool byClick) {
         row = rowOfHit(st, hit);
     }
     if (row < 0) {
-        MessageBeep(MB_ICONASTERISK);  // outside the guide's time window (or no longer in the guide)
+        // Catch-up: most aired results are older than the grid's 6 h of history. A click on one the
+        // archive can still play just selects it — the double-click / Enter that opens it (Play from
+        // the start) is the next step — rather than beeping as if something were wrong. (Opening the
+        // popup here, on the first click, let a double-click's second click land on its buttons.)
+        const bool playable = hit.stopUtc <= now && st->cb.onPlayFromStart &&
+                              guideCanPlayFromStart(hit.archiveChannel, hit.archiveDays, hit.startUtc, now);
+        if (!(byClick && playable)) MessageBeep(MB_ICONASTERISK);  // outside the guide's window, or gone
         updateScrollbars(hwnd, st);
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
@@ -1093,7 +1139,7 @@ void jumpToHit(HWND hwnd, GuideState* st, GuideSearchHit hit, bool byClick) {
 void openHit(HWND hwnd, GuideState* st, const GuideSearchHit& h) {
     const GuideSearchHit copy = h;  // the modal pumps messages; `h` may not survive
     openProgramme(hwnd, st, copy.channelId, copy.channelName, copy.title, copy.descr, copy.startUtc,
-                  copy.stopUtc);
+                  copy.stopUtc, copy.archiveChannel, copy.archiveDays);
 }
 
 void onResultsContextMenu(HWND hwnd, GuideState* st, int x, int y) {
@@ -1103,10 +1149,16 @@ void onResultsContextMenu(HWND hwnd, GuideState* st, int x, int y) {
     InvalidateRect(hwnd, nullptr, FALSE);
     if (st->items[static_cast<size_t>(i)].kind != ItemKind::Hit) return;  // the Channels item: no menu
     const GuideSearchHit h = st->hits[static_cast<size_t>(st->items[static_cast<size_t>(i)].hit)];
-    enum { kPlay = 1, kSchedule, kSeries, kShow };
+    enum { kPlay = 1, kSchedule, kSeries, kShow, kFromStart };
     HMENU m = CreatePopupMenu();
+    const bool fromStart = st->cb.onPlayFromStart &&
+                           guideCanPlayFromStart(h.archiveChannel, h.archiveDays, h.startUtc,
+                                                 static_cast<long long>(time(nullptr)));
+    if (fromStart)
+        AppendMenuW(m, MF_STRING, kFromStart, tr(i18n::StringId::ProgrammePlayFromStartButton).c_str());
     if (st->cb.onPlay) AppendMenuW(m, MF_STRING, kPlay, tr(i18n::StringId::ProgrammePlayButton).c_str());
-    if (st->cb.onSchedule)
+    const bool canSchedule = st->cb.onSchedule && h.stopUtc > static_cast<long long>(time(nullptr));  // not ended
+    if (canSchedule)
         AppendMenuW(m, MF_STRING, kSchedule, tr(i18n::StringId::ProgrammeScheduleButton).c_str());
     if (st->cb.onRecordSeries) AppendMenuW(m, MF_STRING, kSeries, tr(i18n::StringId::RecordSeriesTitle).c_str());
     AppendMenuW(m, MF_STRING, kShow, tr(i18n::StringId::GuideSearchShowInGuide).c_str());
@@ -1115,30 +1167,48 @@ void onResultsContextMenu(HWND hwnd, GuideState* st, int x, int y) {
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
     DestroyMenu(m);
     const GuideCallbacks cb = st->cb;  // a copy: an action can re-enter showEpgGuide
-    if (cmd == kPlay && cb.onPlay) cb.onPlay(h.channelId, h.channelName);
-    else if (cmd == kSchedule && cb.onSchedule)
+    if (cmd == kFromStart && fromStart) cb.onPlayFromStart(h.archiveChannel, h.title, h.startUtc, h.stopUtc);
+    else if (cmd == kPlay && cb.onPlay) cb.onPlay(h.channelId, h.channelName);
+    else if (cmd == kSchedule && canSchedule)
         cb.onSchedule(h.channelId, h.channelName, h.title, h.startUtc, h.stopUtc);
     else if (cmd == kSeries && cb.onRecordSeries) cb.onRecordSeries(h.channelId, h.channelName, h.title);
     else if (cmd == kShow) jumpToHit(hwnd, st, h, /*byClick=*/false);
 }
 
-// Right-click a channel row -> a "favourite" toggle for that channel. x,y are client coords.
+// Right-click a channel row -> a "favourite" toggle for that channel, and — on a programme that has
+// started, whose channel keeps an archive reaching back to it — "Play from the start" (catch-up).
+// x,y are client coords.
 void onGuideContextMenu(HWND hwnd, GuideState* st, int x, int y) {
-    if (!st->cb.onToggleFavourite) return;
     const int r = rowAtY(hwnd, st, y);
     if (r < 0 || r >= static_cast<int>(st->rows.size())) return;
-    const std::wstring channelId = st->rows[r].channelId, channelName = st->rows[r].channelName;
-    if (channelId.empty()) return;  // no tvg-id -> not a resolvable channel to favourite
-    const bool fav = st->cb.isFavourite && st->cb.isFavourite(channelId);
+    const GuideRow& row = st->rows[r];
+    const std::wstring channelId = row.channelId, channelName = row.channelName;
+    const GuideProgramme* p = programmeAt(hwnd, st, x, y, nullptr);
+    const bool fromStart = p && st->cb.onPlayFromStart &&
+                           guideCanPlayFromStart(row.archiveChannel, row.archiveDays, p->startUtc,
+                                                 static_cast<long long>(time(nullptr)));
+    // Snapshot what the actions need before the menu pumps messages.
+    const long long archiveChannel = row.archiveChannel;
+    const std::wstring title = p ? p->title : std::wstring();
+    const long long startUtc = p ? p->startUtc : 0, stopUtc = p ? p->stopUtc : 0;
+    const bool favItem = st->cb.onToggleFavourite && !channelId.empty();  // no tvg-id -> nothing to favourite
+    if (!fromStart && !favItem) return;
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, 1,
-                fav ? tr(i18n::StringId::GuideRemoveFromFavourites).c_str()
-                    : tr(i18n::StringId::GuideAddToFavourites).c_str());
+    if (fromStart)
+        AppendMenuW(m, MF_STRING, 2, tr(i18n::StringId::ProgrammePlayFromStartButton).c_str());
+    if (favItem) {
+        const bool fav = st->cb.isFavourite && st->cb.isFavourite(channelId);
+        AppendMenuW(m, MF_STRING, 1,
+                    fav ? tr(i18n::StringId::GuideRemoveFromFavourites).c_str()
+                        : tr(i18n::StringId::GuideAddToFavourites).c_str());
+    }
     POINT pt{x, y};
     ClientToScreen(hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
     DestroyMenu(m);
-    if (cmd == 1) st->cb.onToggleFavourite(channelId, channelName);
+    const GuideCallbacks cb = st->cb;  // a copy: an action can re-enter showEpgGuide
+    if (cmd == 1 && favItem) cb.onToggleFavourite(channelId, channelName);
+    else if (cmd == 2 && fromStart) cb.onPlayFromStart(archiveChannel, title, startUtc, stopUtc);
 }
 
 // Scroll the time axis back to now (the toolbar's Now button, Home in the grid).
@@ -1244,6 +1314,79 @@ void reshowResults(HWND hwnd, GuideState* st) {
             return;
         }
     }
+}
+
+// The catch-up flags changed under a results list on screen (epgGuideUpdateArchive, on kArchiveTimer):
+// the same search again, QUIETLY — no "Preparing search…" blank-out, the channel matches as they are
+// (the rows did not change), the search index never rebuilt here (LIKE until the next session, if it is
+// stale) — keeping the selection (the Channels item, or the same programme) and the scroll exactly,
+// without scrolling to the selection. Only if nothing moved on meanwhile: a typed search pending (it
+// re-reads the channel set itself), a search being prepared, other text in the box, the grid in front,
+// or the guide hidden — then nothing is done, and the next search sees the new flags anyway. Not
+// between the two clicks of a double-click on the list (it opens what is under the cursor): later.
+void researchInPlace(HWND hwnd, GuideState* st) {
+    if (!st->showResults || !IsWindowVisible(hwnd) || st->searchPending || st->preparing ||
+        st->searchedText.empty() || trimmed(editText(st->hSearch)) != st->searchedText)
+        return;
+    if (const DWORD since = GetTickCount() - st->resultsDownTick; since <= GetDoubleClickTime()) {
+        SetTimer(hwnd, kArchiveTimer, GetDoubleClickTime() - since + 1, nullptr);  // what is left of it
+        return;
+    }
+    ItemKind selKind = ItemKind::Heading;  // = nothing selected
+    std::wstring selChannel;
+    long long selStart = 0, selPlaylist = 0;
+    if (st->resultSel >= 0 && st->resultSel < static_cast<int>(st->items.size())) {
+        const ResultItem& it = st->items[static_cast<size_t>(st->resultSel)];
+        selKind = it.kind;
+        if (it.kind == ItemKind::Hit && it.hit >= 0 && it.hit < static_cast<int>(st->hits.size())) {
+            const GuideSearchHit& h = st->hits[static_cast<size_t>(it.hit)];
+            selChannel = h.channelId;
+            selStart = h.startUtc;
+            selPlaylist = h.playlistId;
+        }
+    }
+    const int oldScroll = st->resultsScrollY;
+    if (!st->sessionReady && st->cb.onSearchBegin) {
+        auto begin = st->cb.onSearchBegin;  // a copy, as runSearch does
+        begin(/*mayRebuild=*/false);
+    }
+    st->sessionReady = true;
+    st->hitsTruncated = false;
+    st->pastTruncated = false;
+    st->nowUtc = static_cast<long long>(time(nullptr));
+    st->searchNowUtc = st->nowUtc;
+    st->hits = st->cb.onSearch
+                   ? st->cb.onSearch(st->searchedText, st->searchNowUtc, &st->hitsTruncated, &st->pastTruncated)
+                   : std::vector<GuideSearchHit>{};
+    st->hitsGeneration = st->rowsGeneration;
+    buildItems(st);
+    // The same item again; a programme no longer listed gives way to the first item when that is in
+    // view (below), else to nothing.
+    st->resultSel = -1;
+    for (size_t i = 0; i < st->items.size() && selKind != ItemKind::Heading; ++i) {
+        const ResultItem& it = st->items[i];
+        bool same = selKind == ItemKind::Channels && it.kind == ItemKind::Channels;
+        if (selKind == ItemKind::Hit && it.kind == ItemKind::Hit) {
+            const GuideSearchHit& h = st->hits[static_cast<size_t>(it.hit)];
+            same = h.channelId == selChannel && h.startUtc == selStart && h.playlistId == selPlaylist;
+        }
+        if (same) {
+            st->resultSel = static_cast<int>(i);
+            break;
+        }
+    }
+    st->resultsScrollY = oldScroll;  // updateScrollbars clamps it to the new list
+    updateScrollbars(hwnd, st);
+    // Gone: the first item, as a search selects — but only where it can be seen (Enter acts on it).
+    if (st->resultSel < 0 && selKind != ItemKind::Heading) {
+        const int first = firstSelectable(st);
+        if (first >= 0) {
+            const ResultItem& it = st->items[static_cast<size_t>(first)];
+            if (it.y >= st->resultsScrollY && it.y + it.h <= st->resultsScrollY + resultsViewH(hwnd, st))
+                st->resultSel = first;
+        }
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 // Arrows / page keys / Enter for the results list — from the search box, or from the guide itself
@@ -1360,6 +1503,11 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (!st->searchPending) return 0;  // cancelled after this tick was queued
                 st->searchPending = false;
                 runSearch(hwnd, st);
+                return 0;
+            }
+            if (wParam == kArchiveTimer) {
+                KillTimer(hwnd, kArchiveTimer);
+                researchInPlace(hwnd, st);
                 return 0;
             }
             if (wParam == kFlashTimer) {
@@ -1490,6 +1638,7 @@ LRESULT CALLBACK GuideProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_LBUTTONDBLCLK: {
             const int mx = GET_X_LPARAM(lParam), my = GET_Y_LPARAM(lParam);
             if (msg == WM_LBUTTONDOWN) st->swallowedDown = false;  // only ever the down just before
+            if (msg == WM_LBUTTONDOWN && st->showResults && my >= st->toolbarH) st->resultsDownTick = GetTickCount();
             if (inRect(st->nowButton, mx, my)) {
                 goToNow(hwnd, st);
                 return 0;
@@ -1720,6 +1869,11 @@ void hideEpgGuide() {
 
 bool epgGuideOpen() { return g_guide && IsWindow(g_guide); }
 
+bool guideCanPlayFromStart(long long archiveChannel, int archiveDays, long long startUtc, long long nowUtc) {
+    return archiveChannel > 0 && archiveDays > 0 && startUtc < nowUtc &&
+           startUtc >= nowUtc - static_cast<long long>(archiveDays) * 86400;
+}
+
 std::wstring guideCoverageSummary(const GuideCoverage& c) {
     return trf(i18n::StringId::GuideCoverageLine, {std::to_wstring(c.shown), std::to_wstring(c.withId)});
 }
@@ -1772,6 +1926,37 @@ void epgGuideRefreshLanguage() {
                          reinterpret_cast<LPARAM>(tr(i18n::StringId::GuideSearchCue).c_str()));
         buildItems(st);
     }
+    InvalidateRect(g_guide, nullptr, FALSE);
+}
+
+void epgGuideUpdateArchive(const GuideArchivePicks& picks) {
+    if (!g_guide || !IsWindow(g_guide)) return;
+    GuideState* st = stateOf(g_guide);
+    if (!st) return;
+    // Only two ints per row and per result change, in place: nothing is reallocated, so a reference a
+    // handler holds into rows/hits across a modal loop (a popup, a menu — this can arrive inside one)
+    // stays valid, and the result list's items (indices into `hits`) stay as they are.
+    auto patchRow = [&](GuideRow& r) {
+        const GuideArchivePick p = picks.pick(r.playlistId, r.channelId);
+        r.archiveChannel = p.channel;
+        r.archiveDays = p.days;
+    };
+    for (GuideRow& r : st->allRows) patchRow(r);
+    for (GuideRow& r : st->rows) patchRow(r);  // the filtered view is a copy
+    auto patchHit = [&](GuideSearchHit& h) {
+        const GuideArchivePick p = picks.pick(h.playlistId, h.channelId);
+        h.archiveChannel = p.channel;
+        h.archiveDays = p.days;
+    };
+    for (GuideSearchHit& h : st->hits) patchHit(h);
+    if (st->jumpedValid) patchHit(st->jumped);
+    st->sessionReady = false;  // the next search re-reads the channel set — and with it the search's picks
+    // A results list ON SCREEN asks again (aired programmes may have gained or lost their archive) —
+    // on a timer of its own, never from inside whatever called us (this can arrive in a popup's or a
+    // menu's modal loop), and apart from the search debounce, so a key or click meanwhile acts on the
+    // list as shown (researchInPlace). A hidden guide does not: its reveal shows the grid and starts a
+    // new session, which re-reads the channel set.
+    if (st->showResults && IsWindowVisible(g_guide)) SetTimer(g_guide, kArchiveTimer, kSearchDebounceMs, nullptr);
     InvalidateRect(g_guide, nullptr, FALSE);
 }
 

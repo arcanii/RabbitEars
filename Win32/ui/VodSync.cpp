@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/VodSync.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <ctime>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "core/Http.h"
@@ -16,6 +20,8 @@
 #include "models/Channel.h"
 #include "models/Playlist.h"
 #include "platform/Log.h"
+#include "platform/TimeZone.h"
+#include "ui/CatchupSync.h"
 #include "ui/DeadLinkSweep.h"  // deadLinkSweepRunning() — the other provider-facing worker
 #include "ui/MainWindowInternal.h"
 #include "ui/VlcPlayer.h"
@@ -85,6 +91,117 @@ void finish(HWND hwnd, VodSyncReport r) {
     PostMessageW(hwnd, WM_APP_VOD_DONE, 0, 0);
 }
 
+// Catch-up: which of this playlist's live channels keep an archive, from get_live_streams (5.3 MB,
+// 13.5 s on the owner's panel — which failed twice, a 60 s stall then a reset, before answering: hence
+// up to three attempts, with this request's own longer per-phase timeout). Best-effort: it never
+// changes `rep.result`, and on any failure — or a cancel — the playlist keeps its previous flags. Flags
+// written → WM_APP_VOD_ARCHIVE at once, so the channel list and an open TV Guide need not wait for the
+// films (minutes) to know them.
+// First, whatever the list does, the server's clock for the timeshift URLs (settings archive_tz_<pid>,
+// archive_utc_offset_<pid>) — it is the probe's, and the stored flags are played with it. Only readings
+// that are present and sane: a probe without them must not replace good ones, or every catch-up URL
+// would be silently hours off; and a zone NAME only as serverZoneToStore allows (it must agree with
+// the clock measured, when one was).
+constexpr int kLiveListTimeoutMs = 60000;
+
+void syncArchive(HWND hwnd, Database& db, const SyncTarget& t, const XtreamAccount& acct, VodSyncReport& rep) {
+    auto notUpdated = [&](const std::wstring& why) {
+        diag::warn(L"VOD sync: catch-up info NOT updated for \"" + t.name + L"\": " + why);
+        if (rep.archiveDetail.empty()) rep.archiveDetail = why;
+    };
+    if (!db.channelArchiveReady()) {
+        notUpdated(L"no channel_archive table");
+        return;
+    }
+    {
+        const std::wstring pid = std::to_wstring(t.id);
+        int offset = 0;
+        const bool haveOffset = xtreamServerUtcOffset(acct, &offset);
+        const std::optional<std::wstring> stored = db.getSetting(L"archive_tz_" + pid);
+        const std::optional<std::wstring> zone =
+            serverZoneToStore(acct.timezone, stored, acct.serverTime, haveOffset ? &offset : nullptr);
+        const bool hadOffset = db.getSetting(L"archive_utc_offset_" + pid).has_value();
+        if (zone) db.setSetting(L"archive_tz_" + pid, *zone);
+        if (haveOffset) db.setSetting(L"archive_utc_offset_" + pid, std::to_wstring(offset));
+        // The log says what the URLs will read the server's clock by (playCatchup: the zone if one is
+        // kept, else the stored offset, else UTC), and why a zone named is not the one used.
+        const std::wstring kept = zone ? *zone : stored.value_or(L"");
+        auto quoted = [](const std::wstring& z) { return L"\"" + z + L"\""; };
+        const std::wstring measured =
+            haveOffset ? L"UTC" + std::wstring(offset >= 0 ? L"+" : L"") + std::to_wstring(offset) + L" s" : L"";
+        std::wstring line = L"VOD sync: server clock for " + quoted(t.name) + L": ";
+        int unusedOffset = 0;
+        const bool keptKnown =
+            !kept.empty() && utcOffsetAt(kept, static_cast<long long>(time(nullptr)), &unusedOffset);
+        if (keptKnown) {
+            line += L"zone " + kept + L" decides" + (haveOffset ? L" (measured " + measured + L")" : L"");
+        } else {
+            line += kept.empty() ? std::wstring(L"no zone") : L"zone " + kept + L" unknown here";
+            line += haveOffset ? L" — the measured " + measured + L" decides"
+                    : hadOffset ? std::wstring(L", the clock unreadable — the stored offset decides")
+                                : std::wstring(L", no offset — UTC is assumed");
+        }
+        if (!acct.timezone.empty() && acct.timezone != kept)
+            line += L"; " + quoted(acct.timezone) +
+                    (zone ? (haveOffset ? L" refused: unknown here, or it disagrees with the clock"
+                                        : L" refused: unknown here")
+                          : std::wstring(L" not stored: nothing measured to check it by") +
+                                (kept.empty() ? L" (an earlier one was refused)" : L""));
+        if (zone && stored && !stored->empty() && *stored != *zone && *stored != acct.timezone)
+            line += zone->empty() ? L"; the stored " + quoted(*stored) +
+                                        (haveOffset ? L" dropped: unknown here, or it disagrees with the clock"
+                                                    : L" dropped: unknown here")
+                                  : L"; replaces the stored " + quoted(*stored);
+        diag::info(line);
+    }
+    std::string body;
+    std::wstring err;
+    bool got = false;
+    for (int attempt = 1; attempt <= 3 && !got && !g_cancel.load(); ++attempt) {
+        if (attempt > 1) {
+            diag::warn(L"VOD sync: get_live_streams failed (" + err + L") — attempt " + std::to_wstring(attempt));
+            for (int i = 0; i < 30 && !g_cancel.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (g_cancel.load()) break;
+        }
+        got = httpGet(xtreamApiUrl(t.creds, L"get_live_streams"), body, err, kLiveListTimeoutMs);
+    }
+    if (g_cancel.load()) return;  // the user's playback wins; no flags written (the film result says Cancelled)
+    if (!got) {
+        notUpdated(err.empty() ? std::wstring(L"get_live_streams failed") : err);
+        return;
+    }
+    std::vector<XtreamArchive> arch;
+    size_t total = 0;
+    if (!parseXtreamLiveArchive(body, arch, &total, &err)) {
+        notUpdated(L"get_live_streams unparseable: " + err);
+        return;
+    }
+    body.clear();
+    body.shrink_to_fit();
+    // An empty list is not evidence that every archive is gone — a panel hiccup looks the same.
+    if (total == 0) {
+        notUpdated(L"get_live_streams listed no channels");
+        return;
+    }
+    // Only URLs carrying THIS playlist's login: another shape in the same playlist is not stream N.
+    const ArchiveMatch match = matchArchiveFlags(db.liveChannelUrls(t.id, t.creds.username), arch, t.creds);
+    const std::vector<std::pair<long long, int>>& flags = match.flags;  // (channel id, days)
+    if (g_cancel.load()) return;
+    if (!match.usable) {
+        notUpdated(L"none of this playlist's channel URLs reads as a live stream of its login");
+        return;
+    }
+    if (!db.replaceChannelArchive(t.id, flags)) {
+        notUpdated(L"writing the flags failed: " + db.lastError());
+        return;
+    }
+    rep.archiveChannels = std::max(rep.archiveChannels, 0) + static_cast<int>(flags.size());
+    PostMessageW(hwnd, WM_APP_VOD_ARCHIVE, 0, 0);
+    diag::info(L"VOD sync: catch-up for \"" + t.name + L"\": " + std::to_wstring(arch.size()) + L" of " +
+               std::to_wstring(total) + L" live streams keep an archive; " + std::to_wstring(flags.size()) +
+               L" library channels flagged");
+}
+
 void syncBody(HWND hwnd, const std::wstring& dbPath, const std::vector<SyncTarget>& targets,
               VodSyncReport& rep) {
 
@@ -141,6 +258,12 @@ void syncBody(HWND hwnd, const std::wstring& dbPath, const std::vector<SyncTarge
             rep.detail = acct.status.empty() ? L"auth rejected" : acct.status;
             break;
         }
+        if (g_cancel.load()) { rep.result = VodSyncResult::Cancelled; break; }
+
+        // ---- 1b. Catch-up flags (best-effort; never decides the result) -------
+        // Before the films, so a movie catalogue that fails cannot cost the archive flags too.
+        PostMessageW(hwnd, WM_APP_VOD_PROGRESS, kVodPhaseCatchup, 0);
+        syncArchive(hwnd, db, t, acct, rep);
         if (g_cancel.load()) { rep.result = VodSyncResult::Cancelled; break; }
 
         // ---- 2. Two requests for the whole catalogue ------------------------

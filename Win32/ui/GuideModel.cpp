@@ -10,17 +10,45 @@
 
 namespace rabbitears {
 
+namespace {
+
+// The same normalisation as Database's RE_NORM_TVG: the part before '@', ASCII-lower-cased.
+std::wstring normId(const std::wstring& s) {
+    std::wstring b = s.substr(0, s.find(L'@'));
+    for (auto& ch : b)
+        if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+    return b;
+}
+
+// Catch-up: fold channel `c` (the next in channelsByPlaylist's order) into its id's pick — the longest
+// archive wins, the earlier channel on a tie (Database::refreshProgrammeSearchChannels: the same rule).
+void foldArchive(GuideArchivePick& pick, const Database::GuideChannel& c) {
+    if (c.archiveDays > pick.days) {
+        pick.channel = c.id;
+        pick.days = c.archiveDays;
+    }
+}
+
+}  // namespace
+
+size_t GuideArchivePicks::KeyHash::operator()(const Key& k) const noexcept {
+    return std::hash<std::wstring>{}(k.base) ^ (std::hash<long long>{}(k.playlistId) * 0x9E3779B97F4A7C15ull);
+}
+
+GuideArchivePicks::GuideArchivePicks(Database& db) {
+    for (const auto& c : db.liveGuideChannels())
+        if (c.archiveDays > 0) foldArchive(picks_[Key{c.playlistId, normId(c.tvgId)}], c);
+}
+
+GuideArchivePick GuideArchivePicks::pick(long long playlistId, const std::wstring& tvgId) const {
+    const auto it = picks_.find(Key{playlistId, normId(tvgId)});
+    return it == picks_.end() ? GuideArchivePick{} : it->second;
+}
+
 GuideModel buildGuideModel(Database& db, long long nowUtc) {
     GuideModel m;
     const long long winStart = nowUtc - kGuideWindowPastSec;
     const long long winEnd = nowUtc + kGuideWindowAheadSec;
-    // The same normalisation as Database's RE_NORM_TVG: the part before '@', ASCII-lower-cased.
-    auto normId = [](const std::wstring& s) {
-        std::wstring b = s.substr(0, s.find(L'@'));
-        for (auto& ch : b)
-            if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
-        return b;
-    };
     // The coverage line (GuideCoverage), counted alongside the rows: per playlist, its live channels'
     // distinct guide ids (one query for all playlists, ~3 ms) split into those with a row, those
     // without one in a playlist with no guide link, and those without one despite a link; and, across
@@ -42,11 +70,17 @@ GuideModel buildGuideModel(Database& db, long long nowUtc) {
         auto progs = db.programmesInWindow(pl.id, winStart, winEnd);  // ordered channel_id, start
         if (!progs.empty()) {
             // Keep the FIRST channel per base — its FULL tvg-id becomes the row's channelId, which
-            // Play/Schedule resolve via channelByTvgId, so every row stays playable.
-            std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> byBase;  // base -> (name, full tvg-id)
+            // Play/Schedule resolve via channelByTvgId, so every row stays playable — and the one per
+            // base keeping the longest archive (catch-up, foldArchive), which may be another of them.
+            struct Pick {
+                std::wstring     name, tvgId;
+                GuideArchivePick archive;
+            };
+            std::unordered_map<std::wstring, Pick> byBase;  // base -> the row's channel + archive
             const auto chIt = chansByPlaylist.find(pl.id);
             if (chIt != chansByPlaylist.end())
-                for (const auto& c : chIt->second) byBase.try_emplace(normId(c.tvgId), c.name, c.tvgId);
+                for (const auto& c : chIt->second)
+                    foldArchive(byBase.try_emplace(normId(c.tvgId), Pick{c.name, c.tvgId}).first->second.archive, c);
             GuideRow cur;
             std::wstring curId;
             bool have = false;     // building a row for a channel that IS in this playlist?
@@ -64,8 +98,11 @@ GuideModel buildGuideModel(Database& db, long long nowUtc) {
                     const std::wstring base = normId(curId);  // programme.channelId is the EPG base id
                     auto it = byBase.find(base);
                     if (it != byBase.end()) {
-                        cur.channelId = it->second.second;  // the channel's FULL tvg-id (Play/Schedule use it)
-                        cur.channelName = it->second.first.empty() ? curId : it->second.first;
+                        cur.channelId = it->second.tvgId;  // the channel's FULL tvg-id (Play/Schedule use it)
+                        cur.channelName = it->second.name.empty() ? curId : it->second.name;
+                        cur.archiveChannel = it->second.archive.channel;
+                        cur.archiveDays = it->second.archive.days;
+                        cur.playlistId = pl.id;
                         have = true;
                         guideMatched.insert(base);
                         rowBases.insert(base);

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace rabbitears {
@@ -27,6 +28,39 @@ struct GuideRow {
     std::wstring                channelId;    // tvg-id — resolves to a recordable stream (may be empty)
     std::wstring                channelName;
     std::vector<GuideProgramme> programmes;  // sorted by startUtc
+    // Catch-up: the channel whose archive plays this row's past programmes — of the playlist's live
+    // channels sharing the row's guide id, the one keeping the LONGEST archive, the first in
+    // channelsByPlaylist's order on a tie (it need not be the channel the row is named after; the
+    // search picks the same, Database::refreshProgrammeSearchChannels) — and how many days back it
+    // goes. 0 = no archive.
+    long long                   archiveChannel = 0;
+    int                         archiveDays = 0;
+    long long                   playlistId = 0;  // the playlist the row's channels are in
+};
+
+// A catch-up pick (GuideRow::archiveChannel / archiveDays) for one playlist's guide id.
+struct GuideArchivePick {
+    long long channel = 0;
+    int       days = 0;
+};
+// Every playlist's picks, re-read from the database (liveGuideChannels, ~4 ms) — for a guide that is
+// already open when the archive flags change (a provider sync): `pick(playlistId, tvgId)` with a row's
+// or a search result's FULL tvg-id gives what buildGuideModel would now pick for it.
+class GuideArchivePicks {
+public:
+    explicit GuideArchivePicks(Database& db);
+    GuideArchivePick pick(long long playlistId, const std::wstring& tvgId) const;
+
+private:
+    struct Key {
+        long long    playlistId;
+        std::wstring base;  // the normalised guide id
+        bool operator==(const Key&) const = default;
+    };
+    struct KeyHash {
+        size_t operator()(const Key& k) const noexcept;
+    };
+    std::unordered_map<Key, GuideArchivePick, KeyHash> picks_;
 };
 
 // What the toolbar's coverage line says — "Guide data for {shown} of {withId} channels with a guide

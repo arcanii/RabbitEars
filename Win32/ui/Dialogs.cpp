@@ -1633,7 +1633,7 @@ void closeLoadingDialog(HWND dlg) {
 // ---- Programme popup (click a TV Guide entry) ------------------------------
 
 namespace {
-constexpr int ID_PROG_PLAY = 1801, ID_PROG_SCHED = 1802, ID_PROG_SERIES = 1803;
+constexpr int ID_PROG_PLAY = 1801, ID_PROG_SCHED = 1802, ID_PROG_SERIES = 1803, ID_PROG_FROMSTART = 1804;
 
 struct ProgrammeDlgState {
     ProgrammeAction action = ProgrammeAction::None;  // set in the Proc before destroy
@@ -1658,6 +1658,7 @@ LRESULT CALLBACK ProgrammeDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
                 case ID_PROG_PLAY: st->action = ProgrammeAction::Play; st->done = true; DestroyWindow(hwnd); return 0;
                 case ID_PROG_SCHED: st->action = ProgrammeAction::Schedule; st->done = true; DestroyWindow(hwnd); return 0;
                 case ID_PROG_SERIES: st->action = ProgrammeAction::RecordSeries; st->done = true; DestroyWindow(hwnd); return 0;
+                case ID_PROG_FROMSTART: st->action = ProgrammeAction::PlayFromStart; st->done = true; DestroyWindow(hwnd); return 0;
                 case IDCANCEL: st->done = true; DestroyWindow(hwnd); return 0;
             }
             return 0;
@@ -1668,7 +1669,8 @@ LRESULT CALLBACK ProgrammeDlgProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
 }  // namespace
 
 ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const std::wstring& title,
-                                const std::wstring& info) {
+                                const std::wstring& info, bool fromStart, bool fromStartDefault,
+                                bool canSchedule) {
     static bool registered = false;
     if (!registered) {
         WNDCLASSEXW wc{};
@@ -1684,7 +1686,26 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
     ProgrammeDlgState st;
     HFONT bodyFont = themeFont(FontRole::Body, dpi, 11, FW_NORMAL);
     HFONT headFont = themeFont(FontRole::Body, dpi, 15, FW_SEMIBOLD);
-    const int W = dp(560, dpi), H = dp(300, dpi);  // +100dp for the Record series button
+    const int pw = dp(116, dpi), sw = dp(104, dpi), rw = dp(124, dpi), cw = dp(84, dpi), gap = dp(8, dpi);
+    // Play from the start (catch-up) as wide as its label needs — it says "(experimental)", and a
+    // translation can be longer still — never narrower than the 142 dp it had.
+    int fw = dp(142, dpi);
+    if (fromStart) {
+        const std::wstring label = tr(i18n::StringId::ProgrammePlayFromStartButton);
+        if (HDC sdc = GetDC(nullptr)) {
+            HGDIOBJ old = SelectObject(sdc, bodyFont);
+            SIZE sz{};
+            if (GetTextExtentPoint32W(sdc, label.c_str(), static_cast<int>(label.size()), &sz))
+                fw = std::max(fw, static_cast<int>(sz.cx) + dp(28, dpi));
+            SelectObject(sdc, old);
+            ReleaseDC(nullptr, sdc);
+        }
+    }
+    // +100dp for the Record series button; with Play from the start (catch-up), room for every button —
+    // the margins, the gaps, a gap before Close, and the dialog frame (W is the WINDOW width).
+    const int rowW = dp(20, dpi) * 2 + fw + gap + pw + gap + (canSchedule ? sw + gap : 0) + rw + gap + cw + gap +
+                     2 * GetSystemMetricsForDpi(SM_CXFIXEDFRAME, dpi) + dp(8, dpi);
+    const int W = fromStart ? std::max(dp(710, dpi), rowW) : dp(560, dpi), H = dp(300, dpi);
     RECT pr;
     GetWindowRect(parent, &pr);
     const int x = pr.left + ((pr.right - pr.left) - W) / 2, y = pr.top + ((pr.bottom - pr.top) - H) / 2;
@@ -1710,21 +1731,36 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
                                     ES_READONLY | ES_AUTOVSCROLL,
                                 m, dp(48, dpi), cr.right - 2 * m, btnY - dp(60, dpi), dlg, nullptr, hInst,
                                 nullptr);
-    const int pw = dp(116, dpi), sw = dp(104, dpi), rw = dp(124, dpi), cw = dp(84, dpi),
-              gap = dp(8, dpi);
+    // Catch-up first when offered: [Play from the start] [Play channel] [Schedule…] [Record series].
+    // The default button is Play from the start for a programme that has ended, else Play channel.
+    int bx = m;
+    HWND fromStartBtn = nullptr;
+    if (fromStart) {
+        fromStartBtn = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ProgrammePlayFromStartButton).c_str(),
+                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | (fromStartDefault ? BS_DEFPUSHBUTTON : 0),
+                                       bx, btnY, fw, bh, dlg,
+                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_FROMSTART)), hInst,
+                                       nullptr);
+        bx += fw + gap;
+    }
     HWND play = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ProgrammePlayButton).c_str(),
-                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, m, btnY, pw, bh,
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                    (fromStart && fromStartDefault ? 0 : BS_DEFPUSHBUTTON),
+                                bx, btnY, pw, bh,
                                 dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_PLAY)), hInst,
                                 nullptr);
-    HWND sched = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ProgrammeScheduleButton).c_str(),
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                 m + pw + gap, btnY, sw, bh, dlg,
-                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SCHED)), hInst,
-                                 nullptr);
+    bx += pw + gap;
+    HWND sched = nullptr;
+    if (canSchedule) {
+        sched = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ProgrammeScheduleButton).c_str(),
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP, bx, btnY, sw, bh, dlg,
+                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SCHED)), hInst, nullptr);
+        bx += sw + gap;
+    }
     // "Record series" = a standing rule for every future airing of this title on this channel.
     HWND series = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::RecordSeriesTitle).c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                  m + pw + gap + sw + gap, btnY, rw, bh, dlg,
+                                  bx, btnY, rw, bh, dlg,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PROG_SERIES)), hInst,
                                   nullptr);
     HWND close = CreateWindowExW(0, L"BUTTON", tr(i18n::StringId::ButtonClose).c_str(),
@@ -1732,13 +1768,13 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
                                  cr.right - cw - m, btnY, cw, bh, dlg,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), hInst, nullptr);
     SendMessageW(head, WM_SETFONT, reinterpret_cast<WPARAM>(headFont), TRUE);
-    for (HWND h : {body, play, sched, series, close})
-        SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
+    for (HWND h : {body, play, sched, series, close, fromStartBtn})
+        if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(bodyFont), TRUE);
     applyDialogDarkMode(dlg);
 
     EnableWindow(parent, FALSE);
     ShowWindow(dlg, SW_SHOW);
-    SetFocus(play);
+    SetFocus(fromStartBtn && fromStartDefault ? fromStartBtn : play);
     MSG msg;
     while (!st.done) {
         const BOOL r = GetMessageW(&msg, nullptr, 0, 0);

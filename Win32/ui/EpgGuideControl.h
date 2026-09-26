@@ -30,7 +30,17 @@ struct GuideSearchHit {
                                // description's start
     long long    startUtc = 0, stopUtc = 0;
     bool         inTitle = false;
+    // Catch-up: the channel whose archive can play it, and how many days back it goes (0 = none) —
+    // GuideRow::archiveChannel's counterpart. A hit that has already ended is found only with one (it
+    // may lose it while listed: epgGuideUpdateArchive).
+    long long    archiveChannel = 0;
+    int          archiveDays = 0;
+    long long    playlistId = 0;  // the playlist whose guide it is from (epgGuideUpdateArchive)
 };
+
+// Whether a programme can be played from an archive: it has started (aired, or is airing — "start
+// over"), and the archive reaches back to its start. `archiveChannel` 0 = never.
+bool guideCanPlayFromStart(long long archiveChannel, int archiveDays, long long startUtc, long long nowUtc);
 
 // The coverage line itself ("Guide data for N of M channels with a guide ID"), and the explanation
 // behind it: one paragraph per reason that applies (blank lines between), and the note that entries
@@ -46,6 +56,10 @@ struct GuideCallbacks {
                        const std::wstring& title, long long startUtc, long long stopUtc)>
         onSchedule;
     std::function<void(const std::wstring& channelId, const std::wstring& channelName)> onPlay;
+    // "Play from the start" (catch-up): play the programme out of `archiveChannel`'s archive. Offered
+    // only where guideCanPlayFromStart says so; empty -> never offered.
+    std::function<void(long long archiveChannel, const std::wstring& title, long long startUtc, long long stopUtc)>
+        onPlayFromStart;
     // "Record series": create a standing rule for every future airing of `title` on this
     // channel. Empty -> the popup's Record-series button does nothing.
     std::function<void(const std::wstring& channelId, const std::wstring& channelName,
@@ -60,11 +74,16 @@ struct GuideCallbacks {
     // guide's rows — the host is not involved). onSearchBegin runs once per search SESSION, before its
     // first search — a session starts when the box goes from empty to text, when
     // the guide's rows are (re)built, and when the guide is reopened: the host loads the channel set
-    // and, if the index is stale, rebuilds it (a second or two — the guide shows "Preparing search…"
-    // first). onSearch returns the results for `text` and sets *truncated when there were more. With
-    // no onSearch, every search reports that nothing matches.
-    std::function<void()> onSearchBegin;
-    std::function<std::vector<GuideSearchHit>(const std::wstring& text, bool* truncated)> onSearch;
+    // and, if the index is stale and `mayRebuild`, rebuilds it (a second or two — the guide shows
+    // "Preparing search…" first; the quiet re-search after new catch-up flags passes false, and the
+    // search uses LIKE until the next session). onSearch returns the results for `text` as of `nowUtc`
+    // (what has ended by then, the guide lists apart, after the rest) and sets *truncated when there
+    // were more of those still to come, *truncatedPast when there were more that have ended. With no
+    // onSearch, every search reports that nothing matches.
+    std::function<void(bool mayRebuild)> onSearchBegin;
+    std::function<std::vector<GuideSearchHit>(const std::wstring& text, long long nowUtc, bool* truncated,
+                                              bool* truncatedPast)>
+        onSearch;
     // How many distinct channel NAMES in the user's whole channel list match `text` (the main
     // window's channel search, live channels) with NO channel carrying one of `guideIds` — the
     // normalised ids of the guide's own rows, so another feed of a channel the guide shows (an FHD
@@ -125,5 +144,17 @@ bool epgGuideShowChannel(const std::wstring& tvgId, long long nowUtc);
 // results' headings, then repaint. The programme rows are unchanged, so this skips the DB rebuild
 // showEpgGuide would do. No-op if the guide window doesn't exist (open or hidden).
 void epgGuideRefreshLanguage();
+
+// The catch-up flags changed while the guide exists, open or hidden (a provider sync, a playlist added
+// or deleted — refreshArchiveMarkers): every row and every listed search result takes its new archive
+// pick from `picks`, IN PLACE — no rebuild, so the scroll and the channel filter stay as they are, and
+// nothing takes the focus — and the search session ends, so the next search re-reads the channel set
+// (the search's own picks). A results list on screen searches again, quietly, ~0.2 s later (later still
+// after a click on it: never between a double-click's two clicks), keeping the scroll and the selection
+// — a selected programme no longer listed gives way to the first item if that is in view, else to
+// nothing. Until then an aired result that lost its archive stays listed (without "Play from the
+// start"), and one that gained it is not there yet. A popup or menu already open keeps what it showed
+// (playCatchup checks again). No-op if the guide window doesn't exist.
+void epgGuideUpdateArchive(const GuideArchivePicks& picks);
 
 }  // namespace rabbitears

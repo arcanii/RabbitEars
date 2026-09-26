@@ -14,6 +14,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "audio/SpectrumTap.h"   // SpectrumTap (AppState)
@@ -57,6 +58,9 @@ constexpr UINT WM_APP_VOD_DONE = WM_APP + 9;
 // Refresh Guide's store worker (ui/EpgStore) -> UI thread: the guide is stored. Carries nothing — the
 // result is read back with takeEpgStoreResult(). +11: the next id after ChannelGridControl's +10.
 constexpr UINT WM_APP_EPG_STORED = WM_APP + 11;
+// Xtream VOD sync worker -> UI thread: a playlist's catch-up flags were just written (before the films,
+// which can take minutes more) — re-read them now. Carries nothing.
+constexpr UINT WM_APP_VOD_ARCHIVE = WM_APP + 12;
 constexpr UINT_PTR kSchedulerTimer = 0xA2;    // recording-scheduler tick (~30s; not theme-gated)
 constexpr UINT_PTR kSupportPromptTimer = 0xA3;  // ONE-SHOT: the "support RabbitEars" tip prompt
 constexpr UINT_PTR kSearchDebounceTimer = 0xA4;  // ONE-SHOT: coalesce a typing burst in the search box
@@ -277,8 +281,13 @@ struct VideoPane {
     HWND         hwnd = nullptr;   // kVideoClass window: a WS_CHILD tile, or a floating popup for PIP
     VlcPlayer    player;           // borrows AppState::engine's shared libVLC instance
     Channel      nowPlaying{};     // last channel played into this pane (for re-buffering)
-    long long    nowPlayingId = 0;
+    long long    nowPlayingId = 0;  // 0 for a catch-up programme (no row of its own — see playCatchup)
     std::wstring nowPlayingName;
+    // Catch-up: this pane plays an archive (playCatchup), and whether it ever reached Playing — an
+    // archive that ends or fails before then had nothing recorded for that time, which is what the
+    // status line should say (not "stream ended", and never "dead": nowPlayingId is 0).
+    bool         catchup = false;
+    bool         catchupPlayed = false;
     bool         floating = false;  // PIP: a top-level owned popup that composites OVER the big
                                     // pane's libVLC surface (a child sibling gets occluded by it).
     // Pool of kVoutHostClass child windows (all filling the pane, all hidden except the live one)
@@ -288,8 +297,15 @@ struct VideoPane {
     std::vector<HWND> voutHosts;
 };
 
+// Whether a pane has a stream loaded: a channel (its id), or a catch-up programme (id 0, see above).
+inline bool paneHasStream(const VideoPane& p) { return p.nowPlayingId != 0 || p.catchup; }
+
 struct AppState {
     Database   db;
+    // Catch-up: channel id -> days of archive (Database::channelArchiveDays), re-read by
+    // refreshArchiveMarkers (startup, a provider sync, playlists added or deleted); the grid's markers
+    // and playCatchup read it.
+    std::unordered_map<long long, int> archiveDays;
     VlcEngine  engine;  // owns the shared libVLC instance; must outlive the panes (below)
     // The video panes. panes[0] is created in WM_CREATE and always exists; Split/PIP add
     // more. `active` is the focused pane — it gets channel selection, audio, the transport
@@ -500,6 +516,17 @@ void loadForFilter(AppState* st);
 HTREEITEM navInsert(HWND nav, HTREEITEM parent, const std::wstring& text, LPARAM param, bool bold);
 std::wstring countryLabel(const std::wstring& code);
 void refreshNav(AppState* st);
+// Re-read the catch-up flags: st->archiveDays, the grid's ↺ markers, and — when they changed — the picks
+// of a TV Guide that is already built (epgGuideUpdateArchive).
+void refreshArchiveMarkers(AppState* st);
+// Play a programme from a live channel's archive (catch-up): `archiveChannel` is the channel whose
+// archive holds it (GuideRow::archiveChannel), the times are the programme's. Explains in a dialog
+// when it cannot (no archive that far back, not an Xtream line, …) and returns false; true = asked to play.
+bool playCatchup(AppState* st, long long archiveChannel, const std::wstring& title, long long startUtc,
+                 long long stopUtc);
+// Play `c` into pane `idx` again — a split/PIP move, a re-buffer — keeping it a catch-up programme when it
+// was one (playChannelInPane alone would turn it into a channel with id 0).
+void playPaneStream(AppState* st, const Channel& c, bool catchup, int idx);
 void playChannelInPane(AppState* st, const Channel& c, int idx);
 void playChannel(AppState* st, const Channel& c);
 std::wstring bufLabelText(int ms);

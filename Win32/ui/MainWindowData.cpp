@@ -32,9 +32,11 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "core/M3uParser.h"
 #include "core/RecordingScheduler.h"
 #include "core/XmltvParser.h"
+#include "core/XtreamClient.h"
 #include "db/Database.h"
 #include "platform/Log.h"
 #include "platform/LogSecrets.h"
+#include "platform/TimeZone.h"
 #include "platform/Updater.h"
 #include "resource.h"
 #include "version.h"
@@ -213,7 +215,22 @@ std::wstring countryLabel(const std::wstring& code) {
     return up;
 }
 
+void refreshArchiveMarkers(AppState* st) {
+    std::unordered_map<long long, int> fresh = st->db.channelArchiveDays();
+    const bool changed = fresh != st->archiveDays;
+    st->archiveDays = std::move(fresh);
+    channelGridSetArchive(st->grid, st->archiveDays);
+    // A TV Guide already built (open or hidden) took its archive picks when it was built, and a reveal
+    // does not rebuild it — so every re-read that changes the flags reaches it: a provider sync
+    // (WM_APP_VOD_ARCHIVE) and a playlist added or deleted (refreshNav) alike. Unchanged (every sync
+    // but the first, usually): nothing for it to redo.
+    if (changed && epgGuideOpen()) epgGuideUpdateArchive(GuideArchivePicks(st->db));
+}
+
 void refreshNav(AppState* st) {
+    // Playlists added, deleted or refreshed: the catch-up markers follow (channel ids are reused — a
+    // deleted channel's id can come back as an unrelated new channel, which must not inherit its ↺).
+    refreshArchiveMarkers(st);
     st->navFilters.clear();
     st->navMovies = nullptr;  // cleared BEFORE the delete: the old HTREEITEM dies with it
     TreeView_DeleteAllItems(st->nav);
@@ -284,6 +301,8 @@ void playChannelInPane(AppState* st, const Channel& c, int idx) {
     // — but no further request is issued and nothing is written.
     cancelVodSync();
     VideoPane& p = *st->panes[idx];
+    p.catchup = false;  // playCatchup sets it again after this call; any other play is a channel
+    p.catchupPlayed = false;
     diag::info(L"play pane " + std::to_wstring(idx) + L" #" + std::to_wstring(c.id) + L" \"" + c.name +
                L"\" ua=[" + c.userAgent + L"] ref=[" + c.referrer + L"]");
     if (p.player.isReady()) p.player.play(c.streamUrl, c.userAgent, c.referrer);
@@ -298,7 +317,8 @@ void playChannelInPane(AppState* st, const Channel& c, int idx) {
     p.nowPlaying = c;
     if (idx == st->active) {
         channelGridSetNowPlaying(st->grid, c.id);
-        st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
+        // A catch-up programme (id 0) is not a channel to resume at the next launch.
+        if (c.id) st->db.setSetting(L"last_channel_id", std::to_wstring(c.id));
         bufferMeterSetHealth(st->bufferMeter, 15);
         resetStatMeters(st);  // clear signal/bitrate/frames so switching to a dead/stalled stream
                               // can't leave the previous channel's readings frozen on the meters
@@ -314,6 +334,74 @@ void playChannelInPane(AppState* st, const Channel& c, int idx) {
 
 void playChannel(AppState* st, const Channel& c) { playChannelInPane(st, c, st->active); }
 
+void playPaneStream(AppState* st, const Channel& c, bool catchup, int idx) {
+    playChannelInPane(st, c, idx);
+    if (catchup && idx >= 0 && idx < static_cast<int>(st->panes.size())) {
+        st->panes[idx]->catchup = true;
+        st->panes[idx]->catchupPlayed = false;
+    }
+}
+
+bool playCatchup(AppState* st, long long archiveChannel, const std::wstring& title, long long startUtc,
+                 long long stopUtc) {
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(st->hwnd, GWLP_HINSTANCE));
+    auto explain = [&](const std::wstring& why) {
+        diag::warn(L"catch-up refused: " + why);
+        showInfoDialog(st->hwnd, hInst, st->dpi, tr(i18n::StringId::CatchupTitle),
+                       tr(i18n::StringId::CatchupUnavailableHeading), why);
+    };
+    const std::optional<Channel> ch = st->db.channelById(archiveChannel);  // enabled playlists only
+    const auto daysIt = st->archiveDays.find(archiveChannel);
+    if (!ch || daysIt == st->archiveDays.end()) {
+        explain(tr(i18n::StringId::CatchupNoArchive));
+        return false;
+    }
+    const long long now = static_cast<long long>(time(nullptr));
+    if (startUtc >= now) {  // the UI offers it only for programmes that have started
+        explain(tr(i18n::StringId::CatchupNotStarted));
+        return false;
+    }
+    if (startUtc < now - static_cast<long long>(daysIt->second) * 86400) {
+        explain(trf(i18n::StringId::CatchupTooOld, {ch->name, std::to_wstring(daysIt->second)}));
+        return false;
+    }
+    // The login comes from the playlist's own URL (as the movie sync's does); the stream id from the
+    // channel's. The URL is never logged here; VlcPlayer's "play:" line has it, masked by the log's
+    // redaction (the /timeshift/USER/PASS/ shape).
+    XtreamCreds creds;
+    bool haveCreds = false;
+    for (const Playlist& pl : st->db.listPlaylists())
+        if (pl.id == ch->playlistId) haveCreds = parseXtreamPlaylistUrl(pl.sourceUrl, creds);
+    const long long streamId = xtreamLiveStreamId(ch->streamUrl);
+    if (!haveCreds || streamId <= 0) {
+        explain(tr(i18n::StringId::CatchupNoArchive));
+        return false;
+    }
+    // The panel reads the start on ITS clock: the zone it named at the last sync, on the programme's
+    // day (daylight saving); else the offset measured then; else UTC.
+    const std::wstring pid = std::to_wstring(ch->playlistId);
+    int offset = 0;
+    const std::wstring zone = st->db.getSetting(L"archive_tz_" + pid).value_or(L"");
+    if (!utcOffsetAt(zone, startUtc, &offset))
+        offset = _wtoi(st->db.getSetting(L"archive_utc_offset_" + pid).value_or(L"0").c_str());
+    const int minutes = static_cast<int>(std::max<long long>(1, (stopUtc - startUtc + 59) / 60));
+    Channel c = *ch;
+    c.id = 0;  // not a channel: no "last channel", no dead-link verdict, no grid highlight
+    c.streamUrl = xtreamTimeshiftUrl(creds, streamId, startUtc, minutes, offset);
+    c.name = trf(i18n::StringId::CatchupNowPlayingName, {ch->name, title});
+    if (c.streamUrl.empty()) {
+        explain(tr(i18n::StringId::CatchupNoArchive));
+        return false;
+    }
+    diag::info(L"catch-up: #" + std::to_wstring(ch->id) + L" \"" + ch->name + L"\", " + std::to_wstring(minutes) +
+               L" min from " + std::to_wstring(startUtc) + L" (server zone " + (zone.empty() ? L"?" : zone) + L", UTC" +
+               (offset >= 0 ? L"+" : L"") + std::to_wstring(offset) + L" s)");
+    playChannelInPane(st, c, st->active);
+    st->ap().catchup = true;
+    st->ap().catchupPlayed = false;
+    return true;
+}
+
 std::wstring bufLabelText(int ms) {
     wchar_t b[24];
     swprintf_s(b, tr(i18n::StringId::TransportBufferSeconds).c_str(), ms / 1000.0);
@@ -328,7 +416,8 @@ void setBufferMs(AppState* st, int ms, bool replay) {
     st->db.setSetting(L"buffer_ms", std::to_wstring(ms));
     if (st->bufBar) SendMessageW(st->bufBar, TBM_SETPOS, TRUE, ms / kBufStepMs);
     if (st->bufLabel) SetWindowTextW(st->bufLabel, bufLabelText(ms).c_str());
-    if (replay && st->ap().player.isPlaying() && st->ap().nowPlaying.id != 0) playChannel(st, st->ap().nowPlaying);
+    if (replay && st->ap().player.isPlaying() && paneHasStream(st->ap()))
+        playPaneStream(st, st->ap().nowPlaying, st->ap().catchup, st->active);
 }
 
 std::wstring formatHms(long long ms) {

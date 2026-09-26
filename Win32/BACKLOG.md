@@ -63,8 +63,16 @@ Open items this work left or found (none blocking):
   `bulkInsertProgrammes` wipes the whole playlist's programmes on every refresh — a second source would
   need per-source rows (or merging) and a channel-id mapping (a third-party XMLTV rarely uses the
   provider's tvg-ids).
-- ✅ **Catch-up — built in 0.2.21-dev (uncommitted; HANDOVER item (2), eight review rounds)**: 299 of the
-  owner's 15,345 live streams keep an archive (1–3 days). Left open, reviewed and noted:
+- ✅ **Catch-up — committed in 0.2.21-dev, labelled "(experimental)"** (HANDOVER item (2), eight review
+  rounds; the owner's live test: the timing is right): 299 of the owner's 15,345 live streams keep an
+  archive (1–3 days). Drop the "(experimental)" label once users report it works. Left open, reviewed and
+  noted:
+  - **No scrubbing:** libVLC does not treat the timeshift stream as seekable (no scrub bar — seen by the
+    owner). A seek would have to be a NEW timeshift request at the target time (the archive's URL takes a
+    start and a duration), with the scrub bar driven by the programme's own times rather than libVLC's.
+  - **The status line can stay on "Buffering 100% — …" while a stream plays** (pre-existing, seen in the
+    owner's screenshots): libVLC keeps sending Buffering events after Playing, and the handler rewrites the
+    line on each; a Buffering event at 100% while playing could say "Playing — …" instead.
   - **Player events carry no stream generation** (pre-existing, found by the catch-up review, L2):
     `VlcPlayer::handleVlcEvent` posts (event, pane) only, so an event the PREVIOUS stream fired after the
     user started a new one — posted before the worker detached the old player's events — is handled as

@@ -204,6 +204,7 @@ struct GridState {
     int                  selectedRow = -1;
     int                  hoverRow = -1;
     long long            nowPlayingId = 0;
+    std::unordered_map<long long, int> archiveDays;  // catch-up: channel id -> days (channelGridSetArchive)
     int                  scrollY = 0;
     UINT                 dpi = 96;
     int                  rowH = 30;
@@ -544,9 +545,19 @@ void paint(HWND hwnd, GridState* st) {
                 text(init, st->fmtStar, bx, bh, by, bh, th.textMuted, 0);
             }
         }
-        // name + group
-        text(c.name, st->fmtLeft, static_cast<float>(colLeft(st, hwnd, COL_NAME)),
-             static_cast<float>(colWidth(st, hwnd, COL_NAME)), y, static_cast<float>(st->rowH), txtc, pad);
+        // name + group — and, for a channel that keeps a catch-up archive, a ↺ at the name's right
+        // end (the name is clipped short of it rather than running underneath).
+        const float nameX = static_cast<float>(colLeft(st, hwnd, COL_NAME));
+        float nameW = static_cast<float>(colWidth(st, hwnd, COL_NAME));
+        if (!st->archiveDays.empty() && st->archiveDays.count(c.id)) {
+            const float mw = static_cast<float>(dpx(st->dpi, 22));
+            if (nameW > 2 * mw) {
+                nameW -= mw;
+                text(L"↺", st->fmtStar, nameX + nameW, mw, y, static_cast<float>(st->rowH),
+                     dead ? th.textMuted : (sel ? th.selectionText : th.accent), 0);
+            }
+        }
+        text(c.name, st->fmtLeft, nameX, nameW, y, static_cast<float>(st->rowH), txtc, pad);
         text(c.groupTitle, st->fmtLeft, static_cast<float>(colLeft(st, hwnd, COL_GROUP)),
              static_cast<float>(colWidth(st, hwnd, COL_GROUP)), y, static_cast<float>(st->rowH), subc, pad);
     }
@@ -834,6 +845,13 @@ void channelGridSetNowPlaying(HWND grid, long long channelId) {
     GridState* st = stateOf(grid);
     if (!st) return;
     st->nowPlayingId = channelId;
+    InvalidateRect(grid, nullptr, FALSE);
+}
+
+void channelGridSetArchive(HWND grid, std::unordered_map<long long, int> archiveDays) {
+    GridState* st = stateOf(grid);
+    if (!st) return;
+    st->archiveDays = std::move(archiveDays);
     InvalidateRect(grid, nullptr, FALSE);
 }
 

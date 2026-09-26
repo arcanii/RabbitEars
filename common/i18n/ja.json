@@ -615,5 +615,19 @@
   "GuideCoverageNoProgrammes": "ガイド ID はあるが、現在から 3 日後までの番組が番組表にないもの: {0}。",
   "GuideCoverageUnmatched": "どのチャンネルとも一致しない番組表のチャンネル: {0}。番組表の大半がそうなら、リンクが別のプロバイダーや地域のものかもしれません（プレイリストを右クリック ▸ 番組表URLを設定…）。",
   "GuideCoverageNoId": "ガイド ID（tvg-id）のないプレイリスト項目（シリーズのエピソード、映画、多くのイベントチャンネル）は番組表に表示されません。",
-  "GuideSearchMoreChannels": "チャンネル一覧にもあり、番組表にないもの: {0}"
+  "GuideSearchMoreChannels": "チャンネル一覧にもあり、番組表にないもの: {0}",
+  "ProgrammePlayFromStartButton": "最初から再生（試験的）",
+  "GuideSearchCatchupHeading": "放送済み — 見逃し再生（試験的）",
+  "GuideSearchYesterday": "昨日",
+  "CatchupTitle": "見逃し再生",
+  "CatchupUnavailableHeading": "アーカイブから再生できません",
+  "CatchupNoArchive": "このチャンネルには再生できるアーカイブがないか、プロバイダーが Xtream 回線ではありません。アーカイブのあるチャンネルは「設定 ▸ チャンネル ▸ プロバイダーから映画を同期」で更新されます。",
+  "CatchupNotStarted": "この番組はまだ始まっていません。アーカイブに再生できるものはありません。",
+  "CatchupTooOld": "{0} のアーカイブは {1} 日分です。この番組はそれより前のものです。",
+  "CatchupNowPlayingName": "{0}: {1}（見逃し再生）",
+  "StatusCatchupNotInArchive": "アーカイブから再生できませんでした: {0} — その時間の録画がないか、回線が使用中の可能性があります",
+  "StatusCatchupChannels": " · 見逃し再生チャンネル: {0}",
+  "StatusCatchupNotUpdated": " · 見逃し再生の情報は更新されませんでした（{0}）",
+  "StatusCatchupNoRecord": "アーカイブからの録画はできません。録画するにはチャンネルをライブで再生してください。",
+  "StatusVodSyncFetchingCatchup": "見逃し再生に対応したチャンネルをプロバイダーに確認しています…"
 }

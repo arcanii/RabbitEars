@@ -4006,5 +4006,101 @@
       "{0}"
     ],
     "comment": "A note in the TV Guide's search results, under the matching channels, \"label: count\" style. {0} = how many MORE channel names in the user's channel list match what was typed but are not in the guide — no channel by that name carries the guide ID of a guide row (so another feed of a channel the guide shows is not counted)."
+  },
+  {
+    "id": "ProgrammePlayFromStartButton",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Says it is experimental (the owner's choice for the first release: label only). Programme popup / right-click menu: play this programme from its BEGINNING out of the channel's archive (catch-up). Offered for a programme that has aired, or is airing, on a channel that keeps an archive."
+  },
+  {
+    "id": "GuideSearchCatchupHeading",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Heading in the TV Guide's search results over programmes that have ALREADY AIRED and can still be played from their channel's archive (catch-up). Listed after the upcoming ones, most recent first."
+  },
+  {
+    "id": "GuideSearchYesterday",
+    "cluster": "GuideGrid",
+    "placeholders": [],
+    "comment": "Day heading in the TV Guide's search results (catch-up results that aired yesterday)."
+  },
+  {
+    "id": "CatchupTitle",
+    "cluster": "Dialogs",
+    "placeholders": [],
+    "comment": "Window title of the dialog explaining why a programme cannot be played from its channel's archive (catch-up)."
+  },
+  {
+    "id": "CatchupUnavailableHeading",
+    "cluster": "Dialogs",
+    "placeholders": [],
+    "comment": "Heading of that dialog."
+  },
+  {
+    "id": "CatchupNoArchive",
+    "cluster": "Dialogs",
+    "placeholders": [],
+    "comment": "Body of that dialog when the channel keeps no archive, or its provider has no Xtream API. The menu path must match MenuChannels > MenuVodSync."
+  },
+  {
+    "id": "CatchupNotStarted",
+    "cluster": "Dialogs",
+    "placeholders": [],
+    "comment": "Body of that dialog for a programme that has not started yet."
+  },
+  {
+    "id": "CatchupTooOld",
+    "cluster": "Dialogs",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "Body of the catch-up dialog for a programme older than the archive reaches. {0} = channel name, {1} = how many days of archive the channel keeps (a number; the wording avoids a plural)."
+  },
+  {
+    "id": "CatchupNowPlayingName",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "What is playing, for a programme played from the archive (status line, now-playing). {0} = channel name, {1} = programme title."
+  },
+  {
+    "id": "StatusCatchupNotInArchive",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Status line when a programme played from the archive ends or fails before it ever played. The usual cause is that the provider has nothing recorded for that time — but a busy line (its one connection in use) or a network failure look the same, hence the hedge. {0} = what was being played (CatchupNowPlayingName)."
+  },
+  {
+    "id": "StatusCatchupChannels",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "APPENDED to the movie-sync status line (StatusVodSync*) — keep the leading separator. {0} = how many channels now keep a catch-up archive (the wording avoids a plural)."
+  },
+  {
+    "id": "StatusCatchupNotUpdated",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "APPENDED to the movie-sync status line — keep the leading separator. {0} = a short technical reason, not translated (network / JSON error)."
+  },
+  {
+    "id": "StatusCatchupNoRecord",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Status line when Record is pressed while a programme from the archive (catch-up) is playing: only a live channel can be recorded."
+  },
+  {
+    "id": "StatusVodSyncFetchingCatchup",
+    "cluster": "Status",
+    "placeholders": [],
+    "comment": "Movie-sync phase before the films: asking the provider (its live channel list, several MB, can take a minute or more) which channels keep a catch-up archive. Not the user's own channel list."
   }
 ]

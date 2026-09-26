@@ -615,5 +615,19 @@
   "GuideCoverageNoProgrammes": "With a guide ID the guide has no programmes for, from now to three days ahead: {0}.",
   "GuideCoverageUnmatched": "Channels in the guide matching none of yours: {0}. If that is most of the guide, its link may be for another provider or region (right-click the playlist ▸ Set Guide URL…).",
   "GuideCoverageNoId": "Playlist entries without a guide ID (tvg-id) — series episodes, movies, many event channels — never appear in the guide.",
-  "GuideSearchMoreChannels": "Also in your channel list, not in the guide: {0}"
+  "GuideSearchMoreChannels": "Also in your channel list, not in the guide: {0}",
+  "ProgrammePlayFromStartButton": "Play from the start (experimental)",
+  "GuideSearchCatchupHeading": "Already aired — catch-up (experimental)",
+  "GuideSearchYesterday": "Yesterday",
+  "CatchupTitle": "Catch-up",
+  "CatchupUnavailableHeading": "Can't play this from the archive",
+  "CatchupNoArchive": "This channel keeps no archive to play it from, or its provider is not an Xtream line. Settings ▸ Channels ▸ Sync movies from provider updates which channels keep one.",
+  "CatchupNotStarted": "This programme hasn't started yet — there is nothing in the archive to play.",
+  "CatchupTooOld": "{0} keeps an archive of {1} day(s) — this programme is older than that.",
+  "CatchupNowPlayingName": "{0}: {1} (catch-up)",
+  "StatusCatchupNotInArchive": "Nothing played from the archive: {0} — the provider may have nothing recorded for that time, or the line is busy",
+  "StatusCatchupChannels": " · catch-up channels: {0}",
+  "StatusCatchupNotUpdated": " · catch-up info not updated ({0})",
+  "StatusCatchupNoRecord": "Recording from the archive isn't available — play the channel live to record it.",
+  "StatusVodSyncFetchingCatchup": "Asking your provider which channels keep catch-up…"
 }

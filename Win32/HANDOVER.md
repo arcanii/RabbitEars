@@ -35,12 +35,14 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ### ⏸ STATE 2026-09-26 — where 0.2.21-dev stands. READ THIS FIRST.
 
-**Item (1), the guide stalls, is COMMITTED (2026-09-26, the commit on top of `da8048d`, local — not pushed
+**Item (1), the guide stalls, is COMMITTED as `53c0464` (2026-09-26, on top of `da8048d`; local — not pushed
 yet): the owner's four live checks passed.** Its code is exactly tree `792dabc…`, built from a clean export
-on BOTH theme flags with `--selftest` ALL PASS before committing; its docs are these. **Items (2) and (3)
-are NOT committed:** the working tree holds **(2) catch-up playback — done: the round-2 findings fixed in
-six more review rounds (3–8, 2026-09-26), awaiting the owner's seven checks**, and **(3) photoreal stage A
-— built, three review rounds, the owner's checks next**. The working tree builds clean with BOTH theme
+on BOTH theme flags with `--selftest` ALL PASS before committing; its docs are these. **Item (2), catch-up
+playback, is COMMITTED too (2026-09-26, the commit after `53c0464`, local — not pushed yet), labelled
+"(experimental)"** — the owner's choice after their live test (item (2) below: the timing is right; no
+scrub bar). Cut from `25eeae7` without item (3), built from a clean export on BOTH flags with `--selftest`
+ALL PASS before committing. **Item (3) is NOT committed:** the working tree holds **(3) photoreal stage A
+— built, three review rounds, the owner's checks next** (`build\check-0221-meters\`). The working tree builds clean with BOTH theme
 flags, `--selftest` ALL PASS (**853**), `gen_i18n --check` OK (**639** keys). Git TREES (unreferenced
 objects — `git gc` may prune them in ~2 weeks) snapshot it:
 - **`792dabc5e22f47ba71ddc58150b7ecadb0d7cf7f` = item (1) ALONE** — now committed (above).
@@ -51,7 +53,8 @@ objects — `git gc` may prune them in ~2 weeks) snapshot it:
   — stage A then edited `MainWindow.cpp`, `MainWindowCommands.cpp`, `MainWindowInternal.h`, CMake, the
   i18n files… which catch-up ALSO changed. **Cut item (2)'s commit from THIS tree, not from the working
   tree** (the recipe below, applied to `25eeae7`'s files: `git show 25eeae7:<path>`).
-- **Cutting item (2)'s commit** (after (1) is committed): the working tree MINUS item (3) — revert, in a
+- ✅ **Done** — item (2) was cut this way (plus the "(experimental)" labels, which came after `25eeae7`):
+  the working tree MINUS item (3) — revert, in a
   temporary index, `Win32/ui/MiniMeter.*`, `Win32/ui/BufferMeter.*` (the mirrors), `Win32/render/RabbitEarsRender.cpp`
   (`--meter-height`), `Win32/docs/PHOTOREAL.md` to HEAD, leave out `Win32/ui/MeterBridge.*`, and drop the
   LAST SEVEN entries of `common/i18n/keys.json` / `en` / `ja` / `zh-Hant.json` (`MenuMetersSubmenu` …
@@ -60,9 +63,9 @@ objects — `git gc` may prune them in ~2 weeks) snapshot it:
   files aside (copies in the scratchpad), make the working tree the cut, build both flags, selftest,
   commit it, then put them back (a worktree elsewhere hits the share's "dubious ownership").
 
-**Order for the next session:** (a) ✅ done — item (1) committed; (b) the
-owner's seven catch-up checks (dev profile, `scripts\run-profile.ps1 -Exe build\check-0221-catchup\RabbitEars.exe`)
-→ commit (2) as above; (c) finish (3) stage A (the list under (3)); (d) the cleanups (4).
+**Order for the next session:** (a) ✅ item (1) committed; (b) ✅ item (2) committed (experimental);
+(c) (3) stage A — the owner's eight checks (item (3)), then commit; (d) the cleanups (4). Push when the
+owner says (nothing pushed since `da8048d`).
 
 **The owner's order (2026-09-25): (1) the guide stalls, (2) catch-up playback, (3) the photoreal
 meters, (4) the small cleanups** (multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation"
@@ -130,8 +133,19 @@ meters AND skins, all three size options, new selectable looks, skins drive mete
   open TV Guide). (3) Open the TV Guide: the log's `TV guide first-open: DB+build N ms` (was 1221).
   (4) Search in the guide during and right after a refresh: sensible results either way.
 
-**(2) Catch-up playback — DONE, UNCOMMITTED; the round-2 findings FIXED (rounds 3–8, 2026-09-26, at
-the end of this item); awaiting the owner's live test.**
+**(2) Catch-up playback — COMMITTED 2026-09-26, labelled "(experimental)" (the owner's choice); the
+round-2 findings FIXED (rounds 3–8, at the end of this item).**
+- **The owner's live test (2026-09-26, dev profile):** (1) the sync: "299 of 15345 live streams keep an
+  archive; 299 library channels flagged", server clock Europe/Amsterdam UTC+7200 (log) ✓ — at first the
+  owner saw nothing: none of their 14 favourites keeps an archive (the archived channels are UK, NL, CA,
+  FR, DK, PT, IE… — BBC 1 / ITV / Channel 4 in |UK| GENERAL); (2) ↺ after UK - BBC 1 UHD ✓; (3) Saturday
+  Kitchen Live played from ITS OWN START — **the server-local keying is CONFIRMED** ✓; (4) the airing
+  programme offers live or from the start ✓ (the live point itself not reported); (5)–(7) not run.
+  **No scrub bar:** libVLC does not treat the timeshift stream as seekable, so a catch-up plays from its
+  start and cannot be scrubbed (BACKLOG — a seek would be a new timeshift request at the target time).
+  **The owner's decision: ship it as experimental, label only** — "Play from the start (experimental)"
+  (the popup's button now sizes to its label, the popup widens to fit), "Already aired — catch-up
+  (experimental)"; **the 0.2.21 release notes must say so too.**
 - **Data:** "Sync movies from provider" (`Win32/ui/VodSync` `syncArchive`) also fetches `get_live_streams`
   (up to three attempts), maps each archived stream id to the playlist's live channels (`xtreamLiveStreamId` —
   `/U/P/ID`, `/live/U/P/ID.ext`; movie/series ids are other namespaces) and replaces that playlist's
@@ -1581,7 +1595,7 @@ Paste this verbatim to start a fresh session with working context restored:
 > decisions are ANSWERED at its bottom). Older history: `Win32/HANDOVER-ARCHIVE.md`.
 >
 > **State:** 0.2.20 is SHIPPED and auto-update is LIVE (tag `v0.2.20` @ `74a3b9a`, appcasts @ `528cd9a`).
-> macOS is at 0.2.17. **0.2.21-dev: item (1) is COMMITTED** (on top of `da8048d`, with the `APP_VERSION`
+> macOS is at 0.2.17. **0.2.21-dev: item (1) is COMMITTED as `53c0464`** (on top of `da8048d`, with the `APP_VERSION`
 > 0.2.21 bump); items (2) and (3) are in the working tree, uncommitted — it builds clean, `--selftest` ALL
 > PASS (853), `gen_i18n --check` OK (639 keys):
 > 1. **Guide stalls — COMMITTED 2026-09-26** (the owner's four checks passed). First open 1.4 s → ~0.25 s by a narrow query
@@ -1589,15 +1603,15 @@ Paste this verbatim to start a fresh session with working context restored:
 >    store + search-index rebuild on a worker with its own connection (`Win32/ui/EpgStore`), search kept
 >    correct across connections (`PRAGMA data_version`, one read snapshot), `bulkInsertProgrammes` no
 >    longer commits a broken guide.
-> 2. **Catch-up playback — DONE, eight review rounds; awaiting the owner's seven checks** in
->    `build\check-0221-catchup\` (HANDOVER item (2) lists them), THEN committed — cut WITHOUT item (3)'s
->    files (the STATE block says how). Xtream `tv_archive` flags come with "Sync movies from provider"
+> 2. **Catch-up playback — COMMITTED 2026-09-26, labelled "(experimental)"** (the owner's live test:
+>    the timing is right; no scrubbing — BACKLOG). Xtream `tv_archive` flags come with "Sync movies from provider"
 >    (`channel_archive` table, no schema bump; `WM_APP_VOD_ARCHIVE` the moment they are written), timeshift
 >    URLs in the server's own time zone (`Win32/platform/TimeZone`, C++20 tzdb; the zone kept only while it
 >    agrees with the measured clock — `Win32/ui/CatchupSync`), "Play from the start" in the guide
 >    popup/menus, past results in the guide search (their own block and limit, one pass), ↺ in the channel
->    list. The server-local vs UTC keying is settled only by the owner watching one programme (check 3).
->    Known limits left: L2 (player events carry no stream generation — pre-existing, BACKLOG), L3.
+>    list. The server-local keying is confirmed (the owner watched a programme start at its start).
+>    Known limits left: no scrubbing, L2 (player events carry no stream generation — pre-existing,
+>    BACKLOG), L3. The 0.2.21 release notes must call catch-up experimental.
 > 3. **Photoreal stage A (meter SIZE) — half written.** Meter mirrors (`miniMeterSetMirror`,
 >    `bufferMeterSetMirror`) and `Win32/ui/MeterBridge.{h,cpp}` exist (the bridge NOT yet in CMake, never
 >    compiled); `RabbitEarsRender --meter-height DP` works; 7 i18n keys added. HANDOVER's item (3) has the

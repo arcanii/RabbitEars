@@ -517,7 +517,7 @@ void finishEpgRefresh(AppState* st, std::unique_ptr<EpgResult> res) {
                     : tr(i18n::StringId::EpgRefreshFailedSummary);
     // The TV Guide's programme search index is rebuilt ONCE, after every playlist's guide (EPG_SEARCH.md
     // §3), by the store worker. If that failed, the stamp says "stale": searches use LIKE until the
-    // next search SESSION, whose onSearchBegin rebuilds it.
+    // next search SESSION, whose onSearchBegin rebuilds it (when `mayRebuild`, as a typed search asks).
     if (res->aborted)
         diag::error(L"EPG store: stopped part-way by an exception — any guide it did not reach keeps its "
                     L"previous programmes, and the next search session rebuilds the search index");
@@ -621,6 +621,14 @@ void onEpgGuide(AppState* st) {
                            trf(i18n::StringId::GuideNoMatchBody, { channelName }));
         }
     };
+    // Catch-up: like Play, it hides the guide so the programme is visible — once playback has been asked
+    // for (playCatchup explains in a dialog, and leaves the guide up, when it cannot even try).
+    cb.onPlayFromStart = [st](long long archiveChannel, const std::wstring& title, long long startUtc,
+                              long long stopUtc) {
+        if (!playCatchup(st, archiveChannel, title, startUtc, stopUtc)) return;
+        hideEpgGuide();
+        SetForegroundWindow(st->hwnd);
+    };
     cb.isFavourite = [st](const std::wstring& channelId) {
         const auto ch = st->db.channelByTvgId(channelId);
         return ch && ch->favourite;
@@ -637,13 +645,14 @@ void onEpgGuide(AppState* st) {
     // (the first search after upgrading, a deleted playlist, a refresh by an older build, a failed
     // rebuild after a refresh), rebuild it — the guide is already showing "Preparing search…". Not
     // while Refresh Guide's store worker runs: it rebuilds the index itself once it has stored, and a
-    // rebuild here would wait on its lock and then repeat its work, on the UI thread. Searches use
-    // LIKE until then.
-    cb.onSearchBegin = [st]() {
+    // rebuild here would wait on its lock and then repeat its work, on the UI thread. Nor when the guide
+    // re-searches quietly after new catch-up flags (`mayRebuild` false: no "Preparing search…" is up).
+    // Searches use LIKE until then.
+    cb.onSearchBegin = [st](bool mayRebuild) {
         using Clock = std::chrono::steady_clock;
         const auto t0 = Clock::now();
         bool rebuilt = false;
-        if (!epgStoreRunning() &&
+        if (mayRebuild && !epgStoreRunning() &&
             st->db.programmeSearchState() == Database::ProgrammeSearchState::NeedsRebuild)
             rebuilt = st->db.rebuildProgrammeIndex();
         const bool channels = st->db.refreshProgrammeSearchChannels();
@@ -658,10 +667,12 @@ void onEpgGuide(AppState* st) {
     cb.onCountChannelNames = [st](const std::wstring& text, const std::unordered_set<std::wstring>& guideIds) {
         return st->db.countUncoveredChannelNames(text, guideIds, 5000);
     };
-    cb.onSearch = [st](const std::wstring& text, bool* truncated) {
+    cb.onSearch = [st](const std::wstring& text, long long nowUtc, bool* truncated, bool* truncatedPast) {
         using Clock = std::chrono::steady_clock;
         const auto t0 = Clock::now();
-        const auto hits = st->db.searchProgrammes(text, static_cast<long long>(time(nullptr)), 200, truncated);
+        // With catch-up: programmes that have already aired, on channels whose archive still holds them,
+        // after the upcoming ones (the guide lists them under their own heading).
+        const auto hits = st->db.searchProgrammes(text, nowUtc, 200, truncated, /*withArchive=*/true, truncatedPast);
         if (diag::enabled(diag::Level::Debug))
             diag::debug(L"guide search: " + std::to_wstring(hits.size()) + L" hits in " +
                         std::to_wstring(std::chrono::duration_cast<std::chrono::microseconds>(
@@ -679,6 +690,9 @@ void onEpgGuide(AppState* st) {
             g.startUtc = h.programme.startUtc;
             g.stopUtc = h.programme.stopUtc;
             g.inTitle = h.inTitle;
+            g.archiveChannel = h.archiveChannelId;
+            g.archiveDays = h.archiveDays;
+            g.playlistId = h.playlistId;
             out.push_back(std::move(g));
         }
         return out;
@@ -1024,8 +1038,9 @@ void applyViewMode(AppState* st, ViewMode mode) {
     // whenever the PIP happened to be the active pane (owner-reported, 0.2.14).
     // NB st->viewMode is still the OLD mode here — it is assigned below.
     const bool carryStream =
-        st->viewMode == ViewMode::Split && st->active != 0 && st->ap().nowPlayingId != 0;
+        st->viewMode == ViewMode::Split && st->active != 0 && paneHasStream(st->ap());
     const Channel carry = carryStream ? st->ap().nowPlaying : Channel{};
+    const bool carryCatchup = carryStream && st->ap().catchup;
     // Tear the extra panes down ASYNCHRONOUSLY. libVLC 3.x stop()/release() block for seconds on a
     // stuck IPTV feed; doing that synchronously here (player.shutdown()) froze the UI thread — an
     // AppHang — when entering/leaving 2x2 or PIP with flaky streams. beginTeardown() hands the
@@ -1049,8 +1064,8 @@ void applyViewMode(AppState* st, ViewMode mode) {
         addPane(st->hwnd, st, 1, /*floating=*/true);                 // the floating PIP popup
     // Replay the carried selection into pane 0 (st->active is 0 now, so it plays audible) unless
     // pane 0 already has it. This is what makes "the selected stream survives" true.
-    if (carryStream && st->panes[0]->nowPlayingId != carry.id)
-        playChannelInPane(st, carry, 0);
+    if (carryStream && (carryCatchup || st->panes[0]->nowPlayingId != carry.id))
+        playPaneStream(st, carry, carryCatchup, 0);
     setActivePane(st, 0);
     layout(st->hwnd, st);
     InvalidateRect(st->hwnd, nullptr, TRUE);
@@ -1114,6 +1129,10 @@ void onToggleRecord(AppState* st) {
         SetWindowTextW(st->btnRec, kGlyphRecord);
         setStatus(st, trf(i18n::StringId::StatusRecordingSaved, { file }));
         syncKeepAwake(st);  // another pane may still be recording — re-derive, don't assume
+        return;
+    }
+    if (st->ap().catchup) {  // a programme from the archive, not a channel: nothing to record live
+        setStatus(st, tr(i18n::StringId::StatusCatchupNoRecord));
         return;
     }
     if (st->ap().nowPlaying.id == 0) {
@@ -1890,7 +1909,10 @@ void swapPipWithMain(AppState* st) {
     if (!st || st->viewMode != ViewMode::Pip || st->panes.size() < 2) return;
     const Channel mainCh = st->panes[0]->nowPlaying;  // deep copies — Channel is plain value data,
     const Channel pipCh = st->panes[1]->nowPlaying;   // so the re-opens below can't invalidate them
-    if (mainCh.id == 0 && pipCh.id == 0) return;      // both empty — nothing to swap
+    // A catch-up programme has id 0 (see playCatchup) but IS a stream: it moves too, flags and all.
+    const bool mainHas = paneHasStream(*st->panes[0]), pipHas = paneHasStream(*st->panes[1]);
+    const bool mainCatchup = st->panes[0]->catchup, pipCatchup = st->panes[1]->catchup;
+    if (!mainHas && !pipHas) return;  // both empty — nothing to swap
 
     // Make the main view active BEFORE the re-opens, not after. playChannelInPane persists
     // `last_channel_id` only for the pane that is active at the time — with the PIP active (it
@@ -1907,6 +1929,7 @@ void swapPipWithMain(AppState* st) {
         p.nowPlayingId = 0;
         p.nowPlayingName.clear();
         p.nowPlaying = Channel{};
+        p.catchup = false;
         // Hide the vout hosts by hand. They are opaque WS_CHILD windows (BLACK_BRUSH class brush)
         // filling the pane, and they are only ever shown/hidden on PlayerEvent::Playing — a stop
         // posts no such event, so without this the emptied pane keeps showing a black rectangle (or
@@ -1915,18 +1938,21 @@ void swapPipWithMain(AppState* st) {
         for (HWND h : p.voutHosts)
             if (IsWindow(h)) ShowWindow(h, SW_HIDE);
     };
-    if (pipCh.id != 0) playChannelInPane(st, pipCh, 0);
+    if (pipHas) playPaneStream(st, pipCh, pipCatchup, 0);
     else clearPane(*st->panes[0]);
-    if (mainCh.id != 0) playChannelInPane(st, mainCh, 1);
+    if (mainHas) playPaneStream(st, mainCh, mainCatchup, 1);
     else clearPane(*st->panes[1]);
 
     // Repaint whichever side just went empty so its hint actually appears.
     for (int i = 0; i < 2; ++i)
-        if (st->panes[i]->nowPlayingId == 0 && st->panes[i]->hwnd)
+        if (!paneHasStream(*st->panes[i]) && st->panes[i]->hwnd)
             InvalidateRect(st->panes[i]->hwnd, nullptr, TRUE);
     setStatus(st, tr(i18n::StringId::StatusPipSwapped));
-    diag::info(L"PIP swap: main #" + std::to_wstring(mainCh.id) + L" <-> pip #" +
-               std::to_wstring(pipCh.id));
+    // A catch-up is not a channel (its id is 0), and an empty side has none: say so rather than log "#0".
+    auto who = [](const Channel& c, bool has, bool catchup) {
+        return !has ? std::wstring(L"(empty)") : catchup ? std::wstring(L"catch-up") : L"#" + std::to_wstring(c.id);
+    };
+    diag::info(L"PIP swap: main " + who(mainCh, mainHas, mainCatchup) + L" <-> pip " + who(pipCh, pipHas, pipCatchup));
 }
 
 // Settings ▸ System… — the app-wide plumbing dialog. Applies + persists on OK; the dialog itself

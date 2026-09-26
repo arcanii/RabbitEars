@@ -57,7 +57,8 @@ enum class VodSyncStart {
 // retired nothing is a legitimate "your library was already current".
 enum class VodSyncResult {
     Ok,
-    Cancelled,        // asked to stop (app closing) at a checkpoint; nothing was written
+    Cancelled,        // asked to stop (app closing, playback starting) at a checkpoint; no FILM was
+                      // written — catch-up flags may have been (archiveChannels >= 0 says so)
     NetworkError,
     AuthFailed,       // the panel answered and rejected us, or the line is not Active
     ParseError,
@@ -76,6 +77,12 @@ struct VodSyncReport {
     // film we can play is safe; removing one on bad evidence is not.
     bool retireRefused = false;
     std::wstring detail;  // short technical reason (HTTP / JSON), NOT localized; for the log + tail
+    // Catch-up (live archives, get_live_streams): the library channels now flagged as keeping an
+    // archive, across the synced playlists — or -1 when no playlist's flags were updated, with
+    // `archiveDetail` saying why (not localized, like `detail`). Its own failures never change
+    // `result`: the movie sync stands on its own, and the previous flags are kept.
+    int archiveChannels = -1;
+    std::wstring archiveDetail;
 };
 
 // Progress phases, posted as the WPARAM of WM_APP_VOD_PROGRESS. LPARAM carries a count that only
@@ -83,6 +90,7 @@ struct VodSyncReport {
 constexpr WPARAM kVodPhaseContacting = 0;
 constexpr WPARAM kVodPhaseFetching = 1;
 constexpr WPARAM kVodPhaseSaving = 2;
+constexpr WPARAM kVodPhaseCatchup = 3;  // the live list, for the catch-up flags (before the films)
 
 // True when at least one ENABLED playlist looks like an Xtream line. Cheap (a URL parse per
 // playlist, no network) — it drives whether the menu item exists at all, so a user whose provider

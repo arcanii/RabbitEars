@@ -68,6 +68,24 @@ std::wstring xtreamMovieUrl(const XtreamCreds& c, long long streamId, const std:
 // the same rule and belongs beside its sibling.
 std::wstring xtreamEpisodeUrl(const XtreamCreds& c, long long episodeId, const std::wstring& ext);
 
+// A live channel's ARCHIVE (catch-up): `{origin}/timeshift/{user}/{pass}/{minutes}/{YYYY-MM-DD:HH-MM}/
+// {streamId}.ts`, from `startUtc` for `minutes`. The panel reads that start on ITS OWN wall clock, so
+// `serverUtcOffsetSec` — the server's local time minus UTC at `startUtc` (see XtreamAccount) — is
+// added first; seconds are dropped. Measured on the owner's panel (Europe/Amsterdam, 2026-09-25): this
+// form returned MPEG-TS for archived programmes; `streaming/timeshift.php?…` and `.m3u8` did no better.
+// A channel can advertise an archive and still answer an empty 200 for a time it did not record.
+// Empty when the credentials, id or duration are unusable.
+std::wstring xtreamTimeshiftUrl(const XtreamCreds& c, long long streamId, long long startUtc, int minutes,
+                                int serverUtcOffsetSec);
+
+// The stream id in an Xtream LIVE stream URL — `{origin}/{user}/{pass}/{id}[.ext]` or
+// `{origin}/live/{user}/{pass}/{id}[.ext]` — or 0 for anything else. Movie and series URLs
+// (`/movie/{user}/{pass}/…`, `/series/…`: one segment more) give 0 even though they end in a number:
+// ids are numbered per kind, so a film's id can equal a live channel's, and get_live_streams' ids name
+// live channels only. With `creds`, the path's user and password (percent-decoded) must also be that
+// login's — so a non-Xtream `/a/b/123` in the same playlist is not taken for stream 123.
+long long xtreamLiveStreamId(const std::wstring& streamUrl, const XtreamCreds* creds = nullptr);
+
 // ---------------------------------------------------------------------------
 // Responses
 // ---------------------------------------------------------------------------
@@ -81,7 +99,20 @@ struct XtreamAccount {
     long long    expiresAt = 0;         // unix epoch; 0 == unknown/unlimited
     int          maxConnections = 0;    // 0 == not reported. THE constraint on any sync.
     long long    serverTime = 0;        // server_info.timestamp_now; 0 == absent
+    // The server's wall clock, for catch-up URLs (xtreamTimeshiftUrl): server_info.timezone (an IANA
+    // name, e.g. "Europe/Amsterdam"; empty == absent) and server_info.time_now ("YYYY-MM-DD HH:MM:SS",
+    // local) read as if it were UTC — so serverLocalTime - serverTime is the server's UTC offset at
+    // that moment. 0 == absent or unparseable.
+    std::wstring timezone;
+    long long    serverLocalTime = 0;
 };
+
+// The server's UTC offset from an account probe — serverLocalTime - serverTime, rounded to the quarter
+// hour (every offset in use today is a multiple of 15 min; the two readings can straddle a second
+// tick). False — `*offsetSec` untouched — when either reading is missing or the result lies outside
+// −12 h … +14 h (a millisecond timestamp, a mis-set clock): no answer beats a wrong one, since a
+// wrong offset silently plays the wrong part of the archive.
+bool xtreamServerUtcOffset(const XtreamAccount& a, int* offsetSec);
 
 // A panel answers BAD CREDENTIALS with HTTP 200 and `{"user_info":{"auth":0}}`, so
 // "it responded" and "it let us in" are different questions. `authOk` is the second one.
@@ -117,6 +148,18 @@ struct XtreamVodResult {
 
 bool parseXtreamVodStreams(const std::string& body, XtreamVodResult& out,
                            std::wstring* err = nullptr);
+
+// One live stream that keeps an archive (catch-up), from get_live_streams.
+struct XtreamArchive {
+    long long streamId = 0;
+    int       days = 0;  // tv_archive_duration
+};
+// get_live_streams → the streams with `tv_archive` set and a positive `tv_archive_duration` (the owner's
+// panel: 299 of 15,345, 1–3 days). `total` (optional) = the entries in the list. Fails — rather than
+// answering "no archives" — on anything but a JSON array (an HTML error page, an object), so a caller
+// never replaces good archive data with nothing because a request went wrong.
+bool parseXtreamLiveArchive(const std::string& body, std::vector<XtreamArchive>& out, size_t* total = nullptr,
+                            std::wstring* err = nullptr);
 
 // ---------------------------------------------------------------------------
 // Model mapping

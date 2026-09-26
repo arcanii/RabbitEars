@@ -8,6 +8,7 @@
 #pragma once
 
 #include <functional>
+#include <unordered_map>
 #include <vector>
 
 #include <windows.h>
@@ -35,5 +36,8 @@ void channelGridGetCounts(HWND grid, int* shown, int* total);
 void channelGridSetNowPlaying(HWND grid, long long channelId);
 // Update a channel's dead/geolocked status (greys it out); no-op if not loaded.
 void channelGridSetDeadStatus(HWND grid, long long channelId, DeadStatus status);
+// The channels that keep a catch-up archive (channel id -> days), marked ↺ at the right of the
+// name; replaces the previous set. Kept across channelGridSetChannels (it is per channel id).
+void channelGridSetArchive(HWND grid, std::unordered_map<long long, int> archiveDays);
 
 }  // namespace rabbitears

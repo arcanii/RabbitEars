@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -249,6 +250,11 @@ public:
         // channelName may be empty (a nameless channel — show the id, as the guide does).
         std::wstring channelName, channelTvgId;
         bool         inTitle = false;   // false = matched only in the description
+        // Catch-up: the channel whose archive can play this programme — of the playlist's channels
+        // sharing its guide id, the one keeping the longest archive (the first in channelsByPlaylist's
+        // order on a tie) — and how many days back it goes. 0 = none.
+        long long    archiveChannelId = 0;
+        int          archiveDays = 0;
         // For display, each marked occurrence wrapped in U+0002 … U+0003: `markedTitle` = the title
         // with the typed text marked (title matches); `snippet` = an excerpt of the description around
         // the EARLIEST occurrence of any typed word (description-only matches). Marking is simpler
@@ -259,11 +265,13 @@ public:
         // only the last), and compares typed punctuation literally.
         std::wstring markedTitle, snippet;
     };
-    // (Re)load which channels a search may return: every channel with a tvg-id in an ENABLED
+    // (Re)load which channels a search may return — with, per guide id, the catch-up channel and its
+    // archive days (ProgrammeHit::archiveChannelId): every channel with a tvg-id in an ENABLED
     // playlist, per playlist, by normalised tvg-id — the channels a TV Guide row can be built for
     // (the guide itself only builds rows for programmes in its −6 h..+72 h window). Results are
     // filtered to these BEFORE the limit. Kept on this connection (a TEMP table) until the next call;
-    // call it when a search session starts (~90 ms at the owner's 410k channels, measured).
+    // call it when a search session starts (~90 ms at the owner's 410k channels, measured). It also
+    // notes whether any of them keeps an archive (searchProgrammes' `withArchive` costs nothing without).
     bool refreshProgrammeSearchChannels();
     // Programmes still airing or upcoming at `fromUtc` (stop_utc > fromUtc) on a channel
     // refreshProgrammeSearchChannels() loaded, whose title contains `text` or whose description has
@@ -278,8 +286,17 @@ public:
     // CJK into words. `truncated` (optional) is set when more than `limit` matched. Measured on the owner's
     // real guide (193k programmes): 0.2–0.4 ms for most words, 20–40 ms for the commonest ("news",
     // "the"); the LIKE fallback ~50 ms.
+    // `withArchive` (catch-up): ALSO programmes that have already ended, on channels whose archive
+    // reaches back to their start (archive days × 24 h before `fromUtc`). Then the upcoming and airing
+    // ones come first — title matches, then description-only, soonest first, as above — and the ended
+    // ones after them, likewise split, most recent first; each of the two blocks has its own `limit`
+    // (up to 2 × `limit` results), so a word common among upcoming programmes still shows aired ones.
+    // Then `truncated` says there were more UPCOMING ones, and `truncatedPast` (optional) more aired
+    // ones — without `truncatedPast`, `truncated` says either. One pass over the matches still; when no
+    // channel refreshProgrammeSearchChannels() loaded keeps an archive, exactly the search without.
     std::vector<ProgrammeHit> searchProgrammes(const std::wstring& text, long long fromUtc, int limit,
-                                               bool* truncated = nullptr);
+                                               bool* truncated = nullptr, bool withArchive = false,
+                                               bool* truncatedPast = nullptr);
     // Per playlist (enabled or not): how many distinct guide ids its LIVE channels carry — tvg-ids
     // normalised the way the guide joins them ('@feed' stripped, ASCII-lower-cased), so channels
     // sharing an id count once. Playlists with none are absent. The TV Guide's coverage line ("guide
@@ -300,8 +317,32 @@ public:
     struct GuideChannel {
         long long    playlistId = 0;
         std::wstring name, tvgId;  // tvgId as stored (not normalised)
+        long long    id = 0;           // the channel row
+        int          archiveDays = 0;  // catch-up: days of archive it keeps (channel_archive), 0 = none
     };
     std::vector<GuideChannel> liveGuideChannels();
+
+    // ---- Catch-up (live-channel archives — Xtream tv_archive) -----------------
+    // Which live channels keep an archive, and for how many days: the table channel_archive, replaced
+    // per playlist by the provider sync (Win32 VodSync, from get_live_streams). Created when the app
+    // opens the database — no schema version: a build that does not know it never reads it, and a
+    // channel's row leaves with the channel (ON DELETE CASCADE). If it could not be created, catch-up
+    // is simply absent (channelArchiveReady() false; the calls below do nothing).
+    bool channelArchiveReady() const { return archiveReady_; }
+    // Replace ONE playlist's flags, in one transaction: `days` = (channel id, days of archive) for
+    // its channels that keep one — ids of other playlists' channels are ignored — and every other
+    // channel of the playlist loses its flag. False = nothing changed (lastError()).
+    bool replaceChannelArchive(long long playlistId, const std::vector<std::pair<long long, int>>& days);
+    // Every channel that keeps an archive: channel id -> days (the channel list's catch-up marker).
+    std::unordered_map<long long, int> channelArchiveDays();
+    // A playlist's live channels as (id, stream URL) — what the sync reads stream ids out of. Kind 0
+    // minus the URLs whose path starts "series/" or "movie/" (exactly so, case-sensitive) with at least
+    // three more '/' after it anywhere (a query or a trailing slash counts): an Xtream playlist's series
+    // episodes are kind 0 too (351k of the owner's 366k). A live URL's first segment is "live" or the
+    // login's user name, so only a user NAMED "series" or "movie" could lose one — pass the playlist's
+    // (decoded) `username` and that word's filter is skipped for it. A pre-filter: the caller decides.
+    std::vector<std::pair<long long, std::wstring>> liveChannelUrls(long long playlistId,
+                                                                    const std::wstring& username = L"");
 
     // ---- Scheduled recordings ----------------------------------------------
     long long addSchedule(const ScheduledRecording& s);  // returns the new id, or 0 on failure
@@ -364,6 +405,8 @@ private:
     bool channelSearchTableExists();         // channels_fts present AND genuinely FTS5
     std::wstring programmeIndexStamp();      // what the index must have been built from
     long long    dataVersion();              // PRAGMA data_version; -1 = could not read
+    bool         archiveReady_ = false;      // channel_archive exists on this connection (catch-up)
+    bool         archiveInSearch_ = false;   // the last refreshProgrammeSearchChannels found an archive
     // programmeSearchState()'s memory: -1 = not yet checked since this connection last changed
     // epg_programmes, 0 = stale, 1 = current. Reset by bulkInsertProgrammes and deletePlaylist, and
     // disregarded once data_version moves off `programmeIndexDataVersion_` (another connection

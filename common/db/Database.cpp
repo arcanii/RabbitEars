@@ -485,6 +485,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dedupe ON channels(playlist_id, s
 )SQL";
     if (!exec(kSchema)) return false;
     migrate();
+    // Catch-up flags (channel_archive — see Database.h). Not in kSchema, whose failure fails the open,
+    // and not a version step: IF NOT EXISTS costs nothing once it exists, a build that does not know
+    // the table never reads it, and if it cannot be made the app runs without catch-up.
+    archiveReady_ = exec("CREATE TABLE IF NOT EXISTS channel_archive("
+                         "  channel_id INTEGER PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,"
+                         "  days       INTEGER NOT NULL"
+                         ")");
     return true;
 }
 
@@ -1702,6 +1709,7 @@ namespace {
 constexpr const char* kSearchChannelTable =
     "CREATE TEMP TABLE IF NOT EXISTS guide_channels("
     "playlist_id INTEGER NOT NULL, cid TEXT NOT NULL, name TEXT NOT NULL, tvg_id TEXT NOT NULL,"
+    " archive_channel INTEGER NOT NULL DEFAULT 0, archive_days INTEGER NOT NULL DEFAULT 0,"
     " PRIMARY KEY(playlist_id, cid)) WITHOUT ROWID";
 
 // A tvg-id normalised as core/RecordingRules normaliseTvgId does — the part before '@',
@@ -1721,19 +1729,40 @@ bool Database::refreshProgrammeSearchChannels() {
     // Per (playlist, id) keep the FIRST LIVE channel in channelsByPlaylist's own order — the one the
     // guide's row join keeps (Win32 buildGuideModel, through liveGuideChannels), so a result names the
     // same channel, and carries the same tvg-id, as its guide row.
-    const bool ok =
-        exec("DELETE FROM temp.guide_channels") &&
-        exec("INSERT INTO temp.guide_channels(playlist_id,cid,name,tvg_id)"
-             " SELECT playlist_id, cid, name, tvg_id FROM ("
-             "  SELECT playlist_id, " RE_NORM_TVG("tvg_id") " AS cid, name, tvg_id,"
-             "   ROW_NUMBER() OVER (PARTITION BY playlist_id, " RE_NORM_TVG("tvg_id")
-             "    ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id) AS rn"
-             "  FROM channels WHERE tvg_id>'' AND +kind=0"  // + : the tvg-id index, not every live row
-             "   AND +playlist_id IN (SELECT id FROM playlists WHERE enabled=1))"
-             " WHERE rn=1");
+    // With catch-up (channel_archive), also per (playlist, id) the channel that keeps the LONGEST
+    // archive, the first in the same order on a tie — buildGuideModel's pick too — so "CNN HD" without
+    // one (or with 1 day) still plays from its sibling "CNN" with 3.
+    std::string insert =
+        "INSERT INTO temp.guide_channels(playlist_id,cid,name,tvg_id,archive_channel,archive_days)"
+        " SELECT f.playlist_id, f.cid, f.name, f.tvg_id, ";
+    insert += archiveReady_ ? "IFNULL(a.channel_id,0), IFNULL(a.days,0)" : "0, 0";
+    insert +=
+        " FROM (SELECT playlist_id, cid, name, tvg_id FROM ("
+        "  SELECT playlist_id, " RE_NORM_TVG("tvg_id") " AS cid, name, tvg_id,"
+        "   ROW_NUMBER() OVER (PARTITION BY playlist_id, " RE_NORM_TVG("tvg_id")
+        "    ORDER BY kind, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id) AS rn"
+        "  FROM channels WHERE tvg_id>'' AND +kind=0"  // + : the tvg-id index, not every live row
+        "   AND +playlist_id IN (SELECT id FROM playlists WHERE enabled=1))"
+        " WHERE rn=1) f";
+    if (archiveReady_)
+        insert +=
+            " LEFT JOIN (SELECT playlist_id, cid, channel_id, days FROM ("
+            "  SELECT c.playlist_id, " RE_NORM_TVG("c.tvg_id") " AS cid, c.id AS channel_id, a.days,"
+            "   ROW_NUMBER() OVER (PARTITION BY c.playlist_id, " RE_NORM_TVG("c.tvg_id")
+            "    ORDER BY a.days DESC, (c.lcn IS NULL), c.lcn, c.sort_order, c.name COLLATE NOCASE, c.id) AS rn"
+            "  FROM channel_archive a CROSS JOIN channels c ON c.id=a.channel_id"
+            "  WHERE c.tvg_id>'' AND c.kind=0)"
+            " WHERE rn=1) a ON a.playlist_id=f.playlist_id AND a.cid=f.cid";
+    const bool ok = exec("DELETE FROM temp.guide_channels") && exec(insert.c_str());
     if (!ok || !exec("COMMIT")) {
         exec("ROLLBACK");  // a failed COMMIT leaves the transaction open — close it
         return false;
+    }
+    // Unknown (the query failed): assume there is — the aired block then merely finds nothing.
+    archiveInSearch_ = archiveReady_;
+    if (archiveReady_) {
+        Stmt q(db_, "SELECT EXISTS(SELECT 1 FROM temp.guide_channels WHERE archive_days>0)");
+        if (q && q.step()) archiveInSearch_ = q.intCol(0) != 0;
     }
     return true;
 }
@@ -1770,16 +1799,87 @@ std::vector<Database::GuideChannel> Database::liveGuideChannels() {
     // it, it walks every live row (idx_channels_live) or the playlist's rows to find the few with an
     // id. After playlist_id, the ORDER BY is channelsByPlaylist's with its leading `kind` dropped
     // (constant here) — keep the two in step, or the guide's rows name a different channel.
-    Stmt q(db_, "SELECT playlist_id, name, tvg_id FROM channels WHERE tvg_id>'' AND +kind=0"
-                " ORDER BY playlist_id, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id");
+    Stmt q(db_, archiveReady_
+                    ? "SELECT c.playlist_id, c.name, c.tvg_id, c.id, IFNULL(a.days,0) FROM channels c"
+                      " LEFT JOIN channel_archive a ON a.channel_id=c.id WHERE c.tvg_id>'' AND +c.kind=0"
+                      " ORDER BY c.playlist_id, (c.lcn IS NULL), c.lcn, c.sort_order, c.name COLLATE NOCASE, c.id"
+                    : "SELECT playlist_id, name, tvg_id, id, 0 FROM channels WHERE tvg_id>'' AND +kind=0"
+                      " ORDER BY playlist_id, (lcn IS NULL), lcn, sort_order, name COLLATE NOCASE, id");
     if (!q) return out;
     while (q.step()) {
         GuideChannel c;
         c.playlistId = q.intCol(0);
         c.name = q.textCol(1);
         c.tvgId = q.textCol(2);
+        c.id = q.intCol(3);
+        c.archiveDays = static_cast<int>(q.intCol(4));
         out.push_back(std::move(c));
     }
+    return out;
+}
+
+bool Database::replaceChannelArchive(long long playlistId, const std::vector<std::pair<long long, int>>& days) {
+    if (!db_ || !archiveReady_) return false;
+    auto fail = [this]() {
+        lastError_ = wideFromUtf8(sqlite3_errmsg(db_));
+        return false;
+    };
+    Tx tx(db_);
+    if (!tx) return fail();
+    {
+        // Correlated, so it reads the few hundred flag rows — not every channel of a 410k-row playlist.
+        Stmt del(db_, "DELETE FROM channel_archive"
+                      " WHERE (SELECT playlist_id FROM channels WHERE id=channel_archive.channel_id)=?");
+        if (!del) return fail();
+        del.bindInt(1, playlistId);
+        if (del.stepDone() != SQLITE_DONE) return fail();
+    }
+    // Only this playlist's channels: an id from anywhere else inserts nothing (the SELECT finds no row).
+    Stmt ins(db_, "INSERT OR REPLACE INTO channel_archive(channel_id, days)"
+                  " SELECT id, ?2 FROM channels WHERE id=?1 AND playlist_id=?3");
+    if (!ins) return fail();
+    for (const auto& [id, d] : days) {
+        if (d <= 0) continue;
+        ins.reset();
+        ins.bindInt(1, id);
+        ins.bindInt(2, d);
+        ins.bindInt(3, playlistId);
+        if (ins.stepDone() != SQLITE_DONE) return fail();  // any failure: keep the previous flags whole
+    }
+    if (!tx.commit()) return fail();
+    return true;
+}
+
+std::unordered_map<long long, int> Database::channelArchiveDays() {
+    std::unordered_map<long long, int> out;
+    if (!db_ || !archiveReady_) return out;
+    Stmt q(db_, "SELECT channel_id, days FROM channel_archive");
+    if (!q) return out;
+    while (q.step()) out.emplace(q.intCol(0), static_cast<int>(q.intCol(1)));
+    return out;
+}
+
+std::vector<std::pair<long long, std::wstring>> Database::liveChannelUrls(long long playlistId,
+                                                                         const std::wstring& username) {
+    std::vector<std::pair<long long, std::wstring>> out;
+    if (!db_) return out;
+    // On an Xtream playlist the SERIES episodes are kind 0 too — 351k of the owner's 366k "live" rows;
+    // their /series/ (and any /movie/) URLs are left out here rather than returned to be parsed and
+    // thrown away (15k rows instead of 366k, ~70 MB of strings fewer). Only by the FIRST path segment,
+    // spelt exactly so (GLOB is case-sensitive), then at least three more '/' — GLOB's * crosses them,
+    // so a query or a trailing slash counts too, which only matters for a user name that IS that word
+    // (see the header): its clause is left out then. A pre-filter only: xtreamLiveStreamId decides.
+    // 141 ms on the owner's playlist (was 87 ms by NOT LIKE, which also dropped a login "Movie" or
+    // "series"), the same 14,996 rows.
+    std::string sql = "SELECT id, stream_url FROM (SELECT id, stream_url,"
+                      " substr(stream_url, instr(stream_url, '://') + 3) AS r FROM channels"
+                      " WHERE playlist_id=? AND kind=0) WHERE 1";
+    if (username != L"series") sql += " AND NOT substr(r, instr(r, '/')) GLOB '/series/*/*/*'";
+    if (username != L"movie") sql += " AND NOT substr(r, instr(r, '/')) GLOB '/movie/*/*/*'";
+    Stmt q(db_, sql.c_str());
+    if (!q) return out;
+    q.bindInt(1, playlistId);
+    while (q.step()) out.emplace_back(q.intCol(0), q.textCol(1));
     return out;
 }
 
@@ -2001,9 +2101,11 @@ constexpr const char* kSearchChannelJoin =
 
 std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstring& text,
                                                                long long fromUtc, int limit,
-                                                               bool* truncated) {
+                                                               bool* truncated, bool withArchive,
+                                                               bool* truncatedPast) {
     std::vector<ProgrammeHit> out;
     if (truncated) *truncated = false;
+    if (truncatedPast) *truncatedPast = false;
     if (!db_ || limit <= 0) return out;
     const std::wstring term = trimSpace(text);
     if (term.empty()) return out;
@@ -2036,37 +2138,60 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
     // 1. Match, keep the caller's channels, rank, limit — ROWIDS ONLY from the index: fetching a
     //    column, highlight() or snippet() through FTS5 reads (and re-tokenises) the content row of
     //    EVERY match before the LIMIT applies — measured 700 ms for "the" with snippet().
-    std::string sql;
+    // Which programmes, by time (?3 is `fromUtc`): still airing or upcoming, soonest first — and with
+    // catch-up, after them, ended ones whose start the channel's archive reaches, most recent first,
+    // with a `limit` of their own: under one shared limit a broad word ("news") filled it with upcoming
+    // programmes and never showed an aired one. Still ONE pass over the matches — a window function
+    // numbers the two blocks apart — where a second query for the aired block paid for the whole match
+    // again (the owner's library copy with 300 archive channels: "news" 36 ms this way, 55 ms as two
+    // queries, 36 ms before the split; "the" 74 / 105 / 67 ms).
+    // No channel in the set keeps an archive: there is no aired block to find (and no window to pay for).
+    const bool aired = withArchive && archiveInSearch_;
+    const std::string when =
+        aired ? " WHERE (p.stop_utc>?3 OR (g.archive_days>0 AND p.start_utc>=?3-g.archive_days*86400))"
+              : " WHERE p.stop_utc>?3";
+    std::string cols, from, filter, inTitleExpr;
     if (useIndex) {
-        sql = "SELECT p.id, MAX(m.t) AS inTitle, p.start_utc, g.name, g.tvg_id FROM ("
-              "SELECT rowid AS id, 1 AS t FROM epg_fts_title WHERE epg_fts_title MATCH ?1";
+        inTitleExpr = "MAX(m.t)";
+        // Named explicitly: the catch-up query reads them back by these names from its subquery.
+        cols = "p.id AS id, MAX(m.t) AS inTitle, p.start_utc AS start_utc, g.name AS name, g.tvg_id AS tvg_id,"
+               " g.archive_channel AS archive_channel, g.archive_days AS archive_days";
+        from = " FROM (SELECT rowid AS id, 1 AS t FROM epg_fts_title WHERE epg_fts_title MATCH ?1";
         if (!descrQ.empty())
-            sql += " UNION ALL SELECT rowid, 0 FROM epg_fts_descr WHERE epg_fts_descr MATCH ?2";
+            from += " UNION ALL SELECT rowid, 0 FROM epg_fts_descr WHERE epg_fts_descr MATCH ?2";
         else if (cjk)  // the whole term as a substring of the description (a table scan, ~50 ms)
-            sql += " UNION ALL SELECT id, 0 FROM epg_programmes WHERE descr LIKE ?5 ESCAPE '\\'";
-        sql += ") m CROSS JOIN epg_programmes p ON p.id=m.id";
-        sql += kSearchChannelJoin;
-        sql += " WHERE p.stop_utc>?3";
-        sql += std::string(" AND p.") + kEnabledOnly;
-        sql += " GROUP BY p.id ORDER BY inTitle DESC, p.start_utc LIMIT ?4";
+            from += " UNION ALL SELECT id, 0 FROM epg_programmes WHERE descr LIKE ?5 ESCAPE '\\'";
+        from += ") m CROSS JOIN epg_programmes p ON p.id=m.id";
+        from += kSearchChannelJoin;
+        filter = when + " AND p." + kEnabledOnly + " GROUP BY p.id";
     } else {
         // LIKE, matching the whole term as one substring: titles always; descriptions too unless
         // the index is Ready (a 1–2 character Latin term WITH a Ready index searches titles only — a
         // one-letter description scan matches nearly everything), and always for CJK, where two
         // characters are already a whole word.
-        sql = "SELECT p.id, (p.title LIKE ?1 ESCAPE '\\') AS inTitle, p.start_utc, g.name, g.tvg_id"
-              " FROM epg_programmes p";
-        sql += kSearchChannelJoin;
-        sql += " WHERE p.stop_utc>?3";
-        sql += std::string(" AND p.") + kEnabledOnly;
-        sql += (ready && !cjk) ? " AND p.title LIKE ?1 ESCAPE '\\'"
-                               : " AND (p.title LIKE ?1 ESCAPE '\\' OR p.descr LIKE ?1 ESCAPE '\\')";
-        sql += " ORDER BY inTitle DESC, p.start_utc LIMIT ?4";
+        inTitleExpr = "(p.title LIKE ?1 ESCAPE '\\')";
+        cols = "p.id AS id, (p.title LIKE ?1 ESCAPE '\\') AS inTitle, p.start_utc AS start_utc, g.name AS name,"
+               " g.tvg_id AS tvg_id, g.archive_channel AS archive_channel, g.archive_days AS archive_days";
+        from = std::string(" FROM epg_programmes p") + kSearchChannelJoin;
+        filter = when + " AND p." + kEnabledOnly;
+        filter += (ready && !cjk) ? " AND p.title LIKE ?1 ESCAPE '\\'"
+                                  : " AND (p.title LIKE ?1 ESCAPE '\\' OR p.descr LIKE ?1 ESCAPE '\\')";
     }
+    const std::string sql =
+        aired
+            // Column 7, `past`, says which block a row is in; ?4 rows at most of each.
+            ? "SELECT id, inTitle, start_utc, name, tvg_id, archive_channel, archive_days, past FROM (SELECT " +
+                  cols + ", (p.stop_utc<=?3) AS past, ROW_NUMBER() OVER (PARTITION BY (p.stop_utc<=?3) ORDER BY " +
+                  inTitleExpr + " DESC, CASE WHEN p.stop_utc>?3 THEN p.start_utc ELSE -p.start_utc END, p.id) AS rn" +
+                  from + filter +
+                  ") WHERE rn<=?4 ORDER BY past, inTitle DESC, CASE WHEN past=0 THEN start_utc ELSE -start_utc END, id"
+            : "SELECT " + cols + from + filter + " ORDER BY inTitle DESC, p.start_utc LIMIT ?4";
     struct Ranked {
         long long    id;
         bool         inTitle;
         std::wstring name, tvgId;
+        long long    archiveChannel;
+        int          archiveDays;
     };
     std::vector<Ranked> ranked;
     {
@@ -2079,12 +2204,18 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
         if (useIndex && !descrQ.empty()) q.bindText(2, descrQ);
         if (useIndex && descrQ.empty() && cjk) q.bindText(5, likeContains(term));
         q.bindInt(3, fromUtc);
-        q.bindInt(4, static_cast<long long>(limit) + 1);  // one extra says "there are more"
-        while (q.step()) ranked.push_back({q.intCol(0), q.intCol(1) != 0, q.textCol(3), q.textCol(4)});
-    }
-    if (static_cast<int>(ranked.size()) > limit) {
-        ranked.resize(static_cast<size_t>(limit));
-        if (truncated) *truncated = true;
+        q.bindInt(4, static_cast<long long>(limit) + 1);  // one extra (per block) says "there are more"
+        int read[2] = {0, 0};  // rows per block: upcoming, aired
+        while (q.step()) {
+            const int block = aired && q.intCol(7) != 0 ? 1 : 0;
+            if (++read[block] > limit) {
+                bool* more = (block == 1 && truncatedPast) ? truncatedPast : truncated;
+                if (more) *more = true;
+                continue;
+            }
+            ranked.push_back({q.intCol(0), q.intCol(1) != 0, q.textCol(3), q.textCol(4), q.intCol(5),
+                              static_cast<int>(q.intCol(6))});
+        }
     }
     if (ranked.empty()) return out;
 
@@ -2127,6 +2258,8 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
         h.inTitle = r.inTitle;
         h.channelName = std::move(r.name);
         h.channelTvgId = std::move(r.tvgId);
+        h.archiveChannelId = r.archiveChannel;
+        h.archiveDays = r.archiveDays;
         if (h.inTitle) h.markedTitle = markAll(h.programme.title, {term}, false);
         else h.snippet = snippetAround(h.programme.descr, words);
         out.push_back(std::move(h));

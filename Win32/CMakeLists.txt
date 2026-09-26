@@ -7,12 +7,14 @@
 # RabbitEarsPlatformWin — the Windows platform layer the core deliberately
 # excludes: WinHTTP download (Http.cpp) + the %LOCALAPPDATA% db path (Paths.cpp,
 # which implements Database::defaultDbPath) + log-credential masking
-# (UrlRedact.cpp — pure, here so the CLI selftest can reach it). Linked by the CLI
+# (UrlRedact.cpp — pure, here so the CLI selftest can reach it) + a named time zone's offset
+# (TimeZone.cpp — catch-up URLs; here for the same reason). Linked by the CLI
 # and the GUI. The macOS peers are ../mac/platform/* (UrlRedact has none).
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsPlatformWin STATIC
   platform/Http.cpp
   platform/Paths.cpp
+  platform/TimeZone.cpp
   platform/UrlRedact.cpp)
 target_link_libraries(RabbitEarsPlatformWin PUBLIC RabbitEarsCore shell32 ole32 winhttp)
 # Win32/ as an include root: for this library's own sources (platform/HttpProgress.h,
@@ -25,8 +27,9 @@ target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_
 # gate 1 of the VOD epic — it is NOT the production JSON path. See its header.
 # ---------------------------------------------------------------------------
 # ui/GuideModel.cpp is the TV Guide's row build (no window code) — compiled here too so --selftest
-# and --guidebench run the GUI's own build against a database.
-add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp ui/GuideModel.cpp)
+# and --guidebench run the GUI's own build against a database; ui/CatchupSync.cpp likewise (the
+# provider sync's catch-up decisions), for --selftest.
+add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp ui/CatchupSync.cpp ui/GuideModel.cpp)
 target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsPlatformWin)
 add_test(NAME selftest COMMAND RabbitEarsCli --selftest)  # peer of mac/'s selftest
 
@@ -81,6 +84,7 @@ if(RABBITEARS_BUILD_GUI)
     ui/VuDial.cpp
     ui/DeadLinkSweep.cpp
     ui/VodSync.cpp
+    ui/CatchupSync.cpp
     ui/Dialogs.cpp
     ui/Splash.cpp
     ui/VlcEngine.cpp

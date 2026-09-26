@@ -714,7 +714,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 applyActiveSkin(hwnd, st, /*repaint=*/false);  // window not shown yet; first paint uses it
 #endif
                 syncSpectrumTap(st);
-                refreshNav(st);
+                refreshNav(st);  // (also loads the grid's catch-up ↺ markers)
                 st->filter = {ViewKind::All};
                 loadForFilter(st);
                 int total = 0;
@@ -857,12 +857,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     case kVodPhaseFetching:
                         setStatus(st, tr(i18n::StringId::StatusVodSyncFetching));
                         break;
+                    case kVodPhaseCatchup:
+                        setStatus(st, tr(i18n::StringId::StatusVodSyncFetchingCatchup));
+                        break;
                     case kVodPhaseSaving:
                         setStatus(st, trf(i18n::StringId::StatusVodSyncSaving,
                                           {std::to_wstring(static_cast<int>(lParam))}));
                         break;
                 }
             }
+            return 0;
+        case WM_APP_VOD_ARCHIVE:
+            // Catch-up flags written mid-sync: the grid's ↺ markers, the flags playCatchup checks, and a
+            // TV Guide that is already built follow them now (refreshArchiveMarkers), not after the films.
+            if (st) refreshArchiveMarkers(st);
             return 0;
         case WM_APP_VOD_DONE:
             if (st) {
@@ -890,32 +898,41 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         loadForFilter(st);
                     }
                 }
+                std::wstring line;
                 if (r.result == VodSyncResult::Ok) {
                     // retireRefused is accumulated over every playlist, so it does NOT mean
                     // "nothing was removed" — with two providers one line can refuse while the
                     // other retires. The message therefore reports the removals too; claiming a
                     // flat zero would be a falsehood about work that was committed.
-                    setStatus(st, r.retireRefused
+                    line = r.retireRefused
                                       ? trf(i18n::StringId::StatusVodSyncDoneNoRetire,
                                             {std::to_wstring(r.inserted), std::to_wstring(r.retired),
                                              std::to_wstring(r.unusable)})
                                       : trf(i18n::StringId::StatusVodSyncDone,
-                                            {std::to_wstring(r.inserted), std::to_wstring(r.retired)}));
+                                            {std::to_wstring(r.inserted), std::to_wstring(r.retired)});
                 } else if (changed) {
                     // Stopped part-way with work already committed. "Nothing was changed" would be
                     // a lie here, and so would "done".
-                    setStatus(st, trf(i18n::StringId::StatusVodSyncPartial,
-                                      {std::to_wstring(r.inserted), r.detail}));
+                    line = trf(i18n::StringId::StatusVodSyncPartial, {std::to_wstring(r.inserted), r.detail});
                 } else if (r.result == VodSyncResult::EmptyCatalogue) {
-                    setStatus(st, tr(i18n::StringId::StatusVodSyncEmpty));
+                    line = tr(i18n::StringId::StatusVodSyncEmpty);
                 } else if (r.result == VodSyncResult::Cancelled) {
-                    setStatus(st, tr(i18n::StringId::StatusVodSyncCancelled));
+                    line = tr(i18n::StringId::StatusVodSyncCancelled);
                 } else {
                     // AuthFailed / NetworkError / ParseError / DatabaseError all carry a short
                     // technical detail. It is deliberately NOT localized: it comes from WinHTTP or
                     // the JSON reader, and a translated approximation of it helps nobody debug.
-                    setStatus(st, trf(i18n::StringId::StatusVodSyncFailed, {r.detail}));
+                    line = trf(i18n::StringId::StatusVodSyncFailed, {r.detail});
                 }
+                // Catch-up, after whatever the films said: how many channels now keep an archive, or
+                // why the flags were left as they were. (The markers and an open guide already followed
+                // the new flags, on WM_APP_VOD_ARCHIVE.) With two Xtream lines, one can succeed and the
+                // other fail: both are said.
+                if (r.archiveChannels >= 0)
+                    line += trf(i18n::StringId::StatusCatchupChannels, {std::to_wstring(r.archiveChannels)});
+                if (!r.archiveDetail.empty())
+                    line += trf(i18n::StringId::StatusCatchupNotUpdated, {r.archiveDetail});
+                setStatus(st, line);
             }
             return 0;
         case WM_ACTIVATEAPP:
@@ -1201,6 +1218,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case ID_BTN_STOP:
                     st->ap().player.stop();
                     st->ap().nowPlayingId = 0;
+                    st->ap().catchup = false;
                     channelGridSetNowPlaying(st->grid, 0);
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
@@ -1520,6 +1538,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // Opening/Buffering, so a channel switch has no black gap.
             if (pe == PlayerEvent::Playing && paneIdx >= 0 &&
                 paneIdx < static_cast<int>(st->panes.size())) {
+                // Catch-up: it played — noted for its OWN pane, before the active-pane filter below
+                // (the user may have clicked another pane while it opened).
+                if (st->panes[paneIdx]->catchup) st->panes[paneIdx]->catchupPlayed = true;
                 const HWND cur = st->panes[paneIdx]->player.currentHost();
                 for (HWND h : st->panes[paneIdx]->voutHosts)
                     if (IsWindow(h)) ShowWindow(h, h == cur ? SW_SHOW : SW_HIDE);
@@ -1607,14 +1628,20 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, tr(i18n::StringId::StatusStreamEnded));
+                    // A catch-up archive that ends before it ever played had nothing recorded for that
+                    // time (the panel answers an empty 200) — say that, not "stream ended".
+                    setStatus(st, st->ap().catchup && !st->ap().catchupPlayed
+                                      ? trf(i18n::StringId::StatusCatchupNotInArchive, {st->ap().nowPlayingName})
+                                      : tr(i18n::StringId::StatusStreamEnded));
                     diag::info(L"event: EndReached — " + st->ap().nowPlayingName);
                     break;
                 case PlayerEvent::Error:
                     bufferMeterSetHealth(st->bufferMeter, 0);
                     resetStatMeters(st);
                     SetWindowTextW(st->btnPlay, kGlyphPlay);
-                    setStatus(st, trf(i18n::StringId::StatusUnavailable, {st->ap().nowPlayingName}));
+                    setStatus(st, st->ap().catchup && !st->ap().catchupPlayed
+                                      ? trf(i18n::StringId::StatusCatchupNotInArchive, {st->ap().nowPlayingName})
+                                      : trf(i18n::StringId::StatusUnavailable, {st->ap().nowPlayingName}));
                     diag::error(L"event: PLAYBACK ERROR (offline / geo-locked / codec) — " +
                                 st->ap().nowPlayingName);
                     if (st->ap().nowPlayingId) {
@@ -1758,13 +1785,13 @@ LRESULT CALLBACK VideoProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HDC dc = reinterpret_cast<HDC>(wParam);
             FillRect(dc, &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             // An empty floating PIP is a small black popup that's easy to miss. Until a channel
-            // is played into it (nowPlayingId != 0, after which libVLC's surface covers this),
+            // is played into it (paneHasStream — a channel or a catch-up; libVLC's surface then covers this),
             // highlight it: an accent frame + a centred hint so it's obvious where the PIP is and
             // how to fill it. Only the floating PIP pane gets this — tiles are laid out in the grid.
             AppState* st = stateOf(GetParent(hwnd));
             const int idx = static_cast<int>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
             if (st && idx >= 0 && idx < static_cast<int>(st->panes.size()) &&
-                st->panes[idx]->floating && st->panes[idx]->nowPlayingId == 0) {
+                st->panes[idx]->floating && !paneHasStream(*st->panes[idx])) {
                 const Theme& th = currentTheme();
                 HBRUSH ab = themeBrush(th.accent);
                 RECT fr = rc;

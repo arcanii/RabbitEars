@@ -674,6 +674,22 @@ enum class StringId {
     GuideCoverageUnmatched,
     GuideCoverageNoId,
     GuideSearchMoreChannels,
+    ProgrammePlayFromStartButton,
+    GuideSearchCatchupHeading,
+    GuideSearchYesterday,
+    // --- Dialogs ---
+    CatchupTitle,
+    CatchupUnavailableHeading,
+    CatchupNoArchive,
+    CatchupNotStarted,
+    CatchupTooOld,
+    // --- Status ---
+    CatchupNowPlayingName,
+    StatusCatchupNotInArchive,
+    StatusCatchupChannels,
+    StatusCatchupNotUpdated,
+    StatusCatchupNoRecord,
+    StatusVodSyncFetchingCatchup,
     Count  // sentinel — MUST stay last
 };
 
