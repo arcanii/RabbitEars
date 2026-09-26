@@ -167,7 +167,7 @@ IAudioClient* activateProcessLoopback() {
 
 SpectrumTap::~SpectrumTap() { stop(); }
 
-void SpectrumTap::start(std::function<void(const float*)> sink) {
+void SpectrumTap::start(std::function<void(const float*, float)> sink) {
     if (running_.load()) return;             // a worker is already active
     if (thread_.joinable()) thread_.join();  // reap a previously-finished (e.g. failed) thread
     if (stopEvt_) {
@@ -244,6 +244,10 @@ void SpectrumTap::run() {
 
         std::vector<float> win(kFftSize, 0.0f);  // mono accumulation window
         int wpos = 0;
+        // The window's level for the audio meter's needle: each channel's sum of squares (the
+        // louder one's RMS is what a VU meter on the programme would read — before any Hann
+        // weighting, which only the FFT wants).
+        double sumL = 0.0, sumR = 0.0;
         std::vector<float> re(kFftSize), im(kFftSize);
         float bands[SpectrumTap::kBands];
         bool firstWindow = true;
@@ -262,7 +266,10 @@ void SpectrumTap::run() {
                 const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
                 const float* f = (silent || !data) ? nullptr : reinterpret_cast<const float*>(data);
                 for (UINT32 i = 0; i < frames; ++i) {
-                    const float mono = f ? 0.5f * (f[i * 2] + f[i * 2 + 1]) : 0.0f;
+                    const float l = f ? f[i * 2] : 0.0f, r = f ? f[i * 2 + 1] : 0.0f;
+                    const float mono = 0.5f * (l + r);
+                    sumL += static_cast<double>(l) * l;
+                    sumR += static_cast<double>(r) * r;
                     win[wpos++] = mono;
                     if (wpos >= kFftSize) {
                         for (int k = 0; k < kFftSize; ++k) {
@@ -288,7 +295,9 @@ void SpectrumTap::run() {
                             const float db = 20.0f * std::log10(mx + 1e-9f);
                             bands[b] = std::clamp((db + 72.0f) / 60.0f, 0.0f, 1.0f);
                         }
-                        if (sink_) sink_(bands);
+                        // (fmax: a NaN on one channel does not silence the other.)
+                        if (sink_) sink_(bands, rmsDbfs(std::fmax(sumL, sumR), kFftSize));
+                        sumL = sumR = 0.0;
                         if (firstWindow) {
                             diag::info(L"SpectrumTap: first audio window analysed (audio is flowing)");
                             firstWindow = false;

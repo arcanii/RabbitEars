@@ -216,6 +216,7 @@ void feedMini(HWND m, MeterKind k, int tick, int nBands) {
                 bands[i] = std::clamp(v, 0.0f, 1.0f);
             }
             miniMeterPushSpectrum(m, bands, nBands);
+            miniMeterPushLevel(m, -20.0f + 6.0f * std::sin(t * 0.9f) + 3.0f * std::sin(t * 2.7f));
             break;
         }
         case MeterKind::Signal:

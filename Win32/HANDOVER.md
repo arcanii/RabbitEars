@@ -35,7 +35,8 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ### ⏸ STATE 2026-09-26 (late evening) — where 0.2.21-dev stands. READ THIS FIRST.
 
-**Committed AND pushed — origin/main = `10174c4` (the owner pushed, 2026-09-26):**
+**Committed AND pushed — origin/main = `f2ec7af` (the owner pushed, 2026-09-26): the two below, then `b5e141d`,
+`6ffc91b`, `f2ec7af` (item (3), further down); then two more commits on top, NOT pushed (the end of this block).**
 - **`53c0464` — item (1), the guide stalls** (the owner's four live checks passed): first open 1.4 s → ~0.25 s,
   Refresh Guide's store + index rebuild off the UI thread, search correct across connections,
   `bulkInsertProgrammes` never commits a broken guide; `APP_VERSION` 0.2.21.
@@ -46,7 +47,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
   `--selftest` ALL PASS (779 / 843), before it was committed (see the trap list: the working tree may not
   be swapped in place).
 
-**Committed, NOT pushed — `b5e141d`, item (3), photoreal stage A (meter SIZE) (2026-09-26)**
+**Committed and pushed — `b5e141d`, item (3), photoreal stage A (meter SIZE) (2026-09-26)**
 (22 files — 20 of code, HANDOVER + PHOTOREAL: `Win32/ui/MeterTray.h`, `Win32/ui/MeterBridge.{h,cpp}`, the strip-edge drag + the Settings ▸ Meters
 submenu in `MainWindow*.cpp` / `MainWindowInternal.h`, the mirrors in `MiniMeter` / `BufferMeter`,
 `RabbitEarsRender` `--meter-height` / `--bench-paint`, CMake, 8 i18n keys, the tray tests, these docs). Three
@@ -62,7 +63,7 @@ exe against the build (hash) before handing it over. **Known in that commit, fix
 large and in a large bridge, the Bitrate meter's LED/LCD/Tube looks leave an empty band on the dial's left
 (the history kept 64 samples: 20 px at 72 dp, 250 px at 120 dp, at 150 %).
 
-**Committed, NOT pushed — the Bitrate history fix, the commit after `b5e141d` (2026-09-26)** — found while the
+**Committed and pushed — `6ffc91b`, the Bitrate history fix (2026-09-26)** — found while the
 owner tested stage A; the owner chose two commits and accepted the cost below. The ring 64 → 256 samples
 (`kBitrateHistory`, beside `kMeterHeightMax` in `Win32/ui/MeterTray.h`, with `bitrateColumnPx` — the column
 width `paintBitrate` now uses); the Scope trace keeps the newest 64 (`kScopeHist`); the bridge's twin starts
@@ -80,7 +81,7 @@ mutation-tested, not re-reviewed). **Owner check — NOT yet run (copy `build\ch
 large, and a large bridge window: the Bitrate meter's dial fills edge to edge (give it ~30 s of playback at
 150 % — a full history); open the bridge DURING playback: its Bitrate graph matches the tray's at once.
 
-**Committed, NOT pushed — the commit after `6ffc91b`: needle meters at one size + meter labels (the owner's asks
+**Committed and pushed — `f2ec7af`: needle meters at one size + meter labels (the owner's asks
 after seeing Large, 2026-09-26: *"should the meters all be the same size? We should have labels as an option"*).**
 The owner chose:
 (a) in the own row (Large and up) and the bridge ONLY, a needle look (VU needle, Silver VU) takes its
@@ -110,9 +111,39 @@ screenshot: Large, four Silver VUs + labels):** (1) Large, four identical needle
 back; (4) the bridge's labels follow a resize; (5) 日本語 and a skin switch with labels on; (6) the standard size
 as before. The owner then asked for the meters **touching (no gap)** — the next commit.
 
-**Order for the next session:** (a) ✅ stage A, the Bitrate fix and the labels / one-size work committed, NOT pushed
-— the owner's glance at a cell-look Bitrate meter at Extra large (the Bitrate fix's check, still not run: their
-tray is all VU now), then push (`git ls-remote` first — the mac team pushes to `main` too); (b) photoreal
+**Committed, NOT pushed — two commits after `f2ec7af`: (i) the meters touching, then (ii) the audio needle; the
+owner's checks ALL PASSED (copy `build\check-0221-audio\`, 2026-09-26):**
+- **(i) The own row's meters touch** (the owner: "we can make them touching (no gap)"): `MeterTray.h`
+  `trayMeterGapPx` — 0 in an own row, 6 dp inline as always (the standard tray byte-identical); the tank keeps
+  its distance; the bridge's meters touch at every size (the tank keeps dp(8)); labels inset 2 dp so two
+  cells that now touch never read as one word. Snapshot of this change alone: tree `3ab9990` (commit it first).
+- **(ii) The Spectrum meter's NEEDLE reads the programme's level** (the owner: "is this a volume meter? It
+  doesn't really move that much. We should reset it to volume tracking"). It read the mean of the 16 FFT bands'
+  dB levels (each a band's peak bin, -72..-12 dBFS, eased), under the needle's own lag. Now `SpectrumTap` also
+  computes each ~21-ms window's RMS of the louder channel, sine-calibrated dBFS (`rmsDbfs`); the sink passes it
+  (`miniMeterPushLevel`, thread-safe, mirrored to the bridge); the needle eases its AMPLITUDE with the VU
+  ballistics (~300 ms) and shows it in dB — 0 VU at -18 dBFS (EBU alignment), the Sens knob ±12 dB
+  (`vuReadingOfDbfs`); a level held while the meter was hidden is dropped when its timer restarts (else
+  leaving fullscreen kicked the needle). Cell looks still draw the bands. Renders: only the Spectrum needles
+  moved (40 files, all inside the VU/Silver Spectrum needle areas; the 16 LED strips byte-identical).
+- **Verified:** BOTH flags 0 warnings; `--selftest` ALL PASS (**861** — new: the level's calibration, the VU
+  reading and the Sens law, the row gap; 10 mutations over two rounds, all caught). One adversarial review of
+  both — its mediums acted on (the hidden-meter kick, dB-domain ballistics → amplitude, the lopsided Sens law →
+  ±12 dB); the fixes built, mutation-tested, not re-reviewed.
+- **The owner's checks — ALL SIX PASSED (2026-09-26):** (1) the meters touch — "looks good"; (2) the Spectrum
+  needle swings on speech — "looks good"; (3) the volume slider 100 % → 50 %: **the needle DROPS** — the capture
+  is AFTER the app's volume (process loopback after the session volume libVLC's WASAPI output sets), so the
+  needle reads the programme only at 100 %; (4) leaving fullscreen: no kick; (5) Sens shifts it; (6) labels
+  under touching meters stay separate.
+- **Next (a decision for the owner):** make the needle independent of the listening volume — add back what the
+  volume took (libVLC 3's mmdevice sets the session volume to v³, v = volume/100, so -60·log10(v) dB — from
+  memory of VLC's source, NOT verified here: measure it on a steady programme at 100 % and 50 % first; the cube
+  law predicts 18 dB) — or keep it following what is heard.
+
+**Order for the next session:** (a) ✅ everything through `f2ec7af` pushed; the meters-touching and audio-needle
+commits after it NOT pushed — the volume-compensation decision above; the owner's glance at a cell-look Bitrate
+meter at Extra large (the Bitrate fix's check, still not run: their tray is all VU); push (`git ls-remote` first
+— the mac team pushes to `main` too); (b) photoreal
 stage B — new selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's
 cost at size: a Tube Bitrate ~10–15 ms a frame at 120 dp), then stage C — skins as materials, skins driving meters
 (PHOTOREAL.md); (c) the cleanups (4) — multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise,

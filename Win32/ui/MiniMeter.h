@@ -10,6 +10,8 @@
 // Each is drawn as small square LEDs (lit/dim cells) to match the family look.
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -84,7 +86,7 @@ inline MeterStyle defaultMeterStyle(MeterKind /*kind*/) { return MeterStyle::Led
 struct MeterTuning {
     float glow;         // Tube/Scope bloom intensity
     float smoothing;    // attack/decay easing (higher = smoother)
-    float sensitivity;  // input gain (0.5 = unity)
+    float sensitivity;  // input gain (0.5 = unity; on the audio needle ±12 dB — vuReadingOfDbfs)
     float peakHold;     // spectrum peak-cap linger
     float breathing;    // bitrate ceiling re-normalization speed
 };
@@ -107,6 +109,21 @@ MeterKind miniMeterKind(HWND meter);
 // the audio capture thread; the values are latched under a lock and consumed by the
 // control's animation timer on the UI thread.
 void miniMeterPushSpectrum(HWND meter, const float* bands, int count);
+
+// Spectrum, too: the programme's level in dBFS (SpectrumTap::rmsDbfs), for the audio meter's NEEDLE —
+// a needle look on the Spectrum meter reads it as a VU meter does (vuReadingOfDbfs); the cell looks keep
+// drawing the bands. Without it (a feed that never pushes one) the needle falls back to the bands' mean.
+// THREAD-SAFE, like miniMeterPushSpectrum: the loudest level pushed between two ticks is the one read.
+void miniMeterPushLevel(HWND meter, float dbfs);
+
+// The audio needle's reading in VU for a level in dBFS: 0 VU at kVuReferenceDbfs (the EBU digital
+// alignment level), the Sens knob shifting it evenly in dB — ±kVuSensSpanDb at its ends, 0 at 0.5 — so a
+// quiet source (or a low volume) can be brought up as far as a loud one brought down.
+constexpr float kVuReferenceDbfs = -18.0f;
+constexpr float kVuSensSpanDb = 12.0f;
+inline float vuReadingOfDbfs(float dbfs, float sensitivity) {
+    return dbfs - kVuReferenceDbfs + (sensitivity - 0.5f) * 2.0f * kVuSensSpanDb;
+}
 
 // Signal: strength 0..1 (bars lit) and trouble 0..1 (tints the lit bars red). UI thread.
 void miniMeterSetSignal(HWND meter, float strength, float trouble);

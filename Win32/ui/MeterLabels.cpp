@@ -69,18 +69,25 @@ void paintMeterLabel(HDC dc, const RECT& cell, const std::wstring& text, UINT dp
     // Tracked out a little, like a panel legend — where that fits the cell. Else untracked, and cut with an
     // ellipsis if still too wide: DrawText's ellipsis does not allow for the tracking (it cut the "…" too).
     const int oldExtra = SetTextCharacterExtra(dc, px);
+    // 2 dp in from each side: the meters of an own row touch, and so do their cells — two labels that
+    // filled theirs would read as one word, and the shadow would reach the next.
+    RECT box = cell;
+    InflateRect(&box, -2 * px, 0);
+    if (box.right <= box.left) box = cell;
     SIZE ext{};
     GetTextExtentPoint32W(dc, caps.c_str(), static_cast<int>(caps.size()), &ext);
     UINT fmt = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
-    if (ext.cx > cell.right - cell.left) {
+    if (ext.cx > box.right - box.left - px) {  // (and room for the shadow's offset)
         SetTextCharacterExtra(dc, 0);
         fmt |= DT_END_ELLIPSIS;
     }
-    RECT r = cell;
+    RECT r = box;
+    r.right -= px;  // the shadow lands px right of the text: keep both inside the box
     OffsetRect(&r, px, px);
     SetTextColor(dc, shadow);
     DrawTextW(dc, caps.c_str(), static_cast<int>(caps.size()), &r, fmt);
-    r = cell;
+    r = box;
+    r.right -= px;
     SetTextColor(dc, th.textMuted);
     DrawTextW(dc, caps.c_str(), static_cast<int>(caps.size()), &r, fmt);
     SetTextCharacterExtra(dc, oldExtra);

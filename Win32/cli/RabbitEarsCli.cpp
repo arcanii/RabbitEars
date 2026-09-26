@@ -43,7 +43,8 @@
 #include "ui/DockLayout.h"
 #include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
-#include "ui/MiniMeter.h"  // Win32/ui — only its header-inline needle width (the CLI links no GUI code)
+#include "ui/MiniMeter.h"  // Win32/ui — only its header-inline math: needle width, audio reading (no GUI code)
+#include "audio/SpectrumTap.h"  // Win32/audio — only its header-inline level (rmsDbfs; no capture here)
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
 #include "ui/VuLamp.h"
@@ -952,6 +953,37 @@ int selftest() {
         // An own row's meters touch (the owner's ask); inline they keep their 6 dp, as they always had.
         expect(trayMeterGapPx(true, 144) == 0 && trayMeterGapPx(false, 144) == 9 && trayMeterGapPx(false, 96) == 6,
                "meter tray: an own row's meters stand side by side; the standard tray keeps its 6-dp gaps");
+    }
+
+    out("== The audio needle reads the programme's level (audio/SpectrumTap.h, ui/MiniMeter.h) ==\n");
+    {
+        // A window's level: its RMS in dBFS, sine-calibrated — a full-scale sine reads 0, a sine at the
+        // EBU alignment level -18, silence the floor. (1024 samples, 10 whole cycles: a mean square of
+        // exactly a half of the amplitude squared.)
+        auto sineDb = [](double amp) {
+            double sum = 0.0;
+            for (int i = 0; i < 1024; ++i) {
+                const double v = amp * std::sin(2.0 * 3.14159265358979323846 * 10.0 * i / 1024.0);
+                sum += v * v;
+            }
+            return SpectrumTap::rmsDbfs(sum, 1024);
+        };
+        const float full = sineDb(1.0), align = sineDb(std::pow(10.0, -18.0 / 20.0));
+        expect(std::fabs(full) < 0.01f && std::fabs(align + 18.0f) < 0.01f &&
+                   SpectrumTap::rmsDbfs(0.0, 1024) == SpectrumTap::kSilenceDbfs &&
+                   SpectrumTap::rmsDbfs(1e-30, 1024) == SpectrumTap::kSilenceDbfs &&
+                   SpectrumTap::rmsDbfs(1.0, 0) == SpectrumTap::kSilenceDbfs &&
+                   SpectrumTap::rmsDbfs(std::nan(""), 1024) == SpectrumTap::kSilenceDbfs,  // never a NaN level
+               "audio level: a full-scale sine reads " + std::to_string(full) + " dBFS, one at -18 dBFS reads " +
+                   std::to_string(align) + "; silence the floor");
+        // The needle's reading: 0 VU at -18 dBFS; the Sens knob evenly in dB (0.5 unity, 1.0 +12 dB, 0.25 -6 dB,
+        // 0 -12 dB).
+        const float zero = vuReadingOfDbfs(-18.0f, 0.5f), up = vuReadingOfDbfs(-18.0f, 1.0f),
+                    down = vuReadingOfDbfs(-18.0f, 0.25f), quiet = vuReadingOfDbfs(-26.0f, 0.5f);
+        expect(std::fabs(zero) < 1e-4f && std::fabs(up - 12.0f) < 1e-4f && std::fabs(down + 6.0f) < 1e-4f &&
+                   std::fabs(vuReadingOfDbfs(-18.0f, 0.0f) + 12.0f) < 1e-4f && std::fabs(quiet + 8.0f) < 1e-4f,
+               "audio level: -18 dBFS reads 0 VU (" + std::to_string(zero) + "); Sens moves it by dB (" +
+                   std::to_string(up) + " / " + std::to_string(down) + ")");
     }
 
     out("== Needle meters' own width (own row + bridge; ui/VuDial.h, ui/MiniMeter.h) ==\n");

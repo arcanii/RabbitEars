@@ -1851,7 +1851,10 @@ void syncSpectrumTap(AppState* st) {
         if (!st->spectrumTap.running()) {
             HWND m = st->meterSpectrum;
             st->spectrumTap.start(
-                [m](const float* bands) { miniMeterPushSpectrum(m, bands, SpectrumTap::kBands); });
+                [m](const float* bands, float levelDbfs) {
+                    miniMeterPushSpectrum(m, bands, SpectrumTap::kBands);
+                    miniMeterPushLevel(m, levelDbfs);  // the needle looks read the programme's level
+                });
         }
     } else {
         st->spectrumTap.stop();

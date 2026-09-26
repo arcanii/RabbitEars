@@ -22,6 +22,7 @@ using std::min;
 
 #include <atomic>
 
+#include "audio/SpectrumTap.h"  // kSilenceDbfs — the audio needle's floor
 #include "ui/GlassMask.h"  // shared "glass cover" mask math (common/)
 #include "ui/MeterTray.h"  // kBitrateHistory, bitrateColumnPx — the Bitrate history's size
 #include "ui/VuDial.h"     // the two analog VU instruments (Vu, VuSilver)
@@ -92,9 +93,17 @@ struct MiniMeterState {
     float      pending[kMaxBands] = {};
     int        pendingN = 0;
     bool       hasPending = false;
+    float      pendingLevelDb = 0.0f;  // miniMeterPushLevel: the loudest level since the last tick
+    bool       hasPendingLevel = false;
     float      level[kMaxBands] = {};  // UI-thread only (timer + paint)
     float      peak[kMaxBands] = {};
     int        bands = 0;
+    // The programme's level (dBFS) the audio needle reads — UI thread. audioLevelOn: a level has been
+    // pushed (the needle reads it; else the bands' mean). audioStale: ticks since the last one.
+    float      audioDb = SpectrumTap::kSilenceDbfs;
+    bool       audioLevelOn = false;
+    int        audioStale = 0;
+    float      audioAmp = 0.0f;  // its RMS amplitude, eased with VU ballistics (onTick) — what the needle shows
 
     // Signal
     float sigTarget = 0.0f, sigLevel = 0.0f, sigTrouble = 0.0f;
@@ -283,10 +292,24 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
 // The 0..1 quantity this meter is currently showing, as ONE number. The cell looks render a
 // spectrum/history as many values; a needle can only point at one, so each kind collapses to its
 // headline figure. Shared by the VU needle (and anything else single-valued later).
+constexpr float kVuAudioSpanDb = 30.0f;  // the audio needle: the dB of input the dial's arc spans
 float scalarLevel(const MiniMeterState* st) {
     float raw = 0.0f;
     switch (st->kind) {
-        case MeterKind::Spectrum: {  // loudness ≈ the mean of the bands
+        case MeterKind::Spectrum: {
+            // The programme's level — its RMS amplitude, eased by onTick as a VU movement integrates it —
+            // in VU (vuReadingOfDbfs: 0 VU = -18 dBFS, the Sens knob in dB, so it does not also take the
+            // linear gain below), as the value vuPosition maps back onto the printed scale (full scale -
+            // (1 - level) * the span). Before 2026-09-26 the needle read the mean of the 16 bands' dB
+            // levels, each eased, under the needle's own lag — it hardly moved on loudness-normalised TV
+            // sound (the owner: "it doesn't really move that much").
+            if (st->audioLevelOn) {
+                const float db = 20.0f * std::log10(std::max(st->audioAmp, 1e-6f));
+                const float vu = vuReadingOfDbfs(db, st->tuning.sensitivity);
+                return std::clamp(1.0f - (vuDialFullScaleDb(vuFaceOf(st->style)) - vu) / kVuAudioSpanDb, 0.0f,
+                                  1.0f);
+            }
+            // A feed that never pushes a level: the bands' mean, as before.
             const int n = std::clamp(st->bands, 1, kMaxBands);
             float sum = 0.0f;
             for (int i = 0; i < n; ++i) sum += std::clamp(st->level[i], 0.0f, 1.0f);
@@ -325,13 +348,12 @@ float scalarLevel(const MiniMeterState* st) {
 // vuFaceOf, MiniMeter.h.)
 
 // What the needle reads, per kind. The printed scale is dB, so only SOUND is read in dB: the Spectrum
-// kind's level is the mean of SpectrumTap's bands, which are already logarithmic ((dBFS + 72) / 60),
-// so it maps LINEARLY onto the scale — a full-scale input reads the top mark, and kVuAudioSpanDb of
-// input span the rest. The other kinds (stream health, throughput, frame rate) are not levels in
-// dB at all; they keep the linear law the old look had, where the red zone is the top fifth of the
-// range. (Through the dB law an ordinary SD stream read +2.7 VU, deep in the red; linearly it sits just
-// under it. A strong HD stream or a 60 fps channel does reach the red — and lights PEAK — by design.)
-constexpr float kVuAudioSpanDb = 30.0f;
+// kind's level (scalarLevel — the programme's level in VU, or the bands' mean without one) is already
+// logarithmic, so it maps LINEARLY onto the scale — the top of its range reads the top mark, and
+// kVuAudioSpanDb of input span the rest. The other kinds (stream health, throughput, frame rate) are not
+// levels in dB at all; they keep the linear law the old look had, where the red zone is the top fifth of
+// the range. (Through the dB law an ordinary SD stream read +2.7 VU, deep in the red; linearly it sits
+// just under it. A strong HD stream or a 60 fps channel does reach the red — and lights PEAK — by design.)
 constexpr float kVuRedFrom = 0.8f;  // non-audio kinds: the level where the red zone (0 VU) begins
 float vuPosition(const MiniMeterState* st, VuFace face, float level) {
     if (!std::isfinite(level)) level = 0.0f;
@@ -632,6 +654,9 @@ void onTick(MiniMeterState* st) {
     float d[kMaxBands];
     bool has = false;
     int n = 0;
+    // ...and the programme's level: the loudest pushed since the last tick. None for 5 ticks (the capture
+    // delivers a window every ~21 ms, a tick is ~33-47 ms) means the sound stopped: silence, and the needle
+    // falls to rest from there (~0.2 s after the bars start falling).
     {
         std::lock_guard<std::mutex> lk(st->mtx);
         if (st->hasPending) {
@@ -639,6 +664,15 @@ void onTick(MiniMeterState* st) {
             n = st->pendingN;
             std::memcpy(d, st->pending, sizeof(float) * std::min(n, kMaxBands));
             st->hasPending = false;
+        }
+        if (st->hasPendingLevel) {
+            st->audioDb = st->pendingLevelDb;
+            st->audioLevelOn = true;
+            st->audioStale = 0;
+            st->hasPendingLevel = false;
+        } else if (st->audioLevelOn) {
+            if (st->audioStale < 5) ++st->audioStale;
+            if (st->audioStale >= 5) st->audioDb = SpectrumTap::kSilenceDbfs;
         }
     }
     if (has) st->bands = std::min(n, kMaxBands);
@@ -668,8 +702,18 @@ void onTick(MiniMeterState* st) {
     // centre of the range is the real instrument.
     const float vuBase = 0.40f;
     const float vuCoef = std::clamp(vuBase * (1.35f - st->tuning.smoothing * 0.70f), 0.06f, 0.75f);
+    // The audio needle eases the programme's AMPLITUDE (a real movement integrates the signal, not its
+    // dB — eased in dB it dives in the gaps between words and rises late on a burst), then shows it in
+    // dB with no second lag.
+    const bool audioNeedle = st->kind == MeterKind::Spectrum && st->audioLevelOn;
+    if (audioNeedle) {
+        const float target = std::pow(10.0f, st->audioDb / 20.0f);
+        st->audioAmp += (target - st->audioAmp) * vuCoef;
+        if (!std::isfinite(st->audioAmp)) st->audioAmp = 0.0f;
+    }
     const float level = scalarLevel(st);
-    st->vuNeedle += (level - st->vuNeedle) * vuCoef;
+    if (audioNeedle) st->vuNeedle = level;
+    else st->vuNeedle += (level - st->vuNeedle) * vuCoef;
     if (!std::isfinite(st->vuNeedle)) st->vuNeedle = 0.0f;  // never let a NaN latch into the needle
     // The PEAK lamp lights whenever the NEEDLE is in the red zone — on every kind (owner's call,
     // 2026-09-23: "if it goes into the red mark the Peak lamp should come on"), so what the lamp says
@@ -687,6 +731,12 @@ void onTick(MiniMeterState* st) {
 // Run the ~30fps animation timer only while the meter is actually shown.
 void syncTimer(HWND hwnd, MiniMeterState* st, bool run) {
     if (run && !st->timerOn) {
+        // The loudest level pushed while hidden (fullscreen, minimized, no room) is not the programme now:
+        // read, it would kick the needle toward the loudest moment of all that time. The next push is.
+        {
+            std::lock_guard<std::mutex> lk(st->mtx);
+            st->hasPendingLevel = false;
+        }
         SetTimer(hwnd, kTimerId, kTimerMs, nullptr);
         st->timerOn = true;
     } else if (!run && st->timerOn) {
@@ -797,6 +847,17 @@ MeterKind miniMeterKind(HWND meter) {
     return st ? st->kind : MeterKind::Spectrum;
 }
 
+void miniMeterPushLevel(HWND meter, float dbfs) {
+    MiniMeterState* st = stateOf(meter);
+    if (!st) return;
+    if (!std::isfinite(dbfs)) dbfs = SpectrumTap::kSilenceDbfs;
+    std::lock_guard<std::mutex> lk(st->mtx);
+    st->pendingLevelDb = st->hasPendingLevel ? std::max(st->pendingLevelDb, dbfs) : dbfs;
+    st->hasPendingLevel = true;
+    // Under THIS meter's lock, as miniMeterPushSpectrum forwards (miniMeterSetMirror(nullptr) waits for it).
+    if (st->mirror) miniMeterPushLevel(st->mirror, dbfs);
+}
+
 void miniMeterPushSpectrum(HWND meter, const float* bands, int count) {
     MiniMeterState* st = stateOf(meter);
     if (!st || !bands || count <= 0) return;
@@ -872,7 +933,10 @@ void miniMeterReset(HWND meter) {
         std::lock_guard<std::mutex> lk(st->mtx);
         st->hasPending = false;
         st->pendingN = 0;
+        st->hasPendingLevel = false;
     }
+    st->audioDb = SpectrumTap::kSilenceDbfs;  // the needle to rest (it still reads levels, once they come)
+    st->audioAmp = 0.0f;
     for (int i = 0; i < kMaxBands; ++i) st->level[i] = st->peak[i] = 0.0f;
     st->sigTarget = st->sigLevel = st->sigTrouble = 0.0f;
     st->histHead = st->histCount = 0;

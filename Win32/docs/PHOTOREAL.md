@@ -207,9 +207,12 @@ now exist, in a new renderer **`Win32/ui/VuDial.{h,cpp}`**:
   arc, red zone, ticks, needle and PEAK lamp, and no numerals.
 - **Cached.** Everything but the needle is rendered once per (face, size, DPI, lamp, red) and
   blitted each frame — cheaper per frame than the old look.
-- **What the needle reads, per kind.** Only SOUND reads in dB: the Spectrum kind's level is already
-  logarithmic (SpectrumTap sends (dBFS+72)/60), so it maps linearly onto the printed scale (full input
-  = the top mark, 30 dB of input below it). Signal / Bitrate / Frames are not dB quantities: they
+- **What the needle reads, per kind.** Only SOUND reads in dB. **Since 2026-09-26 the Spectrum kind's
+  needle reads the programme's LEVEL** (the owner: "it doesn't really move that much"): SpectrumTap's
+  RMS of each ~21-ms window's louder channel, sine-calibrated dBFS, its amplitude eased with VU ballistics,
+  0 VU at -18 dBFS (the EBU alignment level), the Sens knob ±12 dB (`vuReadingOfDbfs`). Before, it read
+  the mean of the 16 bands' levels ((dBFS+72)/60), which barely moved on loudness-normalised TV sound.
+  Either way 30 dB of input span the arc below the top mark. Signal / Bitrate / Frames are not dB quantities: they
   keep the old look's linear law, red zone = the top fifth. **The PEAK lamp lights whenever the
   needle is in the red zone, on every kind** (owner's call, 2026-09-23), fading over ~1/4 s after.
 - **The palette** still drives what it did: Bg = the lamp's hue (black = the stock bulb), High = the

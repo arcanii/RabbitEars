@@ -1875,8 +1875,9 @@ void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
 // field 1 is "Smooth" on a cell look (attack/decay easing) and "Damping" on a VU (a mechanical
 // movement's lag). The English strings in KnobDesc are only a fallback for an unmapped field.
 // NB "Damping" scales vuCoef, whose ~300ms symmetric settle is the real instrument only where the
-// needle's input is UNSMOOTHED — the Bitrate and Frames rows. On Spectrum and Signal, scalarLevel
-// reads values that onTick has already eased (decay / sigEase), so the two lags compose and the
+// needle's input is UNSMOOTHED — the Bitrate and Frames rows, and Spectrum, whose needle reads the
+// programme's level (onTick eases its AMPLITUDE by vuCoef, as a real movement does, and only once). On
+// Signal, scalarLevel reads a value onTick has already eased (sigEase), so the two lags compose and the
 // movement is nearer a second. That is pre-existing behaviour, not something this caption changed.
 std::wstring knobLabelFor(const KnobDesc& kd, MeterStyle style) {
     if (isVuLook(style) && kd.field == 1) return tr(i18n::StringId::MeterKnobDamping);
@@ -1970,6 +1971,9 @@ void meterFeedPreviews(MetersDlgState* st) {
         bands[i] = std::clamp(v, 0.0f, 1.0f);
     }
     miniMeterPushSpectrum(st->preview[0], bands, 24);
+    // ...and a programme level for its needle looks: around -20 dBFS (-2 VU), swinging like speech, now
+    // and then into the red.
+    miniMeterPushLevel(st->preview[0], -20.0f + 6.0f * std::sin(t * 0.9f) + 3.0f * std::sin(t * 2.7f));
     miniMeterSetSignal(st->preview[1], std::clamp(0.6f + 0.4f * std::sin(t * 0.7f), 0.0f, 1.0f),
                        (std::sin(t * 0.31f) > 0.8f) ? 0.7f : 0.0f);
     miniMeterPushBitrate(st->preview[2],
