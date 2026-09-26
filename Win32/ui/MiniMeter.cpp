@@ -23,6 +23,7 @@ using std::min;
 #include <atomic>
 
 #include "ui/GlassMask.h"  // shared "glass cover" mask math (common/)
+#include "ui/MeterTray.h"  // kBitrateHistory, bitrateColumnPx — the Bitrate history's size
 #include "ui/VuDial.h"     // the two analog VU instruments (Vu, VuSilver)
 #include "ui/Theme.h"
 
@@ -31,7 +32,12 @@ namespace {
 
 constexpr wchar_t kClass[] = L"ReMiniMeter";
 constexpr int kMaxBands = 32;
-constexpr int kHist = 64;      // bitrate history ring length
+constexpr int kHist = kBitrateHistory;  // bitrate history ring length (MeterTray.h)
+// The Scope look's Bitrate trace: the newest 64 samples spread across the dial at every size — the old
+// ring's length, so the trace is unchanged. Its buffer also holds a Spectrum's bands (kMaxBands) and
+// a Signal / Frames line's 12 points.
+constexpr int kScopeHist = 64;
+static_assert(kScopeHist >= kMaxBands && kScopeHist <= kHist);
 constexpr UINT kTimerId = 1;
 constexpr UINT kTimerMs = 33;  // ~30fps animation
 
@@ -190,7 +196,7 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
     const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
     if (R <= L || B <= T) return;
 
-    float vals[kHist];
+    float vals[kScopeHist];
     int n = 0;
     switch (st->kind) {
         case MeterKind::Spectrum:
@@ -199,7 +205,7 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
             break;
         case MeterKind::Bitrate: {
             const float denom = std::max(st->histMax, 1.0f);
-            n = std::min(kHist, st->histCount);
+            n = std::min(kScopeHist, st->histCount);
             for (int k = 0; k < n; ++k) {  // oldest → newest, left → right
                 const int idx = (st->histHead - n + k + kHist) % kHist;
                 vals[k] = std::clamp(st->hist[idx] / denom, 0.0f, 1.0f);
@@ -254,7 +260,7 @@ void drawScope(HDC dc, const RECT& in, MiniMeterState* st) {
     // Only values within about a pixel and a half of zero move (~6% of the range on the 100% tray,
     // less on bigger dials); the rest of the trace is exactly where it was.
     const Gdiplus::REAL floorY = Bf - 0.5f - pw * 0.5f;
-    Gdiplus::PointF pts[kHist];
+    Gdiplus::PointF pts[kScopeHist];
     for (int i = 0; i < n; ++i) {
         pts[i].X = Lf + (Rf - Lf) * i / static_cast<Gdiplus::REAL>(n - 1);
         pts[i].Y = std::min(floorY, Bf - vals[i] * (Bf - Tf - 1.0f));
@@ -467,7 +473,7 @@ void paintBitrate(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCe
     const int T = static_cast<int>(in.top), B = static_cast<int>(in.bottom);
     const int cellP = std::max(dpx(3, dpi), 2);
     const int rows = std::max(1, (B - T) / cellP);
-    const int colW = std::max(dpx(3, dpi), 2);
+    const int colW = bitrateColumnPx(dpi);  // one column per history sample (MeterTray.h)
     const int gap = dpx(1, dpi);
     const int maxCols = std::max(1, (R - L) / colW);
     const int cols = std::min(maxCols, st->histCount);
@@ -819,7 +825,16 @@ void miniMeterSetMirror(HWND meter, HWND mirror) {
         st->mirror = mirror;
     }
     if (old) old->isMirror = false;
-    if (m) m->isMirror = true;
+    if (!m) return;
+    m->isMirror = true;
+    // Start the twin with this meter's bitrate history, as bufferMeterSetMirror starts the tank at its
+    // fill: the history is the one long memory a meter keeps, so a bridge opened mid-stream would
+    // otherwise draw an empty graph that takes up to ~40 s to fill. UI thread, as every push is.
+    std::memcpy(m->hist, st->hist, sizeof(st->hist));
+    m->histHead = st->histHead;
+    m->histCount = st->histCount;
+    m->histMax = st->histMax;
+    InvalidateRect(mirror, nullptr, FALSE);
 }
 
 void miniMeterSetSignal(HWND meter, float strength, float trouble) {

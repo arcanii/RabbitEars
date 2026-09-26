@@ -919,6 +919,22 @@ int selftest() {
                    meterHeightForDrag(129, true, 144) == 31 && meterHeightForDrag(127, true, 144) == 30 &&
                    meterHeightForDrag(200, true, 144) == 73,
                "meter tray: the drag switches layouts only past a margin either way (no flip-flop on the edge)");
+        // The Bitrate history outlasts the widest Bitrate meter's columns (one per sample) at every scaling
+        // from 100 to 500 %: a shorter ring leaves the left of a tall dial empty, as the old 64 did. Counted
+        // over the meter's whole width, its chrome included — an over-count, so the check is conservative.
+        int mostCols = 0, mostPct = 0;
+        for (int pct = 100; pct <= 500; ++pct) {
+            const UINT dpi = static_cast<UINT>(MulDiv(96, pct, 100));
+            const int cols = trayWidth(kTrayMeterW96[2], trayDp(kMeterHeightMax, dpi), dpi) / bitrateColumnPx(dpi);
+            if (cols > mostCols) {
+                mostCols = cols;
+                mostPct = pct;
+            }
+        }
+        expect(mostCols > 0 && mostCols <= kBitrateHistory,
+               "meter tray: the Bitrate history (" + std::to_string(kBitrateHistory) +
+                   " samples) outlasts the widest meter's columns (" + std::to_string(mostCols) + " at " +
+                   std::to_string(mostPct) + " %)");
     }
 
     out("== TV Guide rows + coverage (buildGuideModel) ==\n");

@@ -127,7 +127,21 @@ Open items this work left or found (none blocking):
 
 ---
 
-## 🖼️ Photoreal skins & meters — parked on owner decisions (Phase 0 done, 2026-09-23)
+## 🖼️ Photoreal skins & meters — decisions answered; stage A (meter size) committed 2026-09-26, stage B next
+
+> **Update 2026-09-26:** the owner answered the six decisions (PHOTOREAL.md, "The owner's answers");
+> Phase 1 and the VU instruments shipped in 0.2.18; **stage A — meter size (Large / Extra large, the
+> strip-edge drag, the meter bridge) — is committed** (Win32/HANDOVER.md item (3)). The paragraph below is
+> the 2026-09-23 record. Stage A left these for stage B:
+> - **The fixed-pitch looks' cost at size.** A Tube-look Bitrate meter at 120 dp costs ~10 ms a frame at 100 %
+>   and 150 % scaling, ~15 ms at 115 % (its history now fills the dial; `--bench-paint` runs at 144 dpi only —
+>   the CHEAPEST case, `dpx(3)` rounds 4.5 up to 5 there). Stage B's cells that scale with the meter are the fix.
+> - **Tall Bitrate dials show older peaks flat-topped** after the rate drops: the adaptive ceiling halves every
+>   ~11 s (0.985 a sample at the default Breathing, ~4 samples a second), and a 120-dp dial spans 28–37 s. By
+>   design (the same happened within 64 samples); revisit if it reads wrong on stage B's looks.
+> - **Render tool, tall heights:** the Silver VU's "VU" legends can differ by a few anti-aliased pixels
+>   between runs (GDI+ text — seen once in four runs at 120 dp, 150 dpi). Compare tall renders from one run,
+>   or mask the legends; the standard-height renders never draw them (always byte-identical).
 
 Design notes, research and the phased proposal: **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)**. Phase 0
 (`RabbitEarsRender`, a headless PNG renderer for the meters and the skinned strip) is built and verified.

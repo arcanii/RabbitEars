@@ -33,7 +33,8 @@
 //               look, and the tank, at the tray's widths for 30 / 50 / 72 / 120 dp, at 144 dpi (150 %)
 //   --meter-height DP   the tray sheets AND the strips at this meter height, 30..120 (default 30 = the
 //               standard tray; the strip grows and the widths scale with it, as in the app — ui/MeterTray.h);
-//               other heights add _h<DP> to the names
+//               other heights add _h<DP> to the names, and fill a Bitrate meter's whole history first (a
+//               tall dial holds more columns than the 90 samples fed) — as --bench-paint does at every height
 // Exit code: 0 = every PNG written, 1 = something failed (details on stdout), 2 = bad arguments.
 #include <windows.h>
 
@@ -229,7 +230,11 @@ void feedMini(HWND m, MeterKind k, int tick, int nBands) {
     }
 }
 
-Img renderMini(MeterKind kind, MeterStyle style, int w, int h, UINT dpi, int ticks, int nBands) {
+// `fullHistory`: first fill a Bitrate meter's whole history with earlier samples of the same feed, as
+// steady playback has — a tall dial holds more columns than `ticks` samples (126 at 120 dp, 96 dpi).
+// Off for the standard-height sheets and the preview, which keep their bytes.
+Img renderMini(MeterKind kind, MeterStyle style, int w, int h, UINT dpi, int ticks, int nBands,
+               bool fullHistory = false) {
     Img im;
     HWND m = createMiniMeter(g_parent, g_inst, 100, dpi, kind);
     if (!m) {
@@ -238,6 +243,8 @@ Img renderMini(MeterKind kind, MeterStyle style, int w, int h, UINT dpi, int tic
     }
     SetWindowPos(m, nullptr, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
     miniMeterSetStyle(m, style);
+    if (fullHistory && kind == MeterKind::Bitrate)
+        for (int i = -kBitrateHistory; i < 0; ++i) feedMini(m, kind, i, nBands);
     for (int i = 0; i < ticks; ++i) {
         feedMini(m, kind, i, nBands);
         SendMessageW(m, WM_TIMER, kMeterTimerId, 0);  // the real onTick
@@ -330,7 +337,7 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
                 cv.text(x, y, lab, RGB(170, 170, 176), 13);
             }
             const int nb = 16;  // SpectrumTap::kBands — what the tray spectrum is really fed
-            Img im = renderMini(kKinds[k], kStyles[s], colW[k], mh, dpi, 90, nb);
+            Img im = renderMini(kKinds[k], kStyles[s], colW[k], mh, dpi, 90, nb, g_meterH96 != kMeterHeightStd);
             cv.put(im, x, y + rowLabelH, zoom);
             x += colW[k] * zoom + gap;
         }
@@ -435,7 +442,8 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
     for (int k : order) {
         const int w = trayWidth(kTrayMeterW96[k], meterH, dpi);
         if (rightX - w < meterLeft + pad) continue;  // does not fit: hidden, as in layout()
-        cv.put(renderMini(kKinds[k], style, w, meterH, dpi, 90, 16), rightX - w, meterY, 1);
+        cv.put(renderMini(kKinds[k], style, w, meterH, dpi, 90, 16, g_meterH96 != kMeterHeightStd), rightX - w,
+               meterY, 1);
         rightX -= w + dp(6, dpi);
     }
     wchar_t name[160];
@@ -519,6 +527,10 @@ void benchPaint(UINT dpi) {
                 }
                 SetWindowPos(m, nullptr, 0, 0, w, mh, SWP_NOZORDER | SWP_NOACTIVATE);
                 miniMeterSetStyle(m, kStyles[s]);
+                // Bitrate is timed with its whole history filled first (off the clock), as in steady
+                // playback: a tall dial holds more columns than the warm-up's samples.
+                if (kKinds[k] == MeterKind::Bitrate)
+                    for (int i = -kBitrateHistory; i < 0; ++i) feedMini(m, kKinds[k], i, 16);
                 std::vector<double> t;
                 for (int i = 0; i < kWarm + kFrames; ++i) {
                     feedMini(m, kKinds[k], i, 16);

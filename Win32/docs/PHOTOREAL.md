@@ -314,7 +314,8 @@ The three size routes as ONE mechanism plus a window:
   area — the skin strip paints into the main window's DC, so no child window is in the way).
 - **The meter bridge** (`Win32/ui/MeterBridge`): a separate resizable window with the tray's meters in
   one row, as large as the window; its meters are MIRRORS of the tray's (`miniMeterSetMirror` /
-  `bufferMeterSetMirror` — data, resets, look, palette, tuning), so nothing that feeds meters changes.
+  `bufferMeterSetMirror` — data, resets, look, palette, tuning; linking seeds the twin with the tank's fill
+  and the Bitrate history so far), so nothing that feeds meters changes.
 - **What the size buys, today, with no paint change** (`RabbitEarsRender --meter-height 72`): at 72 dp
   (113 px at 150 %) the VU dials show their numerals, PEAK and legends; at 50 dp and 100 % they are clean
   but under the numeral threshold. The LED/LCD looks keep a fixed small cell pitch and read as a fine
@@ -326,9 +327,19 @@ The three size routes as ONE mechanism plus a window:
   hide on a 1920-px screen at 150 % — **the owner chose (2026-09-26) a row of their own above the transport
   row at Large+** (built: `MeterTray.h`; the standard height stays inline, byte-identical), and to keep the
   bridge an owned window. Paint cost per frame, measured (`RabbitEarsRender
-  --bench-paint`): the fixed-pitch Tube look reaches ~5–6 ms per meter at 120 dp — stage B's scaled cells
-  address it; until then the bridge's meters stop at 120 dp.
+  --bench-paint`): the fixed-pitch Tube look is the costly one — a Tube-look Bitrate meter at 120 dp,
+  its history full, ~10 ms a frame at 100 % and 150 % scaling, ~15 ms at 115 % (Frames Tube ~5–5.5 ms,
+  Spectrum / Signal Tube ≤ ~2 ms) — stage B's scaled cells address it; until then the bridge's meters stop
+  at 120 dp.
+- **The Bitrate history** (fixed right after stage A's commit): its cell looks draw one column per sample,
+  and the ring held 64 — tall (so wide) dials kept an empty band on the left (20 px at 72 dp, 250 px at
+  120 dp, at 150 %). Now `kBitrateHistory` = 256, beside `kMeterHeightMax` in MeterTray.h, and a selftest
+  checks every scaling (147 columns at worst, at 120 dp); Standard / Large and the Scope trace are
+  byte-identical. The render tool fills a Bitrate history first at non-standard heights, and the bench
+  always — BOTH changed what their numbers mean for Bitrate (a full dial): compare like with like.
 - Status and the exact TODO: Win32/HANDOVER.md, 0.2.21-dev item (3).
 
-Plus two things that would help: the **reference photos/mockups** (not in the repo), and **one real
-screenshot** of the running app, to check the renders against the owner's actual screen and settings.
+Plus two things that would help: the **reference photos/mockups** (not in the repo), and more **real
+screenshots** of the running app, to check the renders against the owner's actual screen and settings —
+the first one came 2026-09-26 (the owner's Large tray, three Backlit VUs + a Silver VU + the tank; not in
+the repo).

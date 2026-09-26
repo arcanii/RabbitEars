@@ -46,7 +46,7 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
   `--selftest` ALL PASS (779 / 843), before it was committed (see the trap list: the working tree may not
   be swapped in place).
 
-**Committed, NOT pushed — item (3), photoreal stage A (meter SIZE): the commit after `10174c4` (2026-09-26)**
+**Committed, NOT pushed — `b5e141d`, item (3), photoreal stage A (meter SIZE) (2026-09-26)**
 (22 files — 20 of code, HANDOVER + PHOTOREAL: `Win32/ui/MeterTray.h`, `Win32/ui/MeterBridge.{h,cpp}`, the strip-edge drag + the Settings ▸ Meters
 submenu in `MainWindow*.cpp` / `MainWindowInternal.h`, the mirrors in `MiniMeter` / `BufferMeter`,
 `RabbitEarsRender` `--meter-height` / `--bench-paint`, CMake, 8 i18n keys, the tray tests, these docs). Three
@@ -58,13 +58,32 @@ HEAD's (a clean export of `10174c4` rendered beside it). **The owner's check (de
 buttons, all four meters + the tank, the VU numerals legible); the other checks were not reported one by one —
 the owner asked to commit. ⚠️ The copy handed over the session before was STALE (built before `10174c4`'s
 "(experimental)" labels); it was refreshed from the verified build before the owner ran it — check a copy's
-exe against the build (hash) before handing it over. **Known in this commit, fixed by the next:** at Extra
+exe against the build (hash) before handing it over. **Known in that commit, fixed by the next:** at Extra
 large and in a large bridge, the Bitrate meter's LED/LCD/Tube looks leave an empty band on the dial's left
 (the history kept 64 samples: 20 px at 72 dp, 250 px at 120 dp, at 150 %).
 
-**Order for the next session:** (a) ✅ stage A committed — the Bitrate history fix follows as its own commit; (b) photoreal stage B — new
-selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's cost at
-size: ~5 ms a frame per meter at 120 dp), then stage C — skins as materials, skins driving meters
+**Committed, NOT pushed — the Bitrate history fix, the commit after `b5e141d` (2026-09-26)** — found while the
+owner tested stage A; the owner chose two commits and accepted the cost below. The ring 64 → 256 samples
+(`kBitrateHistory`, beside `kMeterHeightMax` in `Win32/ui/MeterTray.h`, with `bitrateColumnPx` — the column
+width `paintBitrate` now uses); the Scope trace keeps the newest 64 (`kScopeHist`); the bridge's twin starts
+with the tray meter's history (`miniMeterSetMirror`); a selftest checks every scaling 100–500 % (148 columns
+over the whole width at 115 %, the worst; mutation-tested — a 128-sample ring FAILS it); RabbitEarsRender
+fills a Bitrate history first at non-standard heights (`renderMini`'s `fullHistory`; never the preview) and
+`--bench-paint` fills it off the clock (its warm-up otherwise unchanged). **Verified:** BOTH flags, 0 warnings
+(OFF from a clean export of exactly this tree); `--selftest` ALL PASS (**854** each); the 56 standard renders
+byte-identical to `b5e141d`'s; at 72 / 120 dp an A/B (the same tool and feed, ring 64 vs 256) differs ONLY in
+the Bitrate band of the LED/LCD/Tube rows. **Cost** (ms a frame, the min of two `--bench-paint` runs, a
+Tube-look Bitrate at 120 dp): 5.7 → 10.7 (100 %), 6.8 → 15.5 (115 %), 5.9 → 9.6 (150 %); LED/LCD at 120 dp
+1.4–1.9 → 2.5–4.3; Standard / Large unchanged; the owner's set at 72 dp 2.10 → 2.13. Two adversarial review
+rounds, no high/medium, every finding acted on (round 2's comment and test-bound tweaks built, selftested and
+mutation-tested, not re-reviewed). **Owner check — NOT yet run (copy `build\check-0221-bitrate\`):** Extra
+large, and a large bridge window: the Bitrate meter's dial fills edge to edge (give it ~30 s of playback at
+150 % — a full history); open the bridge DURING playback: its Bitrate graph matches the tray's at once.
+
+**Order for the next session:** (a) ✅ stage A + the Bitrate fix committed, NOT pushed — the owner's glance at the
+Bitrate meter (just above), then push (`git ls-remote` first — the mac team pushes to `main` too); (b) photoreal
+stage B — new selectable looks whose LED/LCD/Tube cells scale with the meter (it also answers the Tube look's
+cost at size: a Tube Bitrate ~10–15 ms a frame at 120 dp), then stage C — skins as materials, skins driving meters
 (PHOTOREAL.md); (c) the cleanups (4) — multi-URL `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise,
 the mac flags — and the small finds in BACKLOG (the status line stuck on "Buffering 100%", catch-up
 scrubbing, player events without a stream generation); (d) the 0.2.21 release when the owner says.
@@ -361,8 +380,11 @@ meters) follow — PHOTOREAL.md.
   tank's right-click Hide on either hides both. (6) Open the bridge DURING playback: its tank is full at
   once. (7) A skin and a language switch with the bridge open. (8) XL + the bridge open while playing: the
   UI stays smooth.
-- **Next:** the Bitrate history fix (its own commit) → stage B (scaled LED/LCD/Tube cells as NEW looks — also
-  the Tube look's cost at size).
+- **The Bitrate history fix — COMMITTED right after `b5e141d`** (the STATE block has the detail): at Extra large
+  and in a large bridge the Bitrate dial's left stayed empty (a 64-sample history); now 256 — Standard / Large
+  and the Scope trace byte-identical.
+- **Next:** the owner's glance at the Bitrate fix → push → stage B (scaled LED/LCD/Tube cells as NEW looks —
+  also the Tube look's cost at size).
 
 ### ✅ 0.2.20 — SHIPPED (2026-09-25), both appcasts LIVE @ `528cd9a`
 

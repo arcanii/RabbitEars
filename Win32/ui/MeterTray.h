@@ -23,7 +23,7 @@ constexpr int kMeterHeightStd = 30;
 constexpr int kMeterHeightLarge = 50;
 constexpr int kMeterHeightXLarge = 72;
 constexpr int kMeterHeightMin = kMeterHeightStd;
-constexpr int kMeterHeightMax = 120;
+constexpr int kMeterHeightMax = 120;  // kBitrateHistory below must cover this height's columns
 
 // The meters' widths at the standard 30-dp height (96-dpi design values), in MeterKind order —
 // Spectrum, Signal, Bitrate, Frames — and the buffer tank's.
@@ -42,6 +42,14 @@ inline int clampMeterHeightDp(int h) { return std::clamp(h, kMeterHeightMin, kMe
 inline int trayWidth(int w96, int meterPx, UINT dpi) {
     return MulDiv(trayDp(w96, dpi), meterPx, trayDp(kMeterHeightStd, dpi));
 }
+
+// The Bitrate meter's cell looks (MiniMeter.cpp paintBitrate) draw one column per history sample, this
+// wide, newest at the right, as many as fit the dial — so its history ring must outlast the widest
+// meter's columns: at kMeterHeightMax 147 at worst (115 % scaling — 148 over the whole width, as
+// --selftest counts; 114 at 150 %). A bridge meter is never wider than the tray's at that height.
+// --selftest checks every scaling: grow this with kMeterHeightMax.
+constexpr int kBitrateHistory = 256;
+inline int bitrateColumnPx(UINT dpi) { return std::max(trayDp(3, dpi), 2); }
 
 struct StripMetrics {
     int  stripPx = 0;     // the whole strip

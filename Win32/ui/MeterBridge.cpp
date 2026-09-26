@@ -74,8 +74,9 @@ void layoutBridge(HWND hwnd) {
     double scale = static_cast<double>(availH) / base;
     scale = std::min(scale, static_cast<double>(availW) / sumW);
     // No taller than the tray's own maximum (stage A): the fixed-pitch looks' cost grows with the area
-    // (Tube: ~5 ms a frame per meter at 120 dp, measured — RabbitEarsRender --bench-paint). In pixels,
-    // so the rounding of dp() at this DPI cannot push it past trayDp(120).
+    // (a Tube-look Bitrate meter at 120 dp: ~10 ms a frame at 100 % and 150 % scaling, ~15 ms at 115 % —
+    // RabbitEarsRender --bench-paint). In pixels, so the rounding of dp() at this DPI cannot push it past
+    // trayDp(120).
     scale = std::min(scale, static_cast<double>(trayDp(kMeterHeightMax, b->dpi)) / base);
     const int h = std::max(1, static_cast<int>(base * scale));
     int total = gap * (n - 1);
