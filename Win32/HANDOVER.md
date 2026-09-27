@@ -35,6 +35,72 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ### ⏸ STATE 2026-09-27 — where 0.2.21-dev stands. READ THIS FIRST.
 
+#### ✅ PHOTOREAL STAGE B — COMMITTED (the commit after `ae03dfe`, NOT pushed), owner-checked (2026-09-27)
+
+**The owner's check — PASSED (2026-09-27, the copy `build\check-0221-stageB\` + the four sheets):** *"Checked them all,
+looks good — we can commit"* — the looks as they are (10 rows, the glow strengths, the names). **Still open:** the
+buffer tank's fixed dot grid beside them (below). What stage B is:
+- **Three NEW looks, appended to `MeterStyle`** (`Win32/ui/MiniMeter.h`, after VuSilver; `kMeterStyleCount` = 9):
+  **Studio LED** (`StudioLed`, token `led_studio`) — rectangular LEDs in a housing: an unlit lens tinted with its own
+  colour and domed, a lit lens with a hot core (toward the RAW Peak) and a rim, the key light's glint (a 1-px line one
+  pixel inside the rim, top-left), a soft bloom on a dark panel; **Backlit LCD** (`BacklitLcd`, `lcd_backlit`) —
+  crisp flat segments with an edge seal, unlit ones a ghost over the Dim colour, a field a shade deeper than the panel
+  (on a light panel a reflective grey-green LCD), a faint spill on a dark panel; **VFD** (`Vfd`, `vfd`) — phosphor
+  segments behind dark teal glass (dark on a LIGHT skin too — `meterDrawnPalette` skips the light-panel resolution for
+  it), unlit anodes the Dim colour through the glass, a glow, the filament wires once the pitch is >= 6 px (Extra
+  large at 100 %, Large at 150 %) and the control grid's mesh once it is >= 7 (Extra large at 150 %).
+- **Cells that scale with the meter** — `Win32/ui/PhotoCells.h` (header-inline geometry): pitch = max(classic pitch,
+  dialH / `kPhotoRows` (10), floored), as many whole rows as fit (10–13 at size), the block centred; Spectrum/Signal
+  divide the width like the classic looks, Bitrate's history columns and Frames' bar are cells too (so ~35 history
+  columns at Extra large, 150 %, where the classic look has ~70). At the standard height: the classic pitch and gap
+  (not its exact grid — 9 rows where the classic has 8 at 100 %, centred).
+- **A pixel rasteriser, no GDI** — `Win32/ui/PhotoCells.cpp`: each (size, colour, lit) cell shaded once into a
+  per-meter LRU sprite cache (`kPhotoSpriteCap` 48; cleared when the meter leaves a photo look), a frame = the field
+  fill + row copies + the glow ADDED in linear light (16-bit sRGB LUTs), windowed to fade to nothing at its reach +
+  (VFD) one integer pass for the filaments and mesh. `MiniMeter.cpp`: `photoSpectrum/Signal/Bitrate/Frames` (the
+  classic readings on the new grid — the classic painters are UNTOUCHED), `drawPhotoCells`, one dispatch branch in
+  `onPaint`. The look codec moved header-inline into MiniMeter.h (behaviour unchanged) so --selftest round-trips it.
+- Meters dialog: 9 looks (`kMtrLookCount`, static_assert vs the enum); the Glow knob on VFD always and on Studio LED
+  only while the row's panel is dark (`photoPanelIsDark` — the same test the rasteriser uses; a Bg pick re-syncs the
+  band). 3 i18n keys appended (**646**): MeterLookStudioLed "Studio LED", MeterLookBacklitLcd "Backlit LCD",
+  MeterLookVfd "Fluorescent (VFD)" (ja スタジオ LED / バックライト LCD / 蛍光表示管 (VFD); zh-Hant 錄音室 LED / 背光 LCD /
+  真空螢光顯示器 (VFD) — machine drafts). CMake: PhotoCells.cpp in RabbitEars, RabbitEarsRender AND RabbitEarsCli.
+- RabbitEarsRender: the new looks go in NEW files — `looks_<skin>_<dpi>dpi_glass<nn>[_h<dp>].png` (each new look
+  beside its classic twin: LED|Studio LED, LCD|Backlit LCD, Tube|VFD), `lookspreview_…`, and strips
+  `strip_…_{studioled,backlitlcd,vfd}…` at every height; `--bench-paint` times all 9 looks.
+
+**Verified:** BOTH theme flags build with 0 warnings, `--selftest` ALL PASS (**875** — 13 new: the codec round-trip;
+the rows at every height × every 25 % step 100–500 % with pinned 150 % values; the columns + Signal bars; every dial
+pixel drawn and nothing outside the dial; the LED lens (hot core > flat colour > rim > unlit, unlit tinted); the
+glint; the glow (knob up/off, none on a light panel) and its fade to nothing at its reach; VFD glass dark / LCD field
+grey-green on a light panel; LCD/VFD unlit cells follow Dim; a warm evicting cache == a fresh one == one that never
+evicts; lit and unlit of one colour kept apart; a new scene drops the cache) — on the final code, OFF and ON (the
+cache left at ON). **Every one of the 272 existing renders (56 standard + 72 each at 50/72/120 dp) byte-identical to
+HEAD's**, after the review round too; the classic build's 12 dark sheets (the new looks' included) byte-identical to
+the engine's. **Mutation-tested: 22 mutants, all caught**, each failing the check meant for it (clipping ×2, centring
+×2, the pitch floor, an empty Signal bar, the codec ×2, the cache ×4 — on/off, a stale reused slot, kept across
+scenes, eviction —, the light-panel glow gate, the Glow knob, the LED tint / core / glint, the glow's fade, the VFD
+and LCD fields, Dim on LCD / VFD, the field fill); a first run let 3 through (loose LED-core and LCD-field bounds;
+an eviction test whose reference also evicted) — the checks were strengthened and all 3 are caught now. GUI-only, no
+selftest: the dialog's Glow-knob rule, the cache clear on a look change, the VFD's filaments and mesh (renders only).
+**Cost** (`--bench-paint` on the final code, 144 dpi, glass off, ms a frame at 30/50/72/120 dp, Bitrate): Studio LED
+0.02/0.05/0.10/0.23, Backlit LCD 0.02/0.04/0.07/0.17, VFD 0.02/0.05/0.10/0.24 — Tube 0.40/1.40/3.58/9.38, LED
+0.13/0.39/0.88/2.47 (`build\stageB-renders\bench-paint.txt`).
+**Reviewed** by two adversarial agents (code; claims vs evidence): no high; the claims review's mediums — a glow cut off
+in a hard rectangle, a glint that did not show, three over-claiming comments, Dim ignored by two looks — all FIXED;
+the lows (the Glow knob dead on a light panel, pointer arithmetic past a fully clipped glow, the cache kept after
+leaving the look, test wording, positive controls) all acted on. The fixes are built, selftested and mutation-tested,
+not re-reviewed.
+
+The owner's copy was `build\check-0221-stageB\` (RabbitEars.exe SHA-256 `ED0DF902…F796` = the verified build); the
+sheets are `build\stageB-renders\stageB-1..4-*.png`. The commit was built from a clean `git archive` export of exactly
+its tree, BOTH flags, selftest ALL PASS, before it was made.
+
+**Next:** (1) push (the owner); (2) **the buffer tank** — still a fixed 3-px dot grid beside the new looks (a visible
+mismatch at Extra large, sheet 4); it has no look setting, so scaling it would change an existing look — ask the
+owner: an opt-in, or follow the meters' look?; (3) stage C — skins as materials, skins driving meters (PHOTOREAL.md);
+then the cleanups and the 0.2.21 release when the owner says.
+
 **0.2.21-dev on `main`** — every item below is committed, reviewed, built with BOTH theme flags, `--selftest` ALL
 PASS, and **checked live by the owner**:
 
@@ -47,27 +113,26 @@ PASS, and **checked live by the owner**:
 | `f2ec7af` | needle meters at one size (own row + bridge); optional meter labels (Settings ▸ Meters ▸ Meter labels) | ✅ |
 | `62502ee` | an own row's meters touch (the tank keeps its gap; the bridge the same) | ✅ |
 | `98cde52` | the Spectrum meter's NEEDLE reads the programme's RMS level (0 VU = −18 dBFS, Sens ±12 dB) | ✅ |
-| `a592ee9` | …compensating our audio session's volume (process loopback is post-volume — owner-confirmed) | **no** |
+| `a592ee9` | …compensating our audio session's volume (process loopback is post-volume — owner-confirmed) | ✅ |
+| (after `ae03dfe`) | **photoreal stage B**: Studio LED, Backlit LCD, VFD — cells that scale with the meter | **no** |
 
-origin/main = `98cde52` (the owner pushes). `a592ee9` and the docs commit after it are NOT pushed.
-`--selftest`: **862** checks. i18n: **643** keys × 4. The owner's latest test copy: `build\check-0221-volume\`
-(= `a592ee9`'s code). The owner's dev profile last had all four meters on **LED** at Extra large (earlier: four
+origin/main = `ae03dfe` (the owner pushed `a592ee9` + the docs commit, 2026-09-27); the stage B commit after it is
+NOT pushed. `--selftest` **875** checks, i18n **646** keys × 4. The owner's latest test copy: `build\check-0221-stageB\`
+(= the stage B commit's code). The owner's dev profile last had all four meters on **LED** at Extra large (earlier: four
 Silver VUs at Large with labels).
 
-**Next, in the owner's order:** (a) push `a592ee9` + the docs (`git ls-remote` first — the mac team pushes to
-`main` too); (b) **photoreal stage B** — NEW selectable looks whose LED/LCD/Tube cells scale with the meter (also
-the Tube look's cost at size: a Tube-look Bitrate at 120 dp is ~10 ms a frame at 100 %/150 %, ~15 ms at 115 %);
-(c) stage C — skins as materials, skins driving meters (PHOTOREAL.md); (d) the cleanups (4) — multi-URL
+**Next, in the owner's order:** (a) ✅ pushed; (b) ✅ **photoreal stage B** — committed, owner-checked (push it; the
+tank question is open — the block above); (c) stage C — skins as materials, skins driving meters (PHOTOREAL.md); (d) the cleanups (4) — multi-URL
 `x-tvg-url`, marking gaps, the libVLC "Cancellation" noise, the mac flags — and BACKLOG's small finds (the status
 line stuck on "Buffering 100%", catch-up scrubbing, player events without a stream generation, a hint for Meter
 labels at the standard size); (e) the **0.2.21 release** when the owner says — its notes: catch-up experimental;
 Large / Extra large meters, the meter bridge, labels; the Spectrum needle now reads the volume.
 
 **For stage B (a code map made this session — verify before relying on it):**
-- A look = `enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver }` (`Win32/ui/MiniMeter.h`) — append new
-  looks LAST (the Meters dialog's combo index == the enum value). Tokens: `meterStyleToString` /
-  `meterStyleFromString` (MiniMeter.cpp) — ⚠️ its `default:` writes `"led"`, so a new value without a case is saved
-  as LED. Every switch on the style: `drawCell`, the `onPaint` dispatch, `vuFaceOf`, `meterPanelColor`,
+- A look = `enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver }` (`Win32/ui/MiniMeter.h`; stage B appended
+  StudioLed, BacklitLcd, Vfd — `kMeterStyleCount`) — append new looks LAST (the Meters dialog's combo index == the
+  enum value). Tokens: `meterStyleToString` / `meterStyleFromString` (now header-inline in MiniMeter.h, round-tripped
+  by --selftest) — ⚠️ its `default:` writes `"led"`, so a new value without a case is saved as LED. Every switch on the style: `drawCell`, the `onPaint` dispatch, `vuFaceOf`, `meterPanelColor`,
   `meterDrawnPalette`, the codecs; Dialogs.cpp `kMtrLookCount`, `kLooks[]`, `knobApplies`, `knobsForRow`,
   `knobLabelFor`; RabbitEarsRender `kStyles[]` + `kStyleNames[]` (no static_assert ties them). New i18n name keys
   (appended). Nothing in `common/` except the generated catalog.
@@ -1764,11 +1829,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > stage A — Standard / Large / Extra large meters in a row of their own, the strip-edge drag, the pop-out
 > meter bridge (`b5e141d`); tall Bitrate meters filling their dial (`6ffc91b`); needle meters at one size +
 > optional meter labels (`f2ec7af`); an own row's meters touching (`62502ee`); the Spectrum needle reading the
-> programme's RMS level (`98cde52`) whatever the volume slider (`a592ee9`). origin/main = `98cde52`;
-> `a592ee9` + the handover docs commit after it are NOT pushed — the owner pushes. `--selftest` 862, 643 i18n
-> keys. **Next: photoreal stage B** — NEW selectable looks whose LED/LCD/Tube cells scale with the meter (the
-> existing looks stay byte-identical — the owner's rule); then stage C (skins as materials), the cleanups,
-> the 0.2.21 release when the owner says.
+> programme's RMS level (`98cde52`) whatever the volume slider (`a592ee9`). origin/main = `ae03dfe` (all of it
+> pushed — the owner pushes). **Then photoreal stage B, committed after `ae03dfe` and NOT pushed** — three NEW looks
+> (Studio LED, Backlit LCD, VFD) whose cells scale with the meter (`Win32/ui/PhotoCells.{h,cpp}`), owner-checked
+> ("looks good"); `--selftest` 875, 646 i18n keys. Details: HANDOVER's "✅ PHOTOREAL STAGE B" block. **Next:** the
+> owner pushes; the buffer tank's fixed dot grid beside the new looks is an open owner question; then stage C (skins
+> as materials), the cleanups, the 0.2.21 release when the owner says.
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin

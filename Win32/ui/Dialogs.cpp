@@ -23,6 +23,7 @@ namespace Gdiplus { using std::min; using std::max; }
 #include "resource.h"
 #include "ui/BufferMeter.h"  // the Data-flow row's preview (createBufferMeter / bufferMeterSet*)
 #include "ui/MiniMeter.h"
+#include "ui/PhotoCells.h"  // photoPanelIsDark — whether the Studio LED's Glow knob does anything
 #include "ui/Theme.h"
 #include "ui/Tr.h"
 #include "version.h"
@@ -1795,7 +1796,9 @@ ProgrammeAction programmeDialog(HWND parent, HINSTANCE hInst, UINT dpi, const st
 // ---- Meters… setup dialog (Settings → Meters…) -----------------------------
 namespace {
 
-constexpr int  kMtrLookCount = 6;    // MeterStyle: Led, Tube, Lcd, Scope, Vu, VuSilver (index == enum)
+constexpr int  kMtrLookCount = 9;    // MeterStyle: Led, Tube, Lcd, Scope, Vu, VuSilver, StudioLed, BacklitLcd, Vfd
+                                     // (index == enum)
+static_assert(kMtrLookCount == kMeterStyleCount, "a combo entry for every look");
 constexpr int  ID_MTR_GLASS = 1597;  // the single GLOBAL "glass cover" strength slider
 constexpr int  ID_MTR_ROW = 1600;   // per row r: enable=+r*16, combo +1, preview +2, swatch j +3+j, slider j +10+j
 constexpr int  ID_MTR_RESET = 1596;
@@ -1817,18 +1820,21 @@ const KnobDesc kMtrKnobDesc[4][kMtrKnobs] = {
 // Does MeterTuning field `f` actually change anything for this (kind, LOOK)? The table above says
 // which fields the KIND feeds; this says which the LOOK consumes. Offering a control that does
 // nothing is worse than offering fewer — every case below was traced to its use site, because the
-// obvious guesses are wrong in both directions.
-bool knobApplies(int f, int kind, MeterStyle style) {
+// obvious guesses are wrong in both directions. `darkPanel`: the row's panel is dark (photoPanelIsDark
+// of meterPanelColor — meterRowPanelIsDark below), which the Studio LED's bloom needs.
+bool knobApplies(int f, int kind, MeterStyle style, bool darkPanel) {
     switch (f) {
         case 0:
-            // glow: the Tube halo (drawTubeGlow) and the Scope bloom (drawScope). LED and LCD never
-            // read it — and LED is defaultMeterStyle for EVERY kind, so out of the box this was
-            // four dead sliders, twice the number the VU case was about.
-            return style == MeterStyle::Tube || style == MeterStyle::Scope;
+            // glow: the Tube halo (drawTubeGlow), the Scope bloom (drawScope), the VFD's glow, and the
+            // Studio LED's bloom on a dark panel only (PhotoCells.cpp glowOf — none is drawn on a light
+            // one). LED, LCD and the Backlit LCD never read it — and LED is defaultMeterStyle for EVERY
+            // kind, so out of the box this was four dead sliders, twice the number the VU case was about.
+            return style == MeterStyle::Tube || style == MeterStyle::Scope || style == MeterStyle::Vfd ||
+                   (style == MeterStyle::StudioLed && darkPanel);
         case 3:
-            // peakHold only moves st->peak[], and only paintSpectrum draws that. So it is dead on
-            // the Spectrum row under Scope or VU, and on every other kind (the per-kind table
-            // already withholds it there).
+            // peakHold only moves st->peak[], and only the Spectrum's cell painters draw that
+            // (paintSpectrum, photoSpectrum). So it is dead on the Spectrum row under Scope or VU, and on
+            // every other kind (the per-kind table already withholds it there).
             return kind == 0 && style != MeterStyle::Scope && !isVuLook(style);
         default:
             // smoothing  — on a cell look it is attack/decay easing; on VU it IS the ballistics
@@ -1843,7 +1849,7 @@ bool knobApplies(int f, int kind, MeterStyle style) {
 // The knob set a row actually exposes, keyed on (kind, LOOK) rather than kind alone. The per-kind
 // table was fine while every look was a grid of cells; it is wrong the moment a look ignores a
 // field its kind feeds.
-void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
+void knobsForRow(int kind, MeterStyle style, bool darkPanel, KnobDesc out[kMtrKnobs]) {
     KnobDesc src[kMtrKnobs];
     if (isVuLook(style)) {
         // A needle has no cells to bloom and no peak cap, so it starts from its own pair rather
@@ -1867,7 +1873,7 @@ void knobsForRow(int kind, MeterStyle style, KnobDesc out[kMtrKnobs]) {
     // Filter, COMPACTING as we go — a hidden slot in the middle would leave a hole in the band.
     int n = 0;
     for (int j = 0; j < kMtrKnobs; ++j)
-        if (src[j].field >= 0 && knobApplies(src[j].field, kind, style)) out[n++] = src[j];
+        if (src[j].field >= 0 && knobApplies(src[j].field, kind, style, darkPanel)) out[n++] = src[j];
     while (n < kMtrKnobs) out[n++] = KnobDesc{nullptr, -1};
 }
 
@@ -1962,6 +1968,13 @@ void meterSetRole(MeterPalette& p, int j, COLORREF c) {
     }
 }
 
+// Is row `r`'s panel dark — what knobApplies asks for the Studio LED's Glow? The panel the meter paints
+// (meterPanelColor: its Bg, or the theme's window), so a Bg pick or the skin decides it.
+bool meterRowPanelIsDark(const MeterConfig& cfg) {
+    return photoPanelIsDark(meterPanelColor(cfg.palette, cfg.style, currentTheme()));
+}
+void meterSyncKnobs(MetersDlgState* st, int r);  // below: re-point a row's knob band at its look (and panel)
+
 // Drive the four preview meters with synthetic data (never touches the SpectrumTap).
 void meterFeedPreviews(MetersDlgState* st) {
     const float t = static_cast<float>(st->feedTick++) * 0.06f;
@@ -2007,10 +2020,12 @@ void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
         meterSetRole(st->cfg[r].palette, j, cc.rgbResult);
         miniMeterSetPalette(st->preview[r], st->cfg[r].palette);
         InvalidateRect(st->swatch[r][j], nullptr, FALSE);
-        // A new panel colour can change what the stock Dim/Peak resolve to (meterDrawnPalette).
+        // A new panel colour can change what the stock Dim/Peak resolve to (meterDrawnPalette), and
+        // whether the Studio LED's Glow knob does anything (knobApplies).
         if (j == 0) {
             InvalidateRect(st->swatch[r][1], nullptr, FALSE);
             InvalidateRect(st->swatch[r][6], nullptr, FALSE);
+            meterSyncKnobs(st, r);
         }
     }
 }
@@ -2021,7 +2036,7 @@ void meterEditSwatch(HWND dlg, MetersDlgState* st, int r, int j) {
 // and re-labelled, rather than destroyed and rebuilt, so focus and tab order survive a look change.
 void meterSyncKnobs(MetersDlgState* st, int r) {
     KnobDesc kd[kMtrKnobs];
-    knobsForRow(r, st->cfg[r].style, kd);
+    knobsForRow(r, st->cfg[r].style, meterRowPanelIsDark(st->cfg[r]), kd);
     for (int j = 0; j < kMtrKnobs; ++j) {
         const bool on = kd[j].field >= 0;
         if (st->knobLbl[r][j]) {
@@ -2150,7 +2165,7 @@ LRESULT CALLBACK MetersProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         // slot 0 is `glow` on a cell look but `smoothing` on a VU, so reading the
                         // raw table here would have written the Damping slider into glow.
                         KnobDesc kd[kMtrKnobs];
-                        knobsForRow(r, st->cfg[r].style, kd);
+                        knobsForRow(r, st->cfg[r].style, meterRowPanelIsDark(st->cfg[r]), kd);
                         const int f = kd[j].field;
                         if (f >= 0) {
                             const int pos = static_cast<int>(SendMessageW(bar, TBM_GETPOS, 0, 0));
@@ -2302,13 +2317,16 @@ bool chooseMeters(HWND parent, HINSTANCE hInst, UINT dpi, MeterConfig cfg[4], bo
                                     tr(i18n::StringId::MeterNameBitrate),
                                     tr(i18n::StringId::MeterNameFrameRate)};
     // ORDER IS LOAD-BEARING: the combo index is cast straight to MeterStyle (see CBN_SELCHANGE),
-    // so this must stay in enum order — Led, Tube, Lcd, Scope, Vu, VuSilver.
+    // so this must stay in enum order — Led, Tube, Lcd, Scope, Vu, VuSilver, StudioLed, BacklitLcd, Vfd.
     const std::wstring kLooks[kMtrLookCount] = {tr(i18n::StringId::MeterLookLed),
                                                 tr(i18n::StringId::MeterLookVacuumTube),
                                                 tr(i18n::StringId::MeterLookLcd),
                                                 tr(i18n::StringId::MeterLookOscilloscope),
                                                 tr(i18n::StringId::MeterLookVu),
-                                                tr(i18n::StringId::MeterLookVuSilver)};
+                                                tr(i18n::StringId::MeterLookVuSilver),
+                                                tr(i18n::StringId::MeterLookStudioLed),
+                                                tr(i18n::StringId::MeterLookBacklitLcd),
+                                                tr(i18n::StringId::MeterLookVfd)};
     const std::wstring kRoles[kMtrRoles] = {tr(i18n::StringId::MeterRoleBg),
                                             tr(i18n::StringId::MeterRoleDim),
                                             tr(i18n::StringId::MeterRoleLow),

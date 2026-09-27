@@ -641,5 +641,8 @@
   "MenuMeterLabels": "量表標籤",
   "MeterLabelSpectrum": "頻譜",
   "MeterLabelSignal": "訊號",
-  "MeterLabelFrames": "影格"
+  "MeterLabelFrames": "影格",
+  "MeterLookStudioLed": "錄音室 LED",
+  "MeterLookBacklitLcd": "背光 LCD",
+  "MeterLookVfd": "真空螢光顯示器 (VFD)"
 }

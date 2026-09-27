@@ -705,6 +705,10 @@ constexpr std::array<const char*, N> kEn = {{
     "Spectrum",  // MeterLabelSpectrum
     "Signal",  // MeterLabelSignal
     "Frames",  // MeterLabelFrames
+    // --- DialogMeters ---
+    "Studio LED",  // MeterLookStudioLed
+    "Backlit LCD",  // MeterLookBacklitLcd
+    "Fluorescent (VFD)",  // MeterLookVfd
 }};
 
 // 日本語
@@ -1400,6 +1404,10 @@ constexpr std::array<const char*, N> kJa = {{
     "スペクトラム",  // MeterLabelSpectrum
     "信号",  // MeterLabelSignal
     "フレーム",  // MeterLabelFrames
+    // --- DialogMeters ---
+    "スタジオ LED",  // MeterLookStudioLed
+    "バックライト LCD",  // MeterLookBacklitLcd
+    "蛍光表示管 (VFD)",  // MeterLookVfd
 }};
 
 // 繁體中文
@@ -2095,6 +2103,10 @@ constexpr std::array<const char*, N> kZhHant = {{
     "頻譜",  // MeterLabelSpectrum
     "訊號",  // MeterLabelSignal
     "影格",  // MeterLabelFrames
+    // --- DialogMeters ---
+    "錄音室 LED",  // MeterLookStudioLed
+    "背光 LCD",  // MeterLookBacklitLcd
+    "真空螢光顯示器 (VFD)",  // MeterLookVfd
 }};
 
 // 繁體中文（香港）
@@ -2790,6 +2802,10 @@ constexpr std::array<const char*, N> kZhHK = {{
     "頻譜",  // MeterLabelSpectrum
     "訊號",  // MeterLabelSignal
     "影格",  // MeterLabelFrames
+    // --- DialogMeters ---
+    "錄音室 LED",  // MeterLookStudioLed
+    "背光 LCD",  // MeterLookBacklitLcd
+    "真空螢光顯示器 (VFD)",  // MeterLookVfd
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

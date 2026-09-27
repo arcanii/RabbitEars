@@ -290,10 +290,24 @@ Img renderBuffer(int w, int h, UINT dpi, int ticks, bool troubled, const wchar_t
     return im;
 }
 
-const MeterStyle kStyles[] = {MeterStyle::Led, MeterStyle::Tube, MeterStyle::Lcd, MeterStyle::Scope,
-                              MeterStyle::Vu, MeterStyle::VuSilver};
-const wchar_t* kStyleNames[] = {L"LED", L"Tube", L"LCD", L"Scope", L"VU", L"Silver"};
+// Every look, in MeterStyle order. The tray and preview sheets show the first kClassicStyleCount — the looks
+// they always showed, so their files keep their bytes; the photoreal cell looks (stage B) are appended and go
+// in sheets of their own ("looks_" / "lookspreview_"), each beside its classic counterpart (kLookPairs).
+constexpr MeterStyle kStyles[] = {MeterStyle::Led,      MeterStyle::Tube,      MeterStyle::Lcd,
+                              MeterStyle::Scope,    MeterStyle::Vu,        MeterStyle::VuSilver,
+                              MeterStyle::StudioLed, MeterStyle::BacklitLcd, MeterStyle::Vfd};
+const wchar_t* kStyleNames[] = {L"LED", L"Tube", L"LCD", L"Scope", L"VU", L"Silver", L"StudioLED", L"BkltLCD", L"VFD"};
 constexpr int kStyleCount = static_cast<int>(sizeof(kStyles) / sizeof(kStyles[0]));
+static_assert(sizeof(kStyleNames) / sizeof(kStyleNames[0]) == kStyleCount, "a name for every look");
+constexpr bool stylesInEnumOrder() {
+    for (int s = 0; s < kStyleCount; ++s)
+        if (static_cast<int>(kStyles[s]) != s) return false;
+    return true;
+}
+static_assert(kStyleCount == kMeterStyleCount && stylesInEnumOrder(), "every look, in enum order");
+constexpr int kClassicStyleCount = 6;
+const int kClassicSheet[] = {0, 1, 2, 3, 4, 5};
+const int kLookPairs[] = {0, 6, 2, 7, 1, 8};  // LED | Studio LED, LCD | Backlit LCD, Tube | VFD
 const MeterKind kKinds[] = {MeterKind::Spectrum, MeterKind::Signal, MeterKind::Bitrate,
                             MeterKind::Frames};
 const wchar_t* kKindNames[] = {L"Spectrum", L"Signal", L"Bitrate", L"Frames"};
@@ -315,7 +329,8 @@ std::wstring wid(const std::string& s) { return std::wstring(s.begin(), s.end())
 // One contact sheet: rows = looks, columns = kinds, all at the REAL tray size for `dpi`, plus the
 // buffer tank (healthy + troubled). Zoomed by integer nearest-neighbour so each device pixel is
 // visible.
-void traySheet(const std::string& skin, UINT dpi, float glass) {
+void traySheet(const std::string& skin, UINT dpi, float glass, const int* rows = kClassicSheet,
+               int nRows = kClassicStyleCount, const wchar_t* prefix = L"tray") {
     miniMeterSetGlass(glass);
     const int mh = dp(g_meterH96, dpi);
     const int zoom = std::max(1, ((dpi <= 96) ? 4 : 3) * 30 / g_meterH96);
@@ -330,25 +345,25 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
     int colW[4], totalW = labelW;
     for (int k = 0; k < 4; ++k) {
         colW[k] = 0;
-        for (int s = 0; s < kStyleCount; ++s) colW[k] = std::max(colW[k], cellW(k, s));
+        for (int i = 0; i < nRows; ++i) colW[k] = std::max(colW[k], cellW(k, rows[i]));
         totalW += colW[k] * zoom + gap;
     }
     const int bufW = trayWidth(kTrayTankW96, mh, dpi);
     totalW = std::max(totalW, labelW + 2 * (bufW * zoom + gap));
     const int rowH = mh * zoom + rowLabelH + gap;
-    const int H = top + kStyleCount * rowH + rowH + 10;
+    const int H = top + nRows * rowH + rowH + 10;
     const Theme& th = currentTheme();
     Canvas cv(totalW + 10, H, 0x00101012u);
     wchar_t title[200];
     swprintf_s(title, L"skin=%ls  dpi=%u  glass=%.2f  tray meter %dpx tall  zoom x%d (nearest)  windowBg=%06X",
                wid(skin).c_str(), dpi, glass, mh, zoom, th.windowBg);
     cv.text(6, 6, title, RGB(230, 230, 230), 15, true);
-    for (int s = 0; s < kStyleCount; ++s) {
-        const int y = top + s * rowH;
+    for (int i = 0; i < nRows; ++i) {
+        const int s = rows[i], y = top + i * rowH;
         cv.text(6, y + rowLabelH + mh * zoom / 2 - 8, kStyleNames[s], RGB(230, 230, 230), 15, true);
         int x = labelW;
         for (int k = 0; k < 4; ++k) {
-            if (s == 0) {
+            if (i == 0) {
                 wchar_t lab[64];
                 swprintf_s(lab, L"%ls %dx%d", kKindNames[k], trayWidth(kTrayMeterW96[k], mh, dpi), mh);
                 cv.text(x, y, lab, RGB(170, 170, 176), 13);
@@ -360,7 +375,7 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
         }
     }
     {
-        const int y = top + kStyleCount * rowH;
+        const int y = top + nRows * rowH;
         cv.text(6, y + rowLabelH + mh * zoom / 2 - 8, L"Buffer", RGB(230, 230, 230), 15, true);
         Img a = renderBuffer(bufW, mh, dpi, 360, false, L"12.4 Mb/s");
         Img b = renderBuffer(bufW, mh, dpi, 360, true, L"1.8 Mb/s");
@@ -373,35 +388,36 @@ void traySheet(const std::string& skin, UINT dpi, float glass) {
         cv.put(b, labelW + bufW * zoom + gap, y + rowLabelH, zoom);
     }
     wchar_t name[128];
-    swprintf_s(name, L"tray_%ls_%udpi_glass%02d%ls.png", wid(skin).c_str(), dpi,
+    swprintf_s(name, L"%ls_%ls_%udpi_glass%02d%ls.png", prefix, wid(skin).c_str(), dpi,
                static_cast<int>(glass * 100 + 0.5f), heightSuffix().c_str());
     writePng(cv.snapshot(), name);
 }
 
 // The Settings > Meters dialog preview size (150x86, buffer 170x76 — Dialogs.cpp), 96 dpi, x2.
-void previewSheet(const std::string& skin, float glass) {
+void previewSheet(const std::string& skin, float glass, const int* rows = kClassicSheet,
+                  int nRows = kClassicStyleCount, const wchar_t* prefix = L"preview") {
     miniMeterSetGlass(glass);
     const UINT dpi = 96;
     const int pw = dp(150, dpi), ph = dp(86, dpi), zoom = 2, gap = 10, labelW = 70, top = 30;
     const int rowH = ph * zoom + gap;
-    Canvas cv(labelW + 4 * (pw * zoom + gap) + 10, top + (kStyleCount + 1) * rowH + 10, 0x00101012u);
+    Canvas cv(labelW + 4 * (pw * zoom + gap) + 10, top + (nRows + 1) * rowH + 10, 0x00101012u);
     wchar_t title[160];
     swprintf_s(title, L"Settings preview size %dx%d  skin=%ls  glass=%.2f  zoom x%d", pw, ph,
                wid(skin).c_str(), glass, zoom);
     cv.text(6, 6, title, RGB(230, 230, 230), 15, true);
-    for (int s = 0; s < kStyleCount; ++s) {
-        const int y = top + s * rowH;
+    for (int i = 0; i < nRows; ++i) {
+        const int s = rows[i], y = top + i * rowH;
         cv.text(6, y + ph * zoom / 2 - 8, kStyleNames[s], RGB(230, 230, 230), 15, true);
         for (int k = 0; k < 4; ++k) {
             Img im = renderMini(kKinds[k], kStyles[s], pw, ph, dpi, 90, 24);
             cv.put(im, labelW + k * (pw * zoom + gap), y, zoom);
         }
     }
-    const int y = top + kStyleCount * rowH;
+    const int y = top + nRows * rowH;
     cv.text(6, y + dp(76, dpi) * zoom / 2 - 8, L"Buffer", RGB(230, 230, 230), 15, true);
     cv.put(renderBuffer(dp(170, dpi), dp(76, dpi), dpi, 360, false, L"12.4 Mb/s"), labelW, y, zoom);
     wchar_t name[128];
-    swprintf_s(name, L"preview_%ls_glass%02d.png", wid(skin).c_str(), static_cast<int>(glass * 100 + 0.5f));
+    swprintf_s(name, L"%ls_%ls_glass%02d.png", prefix, wid(skin).c_str(), static_cast<int>(glass * 100 + 0.5f));
     writePng(cv.snapshot(), name);
 }
 
@@ -570,7 +586,7 @@ void benchPaint(UINT dpi) {
             kFrames, dpi, miniMeterGlass());
     for (int k = 0; k < 4; ++k)
         for (int s = 0; s < kStyleCount; ++s) {
-            wprintf(L"  %-8ls %-7ls", kKindNames[k], kStyleNames[s]);
+            wprintf(L"  %-8ls %-9ls", kKindNames[k], kStyleNames[s]);
             for (int h : heights) {
                 const int mh = dp(h, dpi), w = trayWidth(kTrayMeterW96[k], mh, dpi);
                 HWND m = createMiniMeter(g_parent, g_inst, 100, dpi, kKinds[k]);
@@ -597,7 +613,7 @@ void benchPaint(UINT dpi) {
             }
             wprintf(L"\n");
         }
-    wprintf(L"  %-16ls", L"Tank");
+    wprintf(L"  %-18ls", L"Tank");
     for (int h : heights) {
         const int mh = dp(h, dpi), w = trayWidth(kTrayTankW96, mh, dpi);
         HWND b = createBufferMeter(g_parent, g_inst, 200, dpi);
@@ -752,16 +768,26 @@ int wmain(int argc, wchar_t** argv) {
                 // Not at the standard height, whose file set stays as it always was.
                 if (g_meterH96 != kMeterHeightStd)
                     stripShot(id, dpi, 0.6f, MeterStyle::VuSilver, L"silver_glass60", atag);
+                // The photoreal cell looks (stage B) in the strip — new files, at every height.
+                stripShot(id, dpi, 0.0f, MeterStyle::StudioLed, L"studioled", atag);
+                stripShot(id, dpi, 0.0f, MeterStyle::BacklitLcd, L"backlitlcd", atag);
+                stripShot(id, dpi, 0.0f, MeterStyle::Vfd, L"vfd", atag);
             }
 #endif
             if (!stripOnly) {
                 traySheet(id, dpi, 0.0f);
                 traySheet(id, dpi, 0.6f);
+                const int nPairs = static_cast<int>(sizeof(kLookPairs) / sizeof(kLookPairs[0]));
+                traySheet(id, dpi, 0.0f, kLookPairs, nPairs, L"looks");
+                traySheet(id, dpi, 0.6f, kLookPairs, nPairs, L"looks");
             }
         }
         if (!stripOnly) {
             previewSheet(id, 0.0f);
             previewSheet(id, 0.6f);
+            const int nPairs = static_cast<int>(sizeof(kLookPairs) / sizeof(kLookPairs[0]));
+            previewSheet(id, 0.0f, kLookPairs, nPairs, L"lookspreview");
+            previewSheet(id, 0.6f, kLookPairs, nPairs, L"lookspreview");
         }
     }
 #ifdef RABBITEARS_THEME_ENGINE

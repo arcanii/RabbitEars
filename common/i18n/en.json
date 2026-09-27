@@ -641,5 +641,8 @@
   "MenuMeterLabels": "Meter labels",
   "MeterLabelSpectrum": "Spectrum",
   "MeterLabelSignal": "Signal",
-  "MeterLabelFrames": "Frames"
+  "MeterLabelFrames": "Frames",
+  "MeterLookStudioLed": "Studio LED",
+  "MeterLookBacklitLcd": "Backlit LCD",
+  "MeterLookVfd": "Fluorescent (VFD)"
 }

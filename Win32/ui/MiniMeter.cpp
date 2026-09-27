@@ -25,6 +25,7 @@ using std::min;
 #include "audio/SpectrumTap.h"  // kSilenceDbfs — the audio needle's floor
 #include "ui/GlassMask.h"  // shared "glass cover" mask math (common/)
 #include "ui/MeterTray.h"  // kBitrateHistory, bitrateColumnPx — the Bitrate history's size
+#include "ui/PhotoCells.h"  // the photoreal cell looks (StudioLed, BacklitLcd, Vfd)
 #include "ui/VuDial.h"     // the two analog VU instruments (Vu, VuSilver)
 #include "ui/Theme.h"
 
@@ -148,6 +149,10 @@ struct MiniMeterState {
     UINT                  vuDpi = 0;
     float                 vuPeak = 0.0f;  // the PEAK lamp's glow, 0..1: lit while the needle is in
                                           // the red, then fading
+    // The photoreal cell looks (ui/PhotoCells.h): this frame's cells (kept to reuse its storage) and the cells
+    // shaded so far, so a frame copies them rather than shading them again.
+    std::vector<PhotoCell> photoCells;
+    PhotoCellCache         photoCache;
 };
 
 // Global "glass cover" strength for every meter (0 = off). A single app-wide value rather than a
@@ -543,6 +548,105 @@ void paintFrames(HDC dc, const RECT& in, MiniMeterState* st, std::vector<GlowCel
     }
 }
 
+// ---- The photoreal cell looks (StudioLed, BacklitLcd, Vfd — ui/PhotoCells.h) ---------------------------
+// The classic painters' readings — the same levels, sensitivity, ramp and peak caps — on a grid that scales
+// with the meter (photoRows / photoCols), collected as cells for paintPhotoCells to draw. The classic
+// painters above are untouched: those looks stay exactly as they were (the owner's rule).
+void photoSpectrum(const RECT& in, MiniMeterState* st, const PhotoRows& g, std::vector<PhotoCell>& out) {
+    const int bands = st->bands;
+    if (bands <= 0) return;
+    const int W = in.right - in.left;
+    const PhotoCols cols = photoCols(W, std::max(2, W / bands), g.gap, bands);
+    const float gain = st->tuning.sensitivity * 2.0f;
+    for (int c = 0; c < cols.cols; ++c) {
+        const int x0 = in.left + cols.cellLeft(c), x1 = x0 + cols.colW - g.gap;
+        const int litN = static_cast<int>(std::lround(std::clamp(st->level[c] * gain, 0.0f, 1.0f) * g.rows));
+        const int peakRow = static_cast<int>(std::lround(std::clamp(st->peak[c] * gain, 0.0f, 1.0f) * g.rows));
+        for (int r = 0; r < g.rows; ++r) {
+            bool on = r < litN;
+            COLORREF lit = rampColor(st->drawPal, static_cast<float>(r) / g.rows);
+            if (peakRow > 0 && r == peakRow) {
+                on = true;
+                lit = st->drawPal.peak;
+            }
+            out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, lit, on});
+        }
+    }
+}
+
+void photoSignal(const RECT& in, MiniMeterState* st, const PhotoRows& g, std::vector<PhotoCell>& out) {
+    const int bars = 5, W = in.right - in.left;
+    const PhotoCols cols = photoCols(W, std::max(2, W / bars), g.gap, bars);
+    const float sl = std::clamp(st->sigLevel * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
+    const int litBars = static_cast<int>(std::ceil(sl * bars - 0.001f));
+    COLORREF base = sl > 0.6f ? st->drawPal.low : (sl > 0.3f ? st->drawPal.mid : st->drawPal.high);
+    base = lerpCol(base, st->drawPal.high, st->sigTrouble * 0.6f);
+    for (int j = 0; j < cols.cols; ++j) {
+        const int x0 = in.left + cols.cellLeft(j), x1 = x0 + cols.colW - g.gap;
+        const int n = photoSignalCells(j, g.rows);
+        for (int r = 0; r < n; ++r)
+            out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, base, j < litBars});
+    }
+}
+
+void photoBitrate(const RECT& in, MiniMeterState* st, const PhotoRows& g, std::vector<PhotoCell>& out) {
+    const PhotoCols cols = photoCols(in.right - in.left, photoBitrateColW(g), g.gap, kHist);
+    const int n = std::min(cols.cols, st->histCount);
+    const float denom = std::max(st->histMax, 1.0f);
+    for (int k = 0; k < n; ++k) {  // k = 0: the newest sample, in the rightmost column
+        const int idx = (st->histHead - 1 - k + kHist) % kHist;
+        const float frac = std::clamp(st->hist[idx] / denom * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
+        const int litN = static_cast<int>(std::lround(frac * g.rows));
+        const int x0 = in.left + cols.cellLeft(cols.cols - 1 - k), x1 = x0 + cols.colW - g.gap;
+        for (int r = 0; r < g.rows; ++r) {
+            // The ramp heats toward the RAW peak, as paintBitrate's does (meterDrawnPalette says why).
+            const COLORREF lit = lerpCol(st->drawPal.accent, st->palette.peak, static_cast<float>(r) / g.rows * 0.5f);
+            out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, lit, r < litN});
+        }
+    }
+}
+
+void photoFrames(const RECT& in, MiniMeterState* st, const PhotoRows& g, std::vector<PhotoCell>& out) {
+    const PhotoCols cols = photoCols(in.right - in.left, photoFramesColW(g), g.gap, 1 << 16);
+    const float frac = std::clamp(st->fps / 60.0f * st->tuning.sensitivity * 2.0f, 0.0f, 1.0f);
+    const int lit = static_cast<int>(std::lround(frac * cols.cols));
+    COLORREF base = st->fps >= 24 ? st->drawPal.low : (st->fps >= 15 ? st->drawPal.mid : st->drawPal.high);
+    base = lerpCol(base, st->drawPal.high, st->flare);  // flash toward the alert (high) colour
+    for (int c = 0; c < cols.cols; ++c) {
+        const int x0 = in.left + cols.cellLeft(c), x1 = x0 + cols.colW - g.gap;
+        for (int r = 0; r < g.rows; ++r)
+            out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, base, c < lit});
+    }
+}
+
+CellFinish photoFinishOf(MeterStyle s) {
+    return s == MeterStyle::BacklitLcd ? CellFinish::Lcd : s == MeterStyle::Vfd ? CellFinish::Vfd : CellFinish::Led;
+}
+
+// Collect the cells, then write them straight into the back-buffer's pixels (as drawVu does).
+void drawPhotoCells(const RECT& in, COLORREF panel, MiniMeterState* st) {
+    const PhotoRows g = photoRows(in.bottom - in.top, st->dpi);
+    std::vector<PhotoCell>& cells = st->photoCells;
+    cells.clear();
+    switch (st->kind) {
+        case MeterKind::Spectrum: photoSpectrum(in, st, g, cells); break;
+        case MeterKind::Signal: photoSignal(in, st, g, cells); break;
+        case MeterKind::Bitrate: photoBitrate(in, st, g, cells); break;
+        case MeterKind::Frames: photoFrames(in, st, g, cells); break;
+    }
+    PhotoScene sc;
+    sc.finish = photoFinishOf(st->style);
+    sc.panel = panel;
+    sc.off = st->drawPal.off;
+    sc.hot = st->palette.peak;  // the RAW peak: an LED's core is "the hottest light" (meterDrawnPalette)
+    sc.glow = st->tuning.glow;
+    sc.pitch = g.pitch;
+    // onPaint's fillCell()/FrameRect() are batched GDI: they must land before these pixels are written.
+    GdiFlush();
+    if (st->backBits)
+        paintPhotoCells(static_cast<uint32_t*>(st->backBits), st->backW, st->backH, in, sc, cells, st->photoCache);
+}
+
 // Ensure the cached back-buffer matches (w,h) and the glass LUTs match the active strength.
 // Returns false if the surface couldn't be created (caller falls back to painting nothing).
 bool ensureBack(MiniMeterState* st, HDC ref, int w, int h) {
@@ -622,6 +726,8 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
             drawVu(mem, in, st);
         } else if (st->style == MeterStyle::Scope) {
             drawScope(mem, in, st);
+        } else if (isPhotoCellLook(st->style)) {
+            drawPhotoCells(in, bg, st);
         } else {
             // Tube collects its lit cells for a soft GDI+ halo pass afterwards; the
             // other looks pass nullptr, so there's no collection and no overhead.
@@ -957,6 +1063,8 @@ void miniMeterSetStyle(HWND meter, MeterStyle style) {
     MiniMeterState* st = stateOf(meter);
     if (!st) return;
     st->style = style;
+    // Leaving the photoreal looks: let their shaded cells go (at 120 dp and 500 % a cache can hold MBs).
+    if (!isPhotoCellLook(style)) st->photoCache = PhotoCellCache();
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
     if (st->mirror) miniMeterSetStyle(st->mirror, style);
 }
@@ -1001,6 +1109,9 @@ MeterPalette meterDrawnPalette(const MeterPalette& p, MeterStyle style, const Th
     // On the needle looks the stock accent means the FACE's own needle (black on both reference
     // instruments) — any panel, any skin. A picked accent is drawn as picked.
     if (isVuLook(style) && p.accent == stock.accent) d.accent = vuDialNeedleColour(vuFaceOf(style));
+    // The VFD's cells sit behind dark glass on ANY panel (PhotoCells.cpp), so its stock dark-panel Dim and
+    // Peak are already right there.
+    if (style == MeterStyle::Vfd) return d;
     const COLORREF panel = meterPanelColor(p, style, th);
     const int luma =
         (299 * GetRValue(panel) + 587 * GetGValue(panel) + 114 * GetBValue(panel)) / 1000;
@@ -1059,28 +1170,6 @@ COLORREF parseHexColor(const std::wstring& s, COLORREF fallback) {
     return RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
 }
 }  // namespace
-
-std::wstring meterStyleToString(MeterStyle style) {
-    switch (style) {
-        case MeterStyle::Tube:  return L"tube";
-        case MeterStyle::Lcd:   return L"lcd";
-        case MeterStyle::Scope: return L"scope";
-        case MeterStyle::Vu:    return L"vu";
-        case MeterStyle::VuSilver: return L"vu_silver";
-        case MeterStyle::Led:
-        default:                return L"led";
-    }
-}
-
-MeterStyle meterStyleFromString(const std::wstring& s, MeterStyle fallback) {
-    if (s == L"led") return MeterStyle::Led;
-    if (s == L"tube") return MeterStyle::Tube;
-    if (s == L"lcd") return MeterStyle::Lcd;
-    if (s == L"scope") return MeterStyle::Scope;
-    if (s == L"vu") return MeterStyle::Vu;
-    if (s == L"vu_silver") return MeterStyle::VuSilver;
-    return fallback;
-}
 
 std::wstring meterPaletteToString(const MeterPalette& p) {
     const std::wstring bg = (p.bg == CLR_INVALID) ? std::wstring(L"theme") : hexColor(p.bg);

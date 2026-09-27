@@ -706,6 +706,10 @@ enum class StringId {
     MeterLabelSpectrum,
     MeterLabelSignal,
     MeterLabelFrames,
+    // --- DialogMeters ---
+    MeterLookStudioLed,
+    MeterLookBacklitLcd,
+    MeterLookVfd,
     Count  // sentinel — MUST stay last
 };
 

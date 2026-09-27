@@ -350,6 +350,51 @@ The three size routes as ONE mechanism plus a window:
   `RabbitEarsRender --meter-height 50 --meter-labels` shows them (and a Silver strip).
 - Status and the exact TODO: Win32/HANDOVER.md, 0.2.21-dev item (3).
 
+## Stage B — photoreal cell looks (COMMITTED 2026-09-27, owner-checked: "looks good" — Win32/HANDOVER.md "✅ PHOTOREAL STAGE B")
+
+Three NEW looks, appended to `MeterStyle` after Silver VU — the classic LED / LCD / Vacuum tube are untouched
+(their painters are not edited; every existing render is byte-identical):
+- **Studio LED** (`led_studio`): rectangular LEDs set in a housing a shade under the panel. Unlit, a lens is still
+  coloured plastic — its own hue, dark, domed (lighter at the top). Lit: a diffused lens with a hot core leaning to
+  the RAW Peak ("the hottest light", as the classic Tube core) and a darker rim. The key light's glint (above-left,
+  the rule since Phase 1): a 1-px line of light one pixel inside the rim, along the top from the left and down the
+  left side, fading by the middle — on lit and (fainter) unlit lenses. A bloom round lit cells on a dark panel (the
+  Glow knob, which the Meters dialog hides for this look on a light panel, where no bloom is drawn).
+- **Backlit LCD** (`lcd_backlit`): crisp, flat segments with a 1-px edge seal; unlit ones a ghost — half-way from
+  the field to the Dim colour tinted with their own; the field the polariser's black, a shade deeper than the panel
+  — on a LIGHT panel a reflective grey-green LCD instead (so not "backlit" there); a faint light spill round lit
+  segments on a dark panel (fixed, no knob).
+- **VFD** (`vfd`, "Fluorescent (VFD)"): phosphor segments behind dark teal glass — dark on a light skin too (a VFD
+  window is dark on any front panel; `meterDrawnPalette` keeps its stock dark-panel Dim/Peak); unlit anodes the Dim
+  colour, tinted with their own, through the glass; a glow (the Glow knob); once the pitch is >= 6 px (Extra large at
+  100 %, Large at 150 %) 2 filament wires across the window (3 when the dial is >= 120 px), ~78 % of what is behind
+  them with a faint warm sheen, and once it is >= 7 (Extra large at 150 %) the control grid's mesh (every ~pitch/3
+  px, 12 % darker).
+
+**Cells that scale with the meter** (`Win32/ui/PhotoCells.h`, header-inline, selftested): the pitch is the dial's
+height over `kPhotoRows` (10), floored, never finer than the classic 3-dp pitch; as many whole rows as fit (10–13
+at size; at the standard height the classic pitch — 8–9 rows), the block centred. Spectrum's bands and Signal's 5
+bars divide the width as the classic looks do; Bitrate's history columns and Frames' bar are cells too — so a
+Bitrate meter at Extra large (150 %) shows ~35 samples (~9 s at ~4 a second) where the classic look shows ~70.
+
+**Drawn without GDI** (`PhotoCells.cpp`): each (size, colour, lit) cell is shaded once — a rounded-rectangle
+distance field for anti-aliased edges — into a per-meter cache (48 sprites, least recently drawn out first; dropped
+when the meter leaves these looks); a frame is the field fill, one row copy per cell row, the lit cells' glow ADDED
+in linear light (16-bit sRGB LUTs — the "Constraints" section's gamma-space note, a likely, not proven, cause of the
+old bloom's muddy edges) with an exponential falloff windowed to reach nothing at its edge, and the VFD's filaments
+and mesh in one integer pass. **Cost** (`--bench-paint`, 144 dpi, glass off, ms a frame at 30/50/72/120 dp): Bitrate
+Studio LED 0.02/0.05/0.10/0.23, Backlit LCD 0.02/0.04/0.07/0.17, VFD 0.02/0.05/0.10/0.24 — against Tube
+0.40/1.40/3.58/9.38 and LED 0.13/0.39/0.88/2.47. So the Tube look's cost at size (stage A's open item) is answered by
+choosing VFD; the Tube itself is unchanged, as the owner's rule requires.
+
+**Renders:** `RabbitEarsRender` writes the new looks to their own files — `looks_*` / `lookspreview_*` (each beside
+its classic twin: LED | Studio LED, LCD | Backlit LCD, Tube | VFD) and `strip_*_{studioled,backlitlcd,vfd}*` —
+so the old sheets keep their bytes.
+
+**The owner's verdict (2026-09-27): "Checked them all, looks good"** — the rows, glows and names as built. **Still
+open:** **the buffer tank**, which keeps its fixed 3-px dot grid beside the new looks (a mismatch at Extra large; it
+has no look setting, so scaling it would change an existing look).
+
 Plus two things that would help: the **reference photos/mockups** (not in the repo), and more **real
 screenshots** of the running app, to check the renders against the owner's actual screen and settings —
 the first one came 2026-09-26 (the owner's Large tray, three Backlit VUs + a Silver VU + the tank; not in

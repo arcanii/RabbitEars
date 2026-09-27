@@ -641,5 +641,8 @@
   "MenuMeterLabels": "メーターのラベル",
   "MeterLabelSpectrum": "スペクトラム",
   "MeterLabelSignal": "信号",
-  "MeterLabelFrames": "フレーム"
+  "MeterLabelFrames": "フレーム",
+  "MeterLookStudioLed": "スタジオ LED",
+  "MeterLookBacklitLcd": "バックライト LCD",
+  "MeterLookVfd": "蛍光表示管 (VFD)"
 }

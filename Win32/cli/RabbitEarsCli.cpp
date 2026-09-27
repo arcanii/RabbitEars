@@ -43,7 +43,9 @@
 #include "ui/DockLayout.h"
 #include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
-#include "ui/MiniMeter.h"  // Win32/ui — only its header-inline math: needle width, audio reading (no GUI code)
+#include "ui/MiniMeter.h"  // Win32/ui — only its header-inline parts: needle width, audio reading, the look codec
+                           // and count (no GUI code)
+#include "ui/PhotoCells.h"  // Win32/ui — the photoreal cell looks' geometry + rasteriser (pixels only, linked)
 #include "audio/SpectrumTap.h"  // Win32/audio — only its header-inline level math (rmsDbfs, programmeDbfs)
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"
@@ -1040,6 +1042,235 @@ int selftest() {
         expect(silver == 163 && backlit == 112 && othersZero,
                "needle width: Silver " + std::to_string(silver) + " px, Backlit " + std::to_string(backlit) +
                    " px at Large, 150 %; the other looks and a too-small dial 0");
+    }
+
+    out("== Photoreal cell looks (stage B; ui/PhotoCells.h, ui/MiniMeter.h) ==\n");
+    {
+        // Every look survives the settings store: its own token, parsed back to itself (a look missing from
+        // either codec is saved as "led" and comes back as LED), no two looks sharing one.
+        bool codec = true;
+        std::string codecMiss;
+        std::set<std::wstring> tokens;
+        for (int s = 0; s < kMeterStyleCount; ++s) {
+            const MeterStyle look = static_cast<MeterStyle>(s);
+            const std::wstring t = meterStyleToString(look);
+            const MeterStyle other = look == MeterStyle::Led ? MeterStyle::Tube : MeterStyle::Led;
+            if (meterStyleFromString(t, other) != look || !tokens.insert(t).second) {
+                if (codec) codecMiss = "look " + std::to_string(s);
+                codec = false;
+            }
+        }
+        expect(codec && tokens.size() == 9 && isPhotoCellLook(MeterStyle::StudioLed) &&
+                   isPhotoCellLook(MeterStyle::BacklitLcd) && isPhotoCellLook(MeterStyle::Vfd) &&
+                   !isPhotoCellLook(MeterStyle::Led) && !isPhotoCellLook(MeterStyle::Lcd) &&
+                   !isPhotoCellLook(MeterStyle::Tube),
+               "every look's token round-trips and is its own (" + std::to_string(tokens.size()) + " looks)" +
+                   (codec ? std::string() : " (first miss: " + codecMiss + ")"));
+
+        // The rows: whole cells inside the dial, as many as fit, the block centred, never finer than the classic
+        // pitch (nor than the classic Bitrate column — so its history ring covers these columns too); once the
+        // dial has room, the pitch is its height over kPhotoRows (floored), so 10 to 13 rows — at every dial
+        // height a meter can have (a whole cell up to a 120-dp bridge meter at 500 %), every 25 % step from 100 %
+        // to 500 %.
+        bool rowsOk = true;
+        std::string rowsMiss;
+        for (UINT dpi = 96; dpi <= 480; dpi += 24)
+            for (int h = photoClassicPitch(dpi); h <= 600; ++h) {
+                const PhotoRows g = photoRows(h, dpi);
+                const int topMargin = g.cellTop(g.rows - 1), bottomMargin = h - g.bottom;
+                const bool roomy = h >= kPhotoRows * photoClassicPitch(dpi);
+                const bool ok = g.rows >= 1 && g.pitch >= photoClassicPitch(dpi) &&
+                                g.pitch >= bitrateColumnPx(dpi) && g.gap >= 1 && g.gap < g.pitch &&
+                                topMargin >= 0 && bottomMargin >= 0 && std::abs(topMargin - bottomMargin) <= 1 &&
+                                g.rows * g.pitch - g.gap <= h && (g.rows + 1) * g.pitch - g.gap > h &&
+                                (!roomy || (g.pitch == h / kPhotoRows && g.rows >= kPhotoRows && g.rows <= kPhotoRows + 3));
+                if (!ok && rowsOk) rowsMiss = "dpi " + std::to_string(dpi) + " h " + std::to_string(h);
+                rowsOk = rowsOk && ok;
+            }
+        // Pinned, at 150 % (144 dpi): the standard tray's 39-px dial keeps the classic 5-px pitch; Extra
+        // large's 102-px dial has 10 rows of 10 px where the classic looks draw 20 of 5.
+        const PhotoRows std150 = photoRows(39, 144), xl150 = photoRows(102, 144);
+        expect(rowsOk && std150.pitch == 5 && xl150.pitch == 10 && xl150.rows == 10 && xl150.gap == 2,
+               "photo rows: whole, centred, >= the classic pitch, 10-13 at size; 150 %: standard pitch " +
+                   std::to_string(std150.pitch) + ", Extra large " + std::to_string(xl150.rows) + " rows at a " +
+                   std::to_string(xl150.pitch) + "-px pitch" +
+                   (rowsOk ? std::string() : " (first miss: " + rowsMiss + ")"));
+
+        // The columns: as many as fit (capped), inside the width, the block centred; the Signal bars climb to a
+        // full column.
+        bool colsOk = true;
+        std::string colsMiss;
+        for (int w = 1; w <= 700 && colsOk; ++w)
+            for (int colW = 2; colW <= 40 && colsOk; ++colW)
+                for (int gap = 1; gap < colW && colsOk; gap += 3)
+                    for (int maxCols : {5, 16, 1 << 16}) {
+                        const PhotoCols c = photoCols(w, colW, gap, maxCols);
+                        const int used = c.cols * colW - gap, right = w - (c.left + std::max(0, used));
+                        const bool ok = c.cols >= 0 && c.cols <= maxCols && c.left >= 0 && right >= 0 &&
+                                        (c.cols == 0 || std::abs(c.left - right) <= 1) &&
+                                        (c.cols == maxCols || (c.cols + 1) * colW - gap > w);
+                        if (!ok) {
+                            colsOk = false;
+                            colsMiss = "w " + std::to_string(w) + " colW " + std::to_string(colW) + " gap " +
+                                       std::to_string(gap) + " max " + std::to_string(maxCols);
+                            break;
+                        }
+                    }
+        bool signalOk = true;
+        for (int rows = 1; rows <= 40; ++rows)
+            for (int j = 0; j < 5; ++j) {
+                const int cells = photoSignalCells(j, rows);
+                signalOk = signalOk && cells >= 1 && cells <= rows &&
+                           (j == 0 || cells >= photoSignalCells(j - 1, rows)) && (j != 4 || cells == rows);
+            }
+        expect(colsOk && signalOk, "photo columns: as many as fit, inside, centred; Signal bars climb to a full column" +
+                                       (colsOk ? std::string() : " (first miss: " + colsMiss + ")"));
+
+        // The rasteriser. A 200 x 60 buffer of a sentinel colour, a dial inside it, and cells that touch the
+        // dial's edges (their glow would spill past them).
+        constexpr uint32_t kSentinel = 0x00ABCDEFu;
+        const int bw = 200, bh = 60;
+        const RECT dial{20, 10, 180, 50};
+        const COLORREF green = RGB(96, 205, 128), darkPanel = RGB(24, 22, 22), lightPanel = RGB(243, 243, 243);
+        auto luma = [](uint32_t p) {
+            return (299 * ((p >> 16) & 0xFF) + 587 * ((p >> 8) & 0xFF) + 114 * (p & 0xFF)) / 1000;
+        };
+        auto paint = [&](CellFinish f, COLORREF panel, float glow, const std::vector<PhotoCell>& cells,
+                         PhotoCellCache* keep = nullptr) {
+            std::vector<uint32_t> px(static_cast<size_t>(bw) * bh, kSentinel);
+            PhotoScene sc;
+            sc.finish = f;
+            sc.panel = panel;
+            sc.glow = glow;
+            sc.pitch = 10;
+            PhotoCellCache fresh;
+            paintPhotoCells(px.data(), bw, bh, dial, sc, cells, keep ? *keep : fresh);
+            return px;
+        };
+        auto at = [&](const std::vector<uint32_t>& px, int x, int y) { return px[static_cast<size_t>(y) * bw + x]; };
+        // Cells 24 x 8 at the dial's corners and one in the middle (lit, then unlit).
+        const std::vector<PhotoCell> edgeCells = {{RECT{20, 10, 44, 18}, green, true},
+                                                  {RECT{156, 42, 180, 50}, green, true},
+                                                  {RECT{80, 26, 104, 34}, green, true}};
+        bool inside = true, filled = true;
+        for (CellFinish f : {CellFinish::Led, CellFinish::Lcd, CellFinish::Vfd})
+            for (COLORREF panel : {darkPanel, lightPanel}) {
+                const std::vector<uint32_t> px = paint(f, panel, 1.0f, edgeCells);
+                for (int y = 0; y < bh; ++y)
+                    for (int x = 0; x < bw; ++x) {
+                        const bool out = x < dial.left || x >= dial.right || y < dial.top || y >= dial.bottom;
+                        if (out && at(px, x, y) != kSentinel) inside = false;
+                        if (!out && at(px, x, y) == kSentinel) filled = false;
+                    }
+            }
+        expect(inside && filled, "photo cells: every dial pixel drawn and nothing outside the dial (glow and all), "
+                                 "every finish, dark and light");
+
+        // An LED: lit, its core outshines its rim and any unlit lens; unlit, the lens still carries its hue.
+        const std::vector<PhotoCell> litMid = {{RECT{80, 26, 104, 34}, green, true}};
+        const std::vector<PhotoCell> offMid = {{RECT{80, 26, 104, 34}, green, false}};
+        const std::vector<uint32_t> ledOn = paint(CellFinish::Led, darkPanel, 0.5f, litMid);
+        const std::vector<uint32_t> ledOff = paint(CellFinish::Led, darkPanel, 0.5f, offMid);
+        const uint32_t onCore = at(ledOn, 92, 30), onRim = at(ledOn, 81, 33), offCore = at(ledOff, 92, 30);
+        const bool tinted = ((offCore >> 8) & 0xFF) > ((offCore >> 16) & 0xFF) && ((offCore >> 8) & 0xFF) > (offCore & 0xFF);
+        const uint32_t flatGreen = ((green & 0xFFu) << 16) | (green & 0xFF00u) | ((green >> 16) & 0xFFu);  // as 0x00RRGGBB
+        expect(luma(onCore) > luma(flatGreen) + 10 && luma(onCore) > luma(onRim) && luma(onRim) > luma(offCore) &&
+                   tinted,
+               "LED lens: lit core " + std::to_string(luma(onCore)) + " > its flat colour " +
+                   std::to_string(luma(flatGreen)) + " (a hot core) and > rim " + std::to_string(luma(onRim)) +
+                   " > unlit " + std::to_string(luma(offCore)) + "; the unlit lens green-tinted");
+        // The key light's glint: one pixel inside the rim, top-left (the cell's second row, third column) is
+        // lighter than the same spot top-right (its mirror image — the core and rim are symmetric), lit or not.
+        const int glintOn = luma(at(ledOn, 82, 27)) - luma(at(ledOn, 101, 27));
+        const int glintOff = luma(at(ledOff, 82, 27)) - luma(at(ledOff, 101, 27));
+        expect(glintOn > 20 && glintOff > 5,
+               "LED glint: top-left inside the rim " + std::to_string(glintOn) + " (lit) / " + std::to_string(glintOff) +
+                   " (unlit) lighter than top-right");
+
+        // Glow: on a dark panel a lit LED lights the housing beside it (more with the Glow knob up, none with it
+        // down); on a light panel there is none (light added to white is lost).
+        const int gx = 106, gy = 30;  // 2 px right of the cell, in the housing
+        const uint32_t darkLit = at(ledOn, gx, gy), darkUnlit = at(ledOff, gx, gy);
+        const uint32_t knobUp = at(paint(CellFinish::Led, darkPanel, 1.0f, litMid), gx, gy);
+        const uint32_t knobOff = at(paint(CellFinish::Led, darkPanel, 0.0f, litMid), gx, gy);
+        const uint32_t lightLit = at(paint(CellFinish::Led, lightPanel, 1.0f, litMid), gx, gy);
+        const uint32_t lightUnlit = at(paint(CellFinish::Led, lightPanel, 1.0f, offMid), gx, gy);
+        expect(luma(darkLit) > luma(darkUnlit) && luma(knobUp) > luma(darkLit) && knobOff == darkUnlit &&
+                   lightLit == lightUnlit,
+               "LED glow: the housing by a lit cell " + std::to_string(luma(darkLit)) + " > by an unlit one " +
+                   std::to_string(luma(darkUnlit)) + ", Glow up " + std::to_string(luma(knobUp)) +
+                   ", Glow off none; none on a light panel");
+        // ...and it fades to nothing at its reach — no edge. This cell's glow reaches 6 px (0.7 of its 8-px
+        // height): its last pixel (5 px out) and the first beyond it match, with Glow up; 1 px out it is bright.
+        const std::vector<uint32_t> up = paint(CellFinish::Led, darkPanel, 1.0f, litMid);
+        const int nearOut = luma(at(up, 104, 30)), lastIn = luma(at(up, 109, 30)), beyond = luma(at(up, 110, 30));
+        expect(std::abs(lastIn - beyond) <= 1 && nearOut > beyond + 10,
+               "LED glow fades out: 1 px out " + std::to_string(nearOut) + ", at its reach " + std::to_string(lastIn) +
+                   ", beyond " + std::to_string(beyond));
+
+        // The VFD's window is dark glass on a light panel too; the LCD's is a reflective grey-green there.
+        const uint32_t vfdField = at(paint(CellFinish::Vfd, lightPanel, 0.5f, {}), 30, 40);
+        const uint32_t lcdField = at(paint(CellFinish::Lcd, lightPanel, 0.5f, {}), 30, 40);
+        const uint32_t lr = (lcdField >> 16) & 0xFF, lg = (lcdField >> 8) & 0xFF, lb = lcdField & 0xFF;
+        expect(luma(vfdField) < 40 && luma(lcdField) > 150 && lg > lr && lg > lb,
+               "VFD glass stays dark on a light panel (" + std::to_string(luma(vfdField)) +
+                   "); the LCD's field is a light grey-green there (" + std::to_string(lr) + "," + std::to_string(lg) +
+                   "," + std::to_string(lb) + ")");
+
+        // The Backlit LCD's and the VFD's unlit cells follow the palette's Dim, as the LED's lens does (and the
+        // classic LCD's ghost).
+        auto unlitWith = [&](CellFinish f, COLORREF dim) {
+            std::vector<uint32_t> px(static_cast<size_t>(bw) * bh, kSentinel);
+            PhotoScene sc;
+            sc.finish = f;
+            sc.panel = darkPanel;
+            sc.off = dim;
+            sc.pitch = 10;
+            PhotoCellCache c;
+            paintPhotoCells(px.data(), bw, bh, dial, sc, offMid, c);
+            return luma(at(px, 92, 30));
+        };
+        const int lcdDim = unlitWith(CellFinish::Lcd, RGB(38, 40, 44)), lcdBright = unlitWith(CellFinish::Lcd, RGB(200, 200, 200));
+        const int vfdDim = unlitWith(CellFinish::Vfd, RGB(38, 40, 44)), vfdBright = unlitWith(CellFinish::Vfd, RGB(200, 200, 200));
+        expect(lcdBright > lcdDim + 20 && vfdBright > vfdDim + 20,
+               "unlit Backlit LCD / VFD cells follow Dim: " + std::to_string(lcdDim) + " -> " + std::to_string(lcdBright) +
+                   " / " + std::to_string(vfdDim) + " -> " + std::to_string(vfdBright));
+
+        // The cache changes nothing: a frame painted over a warm cache — even one that had to evict (more
+        // colours than it keeps) — is the frame a fresh cache paints, and the frame a cache big enough never to
+        // evict paints.
+        std::vector<PhotoCell> many;
+        for (int i = 0; i < 64; ++i) {
+            const int x = 20 + (i % 16) * 10, y = 10 + (i / 16) * 10;
+            many.push_back({RECT{x, y, x + 8, y + 8}, RGB(4 * i, 255 - 3 * i, 90 + i), (i % 3) != 0});
+        }
+        PhotoCellCache warm;
+        paint(CellFinish::Vfd, darkPanel, 0.5f, many, &warm);
+        std::vector<PhotoCell> shuffled(many.rbegin(), many.rend());
+        paint(CellFinish::Vfd, darkPanel, 0.5f, shuffled, &warm);
+        PhotoCellCache roomy(256);
+        const std::vector<uint32_t> truth = paint(CellFinish::Vfd, darkPanel, 0.5f, many, &roomy);
+        expect(paint(CellFinish::Vfd, darkPanel, 0.5f, many, &warm) == truth &&
+                   paint(CellFinish::Vfd, darkPanel, 0.5f, many) == truth && many.size() > kPhotoSpriteCap,
+               "photo cells: a warm evicting cache, a fresh one and one that never evicts paint the same frame");
+        // ...and within one frame it keeps a lit cell and an unlit one of the same colour apart (a Spectrum
+        // column is exactly that), in either order.
+        bool apart = true;
+        for (bool litFirst : {true, false})
+            for (CellFinish f : {CellFinish::Led, CellFinish::Lcd, CellFinish::Vfd}) {
+                const std::vector<PhotoCell> pair = {{RECT{30, 26, 54, 34}, green, litFirst},
+                                                     {RECT{120, 26, 144, 34}, green, !litFirst}};
+                const std::vector<uint32_t> px = paint(f, darkPanel, 0.5f, pair);
+                const uint32_t litPx = at(px, litFirst ? 42 : 132, 30), offPx = at(px, litFirst ? 132 : 42, 30);
+                apart = apart && luma(litPx) > luma(offPx) + 40;
+            }
+        expect(apart, "photo cells: a lit and an unlit cell of one colour in one frame each drawn as itself");
+        // ...and a new scene (a skin switch, a new Bg) throws the old cells away: a cache warmed on a dark panel
+        // paints a light one as a fresh cache does.
+        PhotoCellCache switched;
+        paint(CellFinish::Led, darkPanel, 0.5f, litMid, &switched);
+        expect(paint(CellFinish::Led, lightPanel, 0.5f, litMid, &switched) == paint(CellFinish::Led, lightPanel, 0.5f, litMid),
+               "photo cells: a cache warmed on one panel paints another as a fresh cache does");
     }
 
     out("== TV Guide rows + coverage (buildGuideModel) ==\n");

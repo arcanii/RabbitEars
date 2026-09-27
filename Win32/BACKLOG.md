@@ -145,6 +145,19 @@ Open items this work left or found (none blocking):
 > - **Render tool, tall heights:** the Silver VU's "VU" legends can differ by a few anti-aliased pixels
 >   between runs (GDI+ text — seen once in four runs at 120 dp, 150 dpi). Compare tall renders from one run,
 >   or mask the legends; the standard-height renders never draw them (always byte-identical).
+>
+> **Stage B (the Studio LED / Backlit LCD / VFD looks — committed 2026-09-27, owner-checked; see HANDOVER) leaves:**
+> - **mac has none of the three looks** (its `MeterStyle` in `mac/src/app/MeterModel.h` stops at Scope; its parser
+>   falls back on the `led_studio` / `lcd_backlit` / `vfd` tokens as it does on `vu` / `vu_silver`) — for the mac
+>   team; its settings live in its own database, so nothing crosses over today.
+> - **The buffer tank keeps its fixed 3-px dot grid** beside the new looks — a mismatch at Large / Extra large. It has
+>   no look setting; scaling it would change an existing look (the owner's rule) — an owner decision (opt-in, or
+>   follow the meters' look).
+> - **A Frames flare / Signal trouble fade re-shades their cells every frame** while the colour moves (a new colour
+>   is a new sprite; the cache holds 48, least recently drawn out first). Cheap at the sizes measured (the bench's
+>   Frames Studio LED is 0.17 ms at 120 dp), but unmeasured mid-fade at 500 %.
+> - **The ja / zh-Hant look names are machine drafts** (スタジオ LED, バックライト LCD, 蛍光表示管 (VFD); 錄音室 LED,
+>   背光 LCD, 真空螢光顯示器 (VFD)).
 
 Design notes, research and the phased proposal: **[`docs/PHOTOREAL.md`](docs/PHOTOREAL.md)**. Phase 0
 (`RabbitEarsRender`, a headless PNG renderer for the meters and the skinned strip) is built and verified.

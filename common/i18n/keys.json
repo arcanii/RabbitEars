@@ -4174,5 +4174,23 @@
     "cluster": "Transport",
     "placeholders": [],
     "comment": "Meter label, printed in capitals under the frame-rate meter. Keep it SHORT."
+  },
+  {
+    "id": "MeterLookStudioLed",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Meter look (the Look drop-down in Settings > Meters): a bar of rectangular LEDs drawn as the real parts - lenses tinted with their colour when off, a bright core when lit - whose cells grow with the meter. 'Studio' as in a recording studio's level meters. LED stays LED."
+  },
+  {
+    "id": "MeterLookBacklitLcd",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Meter look: an LCD bar display (crisp flat segments, the unlit ones faintly visible), whose segments grow with the meter - backlit on a dark panel, drawn as a reflective grey-green LCD on a light one. LCD stays LCD."
+  },
+  {
+    "id": "MeterLookVfd",
+    "cluster": "DialogMeters",
+    "placeholders": [],
+    "comment": "Meter look: a vacuum fluorescent display (VFD) - glowing phosphor segments behind dark glass, as on 1980s-90s hi-fi equipment - whose segments grow with the meter. Use the usual name for this display in the language and keep the abbreviation VFD."
   }
 ]

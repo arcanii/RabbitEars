@@ -7,7 +7,8 @@
 //   * Signal   — antenna-style strength bars (composite of stream health).
 //   * Bitrate  — a scrolling history of stream throughput.
 //   * Frames   — displayed frame-rate with a red flare on dropped frames.
-// Each is drawn as small square LEDs (lit/dim cells) to match the family look.
+// Each is drawn as small square LEDs (lit/dim cells) to match the family look — or, in one of the other
+// looks (MeterStyle), as tube cells, LCD segments, a scope trace, a VU needle, or photoreal cells.
 #pragma once
 
 #include <algorithm>
@@ -32,11 +33,20 @@ enum class MeterKind { Spectrum, Signal, Bitrate, Frames };
 // back on the unknown "vu" token. Adding it there is a mac-team change, flagged in BACKLOG.md.
 // VuSilver is the second analog instrument (a silver cassette-deck meter; ui/VuDial.h) — appended
 // LAST for the same reason, and mac's parser falls back on its "vu_silver" token the same way.
-enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver };
+// StudioLed, BacklitLcd and Vfd (0.2.21, photoreal stage B) are the cell looks drawn as the hardware they
+// imitate, their cells scaling with the meter (ui/PhotoCells.h) — NEW looks beside LED / LCD / Tube, which
+// are unchanged. Appended last, as above (the Meters dialog's combo index is the enum value); mac has none
+// of them and falls back on their tokens.
+enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver, StudioLed, BacklitLcd, Vfd };
+constexpr int kMeterStyleCount = static_cast<int>(MeterStyle::Vfd) + 1;  // keep = the last look + 1
 
 // The two needle looks share everything but their face: `bg` is their lamp, they have no cells, and
 // the Meters dialog gives them the same knobs.
 inline bool isVuLook(MeterStyle s) { return s == MeterStyle::Vu || s == MeterStyle::VuSilver; }
+// The photoreal cell looks (ui/PhotoCells): the classic painters' readings on a grid that scales with the meter.
+inline bool isPhotoCellLook(MeterStyle s) {
+    return s == MeterStyle::StudioLed || s == MeterStyle::BacklitLcd || s == MeterStyle::Vfd;
+}
 inline VuFace vuFaceOf(MeterStyle s) { return s == MeterStyle::VuSilver ? VuFace::Silver : VuFace::Backlit; }
 
 // The chrome band a meter reserves around its dial: a 1px themed FrameRect plus the rest of the
@@ -80,11 +90,11 @@ inline MeterStyle defaultMeterStyle(MeterKind /*kind*/) { return MeterStyle::Led
 
 // Per-meter "feel" knobs (Settings → Meters…), all normalized 0..1 with 0.5 as the
 // neutral default that reproduces the classic behaviour exactly. Which ones matter
-// depends on the meter/look: glow → Tube/Scope bloom; smoothing → attack/decay easing
+// depends on the meter/look: glow → Tube/Scope/Studio LED/VFD bloom; smoothing → attack/decay easing
 // (spectrum/signal/frames); sensitivity → input gain (all); peakHold → spectrum peak
 // linger; breathing → bitrate adaptive-ceiling ebb.
 struct MeterTuning {
-    float glow;         // Tube/Scope bloom intensity
+    float glow;         // Tube/Scope/Studio LED/VFD bloom intensity
     float smoothing;    // attack/decay easing (higher = smoother)
     float sensitivity;  // input gain (0.5 = unity; on the audio needle ±12 dB — vuReadingOfDbfs)
     float peakHold;     // spectrum peak-cap linger
@@ -160,8 +170,8 @@ MeterTuning  miniMeterTuning(HWND meter);
 // meterPanelColor: the panel behind the cells (`bg`, or the theme's window when it is CLR_INVALID;
 // always the theme's on the Vu look, where `bg` is the lamp). meterDrawnPalette: the palette
 // verbatim, except that the STOCK `off` and `peak` — dark-panel colours — are re-derived from the
-// panel when that panel is light, and on a needle look the stock `accent` is the face's own needle
-// (ui/VuDial.h). Paint-time only: never write a resolved colour back to settings
+// panel when that panel is light (not on the VFD look, whose glass is dark on any panel), and on a
+// needle look the stock `accent` is the face's own needle (ui/VuDial.h). Paint-time only: never write a resolved colour back to settings
 // (a stock value saved as its light-panel resolution would stop adapting, and be wrong on a dark skin).
 struct Theme;
 COLORREF     meterPanelColor(const MeterPalette& p, MeterStyle style, const Theme& th);
@@ -170,8 +180,34 @@ MeterPalette meterDrawnPalette(const MeterPalette& p, MeterStyle style, const Th
 // Serialize a style/palette for the settings K/V store (persisted per meter). The
 // palette is 7 comma-joined tokens (bg first — "theme" for CLR_INVALID, else RRGGBB);
 // parsing falls back to `fallback` for any missing/garbled field.
-std::wstring meterStyleToString(MeterStyle style);
-MeterStyle   meterStyleFromString(const std::wstring& s, MeterStyle fallback);
+// The look's token — header-inline so --selftest can round-trip every look: a new look needs a case in BOTH,
+// or it is saved as "led" (the default below) and comes back as LED.
+inline std::wstring meterStyleToString(MeterStyle style) {
+    switch (style) {
+        case MeterStyle::Tube:  return L"tube";
+        case MeterStyle::Lcd:   return L"lcd";
+        case MeterStyle::Scope: return L"scope";
+        case MeterStyle::Vu:    return L"vu";
+        case MeterStyle::VuSilver: return L"vu_silver";
+        case MeterStyle::StudioLed: return L"led_studio";
+        case MeterStyle::BacklitLcd: return L"lcd_backlit";
+        case MeterStyle::Vfd:   return L"vfd";
+        case MeterStyle::Led:
+        default:                return L"led";
+    }
+}
+inline MeterStyle meterStyleFromString(const std::wstring& s, MeterStyle fallback) {
+    if (s == L"led") return MeterStyle::Led;
+    if (s == L"tube") return MeterStyle::Tube;
+    if (s == L"lcd") return MeterStyle::Lcd;
+    if (s == L"scope") return MeterStyle::Scope;
+    if (s == L"vu") return MeterStyle::Vu;
+    if (s == L"vu_silver") return MeterStyle::VuSilver;
+    if (s == L"led_studio") return MeterStyle::StudioLed;
+    if (s == L"lcd_backlit") return MeterStyle::BacklitLcd;
+    if (s == L"vfd") return MeterStyle::Vfd;
+    return fallback;
+}
 std::wstring meterPaletteToString(const MeterPalette& p);
 MeterPalette meterPaletteFromString(const std::wstring& s, const MeterPalette& fallback);
 
