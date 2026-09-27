@@ -710,6 +710,8 @@ enum class StringId {
     MeterLookStudioLed,
     MeterLookBacklitLcd,
     MeterLookVfd,
+    // --- Menu ---
+    MenuMeterTankDots,
     Count  // sentinel — MUST stay last
 };
 

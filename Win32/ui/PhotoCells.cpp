@@ -210,6 +210,149 @@ void shadeGlow(const PhotoScene& s, int w, int h, COLORREF litC, const GlowSpec&
 
 }  // namespace
 
+namespace {
+
+// A cheap, stable hash — the brushed metal's streaks, the same on every frame and every run.
+uint32_t hash32(uint32_t v) {
+    v ^= v >> 16;
+    v *= 0x7FEB352Du;
+    v ^= v >> 15;
+    v *= 0x846CA68Bu;
+    v ^= v >> 16;
+    return v;
+}
+
+// One ring pixel of the bezel. (x, y) in the meter, w x h; b the frame's width; d = the distance to the
+// nearest outer edge (0 .. b-1); lit = on the top or left run of the frame (the key light's side).
+Rgb bezelPixel(const PhotoBezel& bz, int x, int y, int w, int h, int b, int d, bool lit) {
+    const float u = (d + 0.5f) / static_cast<float>(b);  // 0 at the outer edge .. 1 at the window
+    const float outer = std::clamp(1.0f - u / 0.35f, 0.0f, 1.0f);           // the outer bevel's weight
+    const float inner = std::clamp((u - 0.65f) / 0.35f, 0.0f, 1.0f);        // the inner lip's
+    // A raised frame lit from above-left: the outer bevel bright on the lit runs and dark on the others; the
+    // lip into the window the other way round.
+    const float bevel = lit ? outer - inner : inner - outer;  // +1 = catching the light, -1 = in shadow
+    Rgb face{}, light{}, shade{};
+    switch (bz.material) {
+        case SkinMaterial::Anodised:
+        case SkinMaterial::Satin: {
+            const bool satin = bz.material == SkinMaterial::Satin;
+            face = satin ? Rgb{202, 202, 207} : Rgb{46, 46, 50};
+            light = satin ? Rgb{252, 252, 253} : Rgb{120, 120, 128};
+            shade = satin ? Rgb{136, 136, 142} : Rgb{6, 6, 7};
+            // Brushed: fine streaks along the run (along x on the top and bottom, along y on the sides) — each its
+            // own tone, and fading in and out along its length (a 9-px value noise), so they read as brushing
+            // rather than as ruled pinstripes.
+            const bool across = (d == y || d == h - 1 - y);
+            const int lane = across ? y : x, run = across ? x : y;
+            auto h01 = [&](int s) {
+                return (hash32(static_cast<uint32_t>(lane) * 2654435761u ^ static_cast<uint32_t>(s) * 40503u ^
+                               (across ? 0x51u : 0xA3u)) & 0xFF) / 255.0f;
+            };
+            const int seg = run / 9;
+            const float t = (run % 9) / 9.0f, st = t * t * (3.0f - 2.0f * t);
+            const float along = h01(seg) + (h01(seg + 1) - h01(seg)) * st;
+            const float streak = (h01(-1) - 0.5f) * (0.35f + 0.65f * along) * (satin ? 13.0f : 12.0f);
+            face = Rgb{face.r + streak, face.g + streak, face.b + streak};
+            break;
+        }
+        case SkinMaterial::Brass: {
+            // Polished: a broad sheen across the frame, brightest toward the top-left (the key light).
+            const float sheen = std::clamp(1.0f - (static_cast<float>(x) / w + static_cast<float>(y) / h) * 0.6f, 0.0f, 1.0f);
+            face = mix(Rgb{146, 100, 38}, Rgb{224, 178, 98}, sheen);
+            light = Rgb{255, 232, 168};
+            shade = Rgb{78, 50, 18};
+            break;
+        }
+        case SkinMaterial::NeonGlass: {
+            face = Rgb{10, 12, 20};
+            light = Rgb{70, 84, 112};
+            shade = Rgb{2, 2, 5};
+            break;
+        }
+        case SkinMaterial::Flat:
+            break;
+    }
+    Rgb c = bevel >= 0.0f ? mix(face, light, bevel) : mix(face, shade, -bevel);
+    if (bz.material == SkinMaterial::NeonGlass && b >= 3) {
+        // The tube: a bright core along the frame's middle, its light spilling over the glass either side.
+        const float off = std::fabs(u - 0.5f) * b;  // px from the tube's centre line
+        const Rgb neon = rgbOf(bz.neon);
+        const float core = std::clamp(1.0f - off / 0.9f, 0.0f, 1.0f);
+        const float spill = std::exp(-off / std::max(0.8f, b * 0.18f)) * 0.55f;
+        c = mix(c, neon, std::max(core, spill));
+        c = mix(c, kWhite, 0.35f * core * core);
+    } else if (bz.material == SkinMaterial::NeonGlass && d == 0) {
+        // Too narrow for a tube (the standard tray below 125 %): a neon edge, so the frame still reads against a
+        // black strip — where the classic looks keep the skin's border.
+        c = mix(c, rgbOf(bz.neon), 0.80f);
+    }
+    // Brass rivets: a domed head at each corner, centred in the frame, once it is wide enough to show one — lit
+    // by the key light (a Lambert dome with a small specular glint top-left) and sat in a 1-px shadow.
+    if (bz.material == SkinMaterial::Brass && b >= 6) {
+        const float r = b * 0.40f, cxy = b * 0.5f;
+        const float cx = x < w / 2 ? cxy : w - cxy, cy = y < h / 2 ? cxy : h - cxy;
+        const float dx = (x + 0.5f - cx) / r, dy = (y + 0.5f - cy) / r, rr = dx * dx + dy * dy;
+        const float seat = 1.0f + 0.8f / r;  // the shadow ring's outer radius, in head radii (under a pixel wide)
+        if (rr < 1.0f) {
+            const float nz = std::sqrt(1.0f - rr);
+            // The light from above-left and in front: (-0.55, -0.55, 0.63), about unit length.
+            const float lambert = std::clamp((-dx - dy) * 0.55f + nz * 0.63f, 0.0f, 1.0f);
+            Rgb head = mix(Rgb{92, 58, 20}, Rgb{218, 168, 80}, lambert);
+            head = mix(head, Rgb{255, 244, 204}, std::pow(lambert, 10.0f));
+            const float edge = std::clamp((1.0f - rr) * r * 0.5f, 0.0f, 1.0f);  // anti-aliased rim
+            c = mix(scale(c, 0.72f), head, edge);
+        } else if (rr < seat * seat) {
+            c = scale(c, 0.72f);
+        }
+    }
+    return c;
+}
+
+}  // namespace
+
+void paintPhotoBezel(uint32_t* px, int stride, int bufH, const RECT& meter, const PhotoBezel& bz,
+                     PhotoBezelCache& cache) {
+    if (!px || !photoMaterialFramed(bz.material) || bz.px <= 0) return;
+    const int w = meter.right - meter.left, h = meter.bottom - meter.top, b = bz.px;
+    if (w <= 2 * b || h <= 2 * b) return;
+    // The ring's layout in the cache (PhotoBezelCache): the top run's b rows, the bottom run's, then each side row's
+    // 2b pixels (b on the left, b on the right).
+    auto slot = [&](int x, int y) -> size_t {
+        if (y < b) return static_cast<size_t>(y) * w + x;
+        if (y >= h - b) return static_cast<size_t>(b) * w + static_cast<size_t>(y - (h - b)) * w + x;
+        return static_cast<size_t>(2 * b) * w + static_cast<size_t>(y - b) * (2 * b) + (x < b ? x : b + (x - (w - b)));
+    };
+    const size_t ringPx = static_cast<size_t>(2 * b) * w + static_cast<size_t>(h - 2 * b) * (2 * b);
+    auto inRing = [&](int x, int y) { return y < b || y >= h - b || x < b || x >= w - b; };
+    if (cache.w != w || cache.h != h || !(cache.key == bz) || cache.ring.size() != ringPx) {
+        cache.ring.assign(ringPx, 0);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                if (!inRing(x, y)) {
+                    x = w - b - 1;  // across the window to its right side
+                    continue;
+                }
+                const int dl = x, dt = y, dr = w - 1 - x, db = h - 1 - y;
+                const int d = std::min(std::min(dl, dt), std::min(dr, db));
+                const bool lit = std::min(dt, dl) <= std::min(db, dr);
+                cache.ring[slot(x, y)] = pack(bezelPixel(bz, x, y, w, h, b, d, lit));
+            }
+        cache.w = w;
+        cache.h = h;
+        cache.key = bz;
+    }
+    for (int y = 0; y < h; ++y) {
+        const int oy = meter.top + y;
+        if (oy < 0 || oy >= bufH) continue;
+        uint32_t* row = px + static_cast<size_t>(oy) * stride;
+        for (int x = 0; x < w; ++x) {
+            if (!inRing(x, y)) x = w - b;  // skip the window
+            const int ox = meter.left + x;
+            if (ox >= 0 && ox < stride) row[ox] = cache.ring[slot(x, y)];
+        }
+    }
+}
+
 void PhotoCellCache::newFrame(const PhotoScene& scene) {
     if (!valid_ || !(scene == scene_)) {
         sprites_.clear();

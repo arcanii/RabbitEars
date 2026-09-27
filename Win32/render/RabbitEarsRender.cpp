@@ -39,6 +39,10 @@
 //               there (the app's own row) a needle look takes its instrument's own width, as in layout()
 //   --meter-labels  the meters' labels under an own row of meters, printed in the strip's frame as the app
 //               prints them (ui/MeterLabels.h); adds _labels to the names of the strips that show them
+// The photoreal cell looks (Studio LED, Backlit LCD, VFD — each skin's material as their frame) are drawn into files of
+// their own, so the classic sheets keep their bytes: looks_*.png (each beside its classic twin; their tank with the
+// opt-in scaled dots, Settings ▸ Meters), lookspreview_*.png (the Meters dialog's preview size; the classic tank), and
+// strip_*_{studioled,backlitlcd,vfd}_dots*.png. The strips are drawn in each skin's material (stage C).
 // Exit code: 0 = every PNG written, 1 = something failed (details on stdout), 2 = bad arguments.
 #include <windows.h>
 
@@ -329,8 +333,10 @@ std::wstring wid(const std::string& s) { return std::wstring(s.begin(), s.end())
 // One contact sheet: rows = looks, columns = kinds, all at the REAL tray size for `dpi`, plus the
 // buffer tank (healthy + troubled). Zoomed by integer nearest-neighbour so each device pixel is
 // visible.
+// `tankDots`: the tank with the opt-in scaled dots (BufferMeter.h bufferLedPitch) — the looks_ sheets show it so, the
+// classic tray sheets never (their bytes).
 void traySheet(const std::string& skin, UINT dpi, float glass, const int* rows = kClassicSheet,
-               int nRows = kClassicStyleCount, const wchar_t* prefix = L"tray") {
+               int nRows = kClassicStyleCount, const wchar_t* prefix = L"tray", bool tankDots = false) {
     miniMeterSetGlass(glass);
     const int mh = dp(g_meterH96, dpi);
     const int zoom = std::max(1, ((dpi <= 96) ? 4 : 3) * 30 / g_meterH96);
@@ -377,8 +383,10 @@ void traySheet(const std::string& skin, UINT dpi, float glass, const int* rows =
     {
         const int y = top + nRows * rowH;
         cv.text(6, y + rowLabelH + mh * zoom / 2 - 8, L"Buffer", RGB(230, 230, 230), 15, true);
+        bufferMeterSetScaledDots(tankDots);
         Img a = renderBuffer(bufW, mh, dpi, 360, false, L"12.4 Mb/s");
         Img b = renderBuffer(bufW, mh, dpi, 360, true, L"1.8 Mb/s");
+        bufferMeterSetScaledDots(false);
         wchar_t lab[96];
         swprintf_s(lab, L"healthy %dx%d (health 100, flow ~0.65)", bufW, mh);
         cv.text(labelW, y, lab, RGB(170, 170, 176), 13);
@@ -452,6 +460,9 @@ void paintRenderLabels(HDC dc, void* ctx) {
 void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style, const wchar_t* tag,
                const std::wstring& adapterTag) {
     miniMeterSetGlass(glass);
+    // The photoreal looks' strips show the tank with its opt-in scaled dots, as they would be used together; the
+    // classic strips never (their bytes).
+    bufferMeterSetScaledDots(isPhotoCellLook(style));
     // The strip at this meter height, as layout() makes it for a video panel 1100 dp wide (and tall
     // enough not to cap it): inline at the standard height, an own row of meters above the transport
     // row when taller (MeterTray.h).
@@ -515,6 +526,7 @@ void stripShot(const std::string& skin, UINT dpi, float glass, MeterStyle style,
                    : renderMini(kKinds[p.slot], style, p.w, meterH, dpi, 90, 16, g_meterH96 != kMeterHeightStd),
                p.x, meterY, 1);
     }
+    bufferMeterSetScaledDots(false);
     wchar_t name[160];
     swprintf_s(name, L"strip_%ls_%udpi_%ls%ls%ls%ls.png", wid(skin).c_str(), dpi, tag, adapterTag.c_str(),
                heightSuffix().c_str(), withLabels ? L"_labels" : L"");
@@ -768,18 +780,19 @@ int wmain(int argc, wchar_t** argv) {
                 // Not at the standard height, whose file set stays as it always was.
                 if (g_meterH96 != kMeterHeightStd)
                     stripShot(id, dpi, 0.6f, MeterStyle::VuSilver, L"silver_glass60", atag);
-                // The photoreal cell looks (stage B) in the strip — new files, at every height.
-                stripShot(id, dpi, 0.0f, MeterStyle::StudioLed, L"studioled", atag);
-                stripShot(id, dpi, 0.0f, MeterStyle::BacklitLcd, L"backlitlcd", atag);
-                stripShot(id, dpi, 0.0f, MeterStyle::Vfd, L"vfd", atag);
+                // The photoreal cell looks (stage B) in the strip — new files, at every height — with the tank's
+                // opt-in scaled dots ("_dots": not the app's default, which keeps the classic tank).
+                stripShot(id, dpi, 0.0f, MeterStyle::StudioLed, L"studioled_dots", atag);
+                stripShot(id, dpi, 0.0f, MeterStyle::BacklitLcd, L"backlitlcd_dots", atag);
+                stripShot(id, dpi, 0.0f, MeterStyle::Vfd, L"vfd_dots", atag);
             }
 #endif
             if (!stripOnly) {
                 traySheet(id, dpi, 0.0f);
                 traySheet(id, dpi, 0.6f);
                 const int nPairs = static_cast<int>(sizeof(kLookPairs) / sizeof(kLookPairs[0]));
-                traySheet(id, dpi, 0.0f, kLookPairs, nPairs, L"looks");
-                traySheet(id, dpi, 0.6f, kLookPairs, nPairs, L"looks");
+                traySheet(id, dpi, 0.0f, kLookPairs, nPairs, L"looks", true);
+                traySheet(id, dpi, 0.6f, kLookPairs, nPairs, L"looks", true);
             }
         }
         if (!stripOnly) {

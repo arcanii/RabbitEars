@@ -644,5 +644,6 @@
   "MeterLabelFrames": "影格",
   "MeterLookStudioLed": "錄音室 LED",
   "MeterLookBacklitLcd": "背光 LCD",
-  "MeterLookVfd": "真空螢光顯示器 (VFD)"
+  "MeterLookVfd": "真空螢光顯示器 (VFD)",
+  "MenuMeterTankDots": "資料流點陣隨量表放大"
 }

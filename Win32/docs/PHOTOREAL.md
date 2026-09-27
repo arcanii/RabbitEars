@@ -391,9 +391,37 @@ choosing VFD; the Tube itself is unchanged, as the owner's rule requires.
 its classic twin: LED | Studio LED, LCD | Backlit LCD, Tube | VFD) and `strip_*_{studioled,backlitlcd,vfd}*` —
 so the old sheets keep their bytes.
 
-**The owner's verdict (2026-09-27): "Checked them all, looks good"** — the rows, glows and names as built. **Still
-open:** **the buffer tank**, which keeps its fixed 3-px dot grid beside the new looks (a mismatch at Extra large; it
-has no look setting, so scaling it would change an existing look).
+**The owner's verdict (2026-09-27): "Checked them all, looks good"** — the rows, glows and names as built. **The
+buffer tank** (its fixed 3-px dot grid beside the new looks): the owner chose an **opt-in** — Settings ▸ Meters ▸
+"Data-flow dots grow with the meter" (off by default); on, the tank's dots take the photoreal cells' pitch (below).
+
+## Stage C — skins as materials (COMMITTED 2026-09-27, owner-checked: "Looks good" — Win32/HANDOVER.md "✅ TANK OPT-IN + PHOTOREAL STAGE C")
+
+The owner's answers (2026-09-27): a skin's material goes on the **new looks only** (Studio LED, Backlit LCD, VFD — the
+classic looks and both VU faces stay byte-identical) and the **four built-in skins are upgraded in place**.
+- **The model:** `common/ui/Skin.h` `SkinMaterial` (Flat, Anodised, Satin, Brass, NeonGlass) and `Skin::material` —
+  Dark Anodised, Light Satin, Cyberpunk NeonGlass, Steampunk Brass. A token; each renderer draws its own (mac: nothing yet
+  — Flat). The Win32 strip shader reads it as a number: append, never reorder.
+- **C1 — the frame.** The new looks sit in a bezel `photoBezelPx` wide — the 2-dp chrome band, or 1/16 of the meter's
+  height when more (at 150 %: 3 / 4 / 6 / 11 px at Standard / Large / Extra large / 120 dp; the dial shrinks by it, so
+  Extra large at 150 % has a 9-px pitch, not 10). A raised frame lit from above-left (the key light): the outer bevel
+  bright top/left, the lip into the window dark top/left. Anodised / Satin: brushed (each streak fading along its
+  length); Brass: a polished sheen brightest top-left, domed rivets (Lambert-lit, a small glint) once the frame is 6 px
+  (Extra large at 150 %, not at 100 %); NeonGlass: black glass, a neon tube in the accent along the frame's middle once
+  3 px, a neon edge on a narrower frame. The glass cover sits inside the frame and leaves it alone. Cached per size (the
+  ring only), so a frame is a copy.
+- **C2 — the strip.** The GPU strip draws the material under the underglow: brushed metal + a lit edge (Dark), darker
+  streaks + a shaded bevel line (Light: light added to white is lost), a riveted brass rail along the top edge over a
+  faint cast-iron mottle (Steampunk — the rail also marks the drag edge; it ends above the controls, which start at
+  10 dp), black glass with a faint diagonal sheen + a neon tube along the top (Cyberpunk). The transport controls cover
+  the strip's middle — the material shows at its top and bottom and round the meters; owner-drawn controls would be a C3.
+- **The tank's growing dots** follow the same geometry: its pitch is the dial of a photoreal meter as tall as it, in the
+  skin's material — it matches the cells beside it exactly (selftested at every height, scaling and material).
+- **Renders:** every tray / preview sheet byte-identical (the classic looks, the classic tank); the strip files changed
+  (the upgrade). `looks_*` show the frames and the tank with its growing dots; `strip_*_{studioled,backlitlcd,vfd}_dots*`
+  the three looks in each skin's strip.
+- **Open:** the tank's own frame when its dots grow; stronger Dark / Light strip materials; C3 (owner-drawn controls —
+  on the BACKLOG, the owner's call); the dock gutters (no material yet); mac.
 
 Plus two things that would help: the **reference photos/mockups** (not in the repo), and more **real
 screenshots** of the running app, to check the renders against the owner's actual screen and settings —

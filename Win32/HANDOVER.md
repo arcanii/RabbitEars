@@ -35,6 +35,65 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ### ⏸ STATE 2026-09-27 — where 0.2.21-dev stands. READ THIS FIRST.
 
+#### ✅ TANK OPT-IN + PHOTOREAL STAGE C (C1 frames, C2 strip) — COMMITTED (the commit after `075369c`, NOT pushed), owner-checked (2026-09-27)
+
+On top of `075369c` (stage B — pushed by the owner). **The owner's check — PASSED (2026-09-27, the copy
+`build\check-0221-stageC\`):** *"Looks good. Commit and let's get ready for a release"*; their screenshot: the Dark skin,
+an own row at about Extra large — a framed Studio LED Spectrum and Bitrate, a classic LED Signal, a Silver VU on Frames,
+the tank (dots off), labels on, the brushed strip. **C3 (owner-drawn transport controls) → BACKLOG** (the owner). The
+tank's frame and stronger Dark / Light strips were not asked for — left in BACKLOG. The owner's decisions this round: **the tank — "Opt-in: settings"**;
+**stage C — skin materials on the NEW looks only** (the classic looks and both VU faces stay byte-identical) and **the four
+built-in skins upgraded IN PLACE** (asked and answered 2026-09-27).
+- **The tank opt-in** — Settings ▸ Meters ▸ **"Data-flow dots grow with the meter"** (id **2039**, setting
+  `buffer_scaled_dots`, OFF by default; i18n key MenuMeterTankDots, 647 keys). `BufferMeter.h` `bufferLedPitch(H, dpi,
+  scaled, material)`: off = the classic grid exactly; on = the photoreal cells' pitch and gap for a meter as tall as the
+  tank in the skin's material (`photoDialPx`) — so it is the classic grid at the standard height (every dpi 96–480) and
+  matches the Studio LED / Backlit LCD / VFD beside it from Large up. Global like the fluid colour (the bridge's tank
+  follows); a drained tank and the bridge are repainted on a toggle. The tank keeps its edge-to-edge grid — no frame.
+- **Stage C1 — the new looks framed in the skin's material.** `common/ui/Skin.h` gains `enum class SkinMaterial { Flat,
+  Anodised, Satin, Brass, NeonGlass }` and `Skin::material` (additive, last member — mac compiles it and draws nothing
+  new; docs/SKIN_MODEL.md updated): Dark Anodised, Light Satin, Cyberpunk NeonGlass, Steampunk Brass. `Theme.h`
+  `currentMaterial()` (classic build: dark→Anodised, light→Satin, so it draws what the engine's dark/light draw).
+  `PhotoCells`: `photoBezelPx` = the 2-dp chrome band, or 1/16 of the meter's height when more (a Flat or unknown
+  material: just the chrome band, nothing drawn); `paintPhotoBezel` — a raised frame lit from above-left (outer edge
+  bright top/left, the lip into the window dark top/left), brushed streaks (anodised / satin), a polished brass sheen +
+  domed rivets once the frame is >= 6 px, black glass + a neon tube in the accent once >= 3 px (a neon edge below — the
+  standard tray under 125 %); the ring cached per size (only the ring's pixels). The glass cover on these looks sits
+  INSIDE the frame (its shadow from the window) and leaves the frame alone (`ensureBack`: the mask's own bezel band
+  painted grey over the material — found in review).
+- **Stage C2 — the strip in the skin's material** (`underglow.hlsl` `applyMaterial`, `uParams.y` = the material, `z` =
+  dpi/96; a static_assert pins the enum's numbers): brushed metal with a lit edge (Dark), darkening streaks + a shaded
+  bevel line (Light — added light is lost on white), a riveted brass rail along the top edge over a cast-iron mottle
+  (Steampunk), black glass with a faint sheen + a neon tube along the top (Cyberpunk). Integer (PCG) hashes — the same on
+  every GPU. The dock gutters have no material (PSEdge unchanged). The transport controls still cover the strip's middle
+  (owner-drawn controls would be a stage C3).
+
+**Verified:** BOTH flags build with 0 warnings; `--selftest` ALL PASS (**879** — new: the tank dots (off classic;
+on = the cells' pitch/gap at every height, dpi 96–480, material; classic at Standard, bigger from Large; pinned XL
+150 %), the frame width, the ring (each material exactly the ring; Flat and an unknown material nothing), the frame lit
+from above-left (left/right and top/bottom) + the neon tube + a 2-px frame's neon edge, the skins' materials);
+**12 mutants, all caught** (tank ×3, frame/material ×9 — a first run let the pre-rewrite anchors through the script;
+re-anchored and all caught). **Renders: all 96 tray/preview sheets byte-identical to `ae03dfe`'s at 30/50/72/120 dp —
+every meter look, the classic tank; only the 176 strip files changed (the in-place skin upgrade)**; the classic build's
+dark sheets (incl. the frames, the scaled tank) byte-identical to the engine's. Bench (144 dpi, Steampunk): a framed
+Studio LED Bitrate at 120 dp ~0.2 ms a frame. **Reviewed** by three adversarial agents (the tank; stage C code; stage C
+claims + renders): no high; mediums — the tank's dots 1 px coarser than the cells (now shared geometry), the glass
+painting over the frames, Cyberpunk's frame invisible on the standard tray (the neon edge), SKIN_MODEL.md stale — all
+fixed; lows/nits acted on (a ring-only cache, integer shader hashes, the enum pinned, brushing that varies along each
+streak and blends at its seams, a smaller rivet seat, the unknown-material fallback, the translator note's 40-45 dp,
+stale comments). The fixes are built, selftested, mutation-tested, rendered — not re-reviewed.
+
+**The owner's check steps** (copy `build\check-0221-stageC\`, RabbitEars.exe SHA-256 `3271D7DE…FCE8C`; sheets
+`build\stageC-renders\stageC-1..4-*.png`) — passed: (1) each skin with the three new looks (Settings ▸ Meters ▸ Look) at Standard,
+Large, Extra large and in the bridge — the frame follows the skin (switch skins live); (2) the strip on each skin — the
+brass rail on Steampunk, the neon tube on Cyberpunk, the lit edge on Dark, the shaded line on Light; (3) the glass cover
+up (your 69 %) — the frames keep their material; (4) Settings ▸ Meters ▸ Data-flow dots grow with the meter — on at
+Extra large (the tank's dots match the cells), unchanged at Standard; (5) the classic looks on every skin exactly as before.
+The commit was built from a clean `git archive` export of exactly its tree, BOTH flags, selftest ALL PASS, before it
+was made. **Next: the 0.2.21 release** (docs/RELEASING.md; the notes: catch-up EXPERIMENTAL; Large / Extra large meters,
+the meter bridge, labels; the Spectrum needle reads the programme's level whatever the volume; the three new looks;
+the skins as materials; the tank's growing dots; the guide faster).
+
 #### ✅ PHOTOREAL STAGE B — COMMITTED (the commit after `ae03dfe`, NOT pushed), owner-checked (2026-09-27)
 
 **The owner's check — PASSED (2026-09-27, the copy `build\check-0221-stageB\` + the four sheets):** *"Checked them all,
@@ -96,10 +155,8 @@ The owner's copy was `build\check-0221-stageB\` (RabbitEars.exe SHA-256 `ED0DF90
 sheets are `build\stageB-renders\stageB-1..4-*.png`. The commit was built from a clean `git archive` export of exactly
 its tree, BOTH flags, selftest ALL PASS, before it was made.
 
-**Next:** (1) push (the owner); (2) **the buffer tank** — still a fixed 3-px dot grid beside the new looks (a visible
-mismatch at Extra large, sheet 4); it has no look setting, so scaling it would change an existing look — ask the
-owner: an opt-in, or follow the meters' look?; (3) stage C — skins as materials, skins driving meters (PHOTOREAL.md);
-then the cleanups and the 0.2.21 release when the owner says.
+**Next (then):** (1) push (the owner); (2) the buffer tank — the owner chose an opt-in (done: the block above); (3)
+stage C — built (the block above); then the cleanups and the 0.2.21 release when the owner says.
 
 **0.2.21-dev on `main`** — every item below is committed, reviewed, built with BOTH theme flags, `--selftest` ALL
 PASS, and **checked live by the owner**:
@@ -1832,9 +1889,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > programme's RMS level (`98cde52`) whatever the volume slider (`a592ee9`). origin/main = `ae03dfe` (all of it
 > pushed — the owner pushes). **Then photoreal stage B, committed after `ae03dfe` and NOT pushed** — three NEW looks
 > (Studio LED, Backlit LCD, VFD) whose cells scale with the meter (`Win32/ui/PhotoCells.{h,cpp}`), owner-checked
-> ("looks good"); `--selftest` 875, 646 i18n keys. Details: HANDOVER's "✅ PHOTOREAL STAGE B" block. **Next:** the
-> owner pushes; the buffer tank's fixed dot grid beside the new looks is an open owner question; then stage C (skins
-> as materials), the cleanups, the 0.2.21 release when the owner says.
+> ("looks good"); `--selftest` 875, 646 i18n keys. Details: HANDOVER's "✅ PHOTOREAL STAGE B" block. **Then, on top of
+> it: the tank opt-in (Settings ▸ Meters ▸ Data-flow dots grow with the meter) + photoreal
+> stage C (C1: the new looks framed in each skin's material — `SkinMaterial` in common/ui/Skin.h; C2: the strip drawn
+> in it)** — COMMITTED after `075369c`, owner-checked ("looks good"); selftest 879, 647 i18n keys (HANDOVER's
+> "✅ TANK OPT-IN + PHOTOREAL STAGE C" block). **Next: the 0.2.21 release** (the owner: "get ready for a release");
+> the cleanups stay in BACKLOG.
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
@@ -1906,7 +1966,8 @@ Paste this verbatim to start a fresh session with working context restored:
 > * **Launching an exe from `G:` through the SHELL** raises a blocking security prompt — use CreateProcess
 >   (`run-profile.ps1` does). **`LNK1168`** = RabbitEars is running: close with `WM_CLOSE`, never kill.
 > * **Command ids:** a genuine gap only (computed ranges 2051–2062, 2079–2098, 2100+ have no literal);
->   2034–2038 are the Settings ▸ Meters items (2038 = Meter labels); 2039–2043 are still free.
+>   2034–2039 are the Settings ▸ Meters items (2038 = Meter labels, 2039 = the tank's growing dots); 2040–2043 are
+>   still free.
 >   WM_APP+12 is WM_APP_VOD_ARCHIVE (+10 is ChannelGrid's).
 > * **Release:** bump ONLY `APP_VERSION` (`cmake/AppVersion.cmake` line 11). Three installers, two appcasts,
 >   `-Tag v<ver>`; push before tagging; `ls-remote` == HEAD before building; the universal installer can

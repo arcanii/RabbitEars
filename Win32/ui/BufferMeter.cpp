@@ -140,6 +140,12 @@ std::atomic<uint32_t>& fluidColorRef() {
     return c;
 }
 
+// The opt-in scaled dots (see bufferLedPitch, BufferMeter.h) — the same idiom.
+std::atomic<bool>& scaledDotsRef() {
+    static std::atomic<bool> on{false};
+    return on;
+}
+
 struct Fluid {
     std::vector<float> u, v, u0, v0, d, d0, curl, phase, phase0;
     Fluid() {
@@ -654,9 +660,15 @@ void renderLedBits(MeterState* st, const Theme& th, int W, int H, int inset) {
     const int total = W * H;
     for (int k = 0; k < total; ++k) st->bits[k] = bg;
 
-    // LED geometry in device pixels; grid centred in the panel.
-    const int gap = std::max(1, dpx(st->dpi, LED_GAP));
-    const int pitch = std::max(gap + 2, dpx(st->dpi, LED_PITCH));
+    // LED geometry in device pixels; grid centred in the panel. The classic LED_PITCH / LED_GAP (3 / 1 dp), or
+    // with the opt-in on, a pitch that grows with the tank's height (bufferLedPitch — the same numbers at the
+    // standard height).
+    static_assert(LED_PITCH == 3 && LED_GAP == 1, "bufferLedPitch (BufferMeter.h) carries these values");
+    const bool scaledDots = scaledDotsRef().load(std::memory_order_relaxed);
+    const BufferPitch lp =
+        bufferLedPitch(H, st->dpi, scaledDots, scaledDots ? currentMaterial() : SkinMaterial::Flat);
+    const int gap = lp.gap;
+    const int pitch = lp.pitch;
     const int cellPx = pitch - gap;
     // Grid geometry lives in the header so --selftest can pin it (see BufferMeter.h).
     const BufferGrid grid = bufferGrid(W, H, gap, pitch, inset);
@@ -1055,6 +1067,9 @@ void bufferMeterSetFluidColor(COLORREF c) {
 COLORREF bufferMeterFluidColor() {
     return static_cast<COLORREF>(fluidColorRef().load(std::memory_order_relaxed));
 }
+
+void bufferMeterSetScaledDots(bool on) { scaledDotsRef().store(on, std::memory_order_relaxed); }
+bool bufferMeterScaledDots() { return scaledDotsRef().load(std::memory_order_relaxed); }
 
 bool bufferMeterSnapshot(HWND meter, std::vector<uint32_t>& pixels, int& w, int& h, bool withReadout) {
     MeterState* st = stateOf(meter);

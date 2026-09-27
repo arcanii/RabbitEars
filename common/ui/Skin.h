@@ -70,7 +70,20 @@ struct SkinGpu {
     float heatHaze  = 0.0f;   // procedural heat-shimmer on the strip underglow (0 = off; Steampunk)
 };
 
-// A complete skin: identity + palette + typography + GPU-effect strengths. `dark`
+// What a skin is MADE of (photoreal stage C, Win32/docs/PHOTOREAL.md): the material its renderer draws the
+// hardware in — on Win32 the photoreal meter looks' bezels and the transport strip. A token, not pixels: each
+// renderer draws its own, and one that does not know a material draws the skin's flat colours, as before (Flat).
+// Append new materials LAST and never reorder: the Win32 strip shader (underglow.hlsl) reads the value as a
+// NUMBER (static_assert in SkinStrip.cpp); a later persisted skin should store it by name.
+enum class SkinMaterial : uint8_t {
+    Flat,       // no material: the skin's flat colours
+    Anodised,   // black anodised aluminium (Dark)
+    Satin,      // satin-brushed light aluminium (Light)
+    Brass,      // polished brass with rivets (Steampunk)
+    NeonGlass,  // black glass edged with a neon tube in the skin's accent (Cyberpunk)
+};
+
+// A complete skin: identity + palette + typography + GPU-effect strengths + material. `dark`
 // hints the OS chrome (DWM immersive dark on Win32 / NSAppearance on mac).
 struct Skin {
     std::string id;        // stable token, e.g. "dark" — this is the persisted selection
@@ -79,6 +92,7 @@ struct Skin {
     SkinGpu     gpu;       // per-skin GPU-effect strengths (glow); default == today's look
     SkinPalette palette;
     SkinFont    body, title, glyph;
+    SkinMaterial material = SkinMaterial::Flat;  // stage C; mac: not drawn yet (Flat == its current look)
 };
 
 // ---- built-in registry ------------------------------------------------------

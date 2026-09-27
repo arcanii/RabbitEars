@@ -8,9 +8,12 @@
 // motion can be distracting.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <vector>
+
+#include "ui/PhotoCells.h"  // photoDialPx — the scaled dots match the photoreal cells beside them
 
 #include <windows.h>
 
@@ -64,6 +67,36 @@ inline BufferGrid bufferGrid(int W, int H, int gap, int pitch, int inset) {
     g.oy = inset + (gridH - (g.rows * pitch - gap)) / 2;
     return g;
 }
+
+// ---- LED pitch: fixed, or scaling with the meter (opt-in) --------------------
+// The dots' pitch (a dot and the gap after it) and gap, device px, for a tank `H` px tall. The classic tank keeps
+// a fixed 3-dp pitch whatever its height — at Large / Extra large a fine mesh beside the photoreal cell looks
+// (ui/PhotoCells.h), whose cells grow with the meter. `scaled` (Settings ▸ Meters ▸ the data-flow dots option,
+// OFF by default — the owner's rule: an existing look changes only when asked) grows them to MATCH those cells:
+// the pitch is the dial height a photoreal meter as tall as the tank has in the active skin's material
+// (photoDialPx: the tank's height minus that meter's frame) over kBufferScaledRows (== kPhotoRows), floored,
+// never finer than the classic one — so at the standard height, at every scaling, it IS the classic pitch — and
+// the gap the classic 1 dp or a fifth of the pitch (photoGap's rule). Unscaled it is exactly the classic grid
+// (renderLedBits' old formula). The tank itself keeps its edge-to-edge grid (no frame), so it has more rows.
+constexpr int kBufferScaledRows = kPhotoRows;
+struct BufferPitch {
+    int gap = 1, pitch = 3;
+};
+inline BufferPitch bufferLedPitch(int H, UINT dpi, bool scaled, SkinMaterial material = SkinMaterial::Flat) {
+    BufferPitch p;
+    p.gap = std::max(1, MulDiv(1, static_cast<int>(dpi), 96));
+    p.pitch = std::max(p.gap + 2, MulDiv(3, static_cast<int>(dpi), 96));
+    if (!scaled) return p;
+    p.pitch = std::max(p.pitch, photoDialPx(H, dpi, material) / kBufferScaledRows);
+    p.gap = std::min(p.pitch - 2, std::max(p.gap, static_cast<int>(p.pitch / 5.0f + 0.5f)));
+    return p;
+}
+
+// GLOBAL, like the fluid colour below (one app-wide choice; the bridge's tank follows it too); persisted under
+// bufferScaledDotsSettingKey(). Setting it only stores the value — the caller repaints.
+void bufferMeterSetScaledDots(bool on);
+bool bufferMeterScaledDots();
+inline const char* bufferScaledDotsSettingKey() { return "buffer_scaled_dots"; }
 
 // ---- fluid colour ----------------------------------------------------------
 // The liquid's body colour, as seen at the SURFACE; depth shades it darker (see the note in

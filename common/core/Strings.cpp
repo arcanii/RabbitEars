@@ -709,6 +709,8 @@ constexpr std::array<const char*, N> kEn = {{
     "Studio LED",  // MeterLookStudioLed
     "Backlit LCD",  // MeterLookBacklitLcd
     "Fluorescent (VFD)",  // MeterLookVfd
+    // --- Menu ---
+    "Data-flow dots grow with the meter",  // MenuMeterTankDots
 }};
 
 // 日本語
@@ -1408,6 +1410,8 @@ constexpr std::array<const char*, N> kJa = {{
     "スタジオ LED",  // MeterLookStudioLed
     "バックライト LCD",  // MeterLookBacklitLcd
     "蛍光表示管 (VFD)",  // MeterLookVfd
+    // --- Menu ---
+    "データフローのドットをメーターに合わせて拡大",  // MenuMeterTankDots
 }};
 
 // 繁體中文
@@ -2107,6 +2111,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     "錄音室 LED",  // MeterLookStudioLed
     "背光 LCD",  // MeterLookBacklitLcd
     "真空螢光顯示器 (VFD)",  // MeterLookVfd
+    // --- Menu ---
+    "資料流點陣隨量表放大",  // MenuMeterTankDots
 }};
 
 // 繁體中文（香港）
@@ -2806,6 +2812,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     "錄音室 LED",  // MeterLookStudioLed
     "背光 LCD",  // MeterLookBacklitLcd
     "真空螢光顯示器 (VFD)",  // MeterLookVfd
+    // --- Menu ---
+    "資料流點陣隨量表放大",  // MenuMeterTankDots
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

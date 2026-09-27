@@ -30,7 +30,7 @@ struct StripConstants {
     float intensity;      // uIntensity   (fills register b0.0)
     float bg[4];          // uBgColor
     float accent[4];      // uAccent
-    float params[4];      // uParams: x = heatHaze; yzw reserved (keeps the size a 16B multiple)
+    float params[4];      // uParams: x = heatHaze; y = the skin's SkinMaterial; z = dpi / 96; w reserved
 };
 
 struct StripState {
@@ -171,7 +171,7 @@ bool ensureResources(StripState* st, UINT w, UINT h) {
 
 // Render one animated frame into the offscreen texture: the D3D underglow shader pass,
 // then a D2D top hairline on the same texture. Returns false on failure.
-bool renderOffscreen(StripState* st, UINT w, UINT h) {
+bool renderOffscreen(StripState* st, UINT w, UINT h, UINT dpi) {
     if (!ensureResources(st, w, h)) return false;
 
     SkinDevice& dev = SkinDevice::instance();
@@ -190,6 +190,8 @@ bool renderOffscreen(StripState* st, UINT w, UINT h) {
     const SkinGpu& gpu = currentSkin().gpu;
     cb.intensity = gpu.stripGlow;                // per-skin underglow strength (SkinGpu manifest)
     cb.params[0] = gpu.heatHaze;                 // per-skin heat-haze shimmer (Steampunk; 0 elsewhere)
+    cb.params[1] = static_cast<float>(currentSkin().material);  // the strip's material (stage C)
+    cb.params[2] = static_cast<float>(dpi) / 96.0f;             // ...its detail sized in dp
     fillColor(cb.bg, th.windowBg);
     fillColor(cb.accent, th.accent);
     c->UpdateSubresource(st->cbuf.Get(), 0, nullptr, &cb, 0, 0);
@@ -321,12 +323,18 @@ bool initSkinStrip() {
     return true;
 }
 
+// underglow.hlsl reads the material as a NUMBER (uParams.y): these are its thresholds.
+static_assert(static_cast<int>(SkinMaterial::Flat) == 0 && static_cast<int>(SkinMaterial::Anodised) == 1 &&
+                  static_cast<int>(SkinMaterial::Satin) == 2 && static_cast<int>(SkinMaterial::Brass) == 3 &&
+                  static_cast<int>(SkinMaterial::NeonGlass) == 4,
+              "underglow.hlsl applyMaterial() thresholds these values");
+
 bool paintSkinStrip(HDC dst, const RECT& r, UINT dpi, void (*overlay)(HDC dc, void* ctx), void* ctx) {
-    (void)dpi;  // strip renders at device pixels; kept for API symmetry
+    // `dpi` sizes the material's detail (uParams.z); the strip itself renders at device pixels.
     if (!g_strip) return false;
     const UINT w = static_cast<UINT>(std::max<LONG>(r.right - r.left, 1));
     const UINT h = static_cast<UINT>(std::max<LONG>(r.bottom - r.top, 1));
-    if (!renderOffscreen(g_strip, w, h)) return false;
+    if (!renderOffscreen(g_strip, w, h, dpi)) return false;
 
     ComPtr<IDXGISurface1> surf;
     if (FAILED(g_strip->tex.As(&surf))) return false;

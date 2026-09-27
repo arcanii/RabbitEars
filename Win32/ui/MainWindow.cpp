@@ -145,6 +145,14 @@ void setMeterLabels(AppState* st, bool on) {
     meterBridgeRelayout(st);  // ...and so do the bridge's meters
 }
 
+void setTankScaledDots(AppState* st, bool on) {
+    bufferMeterSetScaledDots(on);
+    st->db.setSetting(wideFromUtf8(bufferScaledDotsSettingKey()), on ? L"1" : L"0");
+    // A drained tank has stopped its timer, so it would keep the old dots until something else repainted it.
+    if (st->bufferMeter) InvalidateRect(st->bufferMeter, nullptr, FALSE);
+    meterBridgeRelayout(st);  // repaints the bridge's meters, its tank included
+}
+
 void paintStripLabels(HDC dc, void* ctx) {
     const AppState* st = static_cast<const AppState*>(ctx);
     for (int i = 0; i < kMeterLabelSlots; ++i)
@@ -742,6 +750,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (auto v = st->db.getSetting(L"meter_height"); v && !v->empty())
                     st->meterHeightDp = clampMeterHeightDp(_wtoi(v->c_str()));
                 if (auto v = st->db.getSetting(L"meter_labels")) st->meterLabels = (*v == L"1");
+                if (auto v = st->db.getSetting(wideFromUtf8(bufferScaledDotsSettingKey())))
+                    bufferMeterSetScaledDots(*v == L"1");
                 {  // per-meter look + palette (Settings → Meters…)
                     HWND mtr[4] = {st->meterSpectrum, st->meterSignal, st->meterBitrate,
                                    st->meterFrames};

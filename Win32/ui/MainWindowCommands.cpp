@@ -2193,6 +2193,8 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
     AppendMenuW(metersMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(metersMenu, MF_STRING | (st->meterLabels ? chk : 0u), ID_METER_LABELS,
                 tr(StringId::MenuMeterLabels).c_str());
+    AppendMenuW(metersMenu, MF_STRING | (bufferMeterScaledDots() ? chk : 0u), ID_METER_TANK_DOTS,
+                tr(StringId::MenuMeterTankDots).c_str());
     AppendMenuW(metersMenu, MF_STRING | (meterBridgeOpen() ? chk : 0u), ID_METER_BRIDGE,
                 tr(StringId::MenuMeterBridge).c_str());
 
@@ -2421,6 +2423,9 @@ void showSettingsMenu(HWND hwnd, AppState* st, const RECT& anchor) {
             break;
         case ID_METER_LABELS:
             setMeterLabels(st, !st->meterLabels);
+            break;
+        case ID_METER_TANK_DOTS:
+            setTankScaledDots(st, !bufferMeterScaledDots());
             break;
         case ID_SYSTEM_SETTINGS:
             onSystemSettings(st);

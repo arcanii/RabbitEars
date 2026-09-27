@@ -137,6 +137,7 @@ struct MiniMeterState {
     // Glass overlay LUTs, rebuilt with the back-buffer whenever the size or strength changes.
     std::vector<uint8_t> glassAdd, glassMul;
     float                glassBuilt = -1.0f;  // strength the LUTs were built for (-1 = never)
+    bool                 glassFramed = false; // built round a photoreal look's own frame (ensureBack)
     int                  glassChrome = -1;    // chrome width they were built for (DPI can change
                                               // without a resize — miniMeterSetDpi only sets dpi)
     // Vu / VuSilver: the dial's frame-invariant layer (ui/VuDial.h) — faceplate, card, lamp, scale,
@@ -153,6 +154,7 @@ struct MiniMeterState {
     // shaded so far, so a frame copies them rather than shading them again.
     std::vector<PhotoCell> photoCells;
     PhotoCellCache         photoCache;
+    PhotoBezelCache        photoBezel;  // their frame in the skin's material (stage C), per size
 };
 
 // Global "glass cover" strength for every meter (0 = off). A single app-wide value rather than a
@@ -623,8 +625,14 @@ CellFinish photoFinishOf(MeterStyle s) {
     return s == MeterStyle::BacklitLcd ? CellFinish::Lcd : s == MeterStyle::Vfd ? CellFinish::Vfd : CellFinish::Led;
 }
 
-// Collect the cells, then write them straight into the back-buffer's pixels (as drawVu does).
-void drawPhotoCells(const RECT& in, COLORREF panel, MiniMeterState* st) {
+// The frame in the active skin's material (stage C — a bezel round the window, photoBezelPx wide: the chrome
+// band, more on a taller meter), then the cells in the window inside it, written straight into the back-buffer's
+// pixels (as drawVu does). `rc` is the whole meter.
+void drawPhotoCells(const RECT& rc, COLORREF panel, MiniMeterState* st) {
+    const SkinMaterial material = currentMaterial();
+    const int b = photoBezelPx(rc.bottom - rc.top, st->dpi, material);
+    const RECT in{rc.left + b, rc.top + b, rc.right - b, rc.bottom - b};
+    if (in.right <= in.left || in.bottom <= in.top) return;
     const PhotoRows g = photoRows(in.bottom - in.top, st->dpi);
     std::vector<PhotoCell>& cells = st->photoCells;
     cells.clear();
@@ -643,8 +651,14 @@ void drawPhotoCells(const RECT& in, COLORREF panel, MiniMeterState* st) {
     sc.pitch = g.pitch;
     // onPaint's fillCell()/FrameRect() are batched GDI: they must land before these pixels are written.
     GdiFlush();
-    if (st->backBits)
-        paintPhotoCells(static_cast<uint32_t*>(st->backBits), st->backW, st->backH, in, sc, cells, st->photoCache);
+    if (!st->backBits) return;
+    auto* bits = static_cast<uint32_t*>(st->backBits);
+    PhotoBezel bz;
+    bz.material = material;
+    bz.px = b;
+    bz.neon = currentTheme().accent;  // NeonGlass: the tube in the skin's accent
+    paintPhotoBezel(bits, st->backW, st->backH, rc, bz, st->photoBezel);  // Flat: nothing (onPaint's frame stays)
+    paintPhotoCells(bits, st->backW, st->backH, in, sc, cells, st->photoCache);
 }
 
 // Ensure the cached back-buffer matches (w,h) and the glass LUTs match the active strength.
@@ -675,11 +689,25 @@ bool ensureBack(MiniMeterState* st, HDC ref, int w, int h) {
         st->glassBuilt = -1.0f;  // force a LUT rebuild at the new size
     }
     const float want = meterGlassRef().load(std::memory_order_relaxed);
-    const int chrome = meterChromePx(st->dpi);
-    if (st->glassBuilt != want || st->glassChrome != chrome) {
+    // A photoreal look in a skin's material draws its own frame (photoBezelPx wide — drawPhotoCells): the glass then
+    // sits INSIDE it, its cast shadow starting at the window, and leaves the frame alone — the mask's own bezel band
+    // paints an absolute grey there, which would bury the brass / neon / metal under it. Every other look gets the
+    // mask exactly as before.
+    const SkinMaterial material = currentMaterial();
+    const bool framed = isPhotoCellLook(st->style) && photoMaterialFramed(material);
+    const int chrome = framed ? photoBezelPx(h, st->dpi, material) : meterChromePx(st->dpi);
+    if (st->glassBuilt != want || st->glassChrome != chrome || st->glassFramed != framed) {
         buildGlassMask(w, h, GlassParams{want, chrome}, st->glassAdd, st->glassMul);
+        if (framed && want > 0.0f && st->glassAdd.size() == static_cast<size_t>(w) * h)
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                    if (std::min(std::min(x, y), std::min(w - 1 - x, h - 1 - y)) < chrome) {
+                        st->glassAdd[static_cast<size_t>(y) * w + x] = 0;
+                        st->glassMul[static_cast<size_t>(y) * w + x] = 255;
+                    }
         st->glassBuilt = want;
         st->glassChrome = chrome;
+        st->glassFramed = framed;
     }
     return true;
 }
@@ -727,7 +755,7 @@ void onPaint(HWND hwnd, MiniMeterState* st) {
         } else if (st->style == MeterStyle::Scope) {
             drawScope(mem, in, st);
         } else if (isPhotoCellLook(st->style)) {
-            drawPhotoCells(in, bg, st);
+            drawPhotoCells(rc, bg, st);
         } else {
             // Tube collects its lit cells for a soft GDI+ halo pass afterwards; the
             // other looks pass nullptr, so there's no collection and no overhead.
@@ -1064,7 +1092,10 @@ void miniMeterSetStyle(HWND meter, MeterStyle style) {
     if (!st) return;
     st->style = style;
     // Leaving the photoreal looks: let their shaded cells go (at 120 dp and 500 % a cache can hold MBs).
-    if (!isPhotoCellLook(style)) st->photoCache = PhotoCellCache();
+    if (!isPhotoCellLook(style)) {
+        st->photoCache = PhotoCellCache();
+        st->photoBezel = PhotoBezelCache();
+    }
     if (IsWindow(meter)) InvalidateRect(meter, nullptr, FALSE);
     if (st->mirror) miniMeterSetStyle(st->mirror, style);
 }

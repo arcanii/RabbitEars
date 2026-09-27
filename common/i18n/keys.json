@@ -4192,5 +4192,11 @@
     "cluster": "DialogMeters",
     "placeholders": [],
     "comment": "Meter look: a vacuum fluorescent display (VFD) - glowing phosphor segments behind dark glass, as on 1980s-90s hi-fi equipment - whose segments grow with the meter. Use the usual name for this display in the language and keep the abbreviation VFD."
+  },
+  {
+    "id": "MenuMeterTankDots",
+    "cluster": "Menu",
+    "placeholders": [],
+    "comment": "Meters submenu, a check item (off by default): the data-flow (buffer) meter's square dots grow with the meter's size, like the Studio LED / Backlit LCD / VFD looks' cells. Nothing changes at the standard size - only on taller meters (Large, Extra large, a height dragged above about 40-45 dp), in the meter bridge and in the Meters dialog's preview."
   }
 ]

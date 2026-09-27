@@ -32,12 +32,30 @@
 
 #include <windows.h>
 
+#include "ui/Skin.h"  // SkinMaterial — the bezel's material (common/, pure C++)
+
 namespace rabbitears {
 
 enum class CellFinish { Led, Lcd, Vfd };
 
 // ---- Geometry -----------------------------------------------------------------------------------------
-// All in device pixels, relative to the dial (the meter's client rect minus its chrome band).
+// The frame: a photoreal meter's window sits inside a bezel in the skin's material (stage C) — the meter's
+// 2-dp chrome band (meterChromePx), and on a taller meter a sixteenth of its height, so the frame grows with it.
+// A skin without a material (Flat) keeps just the chrome band, drawn as every meter draws it.
+inline int photoChromePx(UINT dpi) { return MulDiv(2, static_cast<int>(dpi), 96); }  // == meterChromePx
+// Whether a material is one this renderer draws a frame for: every one but Flat — and not a value from a newer skin
+// model this build does not know, which is drawn as Flat (Skin.h's promise for an unknown material).
+inline bool photoMaterialFramed(SkinMaterial m) {
+    return m != SkinMaterial::Flat && static_cast<int>(m) <= static_cast<int>(SkinMaterial::NeonGlass);
+}
+inline int photoBezelPx(int meterPx, UINT dpi, SkinMaterial m) {
+    return photoMaterialFramed(m) ? std::max(photoChromePx(dpi), meterPx / 16) : photoChromePx(dpi);
+}
+// The dial — the window inside the frame — of a meter `meterPx` tall: what the rows below are laid out in, and
+// what the buffer tank's opt-in scaled dots are sized from (BufferMeter.h), so its dots match the cells beside it.
+inline int photoDialPx(int meterPx, UINT dpi, SkinMaterial m) { return meterPx - 2 * photoBezelPx(meterPx, dpi, m); }
+
+// Everything else is in device pixels, relative to the dial.
 
 // Rows a cell look aims for in a dial tall enough (a hardware LED ladder has 8-12): the pitch is the dial's
 // height over this, floored, and as many whole cells fit as they will — 10 to 13 rows.
@@ -162,5 +180,29 @@ private:
 // mesh. The chrome outside `dial` is never touched.
 void paintPhotoCells(uint32_t* px, int stride, int bufH, const RECT& dial, const PhotoScene& scene,
                      const std::vector<PhotoCell>& cells, PhotoCellCache& cache);
+
+// The bezel: the ring between `meter` (the whole meter) and `meter` inset by `px` on every side, in `material`,
+// lit from above-left (a raised frame: its outer bevel catches the light on the top and left, the lip at the
+// window's edge on the bottom and right). Anodised / Satin: brushed metal; Brass: polished brass, with a rivet
+// at each corner once the frame is 6 px or more; NeonGlass: black glass with a neon tube in `neon` (the skin's
+// accent) along its middle once the frame is 3 px or more, and on a narrower one (the standard tray below 125 %)
+// a neon edge. Flat (or a material this build does not know) draws nothing. Only the ring is written. `cache`
+// keeps the ring per size.
+struct PhotoBezel {
+    SkinMaterial material = SkinMaterial::Flat;
+    int          px = 0;
+    COLORREF     neon = RGB(244, 55, 148);
+    bool operator==(const PhotoBezel&) const = default;
+};
+class PhotoBezelCache {
+public:
+    // Only the ring: its top and bottom runs (b rows of w each), then its left and right sides (h - 2b rows of 2b)
+    // — at 120 dp and 500 % a whole-meter copy would be MBs per meter, the ring a fraction of it.
+    std::vector<uint32_t> ring;
+    PhotoBezel            key{};
+    int                   w = 0, h = 0;
+};
+void paintPhotoBezel(uint32_t* px, int stride, int bufH, const RECT& meter, const PhotoBezel& bezel,
+                     PhotoBezelCache& cache);
 
 }  // namespace rabbitears

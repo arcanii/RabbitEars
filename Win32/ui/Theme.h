@@ -15,11 +15,12 @@
 
 #include "core/Strings.h"  // i18n::activeLang() — switch to a Japanese face when the UI is Japanese
 
+#include "ui/Skin.h"  // the shared skin model (theme engine) / SkinMaterial (both builds; common/, pure C++)
+
 #ifdef RABBITEARS_THEME_ENGINE
 #include <unordered_map>
 
 #include "platform/Encoding.h"  // wideFromUtf8 — resolve a skin's UTF-8 font family to a wide name
-#include "ui/Skin.h"  // the shared skin model this file resolves into the Win32 COLORREF Theme
 #endif
 
 namespace rabbitears {
@@ -188,6 +189,17 @@ inline const Skin& currentSkin() {
     return skinById(skinId);
 }
 #endif
+
+// The material the active skin is made of (photoreal stage C) — what the photoreal meter looks' bezels are drawn
+// in. Without the theme engine there are only the classic dark and light themes: the Dark and Light skins'
+// materials, so a classic build draws what the engine's dark / light skins draw.
+inline SkinMaterial currentMaterial() {
+#ifdef RABBITEARS_THEME_ENGINE
+    return currentSkin().material;
+#else
+    return currentTheme().dark ? SkinMaterial::Anodised : SkinMaterial::Satin;
+#endif
+}
 
 // ---- shared dialog dark-mode + DPI helpers ----------------------------------
 

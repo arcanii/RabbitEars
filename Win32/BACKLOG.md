@@ -150,9 +150,20 @@ Open items this work left or found (none blocking):
 > - **mac has none of the three looks** (its `MeterStyle` in `mac/src/app/MeterModel.h` stops at Scope; its parser
 >   falls back on the `led_studio` / `lcd_backlit` / `vfd` tokens as it does on `vu` / `vu_silver`) — for the mac
 >   team; its settings live in its own database, so nothing crosses over today.
-> - **The buffer tank keeps its fixed 3-px dot grid** beside the new looks — a mismatch at Large / Extra large. It has
->   no look setting; scaling it would change an existing look (the owner's rule) — an owner decision (opt-in, or
->   follow the meters' look).
+> - ~~The buffer tank keeps its fixed 3-px dot grid~~ — the owner chose an opt-in: Settings ▸ Meters ▸ "Data-flow dots
+>   grow with the meter" (2026-09-27, with stage C). Open: whether the tank should also take the skin's frame then.
+>
+> **Stage C (skins as materials — the new looks' frames, the strip; built 2026-09-27) leaves:**
+> - **mac draws no material** (it compiles `SkinMaterial` and ignores it — Flat, its current look); the mac team's call.
+> - **Stage C3 — owner-drawn transport controls** (buttons, sliders, status text), so the strip's material shows across
+>   the whole strip, not only its top and bottom bands and round the meters. Large. **On the backlog — the owner's
+>   call, 2026-09-27** (after checking stage C: "put C3 on backlog").
+> - **The tank's own frame** when its dots grow (so it matches the framed new looks beside it) — not asked for yet.
+> - **The dock gutters** (PSEdge) have no material yet; the title bar and panels neither ("the skinned chrome").
+> - **The Dark and Light strip materials are subtle by design** (brushed at a few levels, a lit / shaded edge) — stronger
+>   if the owner asks.
+> - **The Meters dialog's tank preview** (76 dp) sizes its growing dots for its own height, beside 86-dp meter previews —
+>   so its pitch is a step off theirs (6 vs 7 px at 100 %). Each preview shows its meter at its own size.
 > - **A Frames flare / Signal trouble fade re-shades their cells every frame** while the colour moves (a new colour
 >   is a new sprite; the cache holds 48, least recently drawn out first). Cheap at the sizes measured (the bench's
 >   Frames Studio LED is 0.17 ms at 120 dp), but unmeasured mid-fade at 500 %.

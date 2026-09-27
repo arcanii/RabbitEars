@@ -9,7 +9,7 @@
 > - **Home of this doc:** root `docs/` (shared — next to [`MACOS_PORT.md`](MACOS_PORT.md)), so the contract
 >   is reviewable without reaching into `Win32/`.
 > - **Home of the code:** [`common/ui/Skin.{h,cpp}`](../common/ui/Skin.h) — the FIRST model physically in
->   `common/`. **Status: implemented, covered by 14 CLI `--selftest` assertions (all pass).**
+>   `common/`. **Status: implemented, covered by the CLI `--selftest`'s "Skin model" section (all pass).**
 > - **Windows renderer design** (not shared): [`Win32/docs/THEME_ENGINE.md`](../Win32/docs/THEME_ENGINE.md)
 >   — §5 (the Win32 resolver over this model) + §6 (the D3D11/HLSL renderer). This doc was extracted from
 >   that doc's §4 so the shared boundary stands on its own; `THEME_ENGINE.md` §4 is now a pointer here.
@@ -48,13 +48,26 @@ struct SkinPalette {
               accent, accentText, selectionBg, selectionText, dangerHover;
 };
 
+struct SkinGpu {                        // per-skin GPU-effect strengths, 0..1 (Win32: the strip underglow, the
+    float stripGlow = 1.0f;             //   dock-gutter neon, Steampunk's heat haze); a renderer without the
+    float edgeGlow  = 0.9f;             //   effects ignores them
+    float heatHaze  = 0.0f;
+};
+
+// What a skin is MADE of (photoreal stage C, 2026-09): a token, not pixels — each renderer draws its own. Win32
+// draws the photoreal meter looks' frames and the transport strip in it; a renderer that does not know a material
+// (or this field at all) draws the skin's flat colours, which is Flat. APPEND new materials last, never reorder:
+// the Win32 strip shader reads the value as a number (0..4).
+enum class SkinMaterial : uint8_t { Flat, Anodised, Satin, Brass, NeonGlass };
+
 struct Skin {
-    std::string id;        // stable token ("dark") — the persisted selection
-    std::string name;      // display name ("Dark")
-    bool        dark;      // hint for OS dark-mode chrome (DWM immersive / NSAppearance)
-    SkinPalette palette;
-    SkinFont    body, title, glyph;
-    // Phase 4: an optional GPU-skin manifest (shader ids + params), resolved per-platform.
+    std::string  id;        // stable token ("dark") — the persisted selection
+    std::string  name;      // display name ("Dark")
+    bool         dark;      // hint for OS dark-mode chrome (DWM immersive / NSAppearance)
+    SkinGpu      gpu;       // GPU-effect strengths
+    SkinPalette  palette;
+    SkinFont     body, title, glyph;
+    SkinMaterial material = SkinMaterial::Flat;  // Dark Anodised, Light Satin, Cyberpunk NeonGlass, Steampunk Brass
 };
 ```
 
@@ -99,6 +112,8 @@ reorder roles: position is identity.
 - The **serialized string form is the cross-platform interchange** — both renderers read the identical
   persisted skin. This is the meter seam's one genuinely portable contract, done right.
 - Skins define their OWN colours — no OS `GetSysColor` / system-colour inheritance (see §2).
+- `SkinMaterial` is additive and optional for a renderer: mac draws nothing new until it chooses to (Flat is its
+  current look for every skin). Its values are numbered on Win32 (the strip shader) — append, never reorder.
 - **Open items for the mac team to weigh in on** are collected in the Windows renderer design doc's open
   questions — [`Win32/docs/THEME_ENGINE.md` §9](../Win32/docs/THEME_ENGINE.md#9-open-questions), the
   "Model/boundary — resolve with the mac team" subsection.

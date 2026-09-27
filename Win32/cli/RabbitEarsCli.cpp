@@ -54,9 +54,8 @@
 #include "ui/VideoGrid.h"
 
 #include "XtreamRecon.h"
-// Relative, deliberately: this is a Win32/ GUI header and Win32/ is NOT on the CLI's include
-// path. Only the header-inline bufferGrid() is used — the rest of the declarations here are
-// never called, so nothing from the GUI TU has to link.
+// A Win32/ GUI header: only its header-inline bufferGrid() and bufferLedPitch() are used — the rest of the
+// declarations here are never called, so nothing from the GUI TU has to link.
 #include "../ui/BufferMeter.h"
 
 using namespace rabbitears;
@@ -1044,6 +1043,49 @@ int selftest() {
                    " px at Large, 150 %; the other looks and a too-small dial 0");
     }
 
+    out("== The data-flow tank's opt-in scaled dots (ui/BufferMeter.h bufferLedPitch) ==\n");
+    {
+        // Off, it is the classic grid at every size and scaling (the owner's rule: the default look never moves).
+        // On, its dots have exactly the pitch and gap of the photoreal cells beside them — a meter as tall as the
+        // tank, in the same skin's material (photoRows of photoDialPx) — at every height, scaling and material; so
+        // at the standard height they are the classic grid, and from Large up (every scaling) they are bigger.
+        bool offClassic = true, matches = true, stdSame = true, grows = true;
+        std::string miss;
+        const SkinMaterial mats[] = {SkinMaterial::Flat, SkinMaterial::Anodised, SkinMaterial::Satin, SkinMaterial::Brass,
+                                     SkinMaterial::NeonGlass};
+        for (UINT dpi = 96; dpi <= 480; ++dpi) {
+            const int gap0 = std::max(1, MulDiv(1, static_cast<int>(dpi), 96));
+            const int pitch0 = std::max(gap0 + 2, MulDiv(3, static_cast<int>(dpi), 96));
+            const int stdH = MulDiv(kMeterHeightStd, static_cast<int>(dpi), 96);
+            const int largeH = MulDiv(kMeterHeightLarge, static_cast<int>(dpi), 96);
+            for (SkinMaterial m : mats) {
+                for (int h = stdH; h <= 600; ++h) {
+                    const BufferPitch off = bufferLedPitch(h, dpi, false, m), on = bufferLedPitch(h, dpi, true, m);
+                    const PhotoRows cells = photoRows(photoDialPx(h, dpi, m), dpi);
+                    if (off.gap != gap0 || off.pitch != pitch0) offClassic = false;
+                    if (on.pitch != cells.pitch || on.gap != cells.gap || on.pitch - on.gap < 2) {
+                        if (matches) miss = "dpi " + std::to_string(dpi) + " h " + std::to_string(h);
+                        matches = false;
+                    }
+                }
+                const BufferPitch s = bufferLedPitch(stdH, dpi, true, m), l = bufferLedPitch(largeH, dpi, true, m);
+                if (s.gap != gap0 || s.pitch != pitch0) stdSame = false;
+                if (l.pitch <= pitch0) grows = false;
+            }
+        }
+        // Pinned: Extra large at 150 % on the Dark skin (Anodised; a 108-px tank): a 9-px pitch — the Studio LED's
+        // beside it — 12 rows edge to edge, where the classic grid has 22 at 5.
+        const BufferPitch xl = bufferLedPitch(108, 144, true, SkinMaterial::Anodised);
+        const BufferGrid g = bufferGrid(415, 108, xl.gap, xl.pitch, 0);
+        const BufferPitch cl = bufferLedPitch(108, 144, false, SkinMaterial::Anodised);
+        const BufferGrid classic = bufferGrid(415, 108, cl.gap, cl.pitch, 0);
+        expect(offClassic && matches && stdSame && grows && xl.pitch == 9 && g.rows == 12 && classic.rows == 22,
+               "tank dots: off = the classic grid everywhere; on = the photoreal cells' pitch and gap at every height, "
+               "dpi 96-480 and material — the classic grid at the standard height, bigger from Large up; Extra large "
+               "150 % Dark: " + std::to_string(g.rows) + " rows at a " + std::to_string(xl.pitch) + "-px pitch" +
+                   (miss.empty() ? std::string() : " (first miss: " + miss + ")"));
+    }
+
     out("== Photoreal cell looks (stage B; ui/PhotoCells.h, ui/MiniMeter.h) ==\n");
     {
         // Every look survives the settings store: its own token, parsed back to itself (a look missing from
@@ -1087,12 +1129,13 @@ int selftest() {
                 if (!ok && rowsOk) rowsMiss = "dpi " + std::to_string(dpi) + " h " + std::to_string(h);
                 rowsOk = rowsOk && ok;
             }
-        // Pinned, at 150 % (144 dpi): the standard tray's 39-px dial keeps the classic 5-px pitch; Extra
-        // large's 102-px dial has 10 rows of 10 px where the classic looks draw 20 of 5.
+        // Pinned, at 150 % (144 dpi): the standard tray's 39-px dial keeps the classic 5-px pitch; a Flat skin's
+        // Extra large dial (102 px — no frame beyond the chrome) has 10 rows at a 10-px pitch where the classic looks
+        // draw 20 of 5. (A skin with a material frames it: 96 px, a 9-px pitch — the tank test below pins that.)
         const PhotoRows std150 = photoRows(39, 144), xl150 = photoRows(102, 144);
         expect(rowsOk && std150.pitch == 5 && xl150.pitch == 10 && xl150.rows == 10 && xl150.gap == 2,
                "photo rows: whole, centred, >= the classic pitch, 10-13 at size; 150 %: standard pitch " +
-                   std::to_string(std150.pitch) + ", Extra large " + std::to_string(xl150.rows) + " rows at a " +
+                   std::to_string(std150.pitch) + ", Extra large (Flat) " + std::to_string(xl150.rows) + " rows at a " +
                    std::to_string(xl150.pitch) + "-px pitch" +
                    (rowsOk ? std::string() : " (first miss: " + rowsMiss + ")"));
 
@@ -1271,6 +1314,71 @@ int selftest() {
         paint(CellFinish::Led, darkPanel, 0.5f, litMid, &switched);
         expect(paint(CellFinish::Led, lightPanel, 0.5f, litMid, &switched) == paint(CellFinish::Led, lightPanel, 0.5f, litMid),
                "photo cells: a cache warmed on one panel paints another as a fresh cache does");
+
+        // Stage C: the frame. Its width is the chrome band (a Flat skin: nothing more), a sixteenth of the meter's
+        // height once that is more; the dial is what is left inside it.
+        bool frameOk = true;
+        for (UINT dpi = 96; dpi <= 480; dpi += 24)
+            for (int h = 1; h <= 600; ++h) {
+                const int chrome = MulDiv(2, static_cast<int>(dpi), 96);
+                frameOk = frameOk && photoBezelPx(h, dpi, SkinMaterial::Flat) == chrome &&
+                          photoBezelPx(h, dpi, static_cast<SkinMaterial>(9)) == chrome &&  // unknown: as Flat
+                          photoBezelPx(h, dpi, SkinMaterial::Brass) == std::max(chrome, h / 16) &&
+                          photoDialPx(h, dpi, SkinMaterial::Anodised) == h - 2 * std::max(chrome, h / 16);
+            }
+        // The ring: every material but Flat fills exactly the ring — nothing inside the window, nothing outside the
+        // meter — and Flat, or a material from a newer skin model this build does not know (9), draws nothing.
+        const RECT meterRc{20, 10, 180, 50};
+        auto bezelFrame = [&](SkinMaterial m, int bpx) {
+            std::vector<uint32_t> px(static_cast<size_t>(bw) * bh, kSentinel);
+            PhotoBezel bz;
+            bz.material = m;
+            bz.px = bpx;
+            PhotoBezelCache c;
+            paintPhotoBezel(px.data(), bw, bh, meterRc, bz, c);
+            return px;
+        };
+        bool ringOk = true;
+        for (SkinMaterial m : {SkinMaterial::Anodised, SkinMaterial::Satin, SkinMaterial::Brass, SkinMaterial::NeonGlass,
+                               SkinMaterial::Flat, static_cast<SkinMaterial>(9)}) {
+            const std::vector<uint32_t> px = bezelFrame(m, 7);
+            for (int y = 0; y < bh; ++y)
+                for (int x = 0; x < bw; ++x) {
+                    const bool inMeter = x >= meterRc.left && x < meterRc.right && y >= meterRc.top && y < meterRc.bottom;
+                    const bool inWindow = x >= meterRc.left + 7 && x < meterRc.right - 7 && y >= meterRc.top + 7 &&
+                                          y < meterRc.bottom - 7;
+                    const bool drawn = at(px, x, y) != kSentinel;
+                    const bool known = m != SkinMaterial::Flat && static_cast<int>(m) != 9;
+                    const bool want = known && inMeter && !inWindow;
+                    if (drawn != want) ringOk = false;
+                }
+        }
+        expect(frameOk && ringOk, "frame: the chrome band or a sixteenth of the height; each material fills exactly the "
+                                  "ring round the window, Flat (or an unknown material) nothing");
+        // Lit from above-left, a raised frame: the outer edge brighter on the left than on the right and on the top
+        // than on the bottom; the lip at the window the other way round. NeonGlass carries its tube's colour down the
+        // frame's middle — and, on a frame too narrow for a tube, along its outer edge.
+        bool litOk = true;
+        std::string litMiss;
+        for (SkinMaterial m : {SkinMaterial::Anodised, SkinMaterial::Satin, SkinMaterial::Brass}) {
+            const std::vector<uint32_t> px = bezelFrame(m, 7);
+            const int my = 30, mx = 100;  // mid-height / mid-width, clear of the rivets
+            const bool ok = luma(at(px, 20, my)) > luma(at(px, 179, my)) && luma(at(px, 26, my)) < luma(at(px, 173, my)) &&
+                            luma(at(px, mx, 10)) > luma(at(px, mx, 49)) && luma(at(px, mx, 16)) < luma(at(px, mx, 43));
+            if (!ok && litOk) litMiss = std::to_string(static_cast<int>(m));
+            litOk = litOk && ok;
+        }
+        auto magenta = [](uint32_t p) {
+            const int r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;  // the stock neon is magenta
+            return r > 150 && r > g + 60 && b > g + 30;
+        };
+        const uint32_t tube = at(bezelFrame(SkinMaterial::NeonGlass, 7), 23, 30);  // 3 px in: the frame's middle
+        const uint32_t edge2 = at(bezelFrame(SkinMaterial::NeonGlass, 2), 20, 30);  // a 2-px frame's outer pixel
+        const int tr = (tube >> 16) & 0xFF, tg = (tube >> 8) & 0xFF, tb = tube & 0xFF;
+        expect(litOk && magenta(tube) && magenta(edge2),
+               "frame: lit from above-left (outer edge left > right, top > bottom; the lip the reverse); the neon tube "
+               "magenta (" + std::to_string(tr) + "," + std::to_string(tg) + "," + std::to_string(tb) +
+                   "), a 2-px frame's neon edge too" + (litOk ? std::string() : " (first miss: material " + litMiss + ")"));
     }
 
     out("== TV Guide rows + coverage (buildGuideModel) ==\n");
@@ -3287,6 +3395,12 @@ int selftest() {
 
     out("\n== Skin model ==\n");
     {
+        // Stage C: each built-in skin is made of its own material; an unknown id falls back to Dark's.
+        expect(skinById("dark").material == SkinMaterial::Anodised && skinById("light").material == SkinMaterial::Satin &&
+                   skinById("cyberpunk").material == SkinMaterial::NeonGlass &&
+                   skinById("steampunk").material == SkinMaterial::Brass &&
+                   skinById("no-such-skin").material == SkinMaterial::Anodised && Skin{}.material == SkinMaterial::Flat,
+               "skins' materials: Dark anodised, Light satin, Cyberpunk neon glass, Steampunk brass; a bare Skin flat");
         // Color codec: RRGGBB round-trip, inherit sentinel, alpha, bad-input fallback.
         expect(skinColorToString(SkinColor{200, 30, 20}) == "C81E14", "color -> RRGGBB hex");
         expect(skinColorFromString("C81E14", {}) == SkinColor{200, 30, 20}, "RRGGBB -> color round-trip");

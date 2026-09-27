@@ -36,6 +36,7 @@ Skin makeDarkSkin() {
     s.body = {"Segoe UI", 10.5f, 400};
     s.title = {"Segoe UI", 12.0f, 600};
     s.glyph = {"Segoe MDL2 Assets", 9.75f, 400, /*symbol=*/true};
+    s.material = SkinMaterial::Anodised;
     return s;
 }
 
@@ -55,6 +56,7 @@ Skin makeLightSkin() {
     s.body = {"Segoe UI", 10.5f, 400};
     s.title = {"Segoe UI", 12.0f, 600};
     s.glyph = {"Segoe MDL2 Assets", 9.75f, 400, /*symbol=*/true};
+    s.material = SkinMaterial::Satin;
     return s;
 }
 
@@ -78,6 +80,7 @@ Skin makeCyberpunkSkin() {
     s.body = {"Segoe UI", 10.5f, 400};
     s.title = {"Segoe UI", 12.0f, 600};
     s.glyph = {"Segoe MDL2 Assets", 9.75f, 400, /*symbol=*/true};
+    s.material = SkinMaterial::NeonGlass;
     return s;
 }
 
@@ -103,6 +106,7 @@ Skin makeSteampunkSkin() {
     s.body = {"Segoe UI", 10.5f, 400};
     s.title = {"Georgia", 12.0f, 700};  // serif title — exercises the Phase-3 typography seam
     s.glyph = {"Segoe MDL2 Assets", 9.75f, 400, /*symbol=*/true};
+    s.material = SkinMaterial::Brass;
     return s;
 }
 

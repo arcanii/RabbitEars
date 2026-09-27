@@ -107,6 +107,7 @@ constexpr int ID_METER_SIZE_LARGE = 2035;   // 50 dp
 constexpr int ID_METER_SIZE_XLARGE = 2036;  // 72 dp
 constexpr int ID_METER_BRIDGE = 2037;       // check: the pop-out meter bridge window (ui/MeterBridge)
 constexpr int ID_METER_LABELS = 2038;       // check: each meter's name under it (ui/MeterLabels); in the same gap
+constexpr int ID_METER_TANK_DOTS = 2039;    // check: the data-flow tank's dots grow with the meter (BufferMeter.h)
 constexpr int ID_METERS_SETUP = 2044;  // Settings → Meters… (opens the full setup dialog)
 constexpr int ID_VIDEO_ONLY = 2046;    // Settings → Video only (hide all chrome; dbl-click/Esc restores)
 constexpr int ID_EPG_REFRESH = 2047;   // Settings → Refresh Guide (fetch XMLTV for enabled playlists)
@@ -509,6 +510,9 @@ int stripHeight(const AppState* st);
 void setMeterHeight(AppState* st, int heightDp);
 // Settings ▸ Meters ▸ Meter labels: persist (meter_labels), relayout the strip and the bridge.
 void setMeterLabels(AppState* st, bool on);
+// Settings ▸ Meters ▸ the data-flow dots growing with the meter: set, persist (buffer_scaled_dots), repaint the
+// tanks (the strip's and the bridge's).
+void setTankScaledDots(AppState* st, bool on);
 // The strip's labels (st->meterLabelRc) into `dc` — ctx is the AppState. The shape of paintSkinStrip's
 // overlay, so an animated skin strip prints them in every frame; the plain strip calls it after its fill.
 void paintStripLabels(HDC dc, void* ctx);
