@@ -31,9 +31,37 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.20 SHIPPED, auto-update LIVE** · **0.2.21-dev** (`APP_VERSION` 0.2.21, bumped 2026-09-25) · macOS **0.2.17**
+## Current state — **v0.2.21 SHIPPED (2026-09-27)** — auto-update LIVE once the appcast commit `422ecf7` is pushed · macOS **0.2.17**
 
-### ⏸ STATE 2026-09-27 — where 0.2.21-dev stands. READ THIS FIRST.
+### ✅ 0.2.21 — SHIPPED (2026-09-27); the appcasts committed as `422ecf7` — auto-update goes LIVE when the owner pushes it
+
+**Released:** tag **`v0.2.21`** @ `6fe1164` (verified: `git ls-remote origin refs/heads/main` == HEAD before building AND
+before tagging), full version **`0.2.21.454`**, GitHub release "RabbitEars 0.2.21" (notes: `build\release-0.2.21-notes.md`
+— catch-up called EXPERIMENTAL, as required) with three installers — uploaded sizes match, and ALL THREE downloaded back
+from the release are byte-identical to the local builds:
+
+| installer | bytes | SHA-256 |
+|---|---|---|
+| `RabbitEars-0.2.21-setup.exe` (x64) | 35,642,641 | `03F4EA09692F853101E744718566125DFC0FC730493206A7C352CD17D8C40C51` |
+| `RabbitEars-0.2.21-arm64-setup.exe` | 30,469,141 | `1581238CDE04B542041F5E0ED52C16B0BD764765CCC2649318EEA39881E93569` |
+| `RabbitEars-0.2.21-universal-setup.exe` | 63,830,283 | `BC842F9144F3BAE18EB8D50CBF4ED88920D7A9044168F659FBECCC7C05108D54` |
+
+The x64 build at THEME_ENGINE=ON / UPDATER=ON, `--selftest` ALL PASS (**879**) on the release commit (and both theme
+flags from a clean export of that tree before it was committed); ARM64 PE machine `0xAA64` (cross-compiled, 0 warnings).
+The universal installer built first time (63.8 MB). Signed by the owner on the Mac with the long form
+(`SIGN_UPDATE=… SIGN_UPDATE_ARGS="--account SQLTerminal"`), from copies on their share whose bytes the signatures proved
+identical; the universal installer is unsigned (in no appcast — optional). Both signatures verified on Windows against
+the app's EdDSA key over the DOWNLOADED bytes (valid on their own installer, INVALID swapped). No schema change this
+release (catch-up's `channel_archive` table is created on open and older builds never read it — no downgrade warning).
+
+**What 0.2.21 contains:** `53c0464` the TV Guide's first open ~0.25 s + Refresh Guide off the UI thread · `10174c4`
+catch-up playback (experimental) · `b5e141d` meter sizes, the strip-edge drag, the meter bridge · `6ffc91b` tall Bitrate
+meters fill their dial · `f2ec7af` needle meters at one size, meter labels · `62502ee` an own row's meters touch ·
+`98cde52` + `a592ee9` the audio needle reads the programme's level whatever the volume · `075369c` stage B (Studio LED,
+Backlit LCD, VFD) · `6fe1164` stage C (skins as materials) + the tank's growing dots · docs. The blocks below are the
+pre-release record.
+
+### ⏸ STATE 2026-09-27 — what went into 0.2.21 (the record). The next cycle starts from the BACKLOG.
 
 #### ✅ TANK OPT-IN + PHOTOREAL STAGE C (C1 frames, C2 strip) — COMMITTED (the commit after `075369c`, NOT pushed), owner-checked (2026-09-27)
 
@@ -1880,8 +1908,12 @@ Paste this verbatim to start a fresh session with working context restored:
 > under it is the record. Plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the
 > owner's decisions are ANSWERED there). Older history: `Win32/HANDOVER-ARCHIVE.md`.
 >
-> **State:** 0.2.20 is SHIPPED and auto-update is LIVE (tag `v0.2.20` @ `74a3b9a`). macOS is at 0.2.17.
-> **0.2.21-dev on `main`, all owner-verified live:** the guide stalls (`53c0464`); catch-up playback,
+> **State:** **0.2.21 is SHIPPED** (tag `v0.2.21` @ `6fe1164`, full version 0.2.21.454, three installers on the GitHub
+> release); its appcasts are commit `422ecf7` — auto-update is LIVE once the owner has pushed it (check `git ls-remote`).
+> macOS is at 0.2.17. **Next:** the next cycle — bump `APP_VERSION` to 0.2.22 with its first change; candidates in
+> BACKLOG (the cleanups: multi-URL `x-tvg-url`, marking guide gaps, the libVLC "Cancellation" noise, the mac flags; the
+> status line stuck on "Buffering 100%"; catch-up scrubbing; C3 owner-drawn transport controls; the tank's own frame).
+> **What 0.2.21 contains (all owner-verified live):** the guide stalls (`53c0464`); catch-up playback,
 > labelled "(experimental)" (`10174c4` — **the 0.2.21 release notes must call it experimental**); photoreal
 > stage A — Standard / Large / Extra large meters in a row of their own, the strip-edge drag, the pop-out
 > meter bridge (`b5e141d`); tall Bitrate meters filling their dial (`6ffc91b`); needle meters at one size +
@@ -1893,8 +1925,7 @@ Paste this verbatim to start a fresh session with working context restored:
 > it: the tank opt-in (Settings ▸ Meters ▸ Data-flow dots grow with the meter) + photoreal
 > stage C (C1: the new looks framed in each skin's material — `SkinMaterial` in common/ui/Skin.h; C2: the strip drawn
 > in it)** — COMMITTED after `075369c`, owner-checked ("looks good"); selftest 879, 647 i18n keys (HANDOVER's
-> "✅ TANK OPT-IN + PHOTOREAL STAGE C" block). **Next: the 0.2.21 release** (the owner: "get ready for a release");
-> the cleanups stay in BACKLOG.
+> "✅ TANK OPT-IN + PHOTOREAL STAGE C" block). Then the release (HANDOVER's "✅ 0.2.21 — SHIPPED" block).
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
