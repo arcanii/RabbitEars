@@ -33,6 +33,24 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 
 ## Current state — **v0.2.21 SHIPPED (2026-09-27)** — auto-update LIVE once the appcast commit `422ecf7` is pushed · macOS **0.2.17**
 
+### ▶️ RESUME HERE (end of session 2026-09-27)
+
+**0.2.21 is SHIPPED** (the block below). At the end of the session **origin/main was still `6fe1164`**: the appcast
+commit `422ecf7`, the handover commit `366e84e` and this update after it were NOT pushed, and the live feed
+(https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml) still said **0.2.20.441** — so **auto-update is
+not live until the owner pushes**. First thing: `git fetch`, `git ls-remote origin refs/heads/main`, read the live feed;
+if it still says 0.2.20, remind the owner to push (nothing else is needed — the release, tag and installers are up).
+
+**Next cycle (0.2.22)** — bump `APP_VERSION` with its first change; ask the owner which first. Candidates (BACKLOG):
+the status line stuck on "Buffering 100%" during playback (visible in the owner's last screenshot); the cleanups —
+multi-URL `x-tvg-url`, marking guide gaps, the libVLC "Cancellation" noise, the mac flags; catch-up scrubbing; C3 —
+owner-drawn transport controls (the owner put it on the backlog); the tank's own frame when its dots grow; stronger Dark
+/ Light strip materials; the dock gutters and title bar as materials; the mac team: `SkinMaterial` (drawn as Flat
+there), the three new looks (not in mac's `MeterStyle`).
+
+**Numbers now:** `--selftest` 879; i18n 647 × 4; command ids 2034–2039 used (2040–2043 free); the seed prompt at the
+end of this file is current.
+
 ### ✅ 0.2.21 — SHIPPED (2026-09-27); the appcasts committed as `422ecf7` — auto-update goes LIVE when the owner pushes it
 
 **Released:** tag **`v0.2.21`** @ `6fe1164` (verified: `git ls-remote origin refs/heads/main` == HEAD before building AND
@@ -1903,29 +1921,38 @@ Paste this verbatim to start a fresh session with working context restored:
 > (coral `#D97757`, custom `WM_NCCALCSIZE` title bar), CMake + Ninja + MSVC (VS 2026), deps
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
-> **Read `Win32/HANDOVER.md` first — its top block "⏸ STATE 2026-09-27" is the state of the work, the
-> order to resume in, and a code map for photoreal stage B**; the "0.2.21-dev — the commits in detail" block
-> under it is the record. Plus `Win32/BACKLOG.md` and `Win32/docs/PHOTOREAL.md` (the photoreal epic — the
-> owner's decisions are ANSWERED there). Older history: `Win32/HANDOVER-ARCHIVE.md`.
+> **Read `Win32/HANDOVER.md` first — its top block "▶️ RESUME HERE" is where things stand and what is next**; the
+> "✅ 0.2.21 — SHIPPED" block under it is the release record, and the "⏸ STATE 2026-09-27" blocks under that record
+> what went into 0.2.21. Plus `Win32/BACKLOG.md` (the next cycle's candidates) and `Win32/docs/PHOTOREAL.md` (the
+> photoreal epic — stages A, B and C are done; the owner's decisions are recorded there). Older history:
+> `Win32/HANDOVER-ARCHIVE.md`.
 >
-> **State:** **0.2.21 is SHIPPED** (tag `v0.2.21` @ `6fe1164`, full version 0.2.21.454, three installers on the GitHub
-> release); its appcasts are commit `422ecf7` — auto-update is LIVE once the owner has pushed it (check `git ls-remote`).
-> macOS is at 0.2.17. **Next:** the next cycle — bump `APP_VERSION` to 0.2.22 with its first change; candidates in
-> BACKLOG (the cleanups: multi-URL `x-tvg-url`, marking guide gaps, the libVLC "Cancellation" noise, the mac flags; the
-> status line stuck on "Buffering 100%"; catch-up scrubbing; C3 owner-drawn transport controls; the tank's own frame).
-> **What 0.2.21 contains (all owner-verified live):** the guide stalls (`53c0464`); catch-up playback,
-> labelled "(experimental)" (`10174c4` — **the 0.2.21 release notes must call it experimental**); photoreal
-> stage A — Standard / Large / Extra large meters in a row of their own, the strip-edge drag, the pop-out
-> meter bridge (`b5e141d`); tall Bitrate meters filling their dial (`6ffc91b`); needle meters at one size +
-> optional meter labels (`f2ec7af`); an own row's meters touching (`62502ee`); the Spectrum needle reading the
-> programme's RMS level (`98cde52`) whatever the volume slider (`a592ee9`). origin/main = `ae03dfe` (all of it
-> pushed — the owner pushes). **Then photoreal stage B, committed after `ae03dfe` and NOT pushed** — three NEW looks
-> (Studio LED, Backlit LCD, VFD) whose cells scale with the meter (`Win32/ui/PhotoCells.{h,cpp}`), owner-checked
-> ("looks good"); `--selftest` 875, 646 i18n keys. Details: HANDOVER's "✅ PHOTOREAL STAGE B" block. **Then, on top of
-> it: the tank opt-in (Settings ▸ Meters ▸ Data-flow dots grow with the meter) + photoreal
-> stage C (C1: the new looks framed in each skin's material — `SkinMaterial` in common/ui/Skin.h; C2: the strip drawn
-> in it)** — COMMITTED after `075369c`, owner-checked ("looks good"); selftest 879, 647 i18n keys (HANDOVER's
-> "✅ TANK OPT-IN + PHOTOREAL STAGE C" block). Then the release (HANDOVER's "✅ 0.2.21 — SHIPPED" block).
+> **State:** **0.2.21 SHIPPED 2026-09-27** — tag `v0.2.21` @ `6fe1164`, full version 0.2.21.454, three installers on
+> the GitHub release (x64 + ARM64 signed by the owner, verified over the downloaded bytes). Its appcasts (`422ecf7`)
+> and the handover commits after it were NOT yet pushed when the session ended — **first check `git ls-remote origin
+> refs/heads/main` and the live feed: https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml must say
+> `0.2.21.454`; if it still says 0.2.20, auto-update is NOT live — tell the owner to push.** macOS is at 0.2.17.
+> `--selftest` 879 checks; i18n 647 keys × 4. `APP_VERSION` is still 0.2.21 — bump it to 0.2.22 (`cmake/AppVersion.cmake`
+> line 11, the only place) with the next cycle's first change.
+>
+> **What 0.2.21 changed that you need to know:** the meters can be Standard / Large / Extra large (an own row above the
+> transport row; the strip-edge drag; the pop-out meter bridge; optional labels — `Win32/ui/MeterTray.h`,
+> `MeterBridge`, `MeterLabels`); three NEW looks, Studio LED / Backlit LCD / VFD, whose cells scale with the meter
+> (`Win32/ui/PhotoCells.{h,cpp}` — a GDI-free rasteriser with a per-meter sprite cache; the classic painters untouched);
+> skins as materials (`SkinMaterial` in `common/ui/Skin.h`: Dark Anodised, Light Satin, Cyberpunk NeonGlass, Steampunk
+> Brass — the new looks' frames `paintPhotoBezel`, the GPU strip `underglow.hlsl applyMaterial`); the tank's opt-in growing
+> dots (Settings ▸ Meters, id 2039, `BufferMeter.h bufferLedPitch`); the Spectrum needle reads the programme's RMS level
+> whatever the volume (`SpectrumTap`); catch-up playback (experimental); the TV Guide's ~0.25 s first open. **The
+> owner's rules for meters and skins:** the classic looks (LED, Tube, LCD, Scope, VU, Silver VU) and the classic tank
+> stay byte-identical; new looks are APPENDED to `MeterStyle` (the Meters dialog's combo index == the enum;
+> `kMeterStyleCount`; the codec is header-inline and round-tripped by --selftest); a skin's material goes on the new
+> looks only; the four built-in skins may be upgraded in place.
+>
+> **Next — ask the owner which first** (all in BACKLOG): the status line stuck on "Buffering 100%" during playback (in
+> the owner's latest screenshot); the cleanups — multi-URL `x-tvg-url`, marking guide gaps, the libVLC "Cancellation"
+> noise, the mac flags; catch-up scrubbing (a new timeshift request at the target time); C3 — owner-drawn transport
+> controls so the strip's material shows everywhere (the owner put it on the backlog); the tank's own frame when its dots
+> grow; stronger Dark / Light strip materials; the dock gutters and title bar as materials.
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
@@ -1934,90 +1961,98 @@ Paste this verbatim to start a fresh session with working context restored:
 > **Tools that change how visual work is done:**
 > * `build\Win32\RabbitEarsRender.exe <outdir> [--skin ID] [--no-strip | --strip-only] [--meter-height DP]
 >   [--meter-labels] [--bench-paint]` renders every meter look, the tank and every skinned strip to PNG from
->   the REAL paint code, byte-reproducibly (the strip at any meter height, as layout() lays it out — needle
->   looks at their own width, a Silver strip too, and with `--meter-labels` the labels); `--bench-paint` times
->   every look's per-frame tick+paint at 30/50/72/120 dp. Render before and after every visual change,
->   byte-compare the unchanged ones, read the PNGs yourself, and hand the owner a labelled sheet (Pillow is
->   installed). The "150dpi" sheets are 156 % scaling.
+>   the REAL paint code, byte-reproducibly; `--bench-paint` times every look's per-frame tick+paint at
+>   30/50/72/120 dp (144 dpi). The classic sheets (`tray_*`, `preview_*`) must stay byte-identical; the photoreal
+>   looks go to their own files (`looks_*` — each beside its classic twin, their tank with the growing dots —
+>   `lookspreview_*`, `strip_*_{studioled,backlitlcd,vfd}_dots*`); every `strip_*` changes when a skin's material
+>   does. Take "before" renders from the current HEAD, render after, byte-compare, read the PNGs yourself (crop and
+>   zoom with Pillow), and hand the owner a labelled sheet. The "150dpi" sheets are 156 % scaling.
 > * `powershell -File scripts\run-profile.ps1 [-Refresh] [-Exe <copy>\RabbitEars.exe]` runs a build
 >   BESIDE the installed app as profile "dev" on a snapshot of the real library (its log:
 >   `%LOCALAPPDATA%\RabbitEarsProfiles\dev\rabbitears.log`). Give the owner a COPY of the build
 >   (`build\check-…\`: the exe, libvlc*.dll, WinSparkle.dll, plugins\) so your next build does not collide
 >   with their test (LNK1168); two copies cannot run at once (one profile). **This sandbox cannot drive the
 >   GUI — the owner drives the screen; tell them exactly where to look** (e.g. catch-up: none of their
->   favourites keeps an archive — use "UK - BBC 1 UHD" in |UK| GENERAL). The owner runs at 150 % and changes
->   their meters as they test (last: all four LED at Extra large; before that four Silver VUs at Large with
->   labels). **Hash-check a copy's exe against the build before handing it over** — a stale copy went out once.
+>   favourites keeps an archive — use "UK - BBC 1 UHD" in |UK| GENERAL). The owner runs at 150 %; their last
+>   screenshot: Dark skin, an own row at about Extra large, Studio LED Spectrum + Bitrate, a classic LED Signal, a
+>   Silver VU on Frames, labels on. **Hash-check a copy's exe against the build before handing it over.**
 > * `RabbitEarsCli --guidebench <copy> [now]` / `--epgsearch <copy>` time the guide build and searches
->   on a COPY of the real library (never the live DB — opening it can migrate it). A previous session's
->   scratchpad may still hold a copy (`guide-bench.db`); copy it into yours.
+>   on a COPY of the real library (never the live DB — opening it can migrate it).
 >
 > **The one number that matters for perf:** the owner's library is **411,149 rows** (366k "live" — mostly
 > Xtream SERIES EPISODES, which are kind 0 too; only 4,795 carry a tvg-id). Measure against it.
 >
 > **Traps that have cost real time:**
-> * **A confident comment is not a verified fact** — every review still found over-claims, including in
->   HANDOVER and in commit messages. Verify or weaken (count the mutations, recompute the numbers).
+> * **A confident comment is not a verified fact** — every review still finds over-claims, including in
+>   HANDOVER, commit messages and your own test messages. Verify or weaken (count the mutations, recompute the numbers,
+>   look at the pixels — two visual defects this time were in the renders all along).
 > * **`common/` is shared with mac** (Apple clang, not compilable here): additive changes only; grep
->   `mac/` first; flag rather than edit their tree. Meter looks and skins are Win32-only.
+>   `mac/` first; update `docs/SKIN_MODEL.md` when the skin model changes; flag rather than edit their tree.
 > * **The working tree may NOT be overwritten in place** (the permission classifier blocks
->   `git checkout-index -a -f` / restoring a tree over it, even with a snapshot). To build or commit a tree
->   that is not the working tree: `git archive <tree> | tar -x -C <scratch>\src`, copy `build\libvlc_pkg`
->   into `<scratch>\build\libvlc_pkg` (no download), configure + build both flags there, selftest; commit
->   with a temporary index: `GIT_INDEX_FILE=<tmp> git read-tree HEAD; git --work-tree=<scratch>\src add -A;
->   git write-tree` (check it), `git commit`, then `git read-tree HEAD` for the real index. Snapshot the
->   working tree the same way (`GIT_INDEX_FILE=<tmp> git read-tree HEAD; git add -A; git write-tree`) before
->   a risky step, and to split one working tree into two commits (commit the earlier snapshot tree first
->   through a temporary index — `git read-tree <tree>; git commit` — then stage the rest by name).
-> * **Inline Python in bash heredocs mangles escapes** — `\\n` arrives as a newline, `\\0` as a NUL; a
->   literal `\n` inside a patch's C++ string becomes a real newline. Write scripts to a FILE with the Write
->   tool (raw strings) or use the Edit tool; make multi-part patches assert every anchor before writing,
->   and normalise CRLF/LF inside the patch helper (files here are mixed). `PYTHONIOENCODING=utf-8` to print
->   channel names.
+>   `git checkout-index -a -f` / restoring a tree over it). To build or commit a tree that is not the working tree:
+>   `git archive <tree> | tar -x -C <scratch>\src`, copy `build\libvlc_pkg` into `<scratch>\src\build\libvlc_pkg`,
+>   build both flags there with `<scratch>\src\scripts\build.cmd`, selftest; build the commit tree with a temporary
+>   index (`GIT_INDEX_FILE=<tmp> git read-tree HEAD; git add -- <paths>; git write-tree`) and check it equals what
+>   you built. Every commit this cycle was built from a clean export of exactly its tree first. Snapshot the working
+>   tree the same way before a risky step.
+> * **Patch scripts:** write them to a FILE (Write tool) with r'''…''' raw strings — inline heredocs mangle escapes,
+>   and in a normal Python string a Windows path's `\b` is a backspace. Assert every anchor exactly once before writing;
+>   keep CRLF/LF (files are mixed). The scratchpad helper `ph.py` did this — recreate it if the scratchpad is gone.
+>   `PYTHONIOENCODING=utf-8` to print non-ASCII.
+> * **Build through PowerShell** (`cmd /c "scripts\build.cmd …"`) — `cmd //c …` from Git Bash once did nothing
+>   silently and a selftest ran an old binary. Confirm a rebuild (the exe's time, a changed message) before trusting a run.
 > * **MSVC evaluates `expect(cond, msg)` arguments in no fixed order** — compute the state first when the
 >   message quotes it. A background `python` run buffers its output until it exits (`python -u`).
-> * **Never pipe `--selftest` into `Select-Object -First`/`head`** — the pipeline stops reading but the
->   process runs on, and the NEXT selftest shares its fixture DBs: a page of bogus [FAIL]s. Write it to a
->   file (`*> st.txt`) and read the file. `Remove-Item` on scratch folders is blocked — use fresh ones.
-> * **Reviewers:** tell background review agents in so many words never to open anything under
->   `%LOCALAPPDATA%\RabbitEars*`, never to build or edit; give them a diff file of just the round.
+> * **Never pipe `--selftest` into `Select-Object -First`/`head`** — the next selftest shares its fixture DBs:
+>   bogus [FAIL]s. Write it to a file (`*> st.txt`) and read the file. `Remove-Item` on scratch folders is blocked.
+> * **Reviewers:** background agents, told in so many words never to open anything under `%LOCALAPPDATA%\RabbitEars*`,
+>   never to build or edit; give them a FROZEN copy (a diff file + copies of the changed files) — the working tree may be
+>   mid-mutation. One reviewer for the code, one for claims vs evidence (with the renders).
+> * **Mutation-test every new check** (patch, `cmake --build build --target RabbitEarsCli`, `--selftest` to a file,
+>   restore byte-for-byte, rebuild). **The script's verdict is only as good as its matcher:** a reworded check turns a
+>   caught mutant into "MISSED" — read the FAIL lines; re-anchor mutants after every refactor (a stale anchor aborts the
+>   run); a mutant that removes a bounds check can read out of range — make it write into the forbidden region instead.
+>   Check a mutant is not EQUIVALENT (e.g. a "warm cache == fresh cache" test cannot see a bug both caches share —
+>   compare against a cache that never evicts). GUI-only code (menus, the dialog's knob rules, the drag) has no
+>   selftest — say so. Pure math the GUI uses goes header-inline so the CLI can test it.
+> * **The glass cover** (`common/ui/GlassMask`) paints an ABSOLUTE grey bezel over a meter's chrome band: a look that
+>   draws its own frame must build the mask at the frame's width and neutralise that band (MiniMeter `ensureBack`).
+> * **HLSL:** a `sin()` hash is outside D3D's accuracy range at large arguments (differs by GPU) — use integer (PCG)
+>   hashes; the strip shader reads `SkinMaterial` as a NUMBER (static_assert in SkinStrip.cpp) — append, never reorder.
 > * **SQLite:** an error can end the WHOLE transaction (SQLITE_FULL/IOERR, RAISE(ROLLBACK)) — check
 >   `sqlite3_get_autocommit` before carrying on. Another connection's commit moves `PRAGMA data_version`;
 >   the app's connection is not the only writer of `epg_programmes` (EpgStore). Schema v11 put TRIGGERS on
->   `channels`; workers open with `upgradeSchema=false`. A subquery's column names are implementation-
->   defined — alias them (`AS`).
-> * **Mutation-test every new guard's test** (break it, see the test fail, restore) — the scratchpad
->   script pattern: patch, `cmake --build build --target RabbitEarsCli`, `--selftest` to a file, restore,
->   rebuild. GUI-only code (the drag, menus, the bridge) has no selftest — say so. Check a mutant is not
->   EQUIVALENT (a downstream clamp once masked one — add the case only the guard catches). Pure math that the
->   GUI uses goes header-inline so the CLI can test it (MeterTray.h, MiniMeter.h, VuDial.h, SpectrumTap.h).
-> * **Pixel diffs:** Pillow's `getbbox()` on an RGBA difference looks at ALPHA only — convert to RGB first
->   (it once reported "identical" for different images). PowerShell: `"h$h:"` is a scope-qualified variable —
->   write `"h$($h):"`.
+>   `channels`; workers open with `upgradeSchema=false`. Alias a subquery's columns (`AS`).
+> * **Pixel diffs:** Pillow's `getbbox()` on an RGBA difference looks at ALPHA only — convert to RGB first.
+>   PowerShell: `"h$h:"` is a scope-qualified variable — write `"h$($h):"`.
 > * **Launching an exe from `G:` through the SHELL** raises a blocking security prompt — use CreateProcess
 >   (`run-profile.ps1` does). **`LNK1168`** = RabbitEars is running: close with `WM_CLOSE`, never kill.
 > * **Command ids:** a genuine gap only (computed ranges 2051–2062, 2079–2098, 2100+ have no literal);
 >   2034–2039 are the Settings ▸ Meters items (2038 = Meter labels, 2039 = the tank's growing dots); 2040–2043 are
->   still free.
->   WM_APP+12 is WM_APP_VOD_ARCHIVE (+10 is ChannelGrid's).
-> * **Release:** bump ONLY `APP_VERSION` (`cmake/AppVersion.cmake` line 11). Three installers, two appcasts,
->   `-Tag v<ver>`; push before tagging; `ls-remote` == HEAD before building; the universal installer can
->   fail once ("EndUpdateResource … antivirus") — re-run, check ~63 MB. Signing on the Mac:
->   `scripts/sign-release.sh "<installer>"` (its defaults untried; the long form works). Verify each
->   signature on Windows over the DOWNLOADED bytes.
+>   free. WM_APP+12 is WM_APP_VOD_ARCHIVE (+10 is ChannelGrid's).
+> * **Release** (docs/RELEASING.md): bump ONLY `APP_VERSION`; the owner pushes; `ls-remote` == HEAD before building and
+>   before tagging; build x64 (`-DRABBITEARS_THEME_ENGINE=ON` explicitly) + `build-arm64.cmd -DRABBITEARS_THEME_ENGINE=ON`
+>   + the three installers (the universal one can fail once — "EndUpdateResource … antivirus" — re-run, check ~63 MB);
+>   give the owner the installers' SHA-256s; they sign on the Mac with the long form
+>   (`SIGN_UPDATE="$(ls build-mac*/sparkle/bin/sign_update | head -1)" SIGN_UPDATE_ARGS="--account SQLTerminal"
+>   scripts/sign-release.sh "<installer>"`) from copies on their share; verify each signature on Windows (Python
+>   `cryptography` Ed25519, the key in `Win32/platform/Updater.cpp`) over the local bytes and again over the bytes
+>   downloaded back from the release (valid on its own file, INVALID swapped); `make-appcast.ps1 … -Tag v<ver>` (check the
+>   printed url=); the GitHub release needs the owner's explicit yes (it is public); commit the appcasts ONLY after the
+>   release exists — the owner's push of that commit is what makes auto-update live.
 > * **Provider logins are secrets** (query or path — including `/timeshift/USER/PASS/`): never print a URL
 >   from the DB or a log unmasked, never put one in a doc or commit. The log masks them by shape.
 > * **Build with `-DRABBITEARS_THEME_ENGINE=ON` explicitly** and verify BOTH flags before committing
 >   (leave the cache at ON).
-> * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent, exactly `json.dumps(…, indent=2)` layout) →
->   `python tools/i18n/gen_i18n.py` (`--check` must pass); never hand-edit `common/core/Strings.*`; append
->   keys at the END of `keys.json`; 643 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine
->   draft; avoid plurals in English templates (there is no plural support). A key's `comment` is what the
->   translator sees — when a string gains a second use (e.g. a dialog name printed as a meter label), say so.
+> * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent, exactly `json.dumps(…, indent=2, ensure_ascii=False)`
+>   layout) → `python tools/i18n/gen_i18n.py` (`--check` must pass); never hand-edit `common/core/Strings.*`; append
+>   keys at the END of `keys.json`; 647 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine draft (use
+>   the glossary's words — e.g. zh-Hant 量表 for "meter"); avoid plurals in English templates. A key's `comment` is
+>   what the translator sees — keep it true (thresholds, where the string shows).
 >
 > **Working rules:** every change adversarially reviewed (background agents) + built with BOTH theme
 > flags + `--selftest` ALL PASS before committing; render before/after for anything visual (the existing
 > looks must stay byte-identical — the owner's rule); hand every runtime check to the owner with exact
-> steps; never conclude anything about a class of streams from one channel. Commit only when asked; stage
-> specific paths (never `git add -A` on the real index); end commit messages with the Co-Authored-By
-> trailer.
+> steps and a hash-checked copy; never conclude anything about a class of streams from one channel. Commit only when
+> asked; stage specific paths (never `git add -A` on the real index); end commit messages with the Co-Authored-By
+> trailer. Anything public (a release, a tag, a push) needs the owner's explicit yes — the owner pushes.
