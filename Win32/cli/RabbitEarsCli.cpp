@@ -52,6 +52,7 @@
 #include "ui/VuLamp.h"
 #include "ui/Skin.h"
 #include "ui/VideoGrid.h"
+#include "ui/VlcLogFilter.h"  // Win32/ui — which libVLC log lines go to Debug (header-only)
 
 #include "XtreamRecon.h"
 // A Win32/ GUI header: only its header-inline bufferGrid() and bufferLedPitch() are used — the rest of the
@@ -258,6 +259,30 @@ int selftest() {
         expect(calls.size() == 2 && calls[0] == kXmltvProgressEvery &&
                    calls[1] == 2 * kXmltvProgressEvery,
                "progress called at 1000 and 2000 only (got " + std::to_string(calls.size()) + " calls)");
+    }
+
+    out("== libVLC log: routine HTTP/2 resets (Win32 VlcLogFilter) ==\n");
+    {
+        // The two libVLC 3.0.23 lines ("local stream %u error: %s (0x%X)", logged at ERROR) as the owner's
+        // log shows them.
+        expect(isRoutineH2Reset("local stream 19 error: Cancellation (0x8)") &&
+                   isRoutineH2Reset("local stream 27 error: Stream closed (0x5)") &&
+                   isRoutineH2Reset("local stream 4294967295 error: Cancellation (0x8)") &&
+                   isRoutineH2Reset("local stream 1 error: Stream closed (0x5)"),
+               "VlcLogFilter: local Cancellation (0x8) / Stream closed (0x5) resets are routine");
+        expect(!isRoutineH2Reset("peer stream 19 error: Cancellation (0x8)") &&
+                   !isRoutineH2Reset("local stream 19 error: Protocol error (0x1)") &&
+                   !isRoutineH2Reset("local stream 19 error: Internal error (0x2)") &&
+                   !isRoutineH2Reset("local stream 19 error: Cancellation (0x5)") &&
+                   !isRoutineH2Reset("local stream 19 error: Stream closed (0x8)"),
+               "VlcLogFilter: a peer reset, another code, or a name/code mismatch is not routine");
+        expect(!isRoutineH2Reset("local stream  error: Cancellation (0x8)") &&
+                   !isRoutineH2Reset("local stream 12345678901 error: Cancellation (0x8)") &&
+                   !isRoutineH2Reset("local stream 19 error: Cancellation (0x8) ") &&
+                   !isRoutineH2Reset("local stream 19 error: Cancellation") &&
+                   !isRoutineH2Reset("xlocal stream 19 error: Cancellation (0x8)") &&
+                   !isRoutineH2Reset("local stream 19 shut down") && !isRoutineH2Reset(""),
+               "VlcLogFilter: no number, an over-long one, extra text or a cut line is not matched");
     }
 
     out("== Log masking + pasted guide URL (Win32 UrlRedact) ==\n");
