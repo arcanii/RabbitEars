@@ -18,8 +18,9 @@
 
 namespace rabbitears::diag {
 
-// Register the credentials `url` carries (see urlCredentials()). Thread-safe; duplicates and
-// values under 4 characters are ignored. Takes effect for every line written afterwards.
+// Register the credentials `url` carries (see urlCredentials()) — for a guide link naming several
+// guides (core/GuideSources.h), each guide's. Thread-safe; duplicates and values under 4 characters
+// are ignored. Takes effect for every line written afterwards.
 void addSecretsFromUrl(const std::wstring& url);
 
 // Mask the previous session's log (rabbitears.log.1) in place with the same rules, rewriting it

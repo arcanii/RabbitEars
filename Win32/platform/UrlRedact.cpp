@@ -5,6 +5,7 @@
 #include <cwchar>
 #include <cwctype>
 
+#include "core/GuideSources.h"
 #include "platform/Encoding.h"
 
 namespace rabbitears {
@@ -299,6 +300,20 @@ bool pathEndsWith(const std::wstring& path, const wchar_t* s) {
 bool looksLikeGuideUrl(const std::wstring& url) {
     const std::wstring path = lowerPath(url);
     return pathEndsWith(path, L".xml") || pathEndsWith(path, L".gz") || pathEndsWith(path, L"/xmltv.php");
+}
+
+std::wstring guideUrlList(const std::wstring& text, const std::wstring& current) {
+    const std::vector<std::wstring> urls = splitGuideUrls(text);
+    if (urls.size() < 2) return L"";
+    const std::vector<std::wstring> known = splitGuideUrls(current);
+    std::wstring out;
+    for (const auto& u : urls) {
+        const bool stored = std::find(known.begin(), known.end(), u) != known.end();
+        if (extractHttpUrl(u) != u || looksLikePlaylistUrl(u) || !(looksLikeGuideUrl(u) || stored)) return L"";
+        if (!out.empty()) out += L',';
+        out += u;
+    }
+    return out;
 }
 
 bool looksLikePlaylistUrl(const std::wstring& url) {

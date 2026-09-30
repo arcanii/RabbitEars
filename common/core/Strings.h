@@ -712,6 +712,9 @@ enum class StringId {
     MeterLookVfd,
     // --- Menu ---
     MenuMeterTankDots,
+    // --- GuideGrid ---
+    LoadingGuideSourceTag,
+    EpgGuideSourceError,
     Count  // sentinel — MUST stay last
 };
 

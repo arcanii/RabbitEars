@@ -645,5 +645,7 @@
   "MeterLookStudioLed": "Studio LED",
   "MeterLookBacklitLcd": "Backlit LCD",
   "MeterLookVfd": "Fluorescent (VFD)",
-  "MenuMeterTankDots": "Data-flow dots grow with the meter"
+  "MenuMeterTankDots": "Data-flow dots grow with the meter",
+  "LoadingGuideSourceTag": " — guide {0} of {1}",
+  "EpgGuideSourceError": "guide {0} of {1}: {2}"
 }

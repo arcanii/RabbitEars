@@ -39,6 +39,13 @@ bool looksLikePlaylistUrl(const std::wstring& url);
 // (query and fragment ignored, case-insensitive)? Set Guide URL takes such an address from a pasted
 // line that names the playlist link first.
 bool looksLikeGuideUrl(const std::wstring& url);
+// For Set Guide URL: `text` when it is a LIST of guide links (core/GuideSources.h splitGuideUrls) —
+// two or more links, each a whole http(s) address as extractHttpUrl would keep it, none of them
+// looksLikePlaylistUrl, and each either looksLikeGuideUrl or already one of `current`'s links (the
+// playlist's stored link, which the prompt is seeded with) — joined with ","; otherwise empty, and the
+// prompt keeps ONE address as before (a single link; a portal, website or playlist link beside a guide
+// link).
+std::wstring guideUrlList(const std::wstring& text, const std::wstring& current);
 
 // The credential values `url` carries in a form that can be recognised generically: the
 // user-info part (user:pass@host) and the values of credential-named query parameters (username,

@@ -22,6 +22,7 @@
 
 #include <sqlite3.h>  // selftest only: hand-builds a pre-EPG (v2) DB to test the upgrade
 
+#include "core/GuideSources.h"
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/Json.h"
@@ -259,6 +260,117 @@ int selftest() {
         expect(calls.size() == 2 && calls[0] == kXmltvProgressEvery &&
                    calls[1] == 2 * kXmltvProgressEvery,
                "progress called at 1000 and 2000 only (got " + std::to_string(calls.size()) + " calls)");
+    }
+
+    out("== Guide links naming several guides (core/GuideSources) ==\n");
+    {
+        using V = std::vector<std::wstring>;
+        // The parser keeps the header's list as written; Refresh Guide splits it.
+        const M3uDocument two = parseM3u("#EXTM3U url-tvg=\"https://a.example/epg.xml.gz,https://b.example/x.xml\"\n"
+                                         "#EXTINF:-1,One\nhttp://s/1\n");
+        expect(two.epgUrl == L"https://a.example/epg.xml.gz,https://b.example/x.xml",
+               "M3U: a url-tvg listing two guides is kept as written");
+        expect(splitGuideUrls(two.epgUrl) == V{L"https://a.example/epg.xml.gz", L"https://b.example/x.xml"},
+               "splitGuideUrls: two comma-separated guides -> two links, in order");
+        expect(splitGuideUrls(L"http://h.example/xmltv.php?username=u&password=p") ==
+                       V{L"http://h.example/xmltv.php?username=u&password=p"} &&
+                   splitGuideUrls(L"  http://h.example/g.xml \t") == V{L"http://h.example/g.xml"},
+               "splitGuideUrls: one link stays one (trimmed)");
+        expect(splitGuideUrls(L"http://a/x.php?ids=1,2,3&k=http") == V{L"http://a/x.php?ids=1,2,3&k=http"} &&
+                   splitGuideUrls(L"http://a/x.xml,httpx://b/y.xml") == V{L"http://a/x.xml,httpx://b/y.xml"} &&
+                   splitGuideUrls(L"http://a/x.xml,ftp://b/y.xml") == V{L"http://a/x.xml,ftp://b/y.xml"} &&
+                   splitGuideUrls(L"http://a/x.xml,http:/b") == V{L"http://a/x.xml,http:/b"},
+               "splitGuideUrls: a comma not followed by http(s):// stays inside the link");
+        expect(splitGuideUrls(L"http://a/x.xml , HTTPS://b/y.xml,,\thttp://c/z.xml") ==
+                       V{L"http://a/x.xml", L"HTTPS://b/y.xml", L"http://c/z.xml"} &&
+                   splitGuideUrls(L"http://a/x.xml http://b/y.xml") == V{L"http://a/x.xml", L"http://b/y.xml"},
+               "splitGuideUrls: a run of commas and spaces separates (scheme in any case)");
+        expect(splitGuideUrls(L"http://a/x.xml,http://b/y.xml,http://a/x.xml") ==
+                       V{L"http://a/x.xml", L"http://b/y.xml"} &&
+                   splitGuideUrls(L"").empty() && splitGuideUrls(L" \t ").empty() &&
+                   splitGuideUrls(L"http://a/x.xml,") == V{L"http://a/x.xml,"},
+               "splitGuideUrls: a repeat dropped; blank = none; ONE link's trailing comma is left as written");
+        expect(splitGuideUrls(L"https://a/x.xml.gz,https://b/y.xml.gz,") ==
+                       V{L"https://a/x.xml.gz", L"https://b/y.xml.gz"} &&
+                   splitGuideUrls(L"http://a/x.xml,,http://a/x.xml ,") == V{L"http://a/x.xml"} &&
+                   splitGuideUrls(L"EPG Link : http://h/xmltv.php?username=u&password=p") ==
+                       V{L"http://h/xmltv.php?username=u&password=p"} &&
+                   splitGuideUrls(L"EPG: http://a/x.xml, http://b/y.xml") == V{L"http://a/x.xml", L"http://b/y.xml"},
+               "splitGuideUrls: a list drops a label before its first link and separators after its last");
+
+        // Merging: a channel's programmes come from the FIRST guide that lists it.
+        auto prog = [](const wchar_t* ch, const wchar_t* title) {
+            Programme p;
+            p.channelId = ch;
+            p.title = title;
+            p.startUtc = 1000;
+            return p;
+        };
+        std::vector<std::vector<Programme>> guides(3);
+        // The first guide spells a channel "One.UK@HD", a later one "one.uk": the SAME channel only once
+        // both are normalised, as the guide joins them.
+        guides[0] = {prog(L"One.UK@HD", L"A1"), prog(L"One.UK@HD", L"A2"), prog(L"two.uk", L"A3")};
+        // Out of channel order on purpose: the merge must not assume a guide groups its channels.
+        guides[1] = {prog(L"three.uk", L"B1"), prog(L"one.uk", L"B2"), prog(L"three.uk", L"B3")};
+        // Starts with guide 1's last channel: a per-channel cache carried across guides would keep it.
+        guides[2] = {prog(L"three.uk", L"C1"), prog(L"Two.UK", L"C2"), prog(L"four.uk", L"C3")};
+        const GuideMerge m = mergeGuideSources(std::move(guides));
+        std::wstring titles;
+        for (const auto& p : m.programmes) titles += p.title + L" ";
+        expect(titles == L"A1 A2 A3 B1 B3 C3 ",
+               "mergeGuideSources: each channel from the first guide listing it, in order (got " +
+                   utf8FromWide(titles) + ")");
+        expect(m.kept == std::vector<size_t>{3, 2, 1} && m.dropped == std::vector<size_t>{0, 1, 2},
+               "mergeGuideSources: per-guide kept 3/2/1, left out 0/1/2 (ids as the guide joins them: "
+               "case and @suffix ignored)");
+        std::vector<std::vector<Programme>> one(1);
+        one[0] = {prog(L"x", L"X1"), prog(L"x", L"X2")};
+        const GuideMerge m1 = mergeGuideSources(std::move(one));
+        expect(m1.programmes.size() == 2 && m1.programmes[1].title == L"X2" && m1.kept == std::vector<size_t>{2} &&
+                   m1.dropped == std::vector<size_t>{0} && mergeGuideSources({}).programmes.empty(),
+               "mergeGuideSources: one guide passes through whole; none gives nothing");
+        // A programme the store would not keep (no readable start) claims no channel.
+        std::vector<std::vector<Programme>> unreadable(2);
+        Programme noStart = prog(L"five.uk", L"F0");
+        noStart.startUtc = 0;
+        Programme orphan = prog(L"six.uk", L"S1");  // listed by no guide with a readable start
+        orphan.startUtc = 0;
+        Programme alsoNoStart = prog(L"five.uk", L"F2");  // on a channel its own guide owns
+        alsoNoStart.startUtc = 0;
+        unreadable[0] = {noStart};
+        unreadable[1] = {prog(L"five.uk", L"F1"), alsoNoStart, orphan};
+        const GuideMerge mu = mergeGuideSources(std::move(unreadable));
+        std::wstring ut;
+        for (const auto& p : mu.programmes) ut += p.title + L" ";
+        expect(ut == L"F0 F1 " && mu.kept == std::vector<size_t>{1, 1} && mu.dropped == std::vector<size_t>{0, 2},
+               "mergeGuideSources: a programme with no readable start claims no channel (the next guide's is "
+               "taken; the first guide still passes whole), and a later guide's is left out (got " +
+                   utf8FromWide(ut) + ")");
+
+        // Set Guide URL: a typed LIST is kept whole; anything else keeps one address (the old rules).
+        expect(guideUrlList(L"http://a.example/x.xml, https://b.example/y.xml.gz", L"") ==
+                       L"http://a.example/x.xml,https://b.example/y.xml.gz" &&
+                   guideUrlList(L"EPG: http://a.example/x.xml, http://b.example/y.xml", L"") ==
+                       L"http://a.example/x.xml,http://b.example/y.xml",
+               "guideUrlList: a list of guide links (a label before it dropped) -> joined with commas");
+        expect(guideUrlList(L"http://a.example/x.xml", L"").empty() &&
+                   guideUrlList(L"http://h/get.php?username=u&password=p http://h/xmltv.php?username=u&password=p",
+                                L"")
+                       .empty() &&
+                   guideUrlList(L"http://host:8080/c/ http://host:8080/xmltv.php?username=U&password=P", L"").empty() &&
+                   guideUrlList(L"https://prov.example/epg.xml.gz https://prov.example/", L"").empty(),
+               "guideUrlList: one link, or a playlist, portal or website link beside a guide link -> not a list");
+        expect(guideUrlList(L"http://h/epg1, http://h/epg2", L"http://h/epg1,http://h/epg2") ==
+                       L"http://h/epg1,http://h/epg2" &&
+                   guideUrlList(L"http://h/epg1,http://h/epg2, https://x.example/y.xml", L"http://h/epg1,http://h/epg2") ==
+                       L"http://h/epg1,http://h/epg2,https://x.example/y.xml" &&
+                   guideUrlList(L"http://h/epg1,http://h/epg3", L"http://h/epg1,http://h/epg2").empty(),
+               "guideUrlList: the playlist's stored links are kept whatever their shape; a new one must look like "
+               "a guide link");
+        const std::wstring storedWithPlaylist = L"http://h/get.php?username=u&password=p,http://h/xmltv.php";
+        expect(guideUrlList(storedWithPlaylist, storedWithPlaylist).empty(),
+               "guideUrlList: a stored list with a playlist link in it is not kept as a list (the prompt's one-address "
+               "rules then take the guide link)");
     }
 
     out("== libVLC log: routine HTTP/2 resets (Win32 VlcLogFilter) ==\n");

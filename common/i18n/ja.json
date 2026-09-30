@@ -645,5 +645,7 @@
   "MeterLookStudioLed": "スタジオ LED",
   "MeterLookBacklitLcd": "バックライト LCD",
   "MeterLookVfd": "蛍光表示管 (VFD)",
-  "MenuMeterTankDots": "データフローのドットをメーターに合わせて拡大"
+  "MenuMeterTankDots": "データフローのドットをメーターに合わせて拡大",
+  "LoadingGuideSourceTag": " — 番組表ソース {0}/{1}",
+  "EpgGuideSourceError": "番組表ソース {0}/{1}: {2}"
 }

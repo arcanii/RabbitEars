@@ -14,6 +14,7 @@
 
 #include <shlobj.h>
 
+#include "core/GuideSources.h"
 #include "platform/Encoding.h"
 #include "platform/LogSecrets.h"
 #include "platform/UrlRedact.h"
@@ -109,6 +110,12 @@ void write(const wchar_t* level, const std::wstring& msg) {
 }
 
 void addSecretsFromUrl(const std::wstring& url) {
+    // A guide link naming several guides (core/GuideSources.h): each guide's own login. (A piece of a
+    // split link never splits again, so this recurses once.)
+    if (const std::vector<std::wstring> urls = splitGuideUrls(url); urls.size() > 1) {
+        for (const auto& u : urls) addSecretsFromUrl(u);
+        return;
+    }
     std::vector<std::wstring> found = urlCredentials(url);
     std::lock_guard<std::mutex> lk(g_mtx);
     // A stream path's login only when part of it is already known — the same account (see

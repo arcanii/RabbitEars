@@ -11,7 +11,8 @@ struct Playlist {
     std::wstring name;
     std::wstring sourceUrl;         // set when isUrl; else empty
     std::wstring sourcePath;        // set for local-file imports; else empty
-    std::wstring epgUrl;            // XMLTV guide URL (from the M3U x-tvg-url); may be empty
+    std::wstring epgUrl;            // XMLTV guide URL (from the M3U x-tvg-url); may be empty, may list
+                                    // several guides (core/GuideSources.h splitGuideUrls)
     bool         isUrl = true;
     long long    addedAt = 0;       // unix epoch seconds
     long long    lastRefreshedAt = 0;

@@ -711,6 +711,9 @@ constexpr std::array<const char*, N> kEn = {{
     "Fluorescent (VFD)",  // MeterLookVfd
     // --- Menu ---
     "Data-flow dots grow with the meter",  // MenuMeterTankDots
+    // --- GuideGrid ---
+    " — guide {0} of {1}",  // LoadingGuideSourceTag
+    "guide {0} of {1}: {2}",  // EpgGuideSourceError
 }};
 
 // 日本語
@@ -1412,6 +1415,9 @@ constexpr std::array<const char*, N> kJa = {{
     "蛍光表示管 (VFD)",  // MeterLookVfd
     // --- Menu ---
     "データフローのドットをメーターに合わせて拡大",  // MenuMeterTankDots
+    // --- GuideGrid ---
+    " — 番組表ソース {0}/{1}",  // LoadingGuideSourceTag
+    "番組表ソース {0}/{1}: {2}",  // EpgGuideSourceError
 }};
 
 // 繁體中文
@@ -2113,6 +2119,9 @@ constexpr std::array<const char*, N> kZhHant = {{
     "真空螢光顯示器 (VFD)",  // MeterLookVfd
     // --- Menu ---
     "資料流點陣隨量表放大",  // MenuMeterTankDots
+    // --- GuideGrid ---
+    "（節目表來源 {0} / {1}）",  // LoadingGuideSourceTag
+    "節目表來源 {0} / {1}：{2}",  // EpgGuideSourceError
 }};
 
 // 繁體中文（香港）
@@ -2814,6 +2823,9 @@ constexpr std::array<const char*, N> kZhHK = {{
     "真空螢光顯示器 (VFD)",  // MeterLookVfd
     // --- Menu ---
     "資料流點陣隨量表放大",  // MenuMeterTankDots
+    // --- GuideGrid ---
+    "（節目表來源 {0} / {1}）",  // LoadingGuideSourceTag
+    "節目表來源 {0} / {1}：{2}",  // EpgGuideSourceError
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

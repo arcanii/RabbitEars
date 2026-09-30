@@ -4198,5 +4198,24 @@
     "cluster": "Menu",
     "placeholders": [],
     "comment": "Meters submenu, a check item (off by default): the data-flow (buffer) meter's square dots grow with the meter's size, like the Studio LED / Backlit LCD / VFD looks' cells. Nothing changes at the standard size - only on taller meters (Large, Extra large, a height dragged above about 40-45 dp), in the meter bridge and in the Meters dialog's preview."
+  },
+  {
+    "id": "LoadingGuideSourceTag",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}"
+    ],
+    "comment": "Loading box while Refresh Guide runs, appended directly to a playlist's name when that playlist's guide link lists SEVERAL XMLTV guides and one of them is being downloaded or read: {0} = which guide (1, 2, ...), {1} = how many guides the link lists. Starts with a separator after the name; keep it short."
+  },
+  {
+    "id": "EpgGuideSourceError",
+    "cluster": "GuideGrid",
+    "placeholders": [
+      "{0}",
+      "{1}",
+      "{2}"
+    ],
+    "comment": "Refresh Guide results box, after a playlist's name and a colon: one of the several XMLTV guides that playlist's guide link lists could not be loaded. {0} = which guide (1, 2, ...), {1} = how many guides the link lists, {2} = the reason (a technical error such as \"download failed\"). When every guide failed, one of these per guide is joined with \"; \"."
   }
 ]

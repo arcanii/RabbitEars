@@ -267,6 +267,11 @@ struct EpgFetch {
     bool                   storeDone = false;
     int                    stored = 0;
     long long              storeMs = 0;
+    // A guide link naming several guides (core/GuideSources.h; the download, gunzip and parse times
+    // and byte counts above are sums over its guides): why each guide that failed while others loaded did not ("guide 2 of 3: …" — shown
+    // in the results and logged), and a log line per guide that loaded (what the merge kept of it).
+    std::vector<std::wstring> sourceErrors;
+    std::vector<std::wstring> sourceLog;
 };
 struct EpgResult {
     std::vector<EpgFetch> fetches;

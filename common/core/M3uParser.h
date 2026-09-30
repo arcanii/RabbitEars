@@ -19,7 +19,8 @@
 namespace rabbitears {
 
 struct M3uDocument {
-    std::wstring               epgUrl;    // x-tvg-url / url-tvg from #EXTM3U (may be empty)
+    std::wstring               epgUrl;    // x-tvg-url / url-tvg from #EXTM3U, as written (may be empty;
+                                          // may list several guides — core/GuideSources.h)
     std::vector<ParsedChannel> channels;
 };
 

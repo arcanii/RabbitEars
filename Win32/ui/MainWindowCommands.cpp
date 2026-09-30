@@ -30,6 +30,7 @@
 namespace Gdiplus { using std::min; using std::max; }
 #include <gdiplus.h>
 
+#include "core/GuideSources.h"
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
@@ -413,38 +414,73 @@ void onEpgRefresh(AppState* st) {
                 n > 1 ? trf(i18n::StringId::LoadingProgressTag,
                             { std::to_wstring(i + 1), std::to_wstring(n) })
                       : L"";
-            std::string bytes;
-            std::wstring err;
-            post(trf(i18n::StringId::LoadingDownloadingName, { t.name, tag }));
-            const Clock::time_point tDownload = Clock::now();
-            const bool got = httpGetWithProgress(  // guides are large: 60 s per connect step / data wait
-                t.url, bytes, err, 60000, [&](unsigned long long received) {
-                    if (due())
-                        post(trf(i18n::StringId::LoadingDownloadingProgress,
-                                 { t.name, mb(received), tag }));
-                });
-            f.downloadMs = msSince(tDownload);
-            f.downloadBytes = bytes.size();
-            if (!got) {
-                f.error = err.empty() ? tr(i18n::StringId::EpgErrorDownloadFailed) : err;
-            } else {
-                post(trf(i18n::StringId::LoadingParsingName,
-                         { t.name, std::to_wstring(bytes.size() / 1024), tag }));
-                const Clock::time_point tGunzip = Clock::now();
-                const std::string xml = gunzipIfNeeded(bytes);
-                f.gunzipMs = msSince(tGunzip);
-                f.xmlBytes = xml.size();
-                if (xml.empty()) {
-                    f.error = tr(i18n::StringId::EpgErrorEmptyAfterDecompress);
-                } else {
-                    const Clock::time_point tParse = Clock::now();
-                    f.programmes = parseXmltv(xml, [&](size_t soFar) {
+            // The playlist's guide link can name several guides (core/GuideSources.h): each is fetched
+            // and parsed, then they are merged — a channel's programmes come from the first guide that
+            // lists it. A link naming one guide goes through as it always did (trimmed of white space).
+            std::vector<std::wstring> urls = splitGuideUrls(t.url);
+            if (urls.empty()) urls.push_back(t.url);  // a blank link: the download says why, as before
+            const size_t nu = urls.size();
+            std::vector<std::vector<Programme>> parsed;  // the guides that parsed, in the link's order
+            std::vector<size_t> parsedFrom;              // which of the link's guides each one is
+            std::vector<std::wstring> failed;            // why each of the others did not, in order
+            for (size_t k = 0; k < nu; ++k) {
+                const std::wstring label =
+                    nu > 1 ? t.name + trf(i18n::StringId::LoadingGuideSourceTag,
+                                          { std::to_wstring(k + 1), std::to_wstring(nu) })
+                           : t.name;
+                std::string bytes;
+                std::wstring err, why;
+                post(trf(i18n::StringId::LoadingDownloadingName, { label, tag }));
+                const Clock::time_point tDownload = Clock::now();
+                const bool got = httpGetWithProgress(  // guides are large: 60 s per connect step / data wait
+                    urls[k], bytes, err, 60000, [&](unsigned long long received) {
                         if (due())
-                            post(trf(i18n::StringId::LoadingReadingProgress,
-                                     { t.name, std::to_wstring(soFar), tag }));
-                    }).programmes;
-                    f.parseMs = msSince(tParse);
+                            post(trf(i18n::StringId::LoadingDownloadingProgress,
+                                     { label, mb(received), tag }));
+                    });
+                f.downloadMs += msSince(tDownload);
+                f.downloadBytes += bytes.size();
+                if (!got) {
+                    why = err.empty() ? tr(i18n::StringId::EpgErrorDownloadFailed) : err;
+                } else {
+                    post(trf(i18n::StringId::LoadingParsingName,
+                             { label, std::to_wstring(bytes.size() / 1024), tag }));
+                    const Clock::time_point tGunzip = Clock::now();
+                    const std::string xml = gunzipIfNeeded(bytes);
+                    f.gunzipMs += msSince(tGunzip);
+                    f.xmlBytes += xml.size();
+                    if (xml.empty()) {
+                        why = tr(i18n::StringId::EpgErrorEmptyAfterDecompress);
+                    } else {
+                        const Clock::time_point tParse = Clock::now();
+                        parsed.push_back(parseXmltv(xml, [&](size_t soFar) {
+                            if (due())
+                                post(trf(i18n::StringId::LoadingReadingProgress,
+                                         { label, std::to_wstring(soFar), tag }));
+                        }).programmes);
+                        parsedFrom.push_back(k);
+                        f.parseMs += msSince(tParse);
+                    }
                 }
+                if (!why.empty())
+                    failed.push_back(nu > 1 ? trf(i18n::StringId::EpgGuideSourceError,
+                                                  { std::to_wstring(k + 1), std::to_wstring(nu), why })
+                                            : why);
+            }
+            if (parsed.empty()) {
+                // Nothing to store: the playlist fails, with every guide's reason.
+                for (const auto& w : failed) f.error += (f.error.empty() ? L"" : L"; ") + w;
+            } else if (nu == 1) {
+                f.programmes = std::move(parsed[0]);
+            } else {
+                GuideMerge m = mergeGuideSources(std::move(parsed));
+                f.programmes = std::move(m.programmes);
+                for (size_t p = 0; p < parsedFrom.size(); ++p)
+                    f.sourceLog.push_back(L"guide " + std::to_wstring(parsedFrom[p] + 1) + L" of " +
+                                          std::to_wstring(nu) + L": " + std::to_wstring(m.kept[p]) +
+                                          L" programmes taken, " + std::to_wstring(m.dropped[p]) +
+                                          L" left out (an earlier guide's channel, or no readable start)");
+                f.sourceErrors = std::move(failed);  // reported beside the programmes the others gave
             }
             res->fetches.push_back(std::move(f));
         }
@@ -496,15 +532,23 @@ void finishEpgRefresh(AppState* st, std::unique_ptr<EpgResult> res) {
         // only happens on the way out; no dialog is shown then.)
         if (f.error.empty() && !f.storeDone && (!res->storeError.empty() || res->aborted))
             f.error = !res->storeError.empty() ? res->storeError : std::wstring(L"internal error");
+        // A link naming several guides: the ones that failed while the others loaded — shown whatever
+        // became of the rest (stored, or lost to a store failure).
+        std::wstring guideLines;
+        for (const auto& w : f.sourceErrors) {
+            guideLines += f.name + L":  " + w + L"\r\n";
+            diag::warn(L"EPG refresh for \"" + f.name + L"\": " + w);
+        }
+        for (const auto& l : f.sourceLog) diag::info(L"EPG \"" + f.name + L"\" " + l);
         if (!f.error.empty()) {
-            detail += f.name + L":  " + f.error + L"\r\n";
+            detail += f.name + L":  " + f.error + L"\r\n" + guideLines;
             diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error + L" (download took " +
                         std::to_wstring(f.downloadMs) + L" ms)");
             continue;
         }
         ++okCount;
         totalProg += f.stored;
-        detail += trf(i18n::StringId::EpgDetailProgrammesLine, { f.name, std::to_wstring(f.stored) });
+        detail += trf(i18n::StringId::EpgDetailProgrammesLine, { f.name, std::to_wstring(f.stored) }) + guideLines;
         diag::info(L"EPG stored " + std::to_wstring(f.stored) + L" programmes for \"" + f.name + L"\"");
         diag::info(L"EPG timings for \"" + f.name + L"\": download " + std::to_wstring(f.downloadMs) +
                    L" ms (" + std::to_wstring(f.downloadBytes) + L" bytes), gunzip " +
@@ -717,6 +761,7 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
     std::wstring url;  // seed with the current URL (M3U x-tvg-url or a prior override)
     for (const auto& pl : st->db.listPlaylists())
         if (pl.id == pid) { url = pl.epgUrl; break; }
+    const std::wstring current = url;
     HINSTANCE hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
     for (;;) {
         if (!promptText(hwnd, hInst, st->dpi, tr(i18n::StringId::SetGuideUrlTitle),
@@ -724,6 +769,12 @@ void promptSetGuideUrl(HWND hwnd, AppState* st, long long pid) {
             return;
         if (url.find_first_not_of(L" \t\r\n") == std::wstring::npos) {  // blank = clear
             url.clear();
+            break;
+        }
+        // A LIST of guide links — an M3U's x-tvg-url can name several (core/GuideSources.h), and the
+        // playlist's own link this prompt was seeded with may: keep them all (guideUrlList says when).
+        if (std::wstring list = guideUrlList(url, current); !list.empty()) {
+            url = std::move(list);
             break;
         }
         // Keep only the address: a provider's email line pasted whole ("EPG Link : http://…") was
