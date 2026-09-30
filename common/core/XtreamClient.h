@@ -41,8 +41,9 @@ namespace rabbitears {
 struct XtreamCreds {
     std::wstring origin;    // "http://host:port" — scheme + authority, no trailing slash
     // DECODED. They are read out of a query string but also have to be emitted into a PATH
-    // (/movie/USER/PASS/), and the encodings differ — '+' is a space in a query and a literal
-    // '+' in a path. Storing the raw query spelling made the API URL correct and the PLAY URL
+    // (/movie/USER/PASS/), and the encodings differ — a raw '+' reads as a space in a query and as a
+    // '+' in a path (the URLs built from these write it as %2B in both: encodeComponent in
+    // XtreamClient.cpp). Storing the raw query spelling made the API URL correct and the PLAY URL
     // silently wrong, which is the worst place for the divergence to land: the auth probe
     // round-trips through a query and succeeds, so login works and only playback fails.
     std::wstring username;

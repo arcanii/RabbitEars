@@ -31,25 +31,87 @@ siblings — *not* WinUI 3, *not* .NET/EF Core. Storage is SQLite via the C API.
 | Installer     | Inno Setup 6 (`packaging/installer.iss`)                       |
 | Auto-update   | WinSparkle, EdDSA-signed appcast on GitHub (LIVE as of 0.1.1) |
 
-## Current state — **v0.2.21 SHIPPED (2026-09-27)** — auto-update LIVE once the appcast commit `422ecf7` is pushed · macOS **0.2.17**
+## Current state — **0.2.22-dev: the cleanups batch** (on **v0.2.21**, SHIPPED 2026-09-27, auto-update LIVE) · macOS **0.2.17**
 
-### ▶️ RESUME HERE (end of session 2026-09-27)
+### ▶️ RESUME HERE (2026-09-27, evening)
 
-**0.2.21 is SHIPPED** (the block below). At the end of the session **origin/main was still `6fe1164`**: the appcast
-commit `422ecf7`, the handover commit `366e84e` and this update after it were NOT pushed, and the live feed
-(https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml) still said **0.2.20.441** — so **auto-update is
-not live until the owner pushes**. First thing: `git fetch`, `git ls-remote origin refs/heads/main`, read the live feed;
-if it still says 0.2.20, remind the owner to push (nothing else is needed — the release, tag and installers are up).
+**0.2.21's auto-update is LIVE:** the owner pushed the appcasts and the handover commits (origin/main = `46937c0`), and
+both feeds serve 0.2.21.454 (checked; the x64 one once GitHub's 5-minute cache let go), and **the owner updated an
+installed 0.2.20 to 0.2.21 through it** (2026-09-27) — confirmed end to end. **The 0.2.22 cycle began with
+the owner's pick, "the cleanups batch"** — the block below: built with both theme flags (GUI included) from clean
+exports, `--selftest` ALL PASS (**919**), mutation-tested, three adversarial reviews acted on. Its commit state and the
+owner's live check are recorded in that block — read it before anything else.
 
-**Next cycle (0.2.22)** — bump `APP_VERSION` with its first change; ask the owner which first. Candidates (BACKLOG):
-the status line stuck on "Buffering 100%" during playback (visible in the owner's last screenshot); the cleanups —
-multi-URL `x-tvg-url`, marking guide gaps, the libVLC "Cancellation" noise, the mac flags; catch-up scrubbing; C3 —
-owner-drawn transport controls (the owner put it on the backlog); the tank's own frame when its dots grow; stronger Dark
-/ Light strip materials; the dock gutters and title bar as materials; the mac team: `SkinMaterial` (drawn as Flat
-there), the three new looks (not in mac's `MeterStyle`).
+**Next (ask the owner which first; BACKLOG):** the status line stuck on "Buffering 100%" during playback; catch-up
+scrubbing; C3 — owner-drawn transport controls; the tank's own frame when its dots grow; stronger Dark / Light strip
+materials; the dock gutters and title bar as materials; `wordish` vs unicode61's separators (a word right after ◆ ・ ★ …
+is found but left unmarked); the mac team's flags (BACKLOG 🍎, now with (7)).
 
-**Numbers now:** `--selftest` 879; i18n 647 × 4; command ids 2034–2039 used (2040–2043 free); the seed prompt at the
-end of this file is current.
+**Numbers now:** `--selftest` 919; i18n 649 × 4; `APP_VERSION` **0.2.22** (bumped with the batch); command ids
+2034–2039 used (2040–2043 free); the seed prompt at the end of this file is current.
+
+### 🧹 0.2.22-dev — the cleanups batch (2026-09-27)
+
+Four parts, one commit each (each commit's tree built with both flags and selftested on its own):
+1. **libVLC's routine HTTP/2 resets at Debug** (+ `APP_VERSION` 0.2.22). `Win32/ui/VlcLogFilter.h` `isRoutineH2Reset`:
+   exactly `local stream <1–10 digits> error: Cancellation (0x8)` or `… Stream closed (0x5)` — the format string read out
+   of libVLC 3.0.23's libadaptive_plugin / libhttps_plugin; peer resets and every other code keep their level.
+   `VlcEngine.cpp vlcLogCb`: the session's first keeps its level with a note; the rest go to Debug (`VLC-DBG`) and are
+   counted — `VlcEngine::shutdown` logs the count at Info (a stream that keeps cancelling still shows).
+2. **A guide link naming several guides.** `common/core/GuideSources.h` (header-only, additive): `splitGuideUrls` (split
+   only where commas / spaces precede `http(s)://`; a list drops a leading label and trailing separators; repeats
+   dropped; ONE link stays as written, trimmed) and `mergeGuideSources` (each channel from the FIRST guide listing it
+   with a readable start — ids as the guide joins them, `normaliseTvgId`; the first guide whole; reserved exactly).
+   `onEpgRefresh`'s worker fetches and parses each ("Downloading X — guide 2 of 3…", key `LoadingGuideSourceTag`) and
+   merges; a guide that fails while others load is a results line (`EpgGuideSourceError`) and a WARN, whatever becomes
+   of the store; all failing = the playlist's error, each guide's reason joined with "; "; one guide = the old path.
+   Set Guide URL: `guideUrlList(text, current)` (UrlRedact) keeps a typed LIST when every link looks like a guide's or
+   is already one of the playlist's stored links (a portal / website / playlist link beside a guide link → the old
+   one-address rules). `addSecretsFromUrl` registers each listed guide's login. No schema change; mac untouched
+   (flagged). The old BACKLOG claim that a list fails with "Invalid URL." was wrong — WinHTTP parses it as ONE URL and
+   asks the first host for a nonsense path (the review checked `WinHttpCrackUrl`).
+3. **Search marking follows the match.** `tools/fold/gen_fts_fold.py` asks SQLite for every BMP character's fold (and
+   stops if plane 1 folds anything but Deseret) → `common/core/FtsFoldTable.h` (GENERATED, 1,262 entries; `--check`).
+   `SearchFold.h`: `ftsFold` / `ftsFoldCodePoint` exact; `searchFold` = ftsFold + Ø Đ Ħ Ŀ Ł Ŧ, one for one — every fold the
+   old one made, it still makes (checked over the BMP). `Database.cpp` `matchAt` / `markAll` / `snippetAround` take a
+   `MarkFold`: Index (ftsFold; dropped accents skipped on both sides and looking back for a word start) or Like (ASCII
+   case only, the whole term, no word-start rule); an excerpt never ends inside the match. `docs/EPG_SEARCH.md` §3 + §6.
+4. **Docs:** BACKLOG (three items closed, the "Invalid URL." note corrected, 🍎 (2) fixed + (7) added, `wordish` left
+   open), this handover, and the `XtreamCreds` comment in `common/core/XtreamClient.h` (comment only).
+
+**Verified:** built with THEME_ENGINE=ON and OFF (GUI + updater ON) from a clean export, 0 warnings; `--selftest` ALL
+PASS **919** (879 + 3 log filter + 15 guide links + 22 marking); `gen_i18n --check`, `gen_fts_fold --check`; the fold
+oracle compares all 129,023 BMP + plane-1 code points with the VENDORED SQLite (trigram every one, unicode61 every one
+it keeps), and checks LIKE is ASCII-only and that unicode61 keeps a dropped accent inside its word. **Mutation:** 8 (log
+filter) + 19 (guide links — one MISSED: a fixture that could not see skipped id normalisation; fixed, caught) + 16
+(marking) + 28 after the review fixes (split / merge / list re-anchored, snippet cut, word start — one MISSED: a
+stored list holding a playlist link, which no test had; test added, caught) — all caught in the end (one of the first
+19 by a crash). **GUI-only, no selftest:** the refresh worker's loop and messages, the results lines, the
+prompt's list path, `addSecretsFromUrl`'s split, the log callback's note and count. **Reviewed** by three adversarial
+agents (log filter + guide links; fold + marking; claims vs evidence): no HIGH. MEDIUMs — Set Guide URL keeping a
+portal link as a guide; the excerpt cut splitting a spaced LIKE match (exposed by whole-term marking); the
+"Invalid URL." claim; "case in every cased script" (FTS5 leaves 175 BMP capitals, e.g. Cherokee); a test message
+calling Greek Ω the ohm sign — all fixed. LOWs and nits acted on (trailing separators and labels, the store-failure
+path, unreadable programmes claiming channels, the reset count, the accent before a word start, plane-1 checks, the
+guide-SOURCE wording in ja / zh-Hant, many comments). The fixes are built, selftested and mutation-tested — not
+re-reviewed.
+
+**Status (2026-09-30): COMMITTED** at the owner's word ("commit all"), on origin/main `46937c0`: `a33a6fe` (1),
+`d1a85ff` (2), `4070283` (3) and the docs commit after them (4) — each commit's tree identical to the one built and
+selftested (both flags, GUI on, from a clean export: 882 / 897 / 919 / 919). **NOT pushed** (the owner pushes).
+**The owner's live check had NOT been run** (the dev profile's log has no session since the copy was made) — it is the
+first thing to do next. The copy: `build\check-0222-cleanups\` (exe SHA-256
+`8EF730B9AB163135C865E0230435BF33C00C886A2A19C3910B62C92F62D5D9B0`, built from the same sources before these commits,
+so it says 0.2.22 (457)); run it with `powershell -File scripts\run-profile.ps1 -Exe build\check-0222-cleanups\RabbitEars.exe`:
+1. play the HLS FAST channel (`*.wurl.com`) ~1 minute, close the app — the dev log
+   (`%LOCALAPPDATA%\RabbitEarsProfiles\dev\rabbitears.log`) should hold ONE `Cancellation (0x8)` / `Stream closed (0x5)`
+   line ending "(usually routine: …)" and, at exit, "libVLC: N more routine HTTP/2 reset line(s) this session…";
+2. 📅 Set Guide URL on a playlist with a guide: append `, http://127.0.0.1:9/none.xml` → OK → Yes — "Downloading ‹name›
+   — guide 1 of 2…" then "… guide 2 of 2…"; the results "‹name›: N programmes" and "‹name›: guide 2 of 2: ‹a connection
+   error›"; the TV Guide still has the programmes; then remove what was added;
+3. TV Guide search "news" and a 2-letter term ("ne"): marked as before (the owner's guide is English — no visible
+   change expected);
+4. Help ▸ About: 0.2.22.
 
 ### ✅ 0.2.21 — SHIPPED (2026-09-27); the appcasts committed as `422ecf7` — auto-update goes LIVE when the owner pushes it
 
@@ -1922,18 +1984,16 @@ Paste this verbatim to start a fresh session with working context restored:
 > vendored/NuGet. Repo `G:\RabbitEars` (a TrueNAS SMB share).
 >
 > **Read `Win32/HANDOVER.md` first — its top block "▶️ RESUME HERE" is where things stand and what is next**; the
-> "✅ 0.2.21 — SHIPPED" block under it is the release record, and the "⏸ STATE 2026-09-27" blocks under that record
-> what went into 0.2.21. Plus `Win32/BACKLOG.md` (the next cycle's candidates) and `Win32/docs/PHOTOREAL.md` (the
+> "🧹 0.2.22-dev — the cleanups batch" block under it is this cycle's work so far, the "✅ 0.2.21 — SHIPPED" block the
+> last release's record, and the "⏸ STATE 2026-09-27" blocks under that what went into 0.2.21. Plus `Win32/BACKLOG.md` (the next cycle's candidates) and `Win32/docs/PHOTOREAL.md` (the
 > photoreal epic — stages A, B and C are done; the owner's decisions are recorded there). Older history:
 > `Win32/HANDOVER-ARCHIVE.md`.
 >
-> **State:** **0.2.21 SHIPPED 2026-09-27** — tag `v0.2.21` @ `6fe1164`, full version 0.2.21.454, three installers on
-> the GitHub release (x64 + ARM64 signed by the owner, verified over the downloaded bytes). Its appcasts (`422ecf7`)
-> and the handover commits after it were NOT yet pushed when the session ended — **first check `git ls-remote origin
-> refs/heads/main` and the live feed: https://raw.githubusercontent.com/arcanii/RabbitEars/main/appcast.xml must say
-> `0.2.21.454`; if it still says 0.2.20, auto-update is NOT live — tell the owner to push.** macOS is at 0.2.17.
-> `--selftest` 879 checks; i18n 647 keys × 4. `APP_VERSION` is still 0.2.21 — bump it to 0.2.22 (`cmake/AppVersion.cmake`
-> line 11, the only place) with the next cycle's first change.
+> **State:** **0.2.21 SHIPPED 2026-09-27** (tag `v0.2.21` @ `6fe1164`, 0.2.21.454) and its auto-update is LIVE (the
+> owner pushed; both appcasts serve 0.2.21.454). macOS is at 0.2.17. **0.2.22-dev:** the owner's first pick, "the
+> cleanups batch" (libVLC's routine HTTP/2 resets at Debug; a guide link naming several guides; search marking that
+> follows the match — an exact FTS5 fold table; the mac flags) — see HANDOVER's "🧹 0.2.22-dev" block for whether it
+> is committed and owner-checked. `--selftest` 919 checks; i18n 649 keys × 4; `APP_VERSION` is 0.2.22.
 >
 > **What 0.2.21 changed that you need to know:** the meters can be Standard / Large / Extra large (an own row above the
 > transport row; the strip-edge drag; the pop-out meter bridge; optional labels — `Win32/ui/MeterTray.h`,
@@ -1949,10 +2009,10 @@ Paste this verbatim to start a fresh session with working context restored:
 > looks only; the four built-in skins may be upgraded in place.
 >
 > **Next — ask the owner which first** (all in BACKLOG): the status line stuck on "Buffering 100%" during playback (in
-> the owner's latest screenshot); the cleanups — multi-URL `x-tvg-url`, marking guide gaps, the libVLC "Cancellation"
-> noise, the mac flags; catch-up scrubbing (a new timeshift request at the target time); C3 — owner-drawn transport
-> controls so the strip's material shows everywhere (the owner put it on the backlog); the tank's own frame when its dots
-> grow; stronger Dark / Light strip materials; the dock gutters and title bar as materials.
+> the owner's latest screenshot); catch-up scrubbing (a new timeshift request at the target time); C3 — owner-drawn
+> transport controls so the strip's material shows everywhere (the owner put it on the backlog); the tank's own frame
+> when its dots grow; stronger Dark / Light strip materials; the dock gutters and title bar as materials; `wordish` vs
+> unicode61's separators (search marking); the mac team's flags (BACKLOG 🍎).
 >
 > The repo has TWO writers (the mac team pushes to `main`): run `git fetch`, `git status`,
 > `git log origin/main..` and `git log ..origin/main` first; verify `git ls-remote origin
@@ -1991,7 +2051,9 @@ Paste this verbatim to start a fresh session with working context restored:
 > * **The working tree may NOT be overwritten in place** (the permission classifier blocks
 >   `git checkout-index -a -f` / restoring a tree over it). To build or commit a tree that is not the working tree:
 >   `git archive <tree> | tar -x -C <scratch>\src`, copy `build\libvlc_pkg` into `<scratch>\src\build\libvlc_pkg`,
->   build both flags there with `<scratch>\src\scripts\build.cmd`, selftest; build the commit tree with a temporary
+>   build both flags there with `<scratch>\src\scripts\build.cmd -DRABBITEARS_BUILD_GUI=ON -DRABBITEARS_UPDATER=ON
+>   -DRABBITEARS_THEME_ENGINE=<flag>` (a FRESH configure defaults the GUI OFF and builds only the CLI — a "both flags
+>   pass" that never compiled the GUI files), selftest; build the commit tree with a temporary
 >   index (`GIT_INDEX_FILE=<tmp> git read-tree HEAD; git add -- <paths>; git write-tree`) and check it equals what
 >   you built. Every commit this cycle was built from a clean export of exactly its tree first. Snapshot the working
 >   tree the same way before a risky step.
@@ -2046,7 +2108,7 @@ Paste this verbatim to start a fresh session with working context restored:
 >   (leave the cache at ON).
 > * **i18n:** edit `common/i18n/*.json` (CRLF, 2-space indent, exactly `json.dumps(…, indent=2, ensure_ascii=False)`
 >   layout) → `python tools/i18n/gen_i18n.py` (`--check` must pass); never hand-edit `common/core/Strings.*`; append
->   keys at the END of `keys.json`; 647 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine draft (use
+>   keys at the END of `keys.json`; 649 keys × 4 languages; `zh-HK` is an override layer; CJK is a machine draft (use
 >   the glossary's words — e.g. zh-Hant 量表 for "meter"); avoid plurals in English templates. A key's `comment` is
 >   what the translator sees — keep it true (thresholds, where the string shows).
 >

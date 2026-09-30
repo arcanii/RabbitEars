@@ -41,10 +41,20 @@ Open items this work left or found (none blocking):
     **[`docs/CHANNEL_SEARCH.md`](../docs/CHANNEL_SEARCH.md)** (0.1–1 ms vs 120–180 ms; a one-time
     3.9–4.5 s upgrade on the owner's 410k channels; FTS5-less builds ≤ 0.2.18 can no longer add, refresh
     or delete playlists or sync movies on a v11 database — accepted).
-- **Marking gaps (cosmetic):** accents FTS5 strips but `searchFold` keeps — Vietnamese / pinyin
-  (U+01A0–U+0233 bar Ș Ț) and U+1E00–U+1EF9 — are FOUND but left unmarked; the stroke letters (Ł, Ø …)
-  fold here but not in FTS5 (`common/core/SearchFold.h` header). A LIKE-fallback result (1–2 typed
-  characters) is marked accent-blind while LIKE matched accents exactly.
+- ✅ **FIXED in 0.2.22-dev — marking gaps:** a result is now marked the way the search matched it. Through
+  the index: `ftsFold` (`common/core/SearchFold.h`), a table of FTS5's own per-character fold generated from
+  SQLite by `tools/fold/gen_fts_fold.py` (1,262 BMP characters) and checked by `--selftest` against the
+  vendored SQLite for every BMP and plane-1 character. The old hand-written `searchFold` lacked 975 of
+  FTS5's folds (Vietnamese / pinyin / Latin Extended-B, polytonic Greek, extended Cyrillic, Georgian,
+  fullwidth …: found, left unmarked), folded 12 letters FTS5 keeps (Ø Đ Ħ Ŀ Ł Ŧ: marked where the index
+  had not matched them) and compared the 25 combining accents FTS5 drops. By LIKE: the whole typed text,
+  ASCII case only. An excerpt never ends inside the match. `searchFold` (the guide's channel filter) is
+  now `ftsFold` + Ø Đ Ħ Ŀ Ł Ŧ, one for one — every fold it made before, it still makes. **Left:**
+  `wordish` (Database.cpp) is not unicode61's separator set — 5,295 BMP characters are separators to
+  unicode61 but word characters to it (◆ ・ ★ × …, common in Japanese EPG text), so a word right after
+  one is found but left unmarked (measured by the 0.2.22 review against Python's SQLite 3.50.4); it also
+  decides which typed words are searched, so changing it is a change of its own. Description marking
+  still takes every typed word as a prefix (the index only the last).
 - ✅ **Past programmes in search** (hidden by decision §7.4) come back in 0.2.21-dev (uncommitted) on the
   channels whose archive still holds them — "Already aired — catch-up", playable (catch-up, below).
 - ✅ **FIXED in 0.2.21-dev (committed 2026-09-26): the loading box floated over other apps** — for the WHOLE
@@ -59,7 +69,8 @@ Open items this work left or found (none blocking):
   to (the loading box now inserts itself below that app's window; the PIP could do the same, once the
   owner has looked); (c) `deletePlaylist` is void and ignores its step result, so a delete that times
   out behind another connection's write lock still reports "Playlist deleted".
-- **A second guide source** is what the calendar needs. Today: one `epg_url` per playlist, and
+- **A second guide source** is what the calendar needs. Today: one `epg_url` per playlist (since
+  0.2.22-dev it may LIST several guides, merged per channel before the store — `core/GuideSources.h`), and
   `bulkInsertProgrammes` wipes the whole playlist's programmes on every refresh — a second source would
   need per-source rows (or merging) and a channel-id mapping (a third-party XMLTV rarely uses the
   provider's tvg-ids).
@@ -83,16 +94,25 @@ Open items this work left or found (none blocking):
     the pane's latest. Touches every channel's playback — its own reviewed change.
   - **A catch-up restarts from its start** on a re-buffer (buffer slider), a PIP swap or split→single
     (L3; films do the same) — a resume position would need the archive's own time base.
-- **Multi-URL `x-tvg-url`:** an M3U header may list several guide URLs comma-separated; stored as one
-  `epg_url` it fails with "Invalid URL.". Not seen on the owner's playlists — unverified how common.
-- **libVLC noise:** an HLS FAST channel (`*.wurl.com`) logs `local stream N error: Cancellation (0x8)`
-  every ~6 s while playing normally — ~150 lines in 15 minutes of the owner's test. Harmless; a filter
-  candidate if the log gets hard to read.
+- ✅ **0.2.22-dev — multi-URL `x-tvg-url`:** a guide link may list several guides (commas or spaces before
+  each `http(s)://`). Refresh Guide splits it (`common/core/GuideSources.h`), fetches and parses each, and
+  merges them — a channel's programmes from the FIRST guide listing it with a readable start; a guide that
+  fails while others load is named in the results ("guide 2 of 3: …"); Set Guide URL keeps a typed list
+  of guide-shaped links (or the playlist's own stored ones); the log registers each guide's login. Stored
+  as before (no schema change). **Correction** to the note that stood here: the whole list does NOT fail
+  with "Invalid URL." — WinHTTP parses it as ONE URL and asks the first host for a nonsense path (checked
+  with `WinHttpCrackUrl` by the 0.2.22 review). Still never seen on the owner's playlists; mac still
+  downloads the whole link (🍎 (7) below).
+- ✅ **0.2.22-dev — libVLC noise:** libVLC's HTTP/2 resets `local stream N error: Cancellation (0x8)` (an
+  HLS FAST channel, `*.wurl.com`, every ~6 s while playing normally — ~150 lines in 15 minutes of the
+  owner's test) and `… Stream closed (0x5)` (in the owner's 2026-09-27 log: five within 2 ms of a
+  Cancellation, on the same stream) are logged at Debug after the session's first
+  (`Win32/ui/VlcLogFilter.h`); the app's exit logs how many were hidden, so a stream that keeps
+  cancelling still shows at the default level.
 - 🍎 **For the mac team (flag, not an edit of their tree):** (1) `mac/platform/Log.mm` masks nothing, so
   the mac log still records Xtream logins in clear — `Win32/platform/UrlRedact.{h,cpp}` is pure C++ and
-  could move to `common/` if they want it; (2) `common/core/XtreamClient.h`'s `XtreamCreds` comment says
-  "'+' is … a literal '+' in a path", but `encodeComponent` writes a `+` into a path as `%2B` (the code
-  is fine — the comment overstates); (3) **step 2 changed the shared core** (`0892cf4`, `35b8826`) and
+  could move to `common/` if they want it; (2) ~~`XtreamCreds`' comment overstated '+' in a path~~ —
+  fixed in 0.2.22-dev (comment only: `encodeComponent` writes `%2B` in both); (3) **step 2 changed the shared core** (`0892cf4`, `35b8826`) and
   it has only been compiled with MSVC: `SQLITE_ENABLE_FTS5` on the root `sqlite3` target (their build
   uses it), **schema v10** in `common/db/Database.cpp` (FTS5 tables; a mac build on it migrates the DB
   to v10 — empty tables, since nothing on mac rebuilds or searches the index; the next guide refresh
@@ -124,6 +144,14 @@ Open items this work left or found (none blocking):
   pick is the LONGEST archive among a guide id's channels (`refreshProgrammeSearchChannels`). 14 i18n
   keys. mac needs none of it; a mac catch-up would call those plus its own tz lookup (Win32 uses C++20
   tzdb) and should mirror `Win32/ui/CatchupSync` (which zone to trust, when a list may replace flags).
+  (7) **0.2.22-dev changes `common/` (MSVC-compiled only):** `core/SearchFold.h` rewritten on a new
+  GENERATED header `core/FtsFoldTable.h` (1,262-entry `inline constexpr` arrays; regenerate with
+  `tools/fold/gen_fts_fold.py`) — both compiled into mac's `Database.cpp`, never yet by Apple clang;
+  `searchFold` keeps every fold it made; `Database.cpp`'s search marking changed (mac does not call
+  `searchProgrammes`); a new header `core/GuideSources.h` (`splitGuideUrls`, `mergeGuideSources`) — mac's
+  Refresh Guide (`mac/src/app/MainWindowController.mm` ~3373) still hands a multi-guide link to one
+  `httpGet`, which asks the first host for a nonsense path; 2 i18n keys (649). mac routes no libVLC log,
+  so the Cancellation noise does not reach it.
 
 ---
 
