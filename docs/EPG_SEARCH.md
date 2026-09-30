@@ -254,14 +254,20 @@ LIMIT :limit + 1;           -- the extra row sets `truncated`
 every match before the LIMIT applies: `snippet()` took **700 ms for "the"** and 180 ms for "news" on the
 owner's guide. So the ≤ 200 results are marked in C++ (U+0002 … U+0003 around each match): the title
 with the typed text (title matches), and for description-only matches an excerpt around the earliest
-typed word. The marking is simpler than the index's matching and can differ: it compares characters
-through `searchFold` (`common/core/SearchFold.h` — case for Latin, Greek and Cyrillic as FTS5 folds it,
-Latin accents dropped, one character for one), so "quebec" marks "Québec"; a match the index found
-through some other folding (Vietnamese and pinyin accents) stays unmarked (the snippet is then the
-description's start), and the stroke letters (Ø Ł …) fold to their base letter though FTS5 keeps them; it marks every typed word as a prefix (the index takes only the
-last); it compares typed punctuation literally; and it treats the common punctuation blocks (U+00A0–BF,
-U+2000–206F, U+3000–303F) as word boundaries, as the tokenizer does, so `“Doctor` still marks `Doctor`.
-For a CJK word it drops the word-start rule (CJK has no word boundaries to start at).
+typed word. The marking compares characters the way the search matched them. Through the index: as
+FTS5's tokenizers fold (`ftsFold`, `common/core/SearchFold.h` — a table generated from SQLite itself by
+`tools/fold/gen_fts_fold.py` and checked against the vendored SQLite for every BMP and plane-1
+character by `--selftest`), so "quebec" marks "Québec", "noi" marks "Nội", and "lodz" does NOT mark
+"Łódź" (FTS5 keeps Ł); a combining accent the tokenizers drop is skipped, and kept inside the mark. By
+LIKE (under 3 characters, an index not Ready, a CJK term's descriptions): the whole typed text, ASCII
+case only, as LIKE compared it. Marking is still simpler than the description index's matching: it marks every typed word
+as a prefix (the index takes only the last); it compares typed punctuation literally; and it treats the
+common punctuation blocks (U+00A0–BF, U+2000–206F, U+3000–303F) as word boundaries, as the tokenizer
+does, so `“Doctor` still marks `Doctor` — but not every other character the tokenizer splits words on
+(`wordish` in Database.cpp: ◆ ・ ★ × …), so a word right after one of those is found and left unmarked.
+For a CJK word it drops the word-start rule (CJK has no word boundaries to start at). A match it cannot
+locate stays unmarked (the snippet is then the description's start); an excerpt never ends inside the
+match.
 
 **The user's text is never FTS5 syntax.** Typed `"`, `*`, `(`, `-`, `AND`/`OR`/`NOT`/`NEAR` search for
 themselves. Title query: the trimmed text as ONE quoted phrase (inner `"` doubled) — trigram matches it
@@ -304,7 +310,8 @@ on; then it shows a **chip** — the filter's text and an ✕ — and a click an
   results it adds to it. Focus is remembered across deactivation (a dialog, Alt-Tab) and restored to
   the box if it had it.
 - **Channels** are matched in the guide itself, in memory — the rows it was built with, by channel
-  NAME, a substring, case- and accent-insensitive (`searchFold`: "quebec" finds "TVA QUÉBEC"). One
+  NAME, a substring, case- and accent-insensitive (`searchFold`: FTS5's fold plus Ø Đ Ħ Ŀ Ł Ŧ —
+  "quebec" finds "TVA QUÉBEC", "lodz" finds "TVP3 Łódź"). One
   function (`channelMatches`) gives both the count the results show and the rows the filter keeps.
 - **Programme search** debounces 200 ms exactly as the main search does (one-shot timer + a
   `searchPending` flag re-checked on the tick, because `KillTimer` does not remove an already-posted
@@ -355,7 +362,8 @@ New strings (appended to `keys.json`, en/ja/zh-Hant; CJK a machine draft): the p
 
 ## 6. Testing
 
-**Selftest (CLI, automated — `RabbitEarsCli --selftest`, block "Programme search"):**
+**Selftest (CLI, automated — `RabbitEarsCli --selftest`, blocks "Programme search" and "Search marking
+follows the match"):**
 - A fresh database reaches v10 with the index not yet built; v2 → v10 walks the whole chain.
 - **v9 → v10 does NOT re-run v9's URL rewrite** — a canary stream URL in a spelling v9 would rewrite
   stays untouched (and the check asserts the canary IS such a spelling). Shown to fail with the gate
@@ -369,10 +377,16 @@ New strings (appended to `keys.json`, en/ja/zh-Hant; CJK a machine draft): the p
   syntax searched literally (quotes, parentheses, `AND`, `OR*`); odd input (a lone `-`, `"`, `NEAR(`,
   `*`, `(((`) neither errors nor poisons the connection; a 2-character term falls back to titles.
 - Marking: a marked title, a marked snippet, the channel name + full tvg-id on a hit; "quebec" marks
-  "Québec" (title and snippet) and lower-case Greek marks upper-case; `searchFold`'s table edges (accents
+  "Québec" (title and snippet) and lower-case Greek marks upper-case; `searchFold`'s Latin edges (accents
   dropped; Æ Œ Ĳ ß × ı ĸ kept); a CJK word found in a description and marked mid-run (2 characters →
   LIKE, 3 → the index path with a LIKE description arm); a word right after a curly quote found AND
-  marked.
+  marked. `ftsFold` equals the vendored FTS5's fold for every BMP and plane-1 character (trigram: every
+  one; unicode61: every one it keeps); marking follows the match — "noi" marks "Nội" in a title and a description, "lodz" marks
+  "Lodz" but not "Łódź", a decomposed accent sits inside the mark (never at its start; typed ones are
+  skipped too), fullwidth case folds, a 2-character (LIKE) term leaves "Áf" unmarked, a CJK term marks
+  its title by the index and a description as the whole term once, an excerpt never ends inside a spaced
+  term, a word start is found past a dropped accent, and a stale index's LIKE marks a description word
+  found mid-word.
 - The stamp: a refresh leaves `NeedsRebuild` and the stale index is bypassed; a rebuild finds the new
   title; deleting a playlist leaves `NeedsRebuild`; a fresh connection reads a saved stamp as `Ready`;
   a simulated older-build same-sized refresh (only `epg_refreshed_<id>` changed) is detected; **a refresh

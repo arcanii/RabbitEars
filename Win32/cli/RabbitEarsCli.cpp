@@ -786,7 +786,7 @@ int selftest() {
                    "search: a description word matches accent-insensitively ('montreal' -> 'Montréal')");
             expect(r.size() == 1 && r[0].snippet == L"a tour of \x02Montréal\x03",
                    "search: ... and the snippet marks 'Montréal'");
-            // searchFold's table edges: accents dropped, letters of their own kept (lower-cased).
+            // searchFold's Latin edges: accents dropped, letters of their own kept (lower-cased).
             expect(searchFold(L'É') == L'e' && searchFold(L'ç') == L'c' && searchFold(L'Ł') == L'l' &&
                        searchFold(L'Ÿ') == L'y' && searchFold(L'ÿ') == L'y' && searchFold(L'Ĺ') == L'l' &&
                        searchFold(L'ž') == L'z' && searchFold(L'ſ') == L's',
@@ -797,7 +797,7 @@ int selftest() {
                    "searchFold: ligatures and letters of their own keep their identity");
             expect(searchFold(L'Σ') == L'σ' && searchFold(L'Ж') == L'ж' && searchFold(L'Ё') == L'ё' &&
                        searchFold(L'東') == L'東' && searchFold(L'Z') == L'z' && searchFold(L'-') == L'-',
-                   "searchFold: Greek + Cyrillic case; everything else unchanged");
+                   "searchFold: Greek + Cyrillic case; CJK and punctuation unchanged");
             expect(searchFold(L'Ά') == L'ά' && searchFold(L'Έ') == L'έ' && searchFold(L'Ί') == L'ί' &&
                        searchFold(L'Ό') == L'ό' && searchFold(L'Ώ') == L'ώ' && searchFold(L'Ϋ') == L'ϋ' &&
                        searchFold(L'ς') == L'σ' && searchFold(L'ά') == L'ά',
@@ -1000,6 +1000,255 @@ int selftest() {
             expect(titles(d) == L"Special" && d[0].snippet.find(L"\x02" L"Doctor\x03") != std::wstring::npos,
                    "search/reuse: a word right after a curly quote is found AND marked");
         }
+    }
+
+    out("== Search marking follows the match (core/SearchFold ftsFold) ==\n");
+    {
+        // 1. ftsFold IS FTS5's fold: every BMP and plane-1 character (plane 1 holds every cased script
+        //    beyond the BMP; FTS5 folds only Deseret there), through the vendored SQLite's own two tokenizers.
+        sqlite3* fdb = nullptr;
+        const bool opened =
+            sqlite3_open(":memory:", &fdb) == SQLITE_OK &&
+            sqlite3_exec(fdb,
+                         "CREATE VIRTUAL TABLE t USING fts5(x, tokenize='trigram remove_diacritics 1');"
+                         "CREATE VIRTUAL TABLE ti USING fts5vocab(t, 'instance');"
+                         "CREATE VIRTUAL TABLE u USING fts5(x, tokenize='unicode61 remove_diacritics 2');"
+                         "CREATE VIRTUAL TABLE ui USING fts5vocab(u, 'instance');",
+                         nullptr, nullptr, nullptr) == SQLITE_OK;
+        auto utf8Of = [](char32_t cp) {
+            std::string s;
+            if (cp < 0x80) {
+                s += static_cast<char>(cp);
+            } else if (cp < 0x800) {
+                s += static_cast<char>(0xC0 | (cp >> 6));
+                s += static_cast<char>(0x80 | (cp & 0x3F));
+            } else if (cp < 0x10000) {
+                s += static_cast<char>(0xE0 | (cp >> 12));
+                s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                s += static_cast<char>(0x80 | (cp & 0x3F));
+            } else {
+                s += static_cast<char>(0xF0 | (cp >> 18));
+                s += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                s += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            return s;
+        };
+        auto codePoints32 = [](const std::string& s) {  // strict enough for SQLite's own output
+            std::vector<char32_t> v;
+            for (size_t i = 0; i < s.size();) {
+                const unsigned char b = static_cast<unsigned char>(s[i]);
+                const int n = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4;
+                char32_t cp = n == 1 ? b : n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F) : (b & 0x07);
+                for (int k = 1; k < n && i + k < s.size(); ++k)
+                    cp = (cp << 6) | (static_cast<unsigned char>(s[i + k]) & 0x3F);
+                v.push_back(cp);
+                i += n;
+            }
+            return v;
+        };
+        std::vector<char32_t> cps;
+        for (char32_t cp = 1; cp <= 0xFFFF; ++cp)
+            if (cp < 0xD800 || cp > 0xDFFF) cps.push_back(cp);
+        for (char32_t cp = 0x10000; cp <= 0x1FFFF; ++cp) cps.push_back(cp);
+        std::unordered_map<long long, std::string> tri, uni;
+        bool likeAsciiOnly = false, accentInsideToken = false;
+        if (opened) {
+            sqlite3_exec(fdb, "BEGIN", nullptr, nullptr, nullptr);
+            sqlite3_stmt* insT = nullptr;
+            sqlite3_stmt* insU = nullptr;
+            sqlite3_prepare_v2(fdb, "INSERT INTO t(rowid, x) VALUES (?, ?)", -1, &insT, nullptr);
+            sqlite3_prepare_v2(fdb, "INSERT INTO u(rowid, x) VALUES (?, ?)", -1, &insU, nullptr);
+            for (char32_t cp : cps) {
+                const std::string one = utf8Of(cp), three = one + one + one;  // trigram: ONE token
+                sqlite3_bind_int64(insT, 1, cp);
+                sqlite3_bind_text(insT, 2, three.c_str(), static_cast<int>(three.size()), SQLITE_TRANSIENT);
+                sqlite3_step(insT);
+                sqlite3_reset(insT);
+                sqlite3_bind_int64(insU, 1, cp);
+                sqlite3_bind_text(insU, 2, one.c_str(), static_cast<int>(one.size()), SQLITE_TRANSIENT);
+                sqlite3_step(insU);
+                sqlite3_reset(insU);
+            }
+            sqlite3_finalize(insT);
+            sqlite3_finalize(insU);
+            sqlite3_exec(fdb, "COMMIT", nullptr, nullptr, nullptr);
+            for (auto [sql, into] : {std::pair<const char*, std::unordered_map<long long, std::string>*>{
+                                         "SELECT doc, term FROM ti", &tri},
+                                     {"SELECT doc, term FROM ui", &uni}}) {
+                sqlite3_stmt* q = nullptr;
+                sqlite3_prepare_v2(fdb, sql, -1, &q, nullptr);
+                while (sqlite3_step(q) == SQLITE_ROW)
+                    (*into)[sqlite3_column_int64(q, 0)] = reinterpret_cast<const char*>(sqlite3_column_text(q, 1));
+                sqlite3_finalize(q);
+            }
+            // LIKE's own rule, which the Like marking mirrors: ASCII letters case-blind, the rest exact.
+            sqlite3_stmt* q = nullptr;
+            sqlite3_prepare_v2(fdb, "SELECT 'Af' LIKE 'aF', 'Á' LIKE 'a', 'Á' LIKE 'á', 'Ｑ' LIKE 'ｑ'", -1, &q,
+                               nullptr);
+            likeAsciiOnly = sqlite3_step(q) == SQLITE_ROW && sqlite3_column_int(q, 0) == 1 &&
+                            sqlite3_column_int(q, 1) == 0 && sqlite3_column_int(q, 2) == 0 &&
+                            sqlite3_column_int(q, 3) == 0;
+            sqlite3_finalize(q);
+            // unicode61 keeps a dropped accent INSIDE its token ("e + U+0301 cole" is one word, "ecole"),
+            // which is why marking skips it within a word and looking back for a word's start.
+            accentInsideToken =
+                sqlite3_exec(fdb,
+                             "CREATE VIRTUAL TABLE w USING fts5(x, tokenize='unicode61 remove_diacritics 2');"
+                             "CREATE VIRTUAL TABLE wi USING fts5vocab(w, 'instance');"
+                             "INSERT INTO w(x) VALUES ('e\xCC\x81" "cole');",
+                             nullptr, nullptr, nullptr) == SQLITE_OK;
+            q = nullptr;
+            sqlite3_prepare_v2(fdb, "SELECT group_concat(term, '|') FROM wi", -1, &q, nullptr);
+            accentInsideToken = accentInsideToken && sqlite3_step(q) == SQLITE_ROW && sqlite3_column_text(q, 0) &&
+                                std::string(reinterpret_cast<const char*>(sqlite3_column_text(q, 0))) == "ecole";
+            sqlite3_finalize(q);
+            sqlite3_close(fdb);
+        }
+        size_t bad = 0, badUni = 0, dropped = 0;
+        std::string firstBad;
+        for (char32_t cp : cps) {
+            char32_t want = 0;  // no trigram at all: the tokenizer drops it
+            if (const auto t = tri.find(cp); t != tri.end()) {
+                const std::vector<char32_t> v = codePoints32(t->second);
+                want = (v.size() == 3 && v[0] == v[1] && v[1] == v[2]) ? v[0] : 0xFFFFFFFF;
+            } else {
+                ++dropped;
+            }
+            if (ftsFoldCodePoint(cp) != want) {
+                ++bad;
+                if (firstBad.size() < 120) {
+                    char b[40];
+                    snprintf(b, sizeof b, " U+%04X->%X(fts %X)", static_cast<unsigned>(cp),
+                             static_cast<unsigned>(ftsFoldCodePoint(cp)), static_cast<unsigned>(want));
+                    firstBad += b;
+                }
+            }
+            if (const auto u = uni.find(cp); u != uni.end()) {  // a character unicode61 keeps
+                const std::vector<char32_t> v = codePoints32(u->second);
+                if (v.size() != 1 || v[0] != want) ++badUni;
+            }
+        }
+        expect(opened && !tri.empty() && bad == 0,
+               "ftsFold == the vendored FTS5's fold for all " + std::to_string(cps.size()) +
+                   " code points (BMP + plane 1; trigram; " + std::to_string(bad) + " differ" + firstBad + ")");
+        expect(opened && uni.size() > 40000 && badUni == 0,
+               "ftsFold: unicode61 (descriptions) folds every character it keeps as trigram does (" +
+                   std::to_string(uni.size()) + " kept, " + std::to_string(badUni) + " differ)");
+        expect(dropped > 0 && ftsFold(L'\u0301') == 0 && ftsFoldCodePoint(0x10400) == 0x10428,
+               "ftsFold: combining accents the tokenizers drop fold to 0; Deseret capitals fold (+40)");
+        expect(likeAsciiOnly, "LIKE (vendored SQLite): ASCII letters case-blind, accents and fullwidth exact");
+        expect(accentInsideToken, "unicode61 (vendored SQLite) keeps a dropped accent inside its word (e+U+0301 "
+                                  "cole -> 'ecole')");
+        // 2. searchFold: ftsFold one character for one, plus the stroke letters FTS5 keeps.
+        expect(searchFold(L'ộ') == L'o' && searchFold(L'Ǎ') == L'a' && searchFold(L'Ａ') == L'ａ' &&
+                   searchFold(L'Ƀ') == L'ƀ' && searchFold(L'\u2126') == L'ω' && searchFold(L'\u0301') == L'\u0301',
+               "searchFold: FTS5's fold beyond Latin-1/Extended-A (Vietnamese, pinyin, fullwidth, Latin "
+               "Extended-B, the ohm sign); a dropped accent stays itself (one for one)");
+        expect(searchFold(L'Ø') == L'o' && searchFold(L'đ') == L'd' && searchFold(L'Ħ') == L'h' &&
+                   searchFold(L'ŀ') == L'l' && searchFold(L'Ł') == L'l' && searchFold(L'ŧ') == L't' &&
+                   ftsFold(L'Ł') == L'ł' && ftsFold(L'Ø') == L'ø',
+               "searchFold folds the stroke letters Ø Đ Ħ Ŀ Ł Ŧ; ftsFold keeps them, as FTS5 does");
+
+        // 3. Marking, through the real search: marked the way each result was matched.
+        const std::wstring mpath = dir + L"\\mark_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) DeleteFileW((mpath + sfx).c_str());
+        const long long now = 1'800'000'000;
+        auto mk = [](long long s, const wchar_t* t, const wchar_t* d) {
+            Programme p;
+            p.channelId = L"mark.tv";
+            p.startUtc = s;
+            p.stopUtc = s + 5;
+            p.title = t;
+            p.descr = d;
+            return p;
+        };
+        auto marked = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + (h.inTitle ? h.markedTitle : h.snippet);
+            return s;
+        };
+        Database mdb;
+        const bool mopen = mdb.open(mpath);
+        const long long mp = mopen ? mdb.addPlaylist(L"M", L"http://m", true, 1000, L"http://m/epg") : 0;
+        ParsedChannel mc;
+        mc.name = L"Mark TV";
+        mc.tvgId = L"mark.tv";
+        mc.streamUrl = L"http://s/m";
+        std::wstring pasted;  // a pasted sentence longer than the excerpt's 90 characters after a match
+        for (int k = 0; k < 20; ++k) pasted += (k ? L" " : L"") + std::wstring(L"qwert");
+        const std::wstring pastedDescr = L"x " + pasted + L" y" + std::wstring(50, L'z');
+        const std::vector<Programme> mg = {
+            mk(now + 10, L"Hà Nội Tonight", L""),
+            mk(now + 20, L"Lodz vs Łódź", L""),
+            mk(now + 30, L"Que\u0301bec Morning", L""),  // decomposed: e + a combining acute
+            mk(now + 40, L"Cafe\u0301 Hour", L""),
+            mk(now + 50, L"ＮＨＫ World", L""),
+            mk(now + 60, L"África or Africa", L""),
+            mk(now + 70, L"Weather", L"明日の東京 天気 予報、天気"),
+            mk(now + 80, L"Evening", L"the sunnews hour"),
+            mk(now + 90, L"VTV Morning", L"tin tức Hà Nội hôm nay"),
+            mk(now + 100, L"東京 天気 特集", L""),
+            // A spaced term matched deep into a long description with no space after it: the excerpt
+            // must not end inside the match.
+            mk(now + 110, L"Long Weather", (std::wstring(L"明日の大阪 天気") + std::wstring(100, L'晴')).c_str()),
+            mk(now + 120, L"Accent Start", L"x \u0301abcd"),  // a dropped accent before a word
+            mk(now + 130, L"Pasted", pastedDescr.c_str()),
+        };
+        expect(mopen && mp > 0 && mdb.bulkInsertChannels(mp, {mc}, 1000) == 1 &&
+                   mdb.bulkInsertProgrammes(mp, mg, 5000) == static_cast<int>(mg.size()) &&
+                   mdb.rebuildProgrammeIndex() && mdb.refreshProgrammeSearchChannels(),
+               "mark: fixture guide stored and indexed");
+        std::wstring got = marked(mdb.searchProgrammes(L"noi", now, 200));
+        expect(got == L"Hà \x02Nội\x03 Tonight|tin tức Hà \x02Nội\x03 hôm nay",
+               "mark: Vietnamese 'noi' found by the index AND marked on 'Nội', in a title and a description (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"lodz", now, 200));
+        expect(got == L"\x02Lodz\x03 vs Łódź",
+               "mark: 'lodz' marks 'Lodz' only - the index keeps Ł, so 'Łódź' is not what it matched (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"quebec", now, 200));
+        expect(got == L"\x02Que\u0301bec\x03 Morning",
+               "mark: a decomposed 'Québec' is marked whole, its combining accent inside (got " + utf8FromWide(got) +
+                   ")");
+        got = marked(mdb.searchProgrammes(L"que\u0301bec", now, 200));
+        expect(got == L"\x02Que\u0301bec\x03 Morning",
+               "mark: a combining accent TYPED in the search is skipped too (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"bec", now, 200));
+        expect(got == L"Que\u0301\x02" L"bec\x03 Morning",
+               "mark: an occurrence never starts on a dropped accent (it belongs to the letter before) (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"cafe", now, 200));
+        expect(got == L"\x02" L"Cafe\u0301\x03 Hour",
+               "mark: a combining accent on the last letter is inside the mark (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"ｎｈｋ", now, 200));
+        expect(got == L"\x02ＮＨＫ\x03 World",
+               "mark: fullwidth letters fold case as the index does (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"af", now, 200));
+        expect(got == L"C\x02" L"af\x03" L"e\u0301 Hour|África or \x02" L"Af\x03rica",
+               "mark: a 2-character term (LIKE) marks as LIKE matched - ASCII case only, 'Áf' left (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"東京 天気", now, 200));
+        expect(got == L"\x02東京 天気\x03 特集|明日の\x02東京 天気\x03 予報、天気",
+               "mark: a CJK term - its title by the index, a description (LIKE) as the whole term once, not each "
+               "word (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"大阪 天気", now, 200));
+        expect(got == L"明日の\x02大阪 天気\x03" + std::wstring(85, L'晴') + L"…",
+               "mark: an excerpt never ends inside a spaced term's match (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"abcd", now, 200));
+        expect(got == L"x \u0301\x02" L"abcd\x03",
+               "mark: a word start is found looking back past an accent the index drops (got " + utf8FromWide(got) +
+                   ")");
+        expect(mdb.bulkInsertProgrammes(mp, mg, 6000) == static_cast<int>(mg.size()) &&
+                   mdb.programmeSearchState() != Database::ProgrammeSearchState::Ready,
+               "mark: (fixture) the guide stored again - the index is stale, so searches use LIKE");
+        got = marked(mdb.searchProgrammes(L"news", now, 200));
+        expect(got == L"the sun\x02news\x03 hour",
+               "mark: a description LIKE found mid-word is marked there (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(pasted, now, 200));
+        expect(got == L"x \x02" + pasted + L"\x03…",
+               "mark: an excerpt runs past its 90 characters to the end of a longer match (got " + utf8FromWide(got) +
+                   ")");
     }
 
     out("== Meter tray geometry (photoreal stage A, ui/MeterTray.h) ==\n");

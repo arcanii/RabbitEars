@@ -1,64 +1,67 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// searchFold — one character folded for "does this match what was typed" comparisons made outside
-// SQLite: marking the matched text in a programme-search result (common/db/Database.cpp), and the TV
-// guide's channel-name matching (Win32/ui/EpgGuideControl.cpp). Lower-cases ASCII, Latin-1 (and µ),
-// Latin Extended-A, Greek (tonos kept, final ς → σ) and basic Cyrillic (and Ukrainian Ґ), and drops a
-// Latin letter's accents (É → e, ç → c, Romanian ș → s) — what the FTS5 tokenizers' case folding and
-// remove_diacritics do for those ranges, so a title the index found for "quebec" can have its "Québec"
-// marked. Everything else is returned unchanged. Known differences from FTS5: the stroke letters
-// Ø Đ Ħ Ŀ Ł Ŧ fold to their base letter here ("lodz" finds the channel "TVP3 Łódź"; FTS5 keeps them,
-// so a programme search for "lodz" does not find "Łódź"), and the accents FTS5 strips beyond these
-// ranges (U+01A0–U+0233 bar Ș Ț — Vietnamese, pinyin, … — and U+1E00–U+1EF9, e.g. Welsh ẃ, Ḥ) are kept
-// here: found by the index, left unmarked. (RecordingRules.cpp's foldChar is a different, case-only
-// fold — the same case mappings bar µ and Ґ, but accents kept (Ș → ș, not s): a recording rule's
-// title match is deliberately stricter than "find what I typed".)
+// Character folds for "does this match what was typed" comparisons made outside SQLite.
 //
-// One character in, one out, so a position in the folded text is the same position in the original
-// (the callers compare character by character). Precomposed characters only: a letter followed by a
-// COMBINING accent keeps that accent as a character of its own (XMLTV text is NFC in practice).
+// ftsFold — EXACTLY what SQLite's FTS5 tokenizers do to a character (the programme search's trigram
+// remove_diacritics 1 and unicode61 remove_diacritics 2 fold alike): case in most cased scripts (FTS5
+// leaves some capitals as they are — Cherokee, Georgian Mtavruli, some of Latin Extended-D), and the
+// accents they remove (É → e, ǎ → a, ộ → o, Ｑ → ｑ; Greek keeps its tonos, final ς → σ); a
+// combining accent they drop altogether folds to 0. The table is generated from SQLite itself
+// (core/FtsFoldTable.h, tools/fold/gen_fts_fold.py), and RabbitEarsCli --selftest checks every BMP
+// and plane-1 character against the vendored SQLite (Deseret is FTS5's one fold beyond the BMP).
+// It marks the matched text in a programme-search result (common/db/Database.cpp), so a title the
+// index found for "quebec" has its "Québec" marked — and no two characters are equated that the
+// index's fold keeps apart.
+//
+// searchFold — the TV guide's channel-name matching (Win32/ui/EpgGuideControl.cpp): ftsFold, but ONE
+// character for one (a character ftsFold drops is kept as it is, so a position in the folded text is
+// the same position in the original), and ALSO folding Ø Đ Ħ Ŀ Ł Ŧ (a stroke, or Ŀ's middle dot) to
+// their base letter, which FTS5 keeps: "lodz" finds the channel "TVP3 Łódź" there, while a programme search for
+// "lodz" does not find "Łódź". (RecordingRules.cpp's foldChar is a different fold: case only, for
+// Latin-1, Latin Extended-A, Romanian Ș Ț, Greek and basic Cyrillic, with accents kept (Ș → ș, not s):
+// a recording rule's title match is deliberately stricter than "find what I typed".)
+//
+// wchar_t is 16-bit on Windows and 32-bit on macOS: on Windows a character outside the BMP is two
+// UTF-16 units, each folding to itself, so Deseret's fold applies on macOS only.
 //
 // Header-only + inline (like FeatureFlags.h): any translation unit on either platform can use it with
-// no build-file change. wchar_t is 16-bit on Windows and 32-bit on macOS; every range here is BMP.
+// no build-file change.
 #pragma once
+
+#include <algorithm>
+#include <cstdint>
+
+#include "core/FtsFoldTable.h"
 
 namespace rabbitears {
 
-inline wchar_t searchFold(wchar_t c) {
-    const unsigned long u = static_cast<unsigned long>(c);
-    if (u < 0x80) return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c;
-    if (u == 0xB5) return static_cast<wchar_t>(0x3BC);  // µ (micro sign) → μ, as FTS5 folds it
-    if (u >= 0xC0 && u <= 0x17F) {
-        // U+00C0–U+017F, one entry per code point: the base letter, or '*' = keep the character but
-        // lower-case it when it is a capital (Æ Ð Þ Ĳ Ŋ Œ — ligatures and letters of their own), or
-        // '.' = keep it as it is (× ÷ ß ĸ ŉ ı).
-        static const char kBase[] =
-            "aaaaaa*ceeeeiiii*nooooo.ouuuuy*."   // U+00C0–U+00DF
-            "aaaaaa*ceeeeiiii*nooooo.ouuuuy*y"   // U+00E0–U+00FF
-            "aaaaaaccccccccddddeeeeeeeeeegggg"   // U+0100–U+011F
-            "gggghhhhiiiiiiiii.**jjkk.llllllll"  // U+0120–U+0140 (33: ı at U+0131, ĸ at U+0138)
-            "llnnnnnn.**oooooo**rrrrrrssssssss"  // U+0141–U+0161
-            "ttttttuuuuuuuuuuuuwwyyyzzzzzzs";    // U+0162–U+017F
-        static_assert(sizeof(kBase) - 1 == 0x17F - 0xC0 + 1, "one entry per code point");
-        const char b = kBase[u - 0xC0];
-        if (b == '.') return c;
-        if (b != '*') return static_cast<wchar_t>(b);
-        if (u <= 0xDE) return static_cast<wchar_t>(u + 0x20);  // Æ Ð Þ → æ ð þ
-        if (u >= 0x100 && (u & 1) == 0) return static_cast<wchar_t>(u + 1);  // Ĳ Ŋ Œ → ĳ ŋ œ
-        return c;
+// `cp` as FTS5's tokenizers fold it, or 0 when they drop it. Any code point.
+inline char32_t ftsFoldCodePoint(char32_t cp) {
+    if (cp < 0x80) return (cp >= U'A' && cp <= U'Z') ? cp + 32 : cp;
+    if (cp <= 0xFFFF) {
+        const std::uint16_t* end = fts_fold::kFrom + fts_fold::kCount;
+        const std::uint16_t* it = std::lower_bound(fts_fold::kFrom, end, static_cast<std::uint16_t>(cp));
+        return (it != end && *it == cp) ? static_cast<char32_t>(fts_fold::kTo[it - fts_fold::kFrom]) : cp;
     }
-    if (u >= 0x218 && u <= 0x21B) return (u < 0x21A) ? L's' : L't';  // Romanian Ș ș Ț ț (comma below)
-    // Greek: case only — the tokenizers keep the tonos (Ά → ά, not α) — and final ς as σ.
-    if (u >= 0x391 && u <= 0x3AB && u != 0x3A2) return static_cast<wchar_t>(u + 0x20);  // Α–Ω, Ϊ Ϋ
-    if (u == 0x386) return static_cast<wchar_t>(0x3AC);                                  // Ά
-    if (u >= 0x388 && u <= 0x38A) return static_cast<wchar_t>(u + 0x25);                 // Έ Ή Ί
-    if (u == 0x38C) return static_cast<wchar_t>(0x3CC);                                  // Ό
-    if (u == 0x38E || u == 0x38F) return static_cast<wchar_t>(u + 0x3F);                 // Ύ Ώ
-    if (u == 0x3C2) return static_cast<wchar_t>(0x3C3);                                  // ς
-    if (u >= 0x410 && u <= 0x42F) return static_cast<wchar_t>(u + 0x20);                // Cyrillic А–Я
-    if (u >= 0x400 && u <= 0x40F) return static_cast<wchar_t>(u + 0x50);                // Cyrillic Ѐ–Џ
-    if (u == 0x490) return static_cast<wchar_t>(0x491);                                  // Ukrainian Ґ
-    return c;
+    if (cp >= 0x10400 && cp <= 0x10427) return cp + 40;  // Deseret capitals
+    return cp;
+}
+
+inline wchar_t ftsFold(wchar_t c) {
+    return static_cast<wchar_t>(ftsFoldCodePoint(static_cast<char32_t>(static_cast<unsigned long>(c))));
+}
+
+inline wchar_t searchFold(wchar_t c) {
+    switch (static_cast<unsigned long>(c)) {
+        case 0xD8: case 0xF8: return L'o';                          // Ø ø
+        case 0x110: case 0x111: return L'd';                        // Đ đ
+        case 0x126: case 0x127: return L'h';                        // Ħ ħ
+        case 0x13F: case 0x140: case 0x141: case 0x142: return L'l';  // Ŀ ŀ Ł ł
+        case 0x166: case 0x167: return L't';                        // Ŧ ŧ
+        default: break;
+    }
+    const wchar_t f = ftsFold(c);
+    return f ? f : c;
 }
 
 }  // namespace rabbitears

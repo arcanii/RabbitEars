@@ -2010,28 +2010,57 @@ std::wstring likeContains(const std::wstring& text) {
     return o + L"%";
 }
 
-// Does `needle` occur in `hay` at `pos`, comparing through searchFold (case, and Latin accents — so
-// the "Québec" a search for "quebec" found gets marked)? With `wordStart`, only where a word begins
-// (the tokenizer's view: a description word matches at its start, never in the middle of another
-// word) — except for a CJK needle, whose words have no boundaries to start at (see hasCjk).
-bool matchesAt(const std::wstring& hay, size_t pos, const std::wstring& needle, bool wordStart) {
-    if (needle.empty() || pos + needle.size() > hay.size()) return false;
-    if (wordStart && pos > 0 && wordish(hay[pos - 1]) && wordish(needle[0]) && !isCjkChar(needle[0]))
-        return false;
-    for (size_t k = 0; k < needle.size(); ++k)
-        if (searchFold(hay[pos + k]) != searchFold(needle[k])) return false;
-    return true;
+// How a result's text is compared with what was typed when it is marked: the way the search matched
+// it. Index — through an FTS5 index, so exactly as its tokenizers fold (core/SearchFold.h ftsFold:
+// case, and the accents they remove — "quebec" marks "Québec"); a combining accent they drop is
+// skipped on both sides. Like — through LIKE: ASCII letters case-blind, everything else exactly.
+enum class MarkFold { Index, Like };
+
+wchar_t likeFold(wchar_t c) { return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + 32) : c; }
+
+// How many characters of `hay` from `pos` are an occurrence of `needle`; 0 = none. Through the index
+// fold that can differ from needle's length: combining accents inside it, and any right after its last
+// letter (they belong to that letter), count; accents typed in `needle` are skipped. With `wordStart`, only where a word begins (the
+// tokenizer's view: a description word matches at its start, never in the middle of another word;
+// looking back past accents the index drops, which sit inside a token) — except for a CJK needle,
+// whose words have no boundaries to start at (see hasCjk).
+size_t matchAt(const std::wstring& hay, size_t pos, const std::wstring& needle, bool wordStart,
+               MarkFold how) {
+    if (needle.empty() || pos >= hay.size()) return 0;
+    if (wordStart && pos > 0 && wordish(needle[0]) && !isCjkChar(needle[0])) {
+        size_t before = pos;
+        if (how == MarkFold::Index)
+            while (before > 0 && ftsFold(hay[before - 1]) == 0) --before;
+        if (before > 0 && wordish(hay[before - 1])) return 0;
+    }
+    if (how == MarkFold::Like) {
+        if (needle.size() > hay.size() - pos) return 0;
+        for (size_t k = 0; k < needle.size(); ++k)
+            if (likeFold(hay[pos + k]) != likeFold(needle[k])) return 0;
+        return needle.size();
+    }
+    if (ftsFold(hay[pos]) == 0) return 0;  // an occurrence starts on a character the index keeps
+    size_t h = pos;
+    for (const wchar_t n : needle) {
+        const wchar_t fn = ftsFold(n);
+        if (fn == 0) continue;
+        while (h < hay.size() && ftsFold(hay[h]) == 0) ++h;
+        if (h == hay.size() || ftsFold(hay[h]) != fn) return 0;
+        ++h;
+    }
+    while (h < hay.size() && ftsFold(hay[h]) == 0) ++h;
+    return h - pos;
 }
 
 // `text` with every occurrence of any `needles` entry wrapped in U+0002 … U+0003 (the longest one
 // where several start at the same place). Empty when nothing occurs — the caller shows it plain.
-std::wstring markAll(const std::wstring& text, const std::vector<std::wstring>& needles, bool wordStart) {
+std::wstring markAll(const std::wstring& text, const std::vector<std::wstring>& needles, bool wordStart,
+                     MarkFold how) {
     std::wstring o;
     bool any = false;
     for (size_t i = 0; i < text.size();) {
         size_t len = 0;
-        for (const auto& n : needles)
-            if (n.size() > len && matchesAt(text, i, n, wordStart)) len = n.size();
+        for (const auto& n : needles) len = std::max(len, matchAt(text, i, n, wordStart, how));
         if (len) {
             o += L'\x02';
             o.append(text, i, len);
@@ -2056,33 +2085,40 @@ size_t offLowSurrogate(const std::wstring& s, size_t i, bool forward) {
     return i;
 }
 
-// An excerpt of a description around the EARLIEST occurrence of any typed word, the words marked;
-// the description's start when searchFold's comparison finds none (a match the tokenizer found
-// through some other folding — the match is still real, it just cannot be located here).
-std::wstring snippetAround(const std::wstring& descr, const std::vector<std::wstring>& words) {
+// An excerpt of a description around the EARLIEST occurrence of any of `words` (compared as
+// matchAt does), those marked; the description's start when none is found — a match the search made
+// in a way marking does not follow (see ProgrammeHit): the match is still real, it just cannot be
+// located here.
+std::wstring snippetAround(const std::wstring& descr, const std::vector<std::wstring>& words, bool wordStart,
+                           MarkFold how) {
     constexpr size_t kBefore = 30, kAfter = 90, kPlain = 110;
     size_t at = std::wstring::npos;
     for (size_t i = 0; i < descr.size() && at == std::wstring::npos; ++i)
         for (const auto& w : words)
-            if (matchesAt(descr, i, w, true)) {
+            if (matchAt(descr, i, w, wordStart, how)) {
                 at = i;
                 break;
             }
     if (at == std::wstring::npos)
         return descr.size() > kPlain ? descr.substr(0, offLowSurrogate(descr, kPlain, false)) + L"…"
                                      : descr;
+    // The excerpt never ends inside the match: a whole typed term (LIKE) can hold a space, and can be
+    // longer than kAfter.
+    size_t len = 0;
+    for (const auto& w : words) len = std::max(len, matchAt(descr, at, w, wordStart, how));
+    const size_t matchEnd = at + len;
     size_t b = offLowSurrogate(descr, at > kBefore ? at - kBefore : 0, true);
-    size_t e = offLowSurrogate(descr, std::min(descr.size(), at + kAfter), false);
+    size_t e = offLowSurrogate(descr, std::min(descr.size(), std::max(at + kAfter, matchEnd)), false);
     if (b > 0) {  // start on a word boundary
         const size_t sp = descr.find(L' ', b);
         if (sp != std::wstring::npos && sp < at) b = sp + 1;
     }
-    if (e < descr.size()) {
+    if (e < descr.size()) {  // end on one, after the match
         const size_t sp = descr.rfind(L' ', e);
-        if (sp != std::wstring::npos && sp > at) e = sp;
+        if (sp != std::wstring::npos && sp >= matchEnd) e = sp;
     }
     const std::wstring cut = descr.substr(b, e - b);
-    const std::wstring marked = markAll(cut, words, true);
+    const std::wstring marked = markAll(cut, words, wordStart, how);
     return (b > 0 ? L"…" : L"") + (marked.empty() ? cut : marked) +
            (e < descr.size() ? L"…" : L"");
 }
@@ -2249,7 +2285,12 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
             byId.emplace(h.id, std::move(h));
         }
     }
-    // 3. Mark the matches for display, in C++ over at most `limit` rows (see ProgrammeHit).
+    // 3. Mark the matches for display, in C++ over at most `limit` rows (see ProgrammeHit) — the way
+    //    each was matched: through an index as its tokenizers fold; by LIKE as LIKE compares, the
+    //    whole text as one substring (a title without the index; a description without it, or for a
+    //    term with CJK in it).
+    const MarkFold titleFold = useIndex ? MarkFold::Index : MarkFold::Like;
+    const bool descrByLike = !useIndex || cjk;
     out.reserve(ranked.size());
     for (auto& r : ranked) {
         auto it = byId.find(r.id);
@@ -2260,8 +2301,9 @@ std::vector<Database::ProgrammeHit> Database::searchProgrammes(const std::wstrin
         h.channelTvgId = std::move(r.tvgId);
         h.archiveChannelId = r.archiveChannel;
         h.archiveDays = r.archiveDays;
-        if (h.inTitle) h.markedTitle = markAll(h.programme.title, {term}, false);
-        else h.snippet = snippetAround(h.programme.descr, words);
+        if (h.inTitle) h.markedTitle = markAll(h.programme.title, {term}, false, titleFold);
+        else if (descrByLike) h.snippet = snippetAround(h.programme.descr, {term}, false, MarkFold::Like);
+        else h.snippet = snippetAround(h.programme.descr, words, true, MarkFold::Index);
         out.push_back(std::move(h));
     }
     return out;

@@ -257,12 +257,14 @@ public:
         int          archiveDays = 0;
         // For display, each marked occurrence wrapped in U+0002 … U+0003: `markedTitle` = the title
         // with the typed text marked (title matches); `snippet` = an excerpt of the description around
-        // the EARLIEST occurrence of any typed word (description-only matches). Marking is simpler
-        // than the index's matching, so it can differ: it compares characters through searchFold
-        // (core/SearchFold.h — case, and Latin accents: "quebec" marks "Québec"), one for one, so a
-        // match the index found through some other folding stays unmarked (markedTitle empty,
-        // snippet = the description's start); it marks EVERY typed word as a prefix (the index takes
-        // only the last), and compares typed punctuation literally.
+        // the EARLIEST occurrence of any typed word (description-only matches). Marking compares
+        // characters the way the search matched them: through the index, as FTS5's tokenizers fold
+        // (core/SearchFold.h ftsFold — case, and the accents they remove: "quebec" marks "Québec"); by
+        // LIKE (under 3 characters, an index not Ready, a CJK term's descriptions), the whole typed text,
+        // ASCII case only. It is still simpler than the index's matching: in a description it marks
+        // EVERY typed word as a prefix (the index takes only the last) and compares typed punctuation
+        // literally, so a match it cannot locate stays unmarked (markedTitle empty, snippet = the
+        // description's start).
         std::wstring markedTitle, snippet;
     };
     // (Re)load which channels a search may return — with, per guide id, the catch-up channel and its
@@ -277,11 +279,12 @@ public:
     // refreshProgrammeSearchChannels() loaded, whose title contains `text` or whose description has
     // its words (the last one as a prefix): title matches first, then description-only matches, each
     // soonest first; at most `limit`. The text is searched for literally — FTS5 syntax typed by the
-    // user is never interpreted. Case is folded for every cased script, accents only for LATIN (the
+    // user is never interpreted. Case is folded for most cased scripts (as FTS5 folds it — not e.g.
+    // Cherokee), accents only for LATIN (the
     // tokenizers do not strip e.g. Greek tonos). Under 3 characters (trigram's minimum), or unless
     // the index is Ready, it falls back to a LIKE scan for the whole text as one substring — of the
     // titles, and also of the descriptions unless the index is Ready: slower, ASCII-only case folding,
-    // accents exact (its results are still marked through searchFold, which ignores accents). A term
+    // accents exact (and its results are marked the same way). A term
     // with CJK in it searches descriptions by LIKE too, since the description tokenizer cannot split
     // CJK into words. `truncated` (optional) is set when more than `limit` matched. Measured on the owner's
     // real guide (193k programmes): 0.2–0.4 ms for most words, 20–40 ms for the commonest ("news",

@@ -26,8 +26,8 @@ struct GuideSearchHit {
     std::wstring title, descr;
     std::wstring markedTitle;  // the title with the typed text marked; empty = show `title` plain
     std::wstring snippet;      // description-only matches: an excerpt with the words marked — or, when
-                               // marking found nothing (a fold searchFold does not make), the
-                               // description's start
+                               // marking found nothing (a match it cannot locate — Database.h
+                               // ProgrammeHit), the description's start
     long long    startUtc = 0, stopUtc = 0;
     bool         inTitle = false;
     // Catch-up: the channel whose archive can play it, and how many days back it goes (0 = none) —

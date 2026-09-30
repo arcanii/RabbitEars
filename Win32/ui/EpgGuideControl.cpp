@@ -13,7 +13,7 @@
 #include <commctrl.h>  // SetWindowSubclass, EM_SETCUEBANNER
 
 #include "resource.h"     // IDI_APPICON
-#include "core/SearchFold.h"  // channel-name matching folds like the programme search's marking
+#include "core/SearchFold.h"  // channel-name matching: searchFold (ftsFold, plus Ø Đ Ħ Ŀ Ł Ŧ)
 #include "ui/D2DSupport.h"
 #include "ui/Dialogs.h"   // showInfoDialog, programmeDialog
 #include "ui/Theme.h"     // currentTheme + applyDialogDarkMode + dialogCtlColor + themeFont
@@ -181,7 +181,8 @@ void computeMetrics(GuideState* st) {
 
 int gridTop(const GuideState* st) { return st->toolbarH + st->headerH; }
 
-// `s` through searchFold: case and Latin accents folded, one character for one.
+// `s` through searchFold: case and accents folded as the programme search's index folds them, plus
+// Ø Đ Ħ Ŀ Ł Ŧ (Ł → l), one character for one.
 std::wstring foldCopy(const std::wstring& s) {
     std::wstring o(s);
     for (wchar_t& c : o) c = searchFold(c);
