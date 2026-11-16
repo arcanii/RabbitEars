@@ -731,11 +731,11 @@ void TankSim::step() { rabbitears::mac::step(&d_->st); }
 
 bool TankSim::active() const { return d_->st.target > 0.0f || totalFluid(d_->st.fluid) > 0.4f; }
 
-void TankSim::render(uint32_t* px, int W, int H, UINT dpi, const TankColors& colors) {
+void TankSim::render(uint32_t* px, int W, int H, UINT dpi, const TankColors& colors, int inset) {
     if (!px || W <= 0 || H <= 0) return;
     d_->st.dpi = dpi;
     d_->st.bits = px;
-    renderLedBits(&d_->st, colors, W, H, /*inset=*/0);  // mac has no glass overlay: the grid is edge-to-edge
+    renderLedBits(&d_->st, colors, W, H, std::max(0, inset));
     d_->st.bits = nullptr;
 }
 

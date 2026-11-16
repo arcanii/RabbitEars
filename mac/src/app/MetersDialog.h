@@ -12,6 +12,8 @@
 namespace rabbitears { class Database; }
 
 @interface MetersDialog : NSObject
+// The glass slider previews live: the host repaints its meters (they read the app-wide strength).
+@property (nonatomic, copy) void (^onGlassChanged)(void);
 - (instancetype)initWithDatabase:(rabbitears::Database*)db;
 // Present as a modal sheet on `parent`. `onApply` runs after the user clicks OK and
 // the config has been persisted, so the controller can refresh the live meters.

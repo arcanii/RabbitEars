@@ -20,6 +20,12 @@
 
 #include "MeterModel.h"
 
+// The meters' "glass cover" (Win32 miniMeterSetGlass, common/ui/GlassMask): ONE app-wide strength 0..1
+// (0 = off, the default), persisted as meter_glass. Applied over every meter's — and the tank's — finished
+// frame. Setting it only stores the value; the caller repaints.
+void REMeterSetGlass(float strength);
+float REMeterGlass();
+
 @interface MeterView : NSView
 - (instancetype)initWithKind:(rabbitears::mac::MeterKind)kind;
 - (rabbitears::mac::MeterKind)kind;

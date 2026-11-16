@@ -151,12 +151,12 @@ void runSync(const std::wstring& dbPath,
              const std::function<void(VodSyncPhase, int)>& progress,
              const std::function<void()>& onArchive,
              VodSyncReport& rep) {
-    // Its OWN connection — see the header. Opening it here also means the v8/v9 migration can run
-    // on THIS queue rather than the main one if the app has never opened the DB, which is a bonus
-    // rather than the reason.
+    // Its OWN connection — see the header. It never MIGRATES: the app's own connection already did
+    // (or could not — which a worker must not retry while holding the write lock: the v11 upgrade is
+    // a ~4 s write on a big library). Database::open's upgradeSchema; Win32 0.2.20 parity.
     Database db;
     std::wstring err;
-    if (!db.open(dbPath, &err)) {
+    if (!db.open(dbPath, &err, /*upgradeSchema=*/false)) {
         diag::error(L"VOD sync: cannot open its own DB connection: " + err);
         rep.result = VodSyncResult::DatabaseError;
         rep.detail = err;

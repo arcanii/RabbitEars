@@ -55,6 +55,13 @@ set(APP_VERSION "0.2.22")
 # appearance), wake-to-record (a non-root app cannot arm a wake), PIP always-on-top (mac's PiP is
 # a subview of the single main window, not a separate top-level window), and the beta-feature
 # switchboard (its enum declares no enumerators).
+#
+# 0.2.22 is the second catch-up: Windows shipped 0.2.18-0.2.21 and has 0.2.22 in development while mac
+# stood still, so mac takes the number of the Windows work it now carries (PRs #49-#55): log credential
+# masking; the scheduler's lost-status-write fix; the TV Guide on the shared row build with its search,
+# coverage line and multi-guide refresh; catch-up playback; the photoreal meter line (Backlit + Silver
+# VU, Studio LED / Backlit LCD / VFD, meter size, labels, the meter bridge, glass); and the data-flow tank,
+# which mac never had. Skin MATERIALS stay Flat on mac (no skin engine — the design doc's own note).
 if(APPLE)
-  set(APP_VERSION "0.2.17")
+  set(APP_VERSION "0.2.22")
 endif()

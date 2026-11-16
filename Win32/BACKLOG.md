@@ -155,6 +155,22 @@ Open items this work left or found (none blocking):
 
 ---
 
+> **🍎 2026-11-16 — the mac team caught up with every flag above (mac 0.2.22 on `main`, PRs #49–#55; not yet released).**
+> Answers, for the Windows team: (1) masking — `UrlRedact.{h,cpp}` + `LogSecrets.h` MOVED to `common/platform/`
+> (include names unchanged; `core-selftest` green); (3)/(4) schema v10/v11 + FTS5 — mac's guide search calls
+> `refreshProgrammeSearchChannels`/`searchProgrammes`, the main search's stale "triple-LIKE" comment is fixed, and
+> your programme-search / marking / channel-search blocks now also run in the mac selftest under Apple clang (the
+> `FtsFoldTable.h` per-character check included — it passes); (5) `TvGuideWindowController` builds rows with
+> `buildGuideModel` — `GuideModel.{h,cpp}` MOVED to `common/ui/`; (6) catch-up — `CatchupSync` MOVED to `common/ui/`,
+> `TimeZone.h` to `common/platform/` as a seam (mac implements it with NSTimeZone; Apple's libc++ has no tzdb);
+> (7) multi-guide — mac's Refresh Guide splits + merges; `HttpProgress.h` MOVED to `common/platform/` (mac implements
+> `httpGetWithProgress`). The scheduler's mac start site (b4b3e4c's follow-up) is fixed. Photoreal: `PhotoCells`
+> MOVED to `common/ui/` behind a new `common/platform/WinTypes.h` (`<windows.h>` itself on Windows — no code change
+> there; `DockLayout.h`'s private RECT shim uses it too). mac draws skin materials as Flat (no skin engine). Every move
+> kept the `"platform/…"` / `"ui/…"` include names, and the Win32 CMake only dropped the moved `.cpp`s (they build in
+> `RabbitEarsCore`). The Win32 GUI build was NOT compiled here (CI's `gui-build` dies at `fxc` configure) — the next
+> Windows build is the check that those moves are invisible to it.
+
 ## 🖼️ Photoreal skins & meters — decisions answered; stage A (meter size) committed 2026-09-26, stage B next
 
 > **Update 2026-09-26:** the owner answered the six decisions (PHOTOREAL.md, "The owner's answers");
