@@ -3,12 +3,14 @@
 #import "MetersDialog.h"
 
 #import "MeterView.h"
+#import "TankView.h"
 #include "MeterModel.h"
 #include "db/Database.h"
 #import "Tr.h"
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
 
 using rabbitears::Database;
@@ -67,6 +69,11 @@ std::wstring wkey(int i, const char* suffix) {
     MeterView*     _preview[4];  // live preview, fed synthetic data by _previewTimer
     NSTimer*       _previewTimer;
     double         _phase;
+    // The data-flow tank's row (Win32's "Data flow": no look/palette/knobs — the fluid look is
+    // internal — just whether it shows, and the fluid's colour, both app-wide).
+    NSButton*      _dataFlow;
+    NSColorWell*   _fluidWell;
+    TankView*      _tankPreview;
 }
 
 - (instancetype)initWithDatabase:(Database*)db {
@@ -122,6 +129,7 @@ std::wstring wkey(int i, const char* suffix) {
     [root addArrangedSubview:hdr];
 
     for (int i = 0; i < 4; ++i) [root addArrangedSubview:[self buildKindRow:i]];
+    [root addArrangedSubview:[self buildDataFlowRow]];
     [root addArrangedSubview:[self buildButtonRow]];
 
     [root layoutSubtreeIfNeeded];
@@ -291,8 +299,48 @@ std::wstring wkey(int i, const char* suffix) {
 }
 
 // Feed each preview synthetic, animated data so the look is visible at rest.
+// [✓ Data flow]  Fluid [■]  [tank preview]  — and the note on what it is.
+- (NSView*)buildDataFlowRow {
+    _dataFlow = [NSButton checkboxWithTitle:Tr(StringId::MeterDataFlowCheckbox) target:nil action:nil];
+    auto bh = _db ? _db->getSetting(L"buffer_hidden") : std::nullopt;
+    _dataFlow.state = (bh && *bh == L"0") ? NSControlStateValueOn : NSControlStateValueOff;  // mac: off unless shown
+    [_dataFlow.widthAnchor constraintEqualToConstant:110].active = YES;
+    NSTextField* fl = [NSTextField labelWithString:Tr(StringId::MeterFluidColour)];
+    fl.font = [NSFont systemFontOfSize:11];
+    unsigned r = 0, g = 0, b = 0;
+    REDataFlowFluidColor(&r, &g, &b);
+    _fluidWell = [[NSColorWell alloc] initWithFrame:NSMakeRect(0, 0, 28, 20)];
+    _fluidWell.color = [NSColor colorWithSRGBRed:r / 255.0 green:g / 255.0 blue:b / 255.0 alpha:1.0];
+    _fluidWell.target = self;
+    _fluidWell.action = @selector(fluidChanged:);
+    [_fluidWell.widthAnchor constraintEqualToConstant:28].active = YES;
+    _tankPreview = [[TankView alloc] initWithFrame:NSMakeRect(0, 0, 160, 48)];
+    [_tankPreview.widthAnchor constraintEqualToConstant:160].active = YES;
+    [_tankPreview.heightAnchor constraintEqualToConstant:48].active = YES;
+    _tankPreview.menu = nil;  // the preview is not the meter: no "Hide" there
+    [_tankPreview setHealth:100];
+    NSTextField* note = [NSTextField wrappingLabelWithString:Tr(StringId::MeterDataFlowNote)];
+    note.font = [NSFont systemFontOfSize:10];
+    note.textColor = NSColor.secondaryLabelColor;
+    [note.widthAnchor constraintLessThanOrEqualToConstant:260].active = YES;
+    NSStackView* row = [NSStackView stackViewWithViews:@[ _dataFlow, fl, _fluidWell, _tankPreview, note ]];
+    row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    row.alignment = NSLayoutAttributeCenterY;
+    row.spacing = 8;
+    return row;
+}
+
+// The fluid previews live (the tank re-reads the app-wide colour every frame); Cancel puts it back.
+- (void)fluidChanged:(NSColorWell*)w {
+    NSColor* c = [w.color colorUsingColorSpace:NSColorSpace.sRGBColorSpace] ?: NSColor.whiteColor;
+    REDataFlowSetFluidColor((unsigned)std::lround(c.redComponent * 255), (unsigned)std::lround(c.greenComponent * 255),
+                            (unsigned)std::lround(c.blueComponent * 255));
+}
+
 - (void)pumpPreviews {
     _phase += 0.09;
+    [_tankPreview setFlow:std::clamp(0.6f + 0.35f * (float)std::sin(_phase * 0.8), 0.0f, 1.0f) trouble:0.0f];
+    [_tankPreview setMetrics:Tr(StringId::MeterPreviewSampleBitrate)];
     for (int i = 0; i < 4; ++i) {
         MeterView* v = _preview[i];
         if (!v) continue;
@@ -322,6 +370,14 @@ std::wstring wkey(int i, const char* suffix) {
 }
 
 - (void)ok:(id)__unused sender {
+    if (_db) {
+        _db->setSetting(L"buffer_hidden", _dataFlow.state == NSControlStateValueOn ? L"0" : L"1");
+        unsigned r = 0, g = 0, b = 0;
+        REDataFlowFluidColor(&r, &g, &b);
+        char hex[8];
+        snprintf(hex, sizeof hex, "%02X%02X%02X", r, g, b);
+        _db->setSetting(L"buffer_fluid_color", widen(hex));
+    }
     for (int i = 0; i < 4; ++i) {
         _cfg[i] = [self configForKind:i];
         if (_db) {
@@ -335,7 +391,18 @@ std::wstring wkey(int i, const char* suffix) {
     [self dismiss];
 }
 
-- (void)cancel:(id)__unused sender { [self dismiss]; }
+- (void)cancel:(id)__unused sender {
+    // The fluid well previewed live, app-wide: put the stored colour back.
+    if (_db)
+        if (auto fc = _db->getSetting(L"buffer_fluid_color"); fc && fc->size() == 6) {
+            const unsigned long v = std::wcstoul(fc->c_str(), nullptr, 16);
+            REDataFlowSetFluidColor((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+            [self dismiss];
+            return;
+        }
+    REDataFlowSetFluidColor(190, 158, 244);  // nothing stored: the stock fluid (TankSim kDefaultFluidColor)
+    [self dismiss];
+}
 
 - (void)reset:(id)__unused sender {
     for (int i = 0; i < 4; ++i) {

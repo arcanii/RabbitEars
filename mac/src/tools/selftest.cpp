@@ -45,7 +45,8 @@
 #include "ui/GuideModel.h"
 #include "ui/PhotoCells.h"
 
-#include "GuideRefresh.h"  // Refresh Guide's worker — run against a local HTTP server below
+#include "GuideRefresh.h"
+#include "TankSim.h"  // the data-flow tank — geometry + sim tested below  // Refresh Guide's worker — run against a local HTTP server below
 #include "MeterModel.h"  // mac-local meter model (rabbitears::mac) — codecs tested below
 #include "ScheduleStatusWriter.h"  // mac scheduler write-behind glue — tested below
 #include "core/RecordingScheduler.h"
@@ -2879,6 +2880,78 @@ int main() {
                "frame: lit from above-left (outer edge left > right, top > bottom; the lip the reverse); the neon tube "
                "magenta (" + std::to_string(tr) + "," + std::to_string(tg) + "," + std::to_string(tb) +
                    "), a 2-px frame's neon edge too" + (litOk ? std::string() : " (first miss: material " + litMiss + ")"));
+    }
+
+    // PORTED from Win32/cli/RabbitEarsCli.cpp (the tank's opt-in scaled dots), against mac's verbatim copy
+    // of BufferMeter.h's geometry, plus the sim's drain-to-idle.
+    out("== The data-flow tank: scaled dots (TankSim.h — Win32 BufferMeter.h verbatim) + the sim ==\n");
+    {
+        using rabbitears::mac::BufferPitch;
+        using rabbitears::mac::BufferGrid;
+        using rabbitears::mac::bufferLedPitch;
+        using rabbitears::mac::bufferGrid;
+        constexpr int kMeterHeightStd = 30, kMeterHeightLarge = 50;  // Win32 MeterTray.h (= mac MeterLayout.h)
+        // Off, it is the classic grid at every size and scaling (the owner's rule: the default look never moves).
+        // On, its dots have exactly the pitch and gap of the photoreal cells beside them — a meter as tall as the
+        // tank, in the same skin's material (photoRows of photoDialPx) — at every height, scaling and material; so
+        // at the standard height they are the classic grid, and from Large up (every scaling) they are bigger.
+        bool offClassic = true, matches = true, stdSame = true, grows = true;
+        std::string miss;
+        const SkinMaterial mats[] = {SkinMaterial::Flat, SkinMaterial::Anodised, SkinMaterial::Satin, SkinMaterial::Brass,
+                                     SkinMaterial::NeonGlass};
+        for (UINT dpi = 96; dpi <= 480; ++dpi) {
+            const int gap0 = std::max(1, MulDiv(1, static_cast<int>(dpi), 96));
+            const int pitch0 = std::max(gap0 + 2, MulDiv(3, static_cast<int>(dpi), 96));
+            const int stdH = MulDiv(kMeterHeightStd, static_cast<int>(dpi), 96);
+            const int largeH = MulDiv(kMeterHeightLarge, static_cast<int>(dpi), 96);
+            for (SkinMaterial m : mats) {
+                for (int h = stdH; h <= 600; ++h) {
+                    const BufferPitch off = bufferLedPitch(h, dpi, false, m), on = bufferLedPitch(h, dpi, true, m);
+                    const PhotoRows cells = photoRows(photoDialPx(h, dpi, m), dpi);
+                    if (off.gap != gap0 || off.pitch != pitch0) offClassic = false;
+                    if (on.pitch != cells.pitch || on.gap != cells.gap || on.pitch - on.gap < 2) {
+                        if (matches) miss = "dpi " + std::to_string(dpi) + " h " + std::to_string(h);
+                        matches = false;
+                    }
+                }
+                const BufferPitch s = bufferLedPitch(stdH, dpi, true, m), l = bufferLedPitch(largeH, dpi, true, m);
+                if (s.gap != gap0 || s.pitch != pitch0) stdSame = false;
+                if (l.pitch <= pitch0) grows = false;
+            }
+        }
+        // Pinned: Extra large at 150 % on the Dark skin (Anodised; a 108-px tank): a 9-px pitch — the Studio LED's
+        // beside it — 12 rows edge to edge, where the classic grid has 22 at 5.
+        const BufferPitch xl = bufferLedPitch(108, 144, true, SkinMaterial::Anodised);
+        const BufferGrid g = bufferGrid(415, 108, xl.gap, xl.pitch, 0);
+        const BufferPitch cl = bufferLedPitch(108, 144, false, SkinMaterial::Anodised);
+        const BufferGrid classic = bufferGrid(415, 108, cl.gap, cl.pitch, 0);
+        expect(offClassic && matches && stdSame && grows && xl.pitch == 9 && g.rows == 12 && classic.rows == 22,
+               "tank dots: off = the classic grid everywhere; on = the photoreal cells' pitch and gap at every height, "
+               "dpi 96-480 and material — the classic grid at the standard height, bigger from Large up; Extra large "
+               "150 % Dark: " + std::to_string(g.rows) + " rows at a " + std::to_string(xl.pitch) + "-px pitch" +
+                   (miss.empty() ? std::string() : " (first miss: " + miss + ")"));
+    
+        // The simulation (the port of Win32's step(), driven headlessly): a healthy stream fills the tank and
+        // keeps it busy; once it stops (health 0) it drains and goes idle, so the view's ~30 fps timer stops —
+        // the condition Win32's WM_TIMER stop test documents as once UNREACHABLE (its comment in step (5)).
+        {
+            rabbitears::mac::TankSim sim;
+            expect(!sim.active(), "tank: idle before any stream");
+            sim.setHealth(100);
+            for (int f = 0; f < 120; ++f) { sim.setFlow(0.8f, 0.0f); sim.step(); }
+            const bool busy = sim.active();
+            std::vector<uint32_t> px(184u * 48u, 0);
+            sim.render(px.data(), 184, 48, 192, rabbitears::mac::TankColors{});
+            int lit = 0;
+            const uint32_t bg = 0x141414;  // TankColors::windowBg RGB(20,20,20)
+            for (uint32_t p : px) lit += (p != bg) ? 1 : 0;
+            sim.setHealth(0);
+            int drained = -1;
+            for (int f = 0; f < 600; ++f) { sim.step(); if (!sim.active()) { drained = f; break; } }
+            expect(busy && lit > 0 && drained > 0,
+                   "tank: busy while a stream plays, drawn, and idle again " + std::to_string(drained) +
+                       " frames after it stops (the timer can stop)");
+        }
     }
 
     // ---- i18n catalog gate (twin of the Win32 CLI block) -------------------------------------

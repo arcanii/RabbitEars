@@ -3,6 +3,7 @@
 #import "MeterBridgeWindowController.h"
 
 #import "MeterView.h"
+#import "TankView.h"
 #import "Tr.h"
 
 #include <algorithm>
@@ -22,6 +23,9 @@ using namespace rabbitears::i18n;
     NSTextField* _labels[4];
     MeterConfig  _cfg[4];
     BOOL         _labelsOn;
+    TankView*    _tank;
+    NSTextField* _tankLabel;
+    BOOL         _tankOn;
 }
 
 - (instancetype)init {
@@ -47,6 +51,13 @@ using namespace rabbitears::i18n;
             _labels[k].hidden = YES;
             [content addSubview:_labels[k]];
         }
+        _tank = [[TankView alloc] initWithFrame:NSMakeRect(0, 0, 92, 24)];
+        _tank.hidden = YES;
+        _tank.menu = nil;  // the tray's tank owns "Hide"
+        [content addSubview:_tank];
+        _tankLabel = [NSTextField labelWithString:@""];
+        _tankLabel.hidden = YES;
+        [content addSubview:_tankLabel];
         _window.frameAutosaveName = @"RabbitEarsMeterBridge";
         if (![_window setFrameUsingName:@"RabbitEarsMeterBridge"]) [_window center];
     }
@@ -54,9 +65,12 @@ using namespace rabbitears::i18n;
 }
 
 - (MeterView*)meterForKind:(int)k { return (k >= 0 && k < 4) ? _meters[k] : nil; }
+- (TankView*)tank { return _tank; }
 
-- (void)applyConfigs:(const MeterConfig*)cfgs labels:(BOOL)labels {
+- (void)applyConfigs:(const MeterConfig*)cfgs labels:(BOOL)labels tank:(BOOL)tank {
     _labelsOn = labels;
+    _tankOn = tank;
+    _tankLabel.attributedStringValue = meterLabelText(4);
     for (int k = 0; k < 4; ++k) {
         _cfg[k] = cfgs[k];
         [_meters[k] setConfig:cfgs[k]];
@@ -74,6 +88,7 @@ using namespace rabbitears::i18n;
         CGFloat w = 0;
         for (int k = 0; k < 4; ++k)
             if (_cfg[k].enabled) w += meterWidthPt(k, _cfg[k].style, mh, /*ownRow=*/true);
+        if (_tankOn) w += kMeterGapPt + tankWidthPt(mh, true);  // the tank keeps its distance
         return w;
     };
     const CGFloat avail = sz.width - 2 * pad;
@@ -90,6 +105,14 @@ using namespace rabbitears::i18n;
         _meters[k].frame = NSMakeRect(x, y, w, h);
         _labels[k].frame = NSMakeRect(x, y - labelH, w, labelH);
         x += w;  // side by side, like a rack of instruments
+    }
+    _tank.hidden = !_tankOn;
+    _tankLabel.hidden = !_tankOn || !_labelsOn;
+    if (_tankOn) {
+        x += kMeterGapPt;
+        const CGFloat w = tankWidthPt(h, true);
+        _tank.frame = NSMakeRect(x, y, w, h);
+        _tankLabel.frame = NSMakeRect(x, y - labelH, w, labelH);
     }
 }
 
@@ -119,6 +142,7 @@ using namespace rabbitears::i18n;
         _labels[k].attributedStringValue = meterLabelText(k);
         [_meters[k] relabelForLanguageChange];
     }
+    _tankLabel.attributedStringValue = meterLabelText(4);
 }
 
 @end
