@@ -10,9 +10,14 @@
 #import <Cocoa/Cocoa.h>
 
 namespace rabbitears { class Database; }
+namespace rabbitears::mac { class ScheduleStatusWriter; }
 
 @interface RecordingsWindowController : NSObject
-- (instancetype)initWithDatabase:(rabbitears::Database*)db;
+// `writer` is the scheduler's (MainWindowController owns both it and this window): every terminal
+// status and rule change here goes through it, so a write lost to DB contention is remembered and
+// replayed instead of silently undone (ScheduleStatusWriter.h).
+- (instancetype)initWithDatabase:(rabbitears::Database*)db
+                    statusWriter:(rabbitears::mac::ScheduleStatusWriter*)writer;
 // Present over `parent` and refresh. `onChange` fires after a cancel/delete/enable so the host
 // can nudge the scheduler (re-expand rules, re-derive keep-awake).
 - (void)presentRelativeTo:(NSWindow*)parent onChange:(void (^)(void))onChange;

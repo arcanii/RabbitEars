@@ -5,6 +5,7 @@
 
 #include "core/RecordingRules.h"  // normaliseTvgId — resolve a rule's channel to the library
 #include "db/Database.h"
+#include "ScheduleStatusWriter.h"
 #include "models/Channel.h"
 #include "models/RecordingRule.h"
 #include "models/ScheduledRecording.h"
@@ -62,6 +63,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
 
 @implementation RecordingsWindowController {
     Database*    _db;
+    rabbitears::mac::ScheduleStatusWriter* _writer;  // the scheduler's (not owned)
     NSWindow*    _window;
     NSTableView* _schedTable;
     NSTableView* _ruleTable;
@@ -80,8 +82,12 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     std::vector<RecordingRule>      _rules;
 }
 
-- (instancetype)initWithDatabase:(Database*)db {
-    if ((self = [super init])) _db = db;
+- (instancetype)initWithDatabase:(Database*)db
+                    statusWriter:(rabbitears::mac::ScheduleStatusWriter*)writer {
+    if ((self = [super init])) {
+        _db = db;
+        _writer = writer;
+    }
     return self;
 }
 
@@ -298,11 +304,21 @@ NSString* whenText(long long startUtc, long long stopUtc) {
 
 - (void)cancelSchedule:(id)__unused sender {
     const NSInteger row = _schedTable.selectedRow;
-    if (row < 0 || row >= (NSInteger)_schedules.size() || !_db) return;
+    if (row < 0 || row >= (NSInteger)_schedules.size() || !_db || !_writer) return;
     const auto s = _schedules[(size_t)row];  // copy: reload below mutates _schedules
     // A recording in progress can't be cancelled from here (the scheduler owns it).
     if (s.status == ScheduleStatus::Recording) return;
-    if (s.status == ScheduleStatus::Pending) {
+    // A row that already carries a queued (un-landed) terminal decision is DECIDED, whatever the
+    // raw column still says — relabelling it would overwrite a queued Skip/Missed/Failed.
+    const std::vector<ScheduledRecording> rows = _db->listSchedules();
+    const bool decided = _writer->hasLiveDecision(rows, s);
+    // Does the row's series rule still exist? A rule-deleted row (deleteRule keeps history, leaving
+    // a dangling rule_id) has nothing to re-queue it, so it deletes like a one-off (Win32 parity).
+    bool ruleListed = false;
+    if (s.ruleId != 0)
+        for (const auto& r : _db->listRules())
+            if (r.id == s.ruleId) { ruleListed = true; break; }
+    if (s.status == ScheduleStatus::Pending && !decided) {
         // Mark a tombstone rather than delete, so a series rule can't re-queue the slot (the
         // expander treats a row of ANY status as owning its slot — RecordingRules.cpp:89).
         //
@@ -310,9 +326,12 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         // for a RULE-generated airing this passes over one episode and leaves the series running,
         // so reporting "Cancelled" said the exact thing it does not mean. Skipped is the honest
         // status and is already rendered (:40) and translated (Win32 0.2.14 parity).
-        _db->updateScheduleStatus(
-            s.id, s.ruleId != 0 ? ScheduleStatus::Skipped : ScheduleStatus::Cancelled);
-    } else if (s.ruleId != 0 && s.stopUtc > (long long)time(nullptr)) {
+        //
+        // Through the scheduler's writer: if the write is LOST (DB busy) the decision is remembered,
+        // overlaid on the planner and replayed every tick — a Pending row that never learns it was
+        // cancelled goes on to record the very airing the user just cancelled.
+        _writer->setTerminal(s.id, &s, s.ruleId != 0 ? ScheduleStatus::Skipped : ScheduleStatus::Cancelled);
+    } else if (ruleListed && s.stopUtc > (long long)time(nullptr)) {
         // Rule-generated, still-future, already history (Cancelled/Failed): this row is the dedup
         // anchor. Hard-deleting it lets the next rule expansion recreate the airing — silently
         // undoing the cancel (a review-caught bug; Win32 guards the same case). Keep it; the user
@@ -323,8 +342,14 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         [a addButtonWithTitle:Tr(StringId::ButtonOk)];
         [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse __unused r) {}];
         return;
+    } else if (_db->deleteSchedule(s.id)) {  // one-off, or a past airing a rule won't recreate
+        _writer->forget(s.id);  // the row is gone; no decision left to land
     } else {
-        _db->deleteSchedule(s.id);  // one-off, or a past airing a rule won't recreate: remove outright
+        // Only a finished row or an already-decided one reaches here (a live Pending row took the
+        // first branch), so a lost DELETE changes nothing the planner acts on: it stays listed until
+        // Delete is pressed again, and the log says why.
+        rabbitears::diag::error(L"schedule DELETE LOST (id " + std::to_wstring(s.id) +
+                                L") — database busy; the row (finished or already decided) is still listed");
     }
     [self reload];
     [self notifyChange];
@@ -349,8 +374,10 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     [a addButtonWithTitle:Tr(StringId::ButtonDelete)];
     [a addButtonWithTitle:Tr(StringId::ButtonCancel)];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse resp) {
-        if (resp != NSAlertFirstButtonReturn || !self->_db) return;
-        self->_db->deleteRule(id);
+        if (resp != NSAlertFirstButtonReturn || !self->_db || !self->_writer) return;
+        // Refused (logged, rule left listed — retryable) while any of its queued airings carries an
+        // un-landed Skip/Cancel/Missed, or when the delete itself is lost (ScheduleStatusWriter.h).
+        self->_writer->deleteRule(id);
         [self reload];
         [self notifyChange];
     }];
@@ -498,10 +525,13 @@ NSString* whenText(long long startUtc, long long stopUtc) {
         }
 
         if (isNew) {
-            self->_db->addRule(r);
+            if (self->_db->addRule(r) == 0)  // nothing saved — the list will show it absent
+                rabbitears::diag::error(L"recording rule add LOST — database busy; the rule was not saved");
         } else {
             self->_db->updateRule(r);
-            self->_db->clearPendingForRule(ruleId);  // stale predictions no longer match the criteria
+            // Stale predictions no longer match the criteria — cleared, sparing any airing whose
+            // Skip/Cancel has not landed (else re-expansion re-creates the skipped airing).
+            if (self->_writer) self->_writer->clearRulePredictions(ruleId);
         }
         [self reload];
         [self notifyChange];  // host re-expands the rules against the new/edited criteria

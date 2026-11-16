@@ -55,6 +55,7 @@
 #import "DeadLinkSweep.h"
 #import "VodSync.h"
 #import "RecordingsWindowController.h"
+#include "ScheduleStatusWriter.h"
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
 #import "TvGuideWindowController.h"
@@ -230,7 +231,15 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     // the exact MRC shape that has produced three shipped over-release crashes in this file.
     NSTimer*       _searchTimer;
     long long      _activeScheduleId;   // the schedule currently on _scheduleRecorder (0 == none)
-    BOOL           _schedulerReconciled; // one-time startup reset of stale "Recording" rows
+    rabbitears::ScheduledRecording _activeScheduleRow;  // its row as listed when it started (identity)
+    BOOL           _schedulerReconciled; // one-time capture of stale "Recording" rows (below)
+    // Stale Recording rows from a previous session, each reset to Pending only once its reset LANDS
+    // — retried every tick (a reset lost to contention used to latch, blocking every schedule until
+    // that row's stop time, which then closed it out as a false Done).
+    std::vector<long long> _staleRecordingIds;
+    // Every terminal schedule status goes through this: a write lost to DB contention is
+    // remembered and replayed (ScheduleStatusWriter.h). Shared with the Recordings window.
+    std::unique_ptr<rabbitears::mac::ScheduleStatusWriter> _statusWriter;
     long long      _rulesExpandedAt;    // last rule-expansion time (throttled; 0 == never)
     id             _recordingsWC;       // RecordingsWindowController (lazily created; app-lifetime)
     NSView*        _topBar;      // top command bar (add / settings / search / filter)
@@ -358,6 +367,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         diag::error(L"DB open failed: " + err);
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
+    if (_db) _statusWriter = std::make_unique<rabbitears::mac::ScheduleStatusWriter>(_db.get());
 
     // Log level FIRST, ahead of every other restore: a tester who set Detailed/Everything to chase
     // a startup problem must have it in force before the interesting logging happens. It is a
@@ -1860,6 +1870,11 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     if (_scheduleRecorder) _scheduleRecorder->stopRecording();  // finalize a scheduled recording too
     if (_keepAwake != 0) { IOPMAssertionRelease(_keepAwake); _keepAwake = 0; }
     [_schedulerTimer invalidate]; _schedulerTimer = nil;
+    // Last chance for a schedule decision whose write was lost: the overlay that protected it lives
+    // in memory, so a "cancelled" airing that never reached the DB would otherwise still be Pending
+    // on the next launch. The workers that contend for the lock were cancelled by the recording
+    // stops above only in the sense that nothing new starts — so this is BEST-EFFORT (Win32 parity).
+    if (_statusWriter) _statusWriter->flushAtQuit();
 }
 
 // ---- recording scheduler (Phase 5/6) ----------------------------------------------------
@@ -1884,35 +1899,87 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     _activeScheduleId = 0;
 }
 
-- (void)schedulerTick {
-    if (!_db) return;
-    auto schedules = _db->listSchedules();
+// A schedule row by id in a listing (nullptr when the listing does not have it).
+static const rabbitears::ScheduledRecording* findScheduleRow(
+    const std::vector<rabbitears::ScheduledRecording>& rows, long long id) {
+    for (const auto& r : rows)
+        if (r.id == id) return &r;
+    return nullptr;
+}
 
-    // One-time startup reconcile: a row still marked Recording is stale (a prior session closed
-    // mid-record; nothing is actually recording now). Reset to Pending so planScheduler resumes
-    // it if still in-window, or misses it. (Peer of Win32's schedulerReconciled.)
+- (void)schedulerTick {
+    if (!_db || !_statusWriter) return;
+    using rabbitears::ScheduleStatus;
+    // Land any terminal status an earlier write lost BEFORE listing, then list with whatever is
+    // still un-landed overlaid, so the planner acts on what the app decided (ScheduleStatusWriter).
+    const bool flushLost = _statusWriter->flush();
+    auto schedules = _statusWriter->listAsDecided();
+
+    // Startup reconcile: a row still marked Recording on the FIRST tick is stale (a prior session
+    // closed mid-record; nothing is actually recording now). Reset it to Pending so planScheduler
+    // resumes it if still in-window, or misses it. (Peer of Win32's schedulerReconciled.)
+    //
+    // The stale set is captured once, and each id leaves it only when its reset LANDS (or the row
+    // stops reading Recording). This used to latch after one attempt: a reset lost to contention
+    // left the row at Recording — and planScheduler counts any Recording row as "recorder busy" —
+    // so it blocked EVERY schedule until its stop time, when plan.stop closed it out as a false Done.
     if (!_schedulerReconciled) {
         _schedulerReconciled = YES;
-        bool changed = false;
         for (const auto& s : schedules)
-            if (s.status == rabbitears::ScheduleStatus::Recording) {
-                _db->updateScheduleStatus(s.id, rabbitears::ScheduleStatus::Pending);
+            if (s.status == ScheduleStatus::Recording) _staleRecordingIds.push_back(s.id);
+    }
+    if (!_staleRecordingIds.empty()) {
+        bool changed = false;
+        // One writer lock: after the first loss (including one the flush just took) don't stall on
+        // the rest; a skipped reset retries next tick.
+        bool contended = flushLost;
+        bool loggedStuck = false;  // once per tick — the only sign that no schedule can start
+        for (auto it = _staleRecordingIds.begin(); it != _staleRecordingIds.end();) {
+            const rabbitears::ScheduledRecording* row = findScheduleRow(schedules, *it);
+            // Missing from THIS listing: kept — a failed read looks exactly like "gone".
+            if (!row) { ++it; continue; }
+            // The active schedule is the one row a reset must never touch (it would restart a live
+            // recording); a row no longer Recording has nothing left to reconcile.
+            if (row->status != ScheduleStatus::Recording || *it == _activeScheduleId) {
+                it = _staleRecordingIds.erase(it);
+            } else if (!contended && _db->updateScheduleStatus(*it, ScheduleStatus::Pending)) {
                 changed = true;
+                it = _staleRecordingIds.erase(it);
+            } else {
+                if (!loggedStuck) {
+                    diag::error(L"stale Recording row could not be reset (id " + std::to_wstring(*it) +
+                                L") — database busy; retrying next tick (no schedule can start while "
+                                L"this repeats — until it lands, or this row's stop time closes it out)");
+                    loggedStuck = true;
+                }
+                contended = true;
+                ++it;
             }
-        if (changed) schedules = _db->listSchedules();
+        }
+        if (changed) schedules = _statusWriter->listAsDecided();
     }
 
     const long long now = (long long)time(nullptr);
     // The dedicated recorder is used ONLY for schedules, so no "manual recording" blocks it.
     const rabbitears::SchedulerPlan plan = rabbitears::planScheduler(schedules, now, /*manual=*/false);
+    // The planner's verdict at DEBUG, only when it decided something: a missed recording is the
+    // hardest thing to diagnose after the fact, and an idle tick logs nothing.
+    if (!plan.start.empty() || !plan.stop.empty() || !plan.miss.empty())
+        diag::debug(L"scheduler: " + std::to_wstring(schedules.size()) + L" queued, start=" +
+                    std::to_wstring(plan.start.size()) + L" stop=" + std::to_wstring(plan.stop.size()) +
+                    L" miss=" + std::to_wstring(plan.miss.size()));
 
     for (long long id : plan.stop) {
         if (id == _activeScheduleId) [self stopScheduledRecorder];
-        _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Done);
+        // Remembered if lost: a row left at Recording would block every other schedule.
+        _statusWriter->setTerminal(id, findScheduleRow(schedules, id), ScheduleStatus::Done);
+        diag::info(L"scheduled recording finished (id " + std::to_wstring(id) + L")");
         [self setStatus:Tr(StringId::StatusScheduledRecordingSaved)];
     }
-    for (long long id : plan.miss)
-        _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Missed);
+    for (long long id : plan.miss) {
+        _statusWriter->setTerminal(id, findScheduleRow(schedules, id), ScheduleStatus::Missed);
+        diag::warn(L"scheduled recording missed (id " + std::to_wstring(id) + L")");
+    }
     for (long long id : plan.start) {  // planScheduler yields at most one
         const rabbitears::ScheduledRecording* s = nullptr;
         for (const auto& x : schedules) if (x.id == id) { s = &x; break; }
@@ -1939,13 +2006,36 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         NSString* ext; std::string mux;
         [MainWindowController extForFormat:s->mux ext:&ext mux:&mux];
         NSString* path = [self recordingPathFor:ns(s->channelName) ext:ext];
-        if (_scheduleRecorder &&
-            _scheduleRecorder->startRecording(s->streamUrl, s->userAgent, s->referrer, ws(path), mux)) {
-            _activeScheduleId = id;
-            _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Recording, ws(path));
-            [self setStatus:TrF(StringId::StatusRecordingScheduledNow, {ns(s->channelName)})];
-        } else {
-            _db->updateScheduleStatus(id, rabbitears::ScheduleStatus::Failed);
+        // Persist Recording FIRST and start only if it landed — beginScheduledStart (common/core/
+        // RecordingScheduler.h) holds the why. The old order (start, THEN write) turned one lost
+        // write into a truncated recording: the row stayed Pending, so the next tick re-started it
+        // over the file in progress, leaving a fragment each time. (Flagged by this team in
+        // 2026-08; fixed in the shared core by Windows in b4b3e4c.)
+        const rabbitears::ScheduledStart outcome = rabbitears::beginScheduledStart(
+            [&] { return _db->updateScheduleStatus(id, ScheduleStatus::Recording, ws(path)); },
+            [&] {
+                return _scheduleRecorder &&
+                       _scheduleRecorder->startRecording(s->streamUrl, s->userAgent, s->referrer, ws(path), mux);
+            });
+        switch (outcome) {
+            case rabbitears::ScheduledStart::Started:
+                _activeScheduleId = id;
+                _activeScheduleRow = *s;  // identity for a later terminal decision about it
+                diag::info(L"scheduled recording started: " + s->channelName + L" -> " + ws(path));
+                [self setStatus:TrF(StringId::StatusRecordingScheduledNow, {ns(s->channelName)})];
+                break;
+            case rabbitears::ScheduledStart::NotPersisted:
+                // Nothing started, nothing owned; the row is still Pending, so the next tick's plan
+                // re-emits it — each lost attempt delays the start by a tick (~30 s).
+                diag::error(L"scheduled recording NOT started: its Recording status write was lost "
+                            L"(database busy) — will retry next tick (id " + std::to_wstring(id) + L")");
+                break;
+            case rabbitears::ScheduledStart::RecorderFailed:
+                // The row already says Recording, so Failed must land (or be remembered), or it
+                // would read as busy with nothing recording.
+                _statusWriter->setTerminal(id, s, ScheduleStatus::Failed);
+                diag::error(L"scheduled recording failed to start (id " + std::to_wstring(id) + L")");
+                break;
         }
     }
 
@@ -3295,7 +3385,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // Settings ⚙ ▸ Recordings… — the schedule/rules manager window.
 - (void)showRecordings:(id)__unused sender {
     if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailable)]; return; }
-    if (!_recordingsWC) _recordingsWC = [[RecordingsWindowController alloc] initWithDatabase:_db.get()];
+    if (!_recordingsWC) _recordingsWC = [[RecordingsWindowController alloc] initWithDatabase:_db.get()
+                                                                     statusWriter:_statusWriter.get()];
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
     [(RecordingsWindowController*)_recordingsWC presentRelativeTo:_window onChange:^{
         [me expandRecordingRules:YES];  // a re-enabled rule should re-queue now

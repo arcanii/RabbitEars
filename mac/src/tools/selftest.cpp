@@ -6,6 +6,8 @@
 // (temp dir / env / file delete) is portable POSIX/std instead of the Win32
 // calls in src/cli/RabbitEarsCli.cpp (which is Windows-only: wmain, GetTempPathW,
 // DeleteFileW, SetConsoleOutputCP). Assertions mirror RabbitEarsCli --selftest.
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>  // setenv
 #include <filesystem>
@@ -21,9 +23,18 @@
 #include "platform/UrlRedact.h"
 #include "ui/DockLayout.h"
 
-#include "MeterModel.h"  // mac-local meter model (rabbitears::mac) — codecs tested below
+#include "MeterModel.h"
+#include "ScheduleStatusWriter.h"  // mac scheduler write-behind glue — tested below
+#include "core/RecordingScheduler.h"
+#include "sqlite3.h"  // a second connection holding the writer lock (genuine contention)  // mac-local meter model (rabbitears::mac) — codecs tested below
 
 using namespace rabbitears;
+
+// The selftest links no log sink (mac/platform/Log.mm is app-only), but core code under test logs
+// through diag::write — so define a quiet one here.
+namespace rabbitears::diag {
+void write(const wchar_t*, const std::wstring&) {}
+}  // namespace rabbitears::diag
 
 namespace {
 
@@ -677,6 +688,288 @@ int main() {
         std::filesystem::remove(gpath, gec);
         std::filesystem::remove(gpath + L"-wal", gec);
         std::filesystem::remove(gpath + L"-shm", gec);
+    }
+
+    // The two scheduler blocks below are PORTED from Win32/cli/RabbitEarsCli.cpp (Win32 timer and
+    // sqlite3_open16 swapped for portable ones); the third is mac's own glue.
+
+    // The macOS team's 2026-08-09 finding (Win32/BACKLOG.md): updateScheduleStatus was void, so a
+    // status write LOST under contention was invisible — and planScheduler learns that a SCHEDULE
+    // holds the recorder only from the status column. A lost Recording write left the row Pending
+    // while the recorder ran; the next tick re-started it over the file in progress. The contended
+    // assertions below drive the REAL failure (a second connection holding the writer lock) through
+    // the REAL beginScheduledStart the scheduler calls — not a copy of its logic.
+    out("== Schedule status writes that can be LOST ==\n");
+    {
+        using S = ScheduleStatus;
+        ScheduledRecording s;
+        s.channelId = L"cnn.us";
+        s.channelName = L"CNN";
+        s.streamUrl = L"http://s/cnn";
+        s.title = L"News";
+        s.startUtc = 5000;
+        s.stopUtc = 8000;
+        s.mux = L"ts";
+        s.createdAt = 1000;
+        const long long sid = db.addSchedule(s);
+        expect(sid > 0, "lost-write fixture: schedule added");
+        auto rowOf = [&](long long id) {
+            for (const ScheduledRecording& r : db.listSchedules())
+                if (r.id == id) return r;
+            return ScheduledRecording{};
+        };
+
+        expect(db.updateScheduleStatus(sid, S::Pending), "a status write that lands reports true");
+        expect(!db.updateScheduleStatus(sid + 100000, S::Done),
+               "a status write that matches no row reports false (nothing landed)");
+
+        {  // Pure ordering pin — cheap, no contention: a lost persist must never reach the recorder.
+            bool recorderCalled = false;
+            const ScheduledStart r = beginScheduledStart([] { return false; },
+                                                         [&] { recorderCalled = true; return true; });
+            expect(r == ScheduledStart::NotPersisted && !recorderCalled,
+                   "beginScheduledStart: persist fails -> the recorder is never started");
+        }
+
+        // ---- The genuine failure: another connection holds BEGIN IMMEDIATE (the WAL writer lock),
+        // exactly what a VOD sync's bulk transaction does. busy_timeout=5000, so this waits ~5 s.
+        sqlite3* locker = nullptr;
+        const bool lockOpened = sqlite3_open(utf8FromWide(dbPath).c_str(), &locker) == SQLITE_OK;
+        const bool locked =
+            lockOpened && sqlite3_exec(locker, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) == SQLITE_OK;
+        expect(locked, "lost-write fixture: a second connection holds the writer lock");
+        if (locked) {
+            bool recorderStarted = false;
+            const auto t0 = std::chrono::steady_clock::now();
+            const ScheduledStart r = beginScheduledStart(
+                [&] { return db.updateScheduleStatus(sid, S::Recording, L"C:\\rec\\lost.ts"); },
+                [&] { recorderStarted = true; return true; });
+            const long long waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         std::chrono::steady_clock::now() - t0).count();
+            // Proves the false came from WAITING ON THE LOCK and giving up — not from some other,
+            // instant failure that would also return false and make this test pass for the wrong
+            // reason. (busy_timeout is 5000 ms; allow scheduler slack below it.)
+            expect(waited >= 4000,
+                   "the contended write genuinely waited out busy_timeout (" + std::to_string(waited) +
+                       " ms) before reporting the loss");
+            expect(r == ScheduledStart::NotPersisted,
+                   "beginScheduledStart reports NotPersisted when the Recording write is lost");
+            expect(!recorderStarted,
+                   "...and did NOT start the recorder (no un-owned recording to be truncated later)");
+            sqlite3_exec(locker, "ROLLBACK", nullptr, nullptr, nullptr);
+        }
+        if (locker) sqlite3_close(locker);
+
+        const ScheduledRecording after = rowOf(sid);
+        expect(after.status == S::Pending && after.filePath.empty(),
+               "the lost write left the row Pending with no file path — nothing half-written");
+        {
+            const SchedulerPlan p = planScheduler({after}, 6000, false);
+            expect(p.start.size() == 1 && p.start[0] == sid,
+                   "...so the next tick re-emits the start: the retry is clean");
+        }
+
+        {  // Uncontended, the same call starts normally and the row records ownership + path.
+            bool recorderStarted = false;
+            const ScheduledStart r = beginScheduledStart(
+                [&] { return db.updateScheduleStatus(sid, S::Recording, L"C:\\rec\\ok.ts"); },
+                [&] { recorderStarted = true; return true; });
+            const ScheduledRecording row = rowOf(sid);
+            expect(r == ScheduledStart::Started && recorderStarted && row.status == S::Recording &&
+                       row.filePath == L"C:\\rec\\ok.ts",
+                   "uncontended: Started, recorder running, row Recording with its path");
+        }
+        {  // Recorder refuses AFTER the row says Recording: the caller is told so it can write Failed.
+            const ScheduledStart r = beginScheduledStart(
+                [&] { return db.updateScheduleStatus(sid, S::Recording, L"C:\\rec\\ok.ts"); },
+                [] { return false; });
+            expect(r == ScheduledStart::RecorderFailed && rowOf(sid).status == S::Recording,
+                   "recorder refuses -> RecorderFailed, and the row still reads Recording (caller "
+                   "must write Failed)");
+            expect(db.updateScheduleStatus(sid, S::Failed) && rowOf(sid).status == S::Failed,
+                   "...which it can: Failed lands and the row is inert");
+        }
+        expect(db.deleteSchedule(sid), "deleteSchedule reports a DELETE that landed");
+    }
+
+    // The write-behind for lost TERMINAL statuses — and the defect adversarial review found in its
+    // first draft: scheduled_recordings.id is a plain INTEGER PRIMARY KEY, so SQLite hands a deleted
+    // top id to the next insert, and a decision keyed by id alone stamped itself onto that unrelated
+    // new schedule. These run the real overlay/flush functions the Win32 tick calls, against REAL
+    // rowid reuse in this schema, with the real updateScheduleStatus as the writer.
+    out("== Lost-status write-behind vs rowid reuse ==\n");
+    {
+        using S = ScheduleStatus;
+        auto mkRow = [](long long start, const wchar_t* url) {
+            ScheduledRecording s;
+            s.channelName = L"CNN";
+            s.streamUrl = url;
+            s.title = L"News";
+            s.startUtc = start;
+            s.stopUtc = start + 1000;
+            s.mux = L"ts";
+            s.createdAt = 4242;
+            return s;
+        };
+        const long long idA = db.addSchedule(mkRow(10000, L"http://s/a"));
+        const long long idB = db.addSchedule(mkRow(20000, L"http://s/b"));  // the TOP id
+        expect(idA > 0 && idB > idA, "write-behind fixture: two schedules, B holds the top id");
+        // A MISSING row must not look like a real one: a default ScheduledRecording reads Pending,
+        // which is exactly what several assertions below expect — they would pass on a vanished row.
+        auto findRow = [](const std::vector<ScheduledRecording>& rows, long long id) {
+            for (const ScheduledRecording& r : rows)
+                if (r.id == id) return r;
+            ScheduledRecording none;
+            none.id = -1;
+            none.status = ScheduleStatus::Failed;  // no assertion in this block expects Failed
+            return none;
+        };
+        int writes = 0;
+        auto writer = [&](long long id, S s) { ++writes; return db.updateScheduleStatus(id, s); };
+
+        // As if the user's Cancel of B had been LOST: the decision is pinned to B's identity.
+        PendingStatusWrites pending;
+        pending[idB] = pendingWriteFor(findRow(db.listSchedules(), idB), S::Cancelled);
+        expect(pendingWriteTarget(db.listSchedules(), idB, pending[idB]) == PendingWriteTarget::SameRow,
+               "a remembered decision targets its own row while that row exists");
+        {
+            auto view = db.listSchedules();
+            overlayPendingWrites(view, pending);
+            expect(findRow(view, idB).status == S::Cancelled && findRow(view, idA).status == S::Pending,
+                   "the overlay shows the planner the decision, and ONLY on its own row");
+        }
+
+        // The user deletes B (the manager's Remove). The decision's row is gone.
+        expect(db.deleteSchedule(idB), "write-behind fixture: B deleted");
+        expect(pendingWriteTarget(db.listSchedules(), idB, pending[idB]) == PendingWriteTarget::Absent,
+               "...its decision now has no target (Absent)");
+        writes = 0;
+        expect(flushPendingWrites(db.listSchedules(), pending, writer) == 0 && writes == 0 &&
+                   pending.count(idB) == 1,
+               "an Absent decision is never written (no UPDATE to wait on the lock) and is kept");
+
+        // A NEW, unrelated schedule is inserted — and SQLite gives it B's old id. This is the premise
+        // of the whole defect; if it ever stops holding, the assertions after it test nothing.
+        const long long idC = db.addSchedule(mkRow(30000, L"http://s/c"));
+        expect(idC == idB, "premise: SQLite reuses the deleted top rowid for the next insert (got " +
+                               std::to_string(idC) + ", B was " + std::to_string(idB) + ")");
+        expect(pendingWriteTarget(db.listSchedules(), idC, pending[idB]) == PendingWriteTarget::Reused,
+               "the reused id is recognised as a DIFFERENT row (Reused)");
+        {
+            auto view = db.listSchedules();
+            overlayPendingWrites(view, pending);
+            // Backed by the planner, not just the status field: inside C's window (30000..31000) it
+            // must actually be STARTED. This is the regression the block exists to catch — an overlay
+            // that dropped or relabelled the reused row would leave C silently never recording.
+            const SchedulerPlan p = planScheduler(view, 30500, false);
+            expect(findRow(view, idC).status == S::Pending &&
+                       std::find(p.start.begin(), p.start.end(), idC) != p.start.end(),
+                   "the new schedule does NOT inherit the dead row's Cancelled — the planner starts it");
+        }
+        writes = 0;
+        expect(flushPendingWrites(db.listSchedules(), pending, writer) == 0 && writes == 0 &&
+                   pending.empty(),
+               "the stale decision is discarded unwritten");
+        expect(findRow(db.listSchedules(), idC).status == S::Pending,
+               "...and the new schedule is still Pending in the DB — nothing was stamped onto it");
+
+        {  // One writer lock: after the first lost write, a flush must stop writing (each further
+           // attempt would be another busy_timeout stall on the UI thread) — but keep every entry.
+            PendingStatusWrites two;
+            two[idA] = pendingWriteFor(findRow(db.listSchedules(), idA), S::Missed);
+            two[idC] = pendingWriteFor(findRow(db.listSchedules(), idC), S::Missed);
+            int attempts = 0;
+            const int landed = flushPendingWrites(db.listSchedules(), two,
+                                                  [&](long long, S) { ++attempts; return false; });
+            expect(landed == 0 && attempts == 1 && two.size() == 2,
+                   "a flush stops writing after the first loss, and keeps every entry for next time");
+        }
+
+        // The ordinary retry: a decision for a row that still exists lands and is removed.
+        pending[idA] = pendingWriteFor(findRow(db.listSchedules(), idA), S::Missed);
+        writes = 0;
+        expect(flushPendingWrites(db.listSchedules(), pending, writer) == 1 && writes == 1 &&
+                   pending.empty() && findRow(db.listSchedules(), idA).status == S::Missed,
+               "a SameRow decision is written, lands, and leaves the queue");
+
+        expect(db.deleteSchedule(idA) && db.deleteSchedule(idC),
+               "write-behind fixture: cleaned up for later blocks");
+    }
+
+    // The mac glue around the shared write-behind (mac/src/app/ScheduleStatusWriter.h) — the
+    // object the scheduler tick AND the Recordings window write every terminal status through —
+    // driven against the same genuine writer lock (busy_timeout ~5 s per lost write).
+    out("== mac ScheduleStatusWriter: lost writes remembered, overlaid, replayed ==\n");
+    {
+        using S = ScheduleStatus;
+        rabbitears::mac::ScheduleStatusWriter w(&db);
+        RecordingRule rule;
+        rule.titleMatch = L"Bulletin";
+        rule.channelId = L"cnn.us";
+        rule.channelName = L"CNN";
+        rule.mux = L"ts";
+        rule.enabled = true;
+        rule.createdAt = 7000;
+        const long long ruleId = db.addRule(rule);
+        auto mk = [&](long long start, const wchar_t* url, long long rid) {
+            ScheduledRecording s;
+            s.channelId = L"cnn.us";
+            s.channelName = L"CNN";
+            s.streamUrl = url;
+            s.title = L"Bulletin";
+            s.startUtc = start;
+            s.stopUtc = start + 1000;
+            s.mux = L"ts";
+            s.createdAt = 7100;
+            s.ruleId = rid;
+            return s;
+        };
+        const long long a = db.addSchedule(mk(50000, L"http://s/ra", ruleId));  // will be Skipped
+        const long long b = db.addSchedule(mk(52000, L"http://s/rb", ruleId));  // a plain prediction
+        expect(ruleId > 0 && a > 0 && b > a, "writer fixture: a rule with two queued airings");
+        auto rowIn = [](const std::vector<ScheduledRecording>& rows, long long id) {
+            for (const auto& r : rows)
+                if (r.id == id) return r;
+            ScheduledRecording none;
+            none.id = -1;
+            none.status = S::Failed;
+            return none;
+        };
+        const ScheduledRecording rowA = rowIn(db.listSchedules(), a);
+
+        sqlite3* locker = nullptr;
+        const bool locked = sqlite3_open(utf8FromWide(dbPath).c_str(), &locker) == SQLITE_OK &&
+                            sqlite3_exec(locker, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) == SQLITE_OK;
+        expect(locked, "writer fixture: a second connection holds the writer lock");
+        if (locked) {
+            // The user Skips airing A while a VOD sync holds the lock: the write is LOST...
+            expect(!w.setTerminal(a, &rowA, S::Skipped) && w.pendingCount() == 1,
+                   "a lost Skip is reported (false) AND remembered");
+            // ...but the planner never sees it as Pending: inside A's window it must NOT start.
+            const auto view = w.listAsDecided();
+            const SchedulerPlan p = planScheduler(view, 50500, false);
+            expect(rowIn(view, a).status == S::Skipped && p.start.empty(),
+                   "the overlay shows the Skip to the planner, so the skipped airing does not record");
+            expect(w.hasLiveDecision(view, rowIn(view, a)) && !w.hasLiveDecision(view, rowIn(view, b)),
+                   "hasLiveDecision: true for the un-landed row only");
+            // A rule delete now would drop A (raw Pending) and lose the Skip: refused.
+            expect(!w.deleteRule(ruleId), "rule delete DEFERRED while an airing's Skip has not landed");
+            sqlite3_exec(locker, "ROLLBACK", nullptr, nullptr, nullptr);
+        }
+        if (locker) sqlite3_close(locker);
+        bool ruleStill = false;
+        for (const auto& r : db.listRules()) ruleStill = ruleStill || r.id == ruleId;
+        expect(ruleStill && rowIn(db.listSchedules(), a).status == S::Pending,
+               "...the rule is still there, and A is still raw Pending (the Skip has not landed)");
+
+        // The lock is gone: a rule EDIT clears the predictions — sparing nothing now, because the
+        // flush inside it lands the Skip first, turning A into a real tombstone that stays.
+        w.clearRulePredictions(ruleId);
+        const auto after = db.listSchedules();
+        expect(w.pendingCount() == 0 && rowIn(after, a).status == S::Skipped && rowIn(after, b).id == -1,
+               "after the lock: the Skip lands (A kept as a Skipped tombstone), B's prediction cleared");
+        expect(w.deleteRule(ruleId), "with nothing un-landed, the rule deletes");
+        expect(db.deleteSchedule(a), "writer fixture: cleaned up");
     }
 
     // ---- i18n catalog gate (twin of the Win32 CLI block) -------------------------------------
