@@ -11,7 +11,7 @@ A cross-platform native IPTV player in **one repo**: **`common/`** (portable cor
 *headers*), **`Win32/`** (the Windows app), **`mac/`** (this — the Cocoa app), under a unified root
 `CMakeLists.txt` (`common` → `Win32`/`mac` per‑OS). Playback is **libVLC**; storage **SQLite**.
 
-`main` carries **both platforms at decoupled versions**: **Windows 0.2.11** (theme engine + EPG/TV Guide,
+`main` carries **both platforms at decoupled versions** (today: **Windows 0.2.22-dev, mac 0.2.22**): historically **Windows 0.2.11** (theme engine + EPG/TV Guide,
 scheduled recordings incl. wake-to-record + EPG series rules, multi-view Split/PIP, saved layouts, per-pane
 recording, live language switch — the Windows team ships from `main`) and **mac 0.2.10** (the parity line). The version split lives in
 `cmake/AppVersion.cmake` (`APP_VERSION` = Windows; an `if(APPLE)` override = mac). **That file is the one
@@ -83,7 +83,58 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — **v0.2.17-mac SHIPPED (2026-08-10)**, and the functional gap to Windows is CLOSED
+## Current state — mac **0.2.22** on `main` (2026-11-16): the Windows 0.2.18–0.2.22 gap CLOSED, NOT YET RELEASED
+
+Windows shipped **0.2.18 → 0.2.21** (and has 0.2.22 in development) while mac sat at 0.2.17 with **zero `mac/`
+changes for two months**. This round ported all of it. `cmake/AppVersion.cmake`'s APPLE override is **0.2.22**.
+Nothing is published: **v0.2.17-mac is still what users run**.
+
+| PR | What | Windows-affecting? |
+|----|------|--------------------|
+| #49 | **Log credential masking.** `UrlRedact` + `LogSecrets.h` → `common/platform/`; `mac/platform/Log.mm` masks every line (file AND os_log), registers logins at the Win32 points, scrubs `rabbitears.log.1` | file move only (include names unchanged) |
+| #50 | **Scheduler: a lost status write can't truncate a recording.** Persist-first start (shared `beginScheduledStart`), `ScheduleStatusWriter` (remembered/overlaid/replayed terminal statuses), retrying reconcile, Recordings window through the writer | no |
+| #51 | **TV Guide parity.** Shared `buildGuideModel` (`GuideModel` → `common/ui/`): LIVE channels only (films no longer name rows) and fast; search (channels + programmes, marked, by day, description-only, filter chip); coverage line; "(24 h)" ranges; Favourites right-click; Refresh Guide → `GuideRefresh` worker (multi-guide split + merge, progress, store + index on its own connection); Set Guide URL extraction / list / playlist warning | file moves only (`GuideModel`, `HttpProgress.h`) |
+| #52 | **Catch-up (experimental).** `TimeZone.h` seam (`mac/platform/TimeZone.mm`, NSTimeZone), `CatchupSync` → `common/ui/`; the movie sync writes `channel_archive`; ↺ in the channel list; "Play from the start"; `playCatchup` | file moves only |
+| #53 | **The meter looks + size.** `PhotoCells` → `common/ui/` behind `common/platform/WinTypes.h`; `VuDialMac` (CoreGraphics port of `VuDial`); programme-level audio needle; Standard/Large/XL + top-edge drag, natural-width needles, labels, the meter **bridge** (mirrors) | file move + shim (`<windows.h>` on Windows) |
+| #54 | **The data-flow tank** — never on mac before: `TankSim` (Win32's solver/render verbatim) + `TankView`, Data flow row (+ Fluid colour), "dots grow with the meter" | no |
+| #55 | **Tail.** Worker DB connections never migrate (Win32 0.2.20); **About tip buttons** (the `mac-about-tip-buttons` branch, finally merged); **meter glass** (`meter_glass`, all looks + tank); **look-aware knobs** | no |
+
+**How each was verified (by running, not reasoning):** the mac selftest went from 154 to **443 assertions**, mostly
+Win32 CLI blocks ported VERBATIM so the shared code is now proven under Apple clang (UrlRedact, GuideSources, programme
+search, FTS5 fold table vs the vendored SQLite, buildGuideModel, other-connection store, channel search, catch-up,
+lost-write contention with a REAL second-connection writer lock — the write waited 5190 ms — rowid reuse, photoreal
+cells, tank geometry) plus mac blocks (ScheduleStatusWriter under the lock; the REAL `GuideRefresh` worker against a
+local HTTP server; the tank sim draining to idle). The VU faces, cell looks, glass, bridge and tank were rendered
+headlessly and inspected by eye. MSVC `core-selftest` passed on every PR (the `gui-build` red is the pre-existing
+`fxc` configure death — every Win32 GUI translation unit touched here only had its include path move).
+
+> **⚠ NOT VERIFIED ON DEVICE — the release gate.** No GUI was driven (computer-use is not granted). Before shipping
+> 0.2.22, run the checklist below. Two ASSUMPTIONS to confirm there: (a) the audio needle undoes libVLC's auhal
+> volume law as **v³** (from VLC 3's source, not measured — drop the volume to 50 % on steady programme audio: the
+> needle should not move); (b) a real Xtream line's archive plays (catch-up was verified only through the shared
+> core and selftests).
+>
+> **Checklist** (isolated `RABBITEARS_DATA_DIR`, the real app): log has no login in clear after playing an Xtream
+> channel; Refresh Guide shows progress and a multi-guide link merges; TV Guide opens fast, search finds channels +
+> programmes (filter chip, double-click opens, Return), coverage line explains; Set Guide URL with a pasted email
+> line keeps only the guide address, warns on a playlist link; a series-rule Skip survives (Recordings); Sync movies
+> → "catch-up channels: N", ↺ markers, "Play from the start" plays; meters: each new look, Large/XL, drag the bar's
+> top edge, labels, the bridge window, the Glow/Damping knobs hiding, glass slider, the tank filling/draining and
+> "Hide buffer fluid"; About shows the two tip buttons.
+>
+> **⚠ ONE-WAY DOOR when it ships:** 0.2.22 migrates libraries to **schema v11** (v10 programme FTS5 + v11 channel
+> FTS5, kept by triggers). Measured: v9→v11 is safe (a real 0.2.17-authored DB, all rows intact, integrity ok); but
+> **0.2.17 cannot write to a v11 library** (no FTS5 compiled in → `no such module: fts5` from the `channels_fts_*`
+> triggers on any channel insert). `v0.2.17-mac` stays downloadable on GitHub — anyone who re-installs it after
+> 0.2.22 can read their library but not refresh a playlist. Decide whether to mark that release.
+
+**Still N/A by design:** the theme engine (and so skin *materials* — mac's photoreal looks draw Flat, which Windows
+does too for a skin without one), wake-to-record, PIP always-on-top, the beta switchboard, Windows' side profile
+(`RABBITEARS_DATA_DIR` already does it), the dark scroll bars, the libVLC HTTP/2 log filter (mac routes no libVLC log).
+**Correction to 0.2.17's "gap closed" claim:** it missed the meter **VU look**, the **data-flow tank**, the **meter
+glass** and **look-aware knobs** — all present on Windows before 0.2.17. All four are in now.
+
+## Before it — **v0.2.17-mac SHIPPED (2026-08-10)**, and the functional gap to Windows is CLOSED
 
 > **Read this box first.** `v0.2.17-mac` (build **418**, arm64-only, notarized + stapled) is
 > **live**: release [`v0.2.17-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.17-mac),

@@ -1,64 +1,40 @@
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions in cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.17; an if(APPLE) override = mac 0.2.17) — that file is the recurring cross-team merge
-conflict, keep both lines. App min macOS 26 (Apple-Silicon-only, so the x86_64 slice can never run;
-arm64-only builds are fine). Build: scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64.
-Release recipe + gotchas: the mac-release-deployment memory.
+Windows 0.2.22-dev, 0.2.21 shipped; an if(APPLE) override = mac 0.2.22) — that file is the recurring
+cross-team merge conflict, keep both lines. App min macOS 26 (Apple-Silicon-only; arm64-only builds are
+fine). Build: scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64. Release recipe + gotchas: the
+mac-release-deployment memory.
 
-TWO THINGS TO KNOW BEFORE ANYTHING ELSE:
+THREE THINGS TO KNOW BEFORE ANYTHING ELSE:
 
-1. v0.2.17-mac IS SHIPPED AND LIVE (2026-08-10, build 418, arm64, notarized; appcast @ 46e3072,
-   feed serving 418 against the 318 users had). Everything merged is now in users' hands — the
-   backlog of three unpublished releases is cleared. The old held ~/Downloads/RabbitEars-0.2.16.dmg
-   is SUPERSEDED; delete it, never ship it. **THE FUNCTIONAL GAP TO WINDOWS IS CLOSED** — both
-   platforms are 0.2.17 and the numbers match on purpose. What is unported is N/A BY DESIGN, not
-   outstanding: theme engine, wake-to-record, PIP always-on-top (mac's PiP is a subview of the one
-   main window, not a separate top-level window) and the beta switchboard (enum has no enumerators).
-   What is genuinely left is COSMETICS ONLY (meter glass + VU needle — one CGBitmapContext
-   restructure or neither; look-aware knobs; tip buttons, which need a custom About window) plus the
-   appcast host move off raw.githubusercontent.com — and that one is NOT a gap, since
-   Win32/platform/Updater.cpp serves from the same host.
+1. mac 0.2.22 IS ON main AND NOT RELEASED. Users still run v0.2.17-mac (build 418). PRs #49-#55 (2026-11-16)
+   ported everything Windows shipped in 0.2.18-0.2.22-dev: log credential masking; the scheduler's lost-
+   status-write fix; the TV Guide on the shared row build (search, coverage line, multi-guide refresh on a
+   worker); catch-up; the photoreal meter line (Backlit + Silver VU, Studio LED / Backlit LCD / VFD, meter
+   size + bridge + labels + glass + look-aware knobs); and the data-flow tank, which mac NEVER had. The
+   HANDOVER's top box has the table. Several shared pieces MOVED Win32 -> common (UrlRedact, LogSecrets.h,
+   GuideModel, HttpProgress.h, TimeZone.h as a seam, CatchupSync, PhotoCells behind the new
+   common/platform/WinTypes.h) with their include names unchanged.
 
-   ⚠ WHAT 0.2.17 SHIPPED WITHOUT: an ON-DEVICE pass on the four gap-tail features (dead-link sweep,
-   Settings > Logging, PiP menu/swap, PiP aspect snap). They were merged on green CI AND a full
-   adversarial review that found and fixed four defects, and their non-GUI halves were verified by
-   running — but nobody drove them in the GUI. Owner's call, same as 0.2.7's recorder. IF A BUG
-   SURFACES IN THE WILD, START THERE. The seek layer, by contrast, IS fully device-verified.
+2. THE RELEASE GATE IS AN ON-DEVICE PASS — nothing in this round was driven in the GUI. The selftest went
+   154 -> 443 (mostly Win32 CLI blocks ported verbatim, so the shared code is proven under Apple clang), the
+   looks/tank/bridge were rendered headlessly and eyeballed, but: the checklist is in the HANDOVER box, and
+   two ASSUMPTIONS ride on it — the audio needle undoes libVLC auhal's volume as v^3 (from VLC source, not
+   measured), and a real Xtream archive playing (catch-up proven only through shared code).
 
-2. THE SEEK LAYER IS VERIFIED — both gates ran on 2026-08-10, so it is NO LONGER a release blocker.
-   PR #46 (478ac16) landed the scrub bar, time readout, skip +/-10s and PAUSE. The adversarial
-   review (12 findings -> 9 survived -> 3 refuted, incl. the only HIGH) plus a full on-device pass
-   found FIVE defects, all fixed in PR #47 (mac-seek-review-fixes): the post-seek latch was scoped
-   to the pane SET not the player; it latched the UNCLAMPED target; the bottom bar reserved 150pt
-   for a cluster that starts at 162 (the readout sat ON the meter button and ate its clicks);
-   -applyLanguageLive never relabelled the skip buttons; and the bar could never retire at
-   end-of-film (at libvlc_Ended, length and seekable BOTH persist — only get_time freezes).
-   Do not "fix" the sampling back to Win32's atomics; that was settled by measurement.
-   TWO TRAPS WORTH INHERITING, each of which produced a confidently WRONG answer:
-   (a) a libVLC probe MUST use the app's instance args — `--no-video --no-audio` reports length=0
-   on a live HLS while the app's instance reports the real DVR window (180s on real live TV),
-   which is why the scrub bar CORRECTLY appears on live channels; and (b) `python3 -m http.server`
-   implements no HTTP Range, which makes a local .mp4 seek look broken in a way indistinguishable
-   from an app bug (keep a Range-capable stub in the fixture kit).
+3. SHIPPING 0.2.22 IS A ONE-WAY DOOR: it migrates libraries to schema v11 (FTS5), and 0.2.17 (no FTS5
+   compiled in) CANNOT WRITE a v11 library (`no such module: fts5` from the channels_fts_* triggers) — while
+   v0.2.17-mac stays downloadable. v9->v11 forward was measured safe on a real 0.2.17-authored DB. Decide
+   whether to mark the old release before shipping.
 
-Already merged on main and NOT yet released: PR #43 (a Clang-vs-MSVC break that had mac unbuildable
-on main — GridFilter nested-struct default member initializers), PR #44 = 0.2.16 "safe to upgrade"
-(first mac build carrying schema v8+v9, where v9 is a DATA migration that rewrites every stream_url
-and merges colliding rows; plus favourites canonicalisation, "Clear dead-link results", the
-GridFilter/SQL grid pushdown + 5000-row cap + search debounce, an ATS exception, and three live
-shipped bugs), and PR #45 = the Xtream VOD movie sync + a Movies nav root, VERIFIED end-to-end
-against a fake Xtream panel (a first for either platform — Windows shipped it unverified).
+What stays N/A BY DESIGN: the theme engine (so skin MATERIALS draw Flat — Windows does the same for a skin
+without one), wake-to-record, PIP always-on-top, the beta switchboard, Windows' side profile, its dark scroll
+bars, its libVLC HTTP/2 log filter (mac routes no libVLC log).
 
-NEXT: there is no parity work left to do, so pick by value, not by gap. The highest-value item is
-the on-device pass 0.2.17 shipped without (see 1 above) — the checklist is in the HANDOVER's
-gap-tail section. After that: the appcast host move (BOTH platforms, not a mac gap), then cosmetics
-(meter glass + VU needle as ONE CGBitmapContext restructure or neither; look-aware knobs; tip
-buttons, which need a custom About window since the system panel cannot host them and
-NSHumanReadableCopyright is where the GPL-3.0 notice lives). New features are now genuinely new
-work rather than catching up — resume/watched and series/seasons/episodes exist on NEITHER platform,
-and mac is AHEAD on the groundwork for the latter (LogoLoader is already the async, disk-cached,
-bomb-safe poster loader it needs).
+NEXT: the on-device pass, then release 0.2.22 (recipe: mac-release-deployment memory; sign_update must run in
+the OWNER's terminal — the keychain ACL refuses this tooling). After that: the appcast host move (BOTH
+platforms), and genuinely new work — resume/watched and series/seasons/episodes exist on NEITHER platform.
 
 HARD-WON RULES (each cost real time):
 - Win32 gui-build CI is pre-existing red and dies at CONFIGURE (needs fxc), so it compiles NOTHING.
