@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/arcanii/RabbitEars/releases/latest"><img src="https://img.shields.io/github/v/release/arcanii/RabbitEars?style=for-the-badge&color=D97757&label=Latest" alt="Latest release"></a>
+  <a href="https://github.com/arcanii/RabbitEars/releases"><img src="https://img.shields.io/github/downloads/arcanii/RabbitEars/total?style=for-the-badge&color=D97757&label=Downloads" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Windows-11-0078D6?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows 11">
   <img src="https://img.shields.io/badge/Arch-x64%20%2B%20ARM64-6E56CF?style=for-the-badge" alt="x64 + ARM64">
