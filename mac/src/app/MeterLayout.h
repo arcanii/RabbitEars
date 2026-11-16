@@ -28,6 +28,11 @@ constexpr CGFloat kMeterBasePt = 24;   // the standard tray's meter height (pt)
 constexpr CGFloat kMeterGapPt = 8;     // the standard tray's gap between meters
 constexpr CGFloat kMeterLabelRowPt = 14;  // the labels' row under a taller row (Win32 kMeterLabelDp)
 constexpr CGFloat kMeterBaseW[4] = {180, 64, 130, 96};  // the kinds' widths at the standard height
+constexpr CGFloat kTankBaseW = 92;  // the data-flow tank at the standard height (Win32's 115 dp at 30 dp)
+// The tank's width at height `h` pt: its standard width, scaled with the height in a taller row.
+inline CGFloat tankWidthPt(CGFloat h, bool ownRow) {
+    return ownRow ? std::round(kTankBaseW * h / kMeterBasePt) : kTankBaseW;
+}
 
 inline int clampMeterHeightDp(int dp) { return std::clamp(dp, kMeterHeightMin, kMeterHeightMax); }
 inline CGFloat meterHeightPt(int dp) { return kMeterBasePt * clampMeterHeightDp(dp) / kMeterHeightStd; }
@@ -50,10 +55,12 @@ inline CGFloat meterWidthPt(int kind, MeterStyle style, CGFloat h, bool ownRow) 
 
 // A meter's short name as its label shows it: capitals, tracked out, the muted text with a hairline
 // shadow below-right (the key light is above-left) — Win32 MeterLabels.
+// `kind` 0..3 = MeterKind order, 4 = the data-flow tank (Win32 MeterLabels' slots).
 inline NSAttributedString* meterLabelText(int kind) {
-    static const i18n::StringId kNames[4] = {i18n::StringId::MeterLabelSpectrum, i18n::StringId::MeterLabelSignal,
-                                              i18n::StringId::MeterNameBitrate, i18n::StringId::MeterLabelFrames};
-    NSString* text = [Tr(kNames[std::clamp(kind, 0, 3)]) uppercaseStringWithLocale:nil];
+    static const i18n::StringId kNames[5] = {i18n::StringId::MeterLabelSpectrum, i18n::StringId::MeterLabelSignal,
+                                              i18n::StringId::MeterNameBitrate, i18n::StringId::MeterLabelFrames,
+                                              i18n::StringId::MeterDataFlowCheckbox};
+    NSString* text = [Tr(kNames[std::clamp(kind, 0, 4)]) uppercaseStringWithLocale:nil];
     NSShadow* sh = [[NSShadow alloc] init];
     sh.shadowColor = [NSColor colorWithWhite:0 alpha:0.9];
     sh.shadowOffset = NSMakeSize(1, -1);

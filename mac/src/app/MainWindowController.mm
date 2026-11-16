@@ -65,6 +65,7 @@
 #import "RecordingsWindowController.h"
 #include "ScheduleStatusWriter.h"
 #import "MeterBridgeWindowController.h"
+#import "TankView.h"
 #include "MeterLayout.h"  // the meters' size (stage A): heights, widths, labels
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
@@ -312,6 +313,11 @@ float programmeDbfs(float capturedDb, float slider) {
     BOOL           _meterLabels;     // `meter_labels`: each meter's short name under it (taller rows, the bridge)
     NSTextField*   _meterLabelViews[4];
     MeterBridgeWindowController* _meterBridge;  // the meter bridge window (lazily made; app-lifetime)
+    // The data-flow tank (Win32's buffering visualizer): the bar's right-most meter while `buffer_hidden`
+    // is "0" (mac: off unless turned on — Settings ▸ Meters ▸ Data flow; right-click it to hide).
+    TankView*      _tank;
+    NSTextField*   _tankLabel;
+    BOOL           _dataFlowOn;
     BOOL           _pipMoved;               // the user moved/resized the PiP inset (else default corner)
     CGFloat        _pipPosX, _pipPosY;      // PiP inset position, as a 0..1 fraction of the free travel
     CGFloat        _pipW, _pipH;            // PiP inset size in px (persisted); 0 == use the default
@@ -715,6 +721,13 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _meterLabelViews[k].hidden = YES;
         [_meterBar addSubview:_meterLabelViews[k]];
     }
+    _tank = [[TankView alloc] initWithFrame:NSMakeRect(0, 0, 92, kMeterH)];  // MRC: app-lifetime, +1 held
+    _tank.hidden = YES;
+    _tank.onHideRequested = ^{ [me setDataFlowOn:NO]; };
+    [_meterBar addSubview:_tank];
+    _tankLabel = [[NSTextField labelWithString:@""] retain];
+    _tankLabel.hidden = YES;
+    [_meterBar addSubview:_tankLabel];
     [videoPane addSubview:_meterBar];  // sibling of the video, on top (floats)
     videoPane.postsFrameChangedNotifications = YES;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(videoPaneResized:)
@@ -1152,6 +1165,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     if (_recordingsWC) [(RecordingsWindowController*)_recordingsWC relabelForLanguageChange];
     if (_guideWC)      [(TvGuideWindowController*)_guideWC relabelForLanguageChange];
     [_meterBridge relabelForLanguageChange];  // the bridge's title + labels
+    [_tank relabelForLanguageChange];         // its right-click "Hide buffer fluid"
     [self applyMeterLayout];                  // the tray's labels re-read their text
 }
 
@@ -2351,6 +2365,24 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
     [self updateTransport];
 
     const FlowStats fs = _player->sampleStats();
+    // The data-flow tank (Win32 MainWindow: Opening/Buffering/Playing events + the Stats tick, here polled):
+    // health from the active pane's player state, flow = throughput through a soft knee (~768 kb/s), trouble
+    // = corruption + discontinuities + half the dropped frames, and the Mb/s readout. Fed before the early
+    // return below, so a stopped stream drains the tank.
+    if (_tank && !_tank.hidden) {
+        if (MacVideoPane* ap = [self activePane]) [_tank setHealth:ap->player->bufferHealth()];
+        const float flow = fs.playing ? (float)(1.0 - std::exp(-fs.demuxBytesPerSec / 96000.0)) : 0.0f;
+        const float tankTrouble = std::clamp(
+            (fs.corruptedDelta + fs.discontinuityDelta + 0.5f * fs.lostPicturesDelta) / 6.0f, 0.0f, 1.0f);
+        [_tank setFlow:flow trouble:tankTrouble];
+        NSString* m = @"";
+        if (fs.playing && fs.demuxBytesPerSec > 0.0) {
+            const double bps = fs.demuxBytesPerSec * 8.0;
+            m = bps >= 1.0e6 ? [NSString stringWithFormat:Tr(StringId::MeterOverlayMbps), bps / 1.0e6]
+                             : [NSString stringWithFormat:Tr(StringId::MeterOverlayKbps), bps / 1.0e3];
+        }
+        [_tank setMetrics:m];
+    }
     // NOTE: do NOT reset _spectrumSilentTicks here. libVLC's is_playing() dips false at HLS
     // segment boundaries, and zeroing the denial counter on every dip meant it could never
     // accumulate its window on a real stream (see -updateSpectrumAvailability:).
@@ -2401,6 +2433,13 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
         if (auto mh = _db->getSetting(L"meter_height"))
             _meterHeightDp = rabbitears::mac::clampMeterHeightDp((int)std::wcstol(mh->c_str(), nullptr, 10));
         if (auto ml = _db->getSetting(L"meter_labels")) _meterLabels = (*ml == L"1");
+        if (auto bh = _db->getSetting(L"buffer_hidden")) _dataFlowOn = (*bh == L"0");  // absent: off on mac
+        if (auto fc = _db->getSetting(L"buffer_fluid_color"); fc && fc->size() == 6) {
+            wchar_t* end = nullptr;
+            const unsigned long v = std::wcstoul(fc->c_str(), &end, 16);
+            if (end && *end == L'\0') REDataFlowSetFluidColor((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+        }
+        if (auto sd = _db->getSetting(L"buffer_scaled_dots")) REDataFlowSetScaledDots(*sd == L"1");
         if (auto x = _db->getSetting(L"meter_pos_x")) _meterPosX = std::clamp(std::wcstod(x->c_str(), nullptr), 0.0, 1.0);
         if (auto y = _db->getSetting(L"meter_pos_y")) _meterPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
         // PiP inset geometry (position fraction + size px). Size is re-clamped against the
@@ -2456,7 +2495,7 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
     const CGFloat availY = std::max(1.0, pane.bounds.size.height - _meterBar.frame.size.height);
     _meterPosY = std::clamp(bottom / availY, 0.0, 1.0);
     [self applyMeterLayout];
-    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels tank:_dataFlowOn];
 }
 
 - (void)persistMeterHeight {
@@ -2471,12 +2510,28 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
     [self persistMeterPos];
 }
 
+// Settings ▾ ▸ Meters ▸ the Data flow checkbox (via the dialog), or the tank's right-click "Hide".
+- (void)setDataFlowOn:(BOOL)on {
+    _dataFlowOn = on;
+    if (_db) _db->setSetting(L"buffer_hidden", on ? L"0" : L"1");
+    [self applyMeterLayout];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels tank:_dataFlowOn];
+}
+
+// Settings ▾ ▸ Meters ▸ Data-flow dots grow with the meter (Win32 buffer_scaled_dots, off by default).
+- (void)toggleTankDots:(id)__unused sender {
+    const bool on = !REDataFlowScaledDots();
+    REDataFlowSetScaledDots(on);
+    if (_db) _db->setSetting(L"buffer_scaled_dots", on ? L"1" : L"0");
+    [_tank setNeedsDisplay:YES];
+}
+
 // Settings ▾ ▸ Meters ▸ Meter labels.
 - (void)toggleMeterLabels:(id)__unused sender {
     _meterLabels = !_meterLabels;
     if (_db) _db->setSetting(L"meter_labels", _meterLabels ? L"1" : L"0");
     [self applyMeterLayout];
-    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels tank:_dataFlowOn];
 }
 
 // Settings ▾ ▸ Meters ▸ Meter bridge window: a separate window whose meters MIRROR the tray's.
@@ -2491,8 +2546,9 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
         MainWindowController* __unsafe_unretained me = self;
         _meterBridge.onClose = ^{ [me closeMeterBridge:NO]; };
     }
-    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels tank:_dataFlowOn];
     for (int k = 0; k < 4; ++k) [_meters[k] setMirror:[_meterBridge meterForKind:k]];
+    [_tank setMirror:[_meterBridge tank]];
     [_meterBridge showNear:_window];
     if (_db) _db->setSetting(L"meter_bridge", L"1");
 }
@@ -2500,13 +2556,14 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
 // `byMenu`: the window is still up (the menu toggled it off) — order it out too.
 - (void)closeMeterBridge:(BOOL)byMenu {
     for (int k = 0; k < 4; ++k) [_meters[k] setMirror:nil];  // unlinked BEFORE the twin can go
+    [_tank setMirror:nil];
     if (byMenu) [_meterBridge close];
     if (_db) _db->setSetting(L"meter_bridge", L"0");
 }
 
 - (void)applyMeterConfig {
     for (int k = 0; k < 4; ++k) [_meters[k] setConfig:_meterCfg[k]];
-    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels tank:_dataFlowOn];
     [self applyMeterLayout];
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) {
         [_meters[(int)MeterKind::Spectrum] setAvailable:YES];
@@ -2545,6 +2602,20 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
         if (labelH > 0) {
             _meterLabelViews[k].attributedStringValue = ml::meterLabelText(k);
             _meterLabelViews[k].frame = NSMakeRect(x, 0, w, labelH);
+        }
+        x += w + gap;
+    }
+    // The data-flow tank, right-most, keeping its distance from the meters in either row (Win32).
+    const BOOL tankShow = _dataFlowOn && !_videoOnly && !_metersHidden;
+    _tank.hidden = !tankShow;
+    _tankLabel.hidden = !tankShow || labelH <= 0;
+    if (tankShow) {
+        if (x > 0 && gap < kMeterGap) x += kMeterGap - gap;  // an own row's meters touch; the tank does not
+        const CGFloat w = ml::tankWidthPt(h, ownRow);
+        _tank.frame = NSMakeRect(x, labelH, w, h);
+        if (labelH > 0) {
+            _tankLabel.attributedStringValue = ml::meterLabelText(4);
+            _tankLabel.frame = NSMakeRect(x, 0, w, labelH);
         }
         x += w + gap;
     }
@@ -3511,8 +3582,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     layoutsItem.submenu = layouts;
 
     // Meters ▸ (Win32's submenu): the size presets, the labels, the bridge window, then the setup dialog.
-    // (Win32's "Or drag the strip's top edge" hint and "Data-flow dots" are strip/tank items mac lacks;
-    // here the floating bar's top edge is the drag.)
+    // (Win32's "Or drag the strip's top edge" hint is a strip item mac lacks; here the floating bar's top
+    // edge is the drag.)
     {
         NSMenuItem* metersItem = [m addItemWithTitle:Tr(StringId::MenuMetersSubmenu) action:nil keyEquivalent:@""];
         NSMenu* mm = [[[NSMenu alloc] init] autorelease];  // MRC: the item retains its submenu
@@ -3530,6 +3601,9 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         NSMenuItem* lab = [mm addItemWithTitle:Tr(StringId::MenuMeterLabels) action:@selector(toggleMeterLabels:) keyEquivalent:@""];
         lab.target = self;
         lab.state = _meterLabels ? NSControlStateValueOn : NSControlStateValueOff;
+        NSMenuItem* dots = [mm addItemWithTitle:Tr(StringId::MenuMeterTankDots) action:@selector(toggleTankDots:) keyEquivalent:@""];
+        dots.target = self;
+        dots.state = REDataFlowScaledDots() ? NSControlStateValueOn : NSControlStateValueOff;
         NSMenuItem* br = [mm addItemWithTitle:Tr(StringId::MenuMeterBridge) action:@selector(toggleMeterBridge:) keyEquivalent:@""];
         br.target = self;
         br.state = (_meterBridge && [_meterBridge isVisible]) ? NSControlStateValueOn : NSControlStateValueOff;

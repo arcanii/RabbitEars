@@ -29,7 +29,8 @@ target_link_libraries(RabbitEarsPlatformMac PUBLIC RabbitEarsCore "-framework Fo
 # MeterModel.cpp is pure C++ (the mac-local meter model, rabbitears::mac) — compiled
 # in here too so the codec round-trip is exercised headlessly (it is NOT in
 # RabbitEarsCore yet; it lives in mac/ until promotion to common/ — see MeterModel.h).
-add_executable(RabbitEarsSelfTest src/tools/selftest.cpp src/app/MeterModel.cpp src/app/GuideRefresh.mm)
+add_executable(RabbitEarsSelfTest src/tools/selftest.cpp src/app/MeterModel.cpp src/app/GuideRefresh.mm
+  src/app/TankSim.cpp)
 target_include_directories(RabbitEarsSelfTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
 target_link_libraries(RabbitEarsSelfTest PRIVATE RabbitEarsPlatformMac z)  # z: gzip a test guide
 add_test(NAME selftest COMMAND RabbitEarsSelfTest)
@@ -74,6 +75,8 @@ if(RABBITEARS_BUILD_MAC)
     src/app/MeterView.mm
     src/app/VuDialMac.mm      # the two VU instruments (port of Win32/ui/VuDial; no retained ObjC — MRC)
     src/app/MeterBridgeWindowController.mm
+    src/app/TankView.mm
+    src/app/TankSim.cpp       # the data-flow tank's physics + LED render (port of Win32/ui/BufferMeter)
     src/app/MetersDialog.mm
     src/app/PlaylistsDialog.mm
     src/app/CategoriesDialog.mm
@@ -104,6 +107,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/PlaylistsDialog.mm src/app/CategoriesDialog.mm src/app/TermsDialog.mm
     src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
     src/app/RecordingsWindowController.mm src/app/LogoLoader.mm src/app/MeterBridgeWindowController.mm
+    src/app/TankView.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE

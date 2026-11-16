@@ -13,12 +13,14 @@
 #include "MeterModel.h"
 
 @class MeterView;
+@class TankView;
 
 @interface MeterBridgeWindowController : NSObject
 - (instancetype)init;
 - (MeterView*)meterForKind:(int)k;  // 0..3, MeterKind order
 // The looks (and which meters show) — the tray's configs; `labels` prints each meter's short name.
-- (void)applyConfigs:(const rabbitears::mac::MeterConfig*)cfgs labels:(BOOL)labels;
+- (void)applyConfigs:(const rabbitears::mac::MeterConfig*)cfgs labels:(BOOL)labels tank:(BOOL)tank;
+- (TankView*)tank;  // the data-flow tank's twin
 - (void)showNear:(NSWindow*)parent;
 - (void)close;               // orders the window out (onClose is NOT called)
 - (BOOL)isVisible;

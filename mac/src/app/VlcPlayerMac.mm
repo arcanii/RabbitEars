@@ -261,6 +261,23 @@ VlcPlayerMac::PlayState VlcPlayerMac::playState() const {
 #endif
 }
 
+int VlcPlayerMac::bufferHealth() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (impl_->player) {
+        switch (libvlc_media_player_get_state(impl_->player)) {
+            case libvlc_Opening:   return 15;
+            case libvlc_Buffering: return 50;
+            case libvlc_Playing:   return 100;
+            case libvlc_Paused:    return -1;
+            case libvlc_NothingSpecial:
+                return impl_->playDeadline > std::chrono::steady_clock::now() ? 15 : 0;
+            default:               return 0;
+        }
+    }
+#endif
+    return 0;
+}
+
 bool VlcPlayerMac::isEngaged() const {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (impl_->player) {

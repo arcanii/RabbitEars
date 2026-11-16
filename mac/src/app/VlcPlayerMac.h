@@ -66,6 +66,12 @@ public:
     enum class PlayState { Other, Playing, Error, Ended };
     PlayState playState() const;
 
+    // The data-flow tank's buffer health (Win32 drives it from player EVENTS: Opening 15, Buffering N %,
+    // Playing 100, stopped/ended/error 0; mac polls, and libVLC's state carries no buffering percent):
+    // Opening (or the post-play() grace window) 15, Buffering 50, Playing 100, Paused -1 (keep the
+    // level), anything terminal 0.
+    int bufferHealth() const;
+
     // Whether this player is holding (or about to hold) a connection to the provider — true from
     // play() until libVLC reaches a terminal state. The peer of Win32 VlcPlayer::isEngaged(), and
     // the gate the Xtream VOD sync consults: on a max_connections:1 line a sync that runs during
