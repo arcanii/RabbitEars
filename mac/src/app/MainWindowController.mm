@@ -5,6 +5,8 @@
 #import <IOKit/pwr_mgt/IOPMLib.h>  // IOPMAssertion — keep-awake while recording
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cwchar>
 #include <ctime>
@@ -15,8 +17,10 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <thread>
 #include <vector>
 
+#include "core/GuideSources.h"  // a guide link naming several guides: split + merge
 #include "core/Gzip.h"
 #include "core/Http.h"
 #include "core/M3uParser.h"
@@ -33,6 +37,7 @@
 #include "platform/Encoding.h"
 #include "ui/VideoGrid.h"  // computeVideoPanes + ViewMode — multi-view pane geometry
 #include "platform/Log.h"
+#include "platform/HttpProgress.h"  // the guide download's running byte count
 #include "platform/LogSecrets.h"
 #include "platform/Updater.h"
 
@@ -59,6 +64,7 @@
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
 #import "TvGuideWindowController.h"
+#include "GuideRefresh.h"  // Refresh Guide's worker
 #import "VlcEngineMac.h"
 #import "VlcPlayerMac.h"
 #import "Tr.h"
@@ -171,6 +177,11 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
 - (void)finishStartup;
 @end
 
+// Set at quit: a running Refresh Guide stops at its next download or transaction boundary.
+namespace {
+std::atomic<bool> g_epgCancel{false};
+}  // namespace
+
 @implementation MainWindowController {
     NSWindow*      _window;
     NSSearchField* _search;
@@ -273,7 +284,7 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
     std::vector<Channel>          _channels;
     long long                     _currentPid;             // loaded playlist (0 = none/all)
     uint64_t                      _loadToken;              // only the newest URL load's result applies
-    uint64_t                      _epgToken;               // only the newest guide refresh's result applies
+    BOOL                          _epgRefreshing;          // a Refresh Guide is running (one at a time)
     id                            _guideWC;                // TvGuideWindowController (lazily created; app-lifetime)
     CGFloat                       _gridWidth;              // channel-grid width; the video pane fills the rest
     int                           _preMuteVolume;          // volume to restore when un-muting
@@ -1868,6 +1879,7 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     for (auto& pane : _panes)
         if (pane->player) pane->player->stopRecording();  // synchronous flush + index write
     if (_scheduleRecorder) _scheduleRecorder->stopRecording();  // finalize a scheduled recording too
+    g_epgCancel = true;  // a running guide refresh stops at its next transaction boundary
     if (_keepAwake != 0) { IOPMAssertionRelease(_keepAwake); _keepAwake = 0; }
     [_schedulerTimer invalidate]; _schedulerTimer = nil;
     // Last chance for a schedule decision whose write was lost: the overlay that protected it lives
@@ -3410,6 +3422,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // Settings ▾ ▸ Manage Playlists… — enable/disable/delete imported playlists.
 - (void)showPlaylists:(id)__unused sender {
     PlaylistsDialog* dlg = [[PlaylistsDialog alloc] initWithDatabase:_db.get()];
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    dlg.onRefreshGuide = ^{ [me refreshGuide:nil]; };
     [dlg presentForWindow:_window onChange:^{ [self reloadAfterPlaylistChange]; }];
     [dlg release];  // MRC: the sheet's completion handler keeps it alive until it closes
 }
@@ -3470,8 +3484,26 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // + parse the XMLTV guide for every enabled playlist that carries a guide URL, off the
 // main queue, then store the parsed programmes on the main thread. Newest refresh wins.
 
+// ---- Refresh Guide --------------------------------------------------------------------------
+// The mac peer of Win32's onRefreshGuide + EpgStore + finishEpgRefresh (MainWindowCommands.cpp,
+// ui/EpgStore.cpp). ONE worker does everything heavy, in order, and the main thread keeps only
+// what needs the controller: the recording-rule pass and the result.
+//  1. Fetch — per playlist, its guide link split into its guides (core/GuideSources.h: an M3U
+//     header's x-tvg-url may list several); each is downloaded with a running byte count and
+//     parsed with a running programme count (status-bar progress, at most one line per 250 ms),
+//     then the guides are MERGED (mergeGuideSources: a channel's programmes from the first guide
+//     listing it). A guide that fails while the others load is named in the results.
+//  2. Store — on the worker's OWN connection (opened with upgradeSchema=false; the app's own
+//     already migrated), one short transaction per playlist with a pause between them, so a
+//     main-thread write waiting on the lock gets it (the scheduler's status writes are retried —
+//     ScheduleStatusWriter — most others are not). It used to run on the main thread.
+//  3. Index — the TV Guide search's index is rebuilt ONCE, after every playlist (EPG_SEARCH.md §3).
+// One refresh at a time (the second click says so); a quit cancels between transactions.
+
+
 - (void)refreshGuide:(id)__unused sender {
     if (!_db) { [self setStatus:Tr(StringId::MacMainWindowDbUnavailable)]; return; }
+    if (_epgRefreshing) { [self setStatus:Tr(StringId::StatusBusyWait)]; return; }
     struct Target { long long id; std::wstring name; std::wstring url; };
     auto targets = std::make_shared<std::vector<Target>>();
     for (const auto& pl : _db->listPlaylists())
@@ -3481,51 +3513,89 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
                      info:Tr(StringId::MacMainWindowNoGuideSourceBody)];
         return;
     }
-    [self setStatus:Tr(StringId::StatusDownloadingGuide)];
-    const uint64_t token = ++_epgToken;  // newest refresh wins (an in-flight one is superseded)
+    _epgRefreshing = YES;
+    g_epgCancel = false;
+    [self setStatus:Tr(StringId::LoadingContactingGuide)];
+    diag::info(L"EPG refresh start: " + std::to_wstring(targets->size()) + L" playlist(s)");
+    MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    const std::wstring dbPath = Database::defaultDbPath();
+    std::vector<rabbitears::mac::GuideTarget> work;
+    for (const auto& t : *targets) work.push_back({t.id, t.name, t.url});
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        // Each fetch's outcome: parsed programmes, or an error string.
-        struct Fetch { long long id; std::wstring name; std::wstring error; std::vector<Programme> progs; };
-        auto results = std::make_shared<std::vector<Fetch>>();
-        for (const auto& t : *targets) {
-            Fetch f; f.id = t.id; f.name = t.name;
-            std::string bytes; std::wstring err;
-            if (!httpGet(t.url, bytes, err, 60000)) {  // guides are large; allow 60s
-                f.error = err.empty() ? L"download failed" : err;
-            } else {
-                const std::string xml = gunzipIfNeeded(bytes);  // .xml.gz bodies arrive still-compressed
-                if (xml.empty()) f.error = L"empty or invalid after decompression";
-                else f.progs = parseXmltv(xml).programmes;
-            }
-            results->push_back(std::move(f));
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (token != self->_epgToken || !self->_db) return;  // a newer refresh superseded this one
-            const long long now = (long long)time(nullptr);  // stamp at store-time (peer of Win32 onEpgDone)
-            int okCount = 0, totalProg = 0;
-            std::set<std::wstring> chans;
-            NSMutableString* detail = [NSMutableString string];
-            for (auto& f : *results) {
-                if (!f.error.empty()) {
-                    [detail appendString:TrF(StringId::MacMainWindowEpgErrorLine, {ns(f.name), ns(f.error)})];
-                    continue;
-                }
-                const int stored = self->_db->bulkInsertProgrammes(f.id, f.progs, now);
-                ++okCount; totalProg += stored;
-                for (const auto& p : f.progs) chans.insert(p.channelId);
-                [detail appendString:TrF(StringId::EpgDetailProgrammesLine,
-                    {ns(f.name), [NSString stringWithFormat:@"%d", stored]})];
-            }
-            NSString* summary = okCount > 0
-                ? TrF(StringId::EpgStoredSummary,
-                   {[NSString stringWithFormat:@"%d", totalProg],
-                    [NSString stringWithFormat:@"%lu", (unsigned long)chans.size()]})
-                : Tr(StringId::EpgRefreshFailedSummary);
-            [self setStatus:summary];
-            if (okCount > 0) [self expandRecordingRules:YES];  // new airings → re-queue series rules
-            [self showResults:summary info:detail];
-        });
+        // Progress lines go to the status bar. The running counts arrive far faster than anyone can
+        // read them, so at most one per 250 ms; a skipped line is overtaken by the next. Step names
+        // (`force`) always go. Called only from this worker or the download's delegate queue while
+        // this worker waits on it, so `lastPost` is never touched concurrently.
+        using Clock = std::chrono::steady_clock;
+        Clock::time_point lastPost = Clock::now() - std::chrono::seconds(1);
+        auto post = [&lastPost, me](const std::wstring& line, bool force) {
+            const Clock::time_point now = Clock::now();
+            if (!force && now - lastPost < std::chrono::milliseconds(250)) return;
+            lastPost = now;
+            NSString* text = [ns(line) retain];  // MRC: the main-queue block outlives this pool
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [me setStatus:text];
+                [text release];
+            });
+        };
+        auto res = std::make_shared<rabbitears::mac::GuideRefreshResult>(
+            rabbitears::mac::refreshGuides(work, dbPath, post, g_epgCancel));
+        dispatch_async(dispatch_get_main_queue(), ^{ [me finishGuideRefresh:res]; });
     });
+}
+
+// The worker is done: log each playlist's outcome, run the recording-rule pass over the new guide,
+// and show the results. (Peer of Win32 finishEpgRefresh.)
+- (void)finishGuideRefresh:(std::shared_ptr<rabbitears::mac::GuideRefreshResult>)res {
+    _epgRefreshing = NO;
+    if (g_epgCancel || !_db) return;  // quitting
+    int okCount = 0, totalProg = 0;
+    NSMutableString* detail = [NSMutableString string];
+    for (auto& f : res->fetches) {
+        NSMutableString* guideLines = [NSMutableString string];
+        for (const auto& w : f.sourceErrors) {
+            [guideLines appendString:TrF(StringId::MacMainWindowEpgErrorLine, {ns(f.name), ns(w)})];
+            diag::warn(L"EPG refresh for \"" + f.name + L"\": " + w);
+        }
+        for (const auto& l : f.sourceLog) diag::info(L"EPG \"" + f.name + L"\" " + l);
+        if (!f.error.empty()) {
+            [detail appendString:TrF(StringId::MacMainWindowEpgErrorLine, {ns(f.name), ns(f.error)})];
+            [detail appendString:guideLines];
+            diag::error(L"EPG refresh failed for \"" + f.name + L"\": " + f.error + L" (download took " +
+                        std::to_wstring(f.downloadMs) + L" ms)");
+            continue;
+        }
+        ++okCount;
+        totalProg += f.stored;
+        [detail appendString:TrF(StringId::EpgDetailProgrammesLine,
+                                 {ns(f.name), [NSString stringWithFormat:@"%d", f.stored]})];
+        [detail appendString:guideLines];
+        diag::info(L"EPG stored " + std::to_wstring(f.stored) + L" programmes for \"" + f.name +
+                   L"\" (download " + std::to_wstring(f.downloadMs) + L" ms, parse " +
+                   std::to_wstring(f.parseMs) + L" ms, " + std::to_wstring(f.parsed) + L" parsed, store " +
+                   std::to_wstring(f.storeMs) + L" ms)");
+    }
+    if (res->index != rabbitears::mac::GuideRefreshResult::Index::NotRun)
+        diag::info(L"EPG search index rebuild: " + std::to_wstring(res->indexMs) + L" ms" +
+                   (res->index == rabbitears::mac::GuideRefreshResult::Index::Rebuilt
+                        ? L""
+                        : L" — FAILED (the next search session rebuilds it): " + res->indexError));
+    NSString* summary = okCount > 0
+        ? TrF(StringId::EpgStoredSummary,
+              {[NSString stringWithFormat:@"%d", totalProg], [NSString stringWithFormat:@"%lu", (unsigned long)res->channels]})
+        : Tr(StringId::EpgRefreshFailedSummary);
+    if (okCount > 0) {  // a fresh guide is exactly when a series rule learns about next week's airings
+        [self setStatus:Tr(StringId::LoadingCheckingRules)];
+        const int queued = [self expandRecordingRules:YES];
+        if (queued > 0) {
+            [detail appendString:TrF(StringId::EpgRulesQueuedDetail, {[NSString stringWithFormat:@"%d", queued]})];
+            summary = [summary stringByAppendingString:TrF(StringId::EpgQueuedByRulesSummary,
+                                                           {[NSString stringWithFormat:@"%d", queued]})];
+        }
+        [(TvGuideWindowController*)_guideWC guideDidChange];  // an open guide shows the new programmes
+    }
+    [self setStatus:summary];
+    [self showResults:summary info:detail];
 }
 
 // Lazily create the guide window controller and wire its recording callbacks once. Both
@@ -3542,6 +3612,21 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         g.onRecordSeries = ^(NSString* tvgId, NSString* name, NSString* title) {
             [me addSeriesRuleForTvgId:tvgId name:name title:title];
         };
+        // A guide row's right-click favourite toggle (Win32 cb.isFavourite / onToggleFavourite).
+        g.isFavourite = ^BOOL(NSString* tvgId) {
+            if (!me->_db) return NO;
+            const auto ch = me->_db->channelByTvgId(ws(tvgId));
+            return ch && ch->favourite;
+        };
+        g.onToggleFavourite = ^(NSString* tvgId, NSString* name) {
+            if (!me->_db) return;
+            const auto ch = me->_db->channelByTvgId(ws(tvgId));
+            if (!ch) return;
+            me->_db->toggleFavourite(ch->id);  // ch->favourite is the pre-toggle state
+            [me refreshChannels];               // the ★ column + a Favourites view stay correct
+            [me setStatus:TrF(ch->favourite ? StringId::StatusRemovedFavourite : StringId::StatusAddedFavourite, {name})];
+        };
+        g.isGuideRefreshing = ^BOOL { return me->_epgRefreshing; };
     }
     return _guideWC;
 }

@@ -28,9 +28,9 @@ target_link_libraries(RabbitEarsPlatformMac PUBLIC RabbitEarsCore "-framework Fo
 # MeterModel.cpp is pure C++ (the mac-local meter model, rabbitears::mac) — compiled
 # in here too so the codec round-trip is exercised headlessly (it is NOT in
 # RabbitEarsCore yet; it lives in mac/ until promotion to common/ — see MeterModel.h).
-add_executable(RabbitEarsSelfTest src/tools/selftest.cpp src/app/MeterModel.cpp)
+add_executable(RabbitEarsSelfTest src/tools/selftest.cpp src/app/MeterModel.cpp src/app/GuideRefresh.mm)
 target_include_directories(RabbitEarsSelfTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/app")
-target_link_libraries(RabbitEarsSelfTest PRIVATE RabbitEarsPlatformMac)
+target_link_libraries(RabbitEarsSelfTest PRIVATE RabbitEarsPlatformMac z)  # z: gzip a test guide
 add_test(NAME selftest COMMAND RabbitEarsSelfTest)
 
 # ---------------------------------------------------------------------------
@@ -84,6 +84,7 @@ if(RABBITEARS_BUILD_MAC)
     # nothing to decide for them.
     src/app/VodSync.mm
     src/app/DeadLinkSweep.mm
+    src/app/GuideRefresh.mm   # Refresh Guide's worker (no retained ObjC objects — MRC)
     src/app/MeterModel.cpp
     platform/Log.mm
     platform/Updater.mm

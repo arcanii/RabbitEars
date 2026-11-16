@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // GuideModel — the TV Guide's rows and coverage counts, built from the database. No window code, so
-// the GUI (onEpgGuide, which hands the result to showEpgGuide) and the CLI (--guidebench, --selftest)
-// run the same build.
+// both GUIs (Win32 onEpgGuide, which hands the result to showEpgGuide; mac TvGuideWindowController)
+// and both self-tests (RabbitEarsCli --guidebench/--selftest, mac RabbitEarsSelfTest) run the same
+// build. In common/ (RabbitEarsCore) since the mac guide adopted it.
 #pragma once
 
 #include <string>

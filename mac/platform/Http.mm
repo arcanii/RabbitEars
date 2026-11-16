@@ -9,6 +9,7 @@
 #include <string>
 
 #include "core/Http.h"
+#include "platform/HttpProgress.h"
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 
 // ⚠ THIS FILE IS MRC (it is absent from the -fobjc-arc list in mac/CMakeLists.txt).
@@ -71,6 +72,58 @@ didCompleteWithError:(NSError*)error {
 
 @end
 
+// Delegate for httpGetWithProgress: a GET that reports each chunk as it arrives (the completion-
+// handler form of httpGet delivers the body only at the end). Same ownership rules as
+// RE_ProbeDelegate: no Objective-C object is held, `sem_` is borrowed from the waiting caller's
+// stack, and the session's retain on the delegate is dropped by finishTasksAndInvalidate.
+// Callbacks arrive serially on the session's delegate queue while the caller blocks, so `body_`
+// and the progress callback are never touched concurrently.
+@interface RE_ProgressDelegate : NSObject <NSURLSessionDataDelegate> {
+@public
+    std::string                     body_;
+    long                            status_;
+    BOOL                            gotResponse_;
+    std::wstring                    error_;       // NSError's description when the transfer failed
+    const rabbitears::HttpProgressFn* progress_;  // NOT owned (the caller's), may be empty
+    dispatch_semaphore_t            sem_;         // NOT owned
+}
+@end
+
+@implementation RE_ProgressDelegate
+
+- (void)URLSession:(NSURLSession*)__unused session
+          dataTask:(NSURLSessionDataTask*)__unused task
+didReceiveResponse:(NSURLResponse*)response
+ completionHandler:(void (^)(NSURLSessionResponseDisposition))handler {
+    status_ = [response isKindOfClass:[NSHTTPURLResponse class]]
+                  ? (long)[(NSHTTPURLResponse*)response statusCode]
+                  : 200;
+    gotResponse_ = YES;
+    // A non-2xx answer is a failure whatever its body says: stop rather than download an error page.
+    handler(status_ >= 200 && status_ < 300 ? NSURLSessionResponseAllow : NSURLSessionResponseCancel);
+}
+
+- (void)URLSession:(NSURLSession*)__unused session
+          dataTask:(NSURLSessionDataTask*)__unused task
+    didReceiveData:(NSData*)data {
+    // enumerateByteRangesUsingBlock: a large NSData may be discontiguous; .bytes would flatten it.
+    [data enumerateByteRangesUsingBlock:^(const void* bytes, NSRange range, BOOL* __unused stop) {
+        body_.append(static_cast<const char*>(bytes), range.length);
+    }];
+    if (progress_ && *progress_) (*progress_)(static_cast<unsigned long long>(body_.size()));
+}
+
+- (void)URLSession:(NSURLSession*)__unused session
+                task:(NSURLSessionTask*)__unused task
+didCompleteWithError:(NSError*)error {
+    // A cancel we made ourselves (a non-2xx status) is reported by its status, not as an error.
+    if (error && !(gotResponse_ && error.code == NSURLErrorCancelled))
+        error_ = rabbitears::wideFromUtf8(error.localizedDescription.UTF8String ?: "");
+    dispatch_semaphore_signal(sem_);
+}
+
+@end
+
 namespace rabbitears {
 
 bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int timeoutMs) {
@@ -114,12 +167,58 @@ bool httpGet(const std::wstring& url, std::string& out, std::wstring& error, int
             }];
         [task resume];
         dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+        dispatch_release(sem);  // MRC: ours (+1 from create), as in httpProbe below
 
         if (ok) {
             out = std::move(body);
         } else {
             error = errLocal.empty() ? L"Download failed." : errLocal;
         }
+        return ok;
+    }
+}
+
+// httpGet with a running byte count (platform/HttpProgress.h) — the mac peer of the Win32
+// implementation, for the guide refresh's progress line. Same request as httpGet (UA, per-request
+// timeout, redirects followed, gzip decoded by NSURLSession), through a delegate instead of a
+// completion handler so each chunk can be counted.
+bool httpGetWithProgress(const std::wstring& url, std::string& out, std::wstring& error, int timeoutMs,
+                         const HttpProgressFn& onProgress) {
+    @autoreleasepool {
+        NSString* urlStr = [NSString stringWithUTF8String:utf8FromWide(url).c_str()];
+        NSURL* nsurl = urlStr ? [NSURL URLWithString:urlStr] : nil;
+        if (!nsurl) {
+            error = L"Invalid URL.";
+            return false;
+        }
+        NSMutableURLRequest* req = [NSMutableURLRequest requestWithURL:nsurl];
+        [req setValue:@"VLC/3.0.23 LibVLC/3.0.23" forHTTPHeaderField:@"User-Agent"];
+        NSURLSessionConfiguration* cfg = NSURLSessionConfiguration.defaultSessionConfiguration;
+        if (timeoutMs > 0) {
+            req.timeoutInterval = timeoutMs / 1000.0;
+            cfg.timeoutIntervalForRequest = timeoutMs / 1000.0;  // per data wait, like httpGet
+        }
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        RE_ProgressDelegate* d = [[RE_ProgressDelegate alloc] init];  // +1, ours
+        d->progress_ = &onProgress;
+        d->sem_ = sem;
+        NSURLSession* session = [NSURLSession sessionWithConfiguration:cfg delegate:d delegateQueue:nil];
+        [[session dataTaskWithRequest:req] resume];
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+
+        const bool ok = d->error_.empty() && d->gotResponse_ && d->status_ >= 200 && d->status_ < 300;
+        if (ok) {
+            out = std::move(d->body_);
+        } else if (!d->error_.empty()) {
+            error = d->error_;
+        } else if (d->gotResponse_) {
+            error = L"HTTP status " + std::to_wstring(d->status_);
+        } else {
+            error = L"Download failed.";
+        }
+        [session finishTasksAndInvalidate];  // releases the session's ref to `d`
+        [d release];
+        dispatch_release(sem);
         return ok;
     }
 }
