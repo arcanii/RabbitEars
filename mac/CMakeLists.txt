@@ -72,6 +72,8 @@ if(RABBITEARS_BUILD_MAC)
     src/app/VlcPlayerMac.mm
     src/app/SpectrumTap.mm
     src/app/MeterView.mm
+    src/app/VuDialMac.mm      # the two VU instruments (port of Win32/ui/VuDial; no retained ObjC — MRC)
+    src/app/MeterBridgeWindowController.mm
     src/app/MetersDialog.mm
     src/app/PlaylistsDialog.mm
     src/app/CategoriesDialog.mm
@@ -101,7 +103,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
     src/app/PlaylistsDialog.mm src/app/CategoriesDialog.mm src/app/TermsDialog.mm
     src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
-    src/app/RecordingsWindowController.mm src/app/LogoLoader.mm
+    src/app/RecordingsWindowController.mm src/app/LogoLoader.mm src/app/MeterBridgeWindowController.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
@@ -110,7 +112,8 @@ if(RABBITEARS_BUILD_MAC)
   target_link_libraries(RabbitEars PRIVATE
     RabbitEarsPlatformMac "-framework Cocoa" "-framework AppKit"
     "-framework CoreAudio" "-framework Accelerate" "-framework IOKit"
-    "-framework ImageIO")  # CGImageSource — bomb-safe logo decode/thumbnailing (LogoLoader)
+    "-framework ImageIO"     # CGImageSource — bomb-safe logo decode/thumbnailing (LogoLoader)
+    "-framework CoreText")   # the VU dials' legends (VuDialMac)
   set_target_properties(RabbitEars PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "RabbitEars"

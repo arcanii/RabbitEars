@@ -159,8 +159,12 @@ std::wstring wkey(int i, const char* suffix) {
     // indices 1 and 2 — picking "LCD" in shipped 0.2.15 gave you the vacuum-tube look, and
     // vice versa. Fix the ORDER HERE, never the enum: the enum value is what is persisted in
     // `meter_<kind>_style`, so renumbering it would silently reinterpret every saved config.
+    // index == (int)MeterStyle — the order of the enum (and of Win32's Look list).
     [sp addItemsWithTitles:@[ Tr(StringId::MeterLookLed), Tr(StringId::MeterLookVacuumTube),
-                              Tr(StringId::MeterLookLcd), Tr(StringId::MeterLookOscilloscope) ]];  // index == (int)MeterStyle
+                              Tr(StringId::MeterLookLcd), Tr(StringId::MeterLookOscilloscope),
+                              Tr(StringId::MeterLookVu), Tr(StringId::MeterLookVuSilver),
+                              Tr(StringId::MeterLookStudioLed), Tr(StringId::MeterLookBacklitLcd),
+                              Tr(StringId::MeterLookVfd) ]];
     [sp selectItemAtIndex:(NSInteger)_cfg[i].style];
     sp.target = self;
     sp.action = @selector(controlChanged:);

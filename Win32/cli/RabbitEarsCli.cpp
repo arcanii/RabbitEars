@@ -46,7 +46,7 @@
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
 #include "ui/MiniMeter.h"  // Win32/ui — only its header-inline parts: needle width, audio reading, the look codec
                            // and count (no GUI code)
-#include "ui/PhotoCells.h"  // Win32/ui — the photoreal cell looks' geometry + rasteriser (pixels only, linked)
+#include "ui/PhotoCells.h"  // common/ui — the photoreal cell looks' geometry + rasteriser (pixels only, shared with mac)
 #include "audio/SpectrumTap.h"  // Win32/audio — only its header-inline level math (rmsDbfs, programmeDbfs)
 #include "core/DeadLinkCheck.h"
 #include "ui/GlassMask.h"

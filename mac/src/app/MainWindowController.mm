@@ -64,6 +64,8 @@
 #import "VodSync.h"
 #import "RecordingsWindowController.h"
 #include "ScheduleStatusWriter.h"
+#import "MeterBridgeWindowController.h"
+#include "MeterLayout.h"  // the meters' size (stage A): heights, widths, labels
 #import "SpectrumTap.h"
 #import "TermsDialog.h"
 #import "TvGuideWindowController.h"
@@ -97,16 +99,36 @@ using namespace rabbitears::i18n;  // StringId / Tr / TrF
 // Reports its new position (via onMoved) after each drag so the controller persists it.
 @interface DraggableMeterBar : NSView
 @property (nonatomic, copy) void (^onMoved)(void);
+// The top edge (kResizeBand pt) resizes the meters instead of moving the bar — the mac reading of
+// Win32's strip-edge drag: `onResize` gets the bar's wanted height (its bottom stays put), and
+// `onMoved` persists the result on mouse-up.
+@property (nonatomic, copy) void (^onResize)(CGFloat barHeight);
 @end
 
 @implementation DraggableMeterBar {
-    NSPoint _grab;  // cursor offset within the bar at mouse-down
+    NSPoint _grab;      // cursor offset within the bar at mouse-down
+    BOOL    _resizing;  // the drag began on the top edge
 }
-- (void)mouseDown:(NSEvent*)e { _grab = [self convertPoint:e.locationInWindow fromView:nil]; }
+static const CGFloat kResizeBand = 5;
+- (void)resetCursorRects {
+    if (!self.onResize) return;
+    const NSRect b = self.bounds;
+    [self addCursorRect:NSMakeRect(0, b.size.height - kResizeBand, b.size.width, kResizeBand)
+                 cursor:NSCursor.resizeUpDownCursor];
+}
+- (void)mouseDown:(NSEvent*)e {
+    _grab = [self convertPoint:e.locationInWindow fromView:nil];
+    _resizing = self.onResize && _grab.y >= self.bounds.size.height - kResizeBand;
+}
 - (void)mouseDragged:(NSEvent*)e {
     NSView* pane = self.superview;
     if (!pane) return;
     const NSPoint p = [pane convertPoint:e.locationInWindow fromView:nil];
+    if (_resizing) {
+        const CGFloat top = std::min(p.y, pane.bounds.size.height);  // the bar's bottom stays put
+        self.onResize(std::max<CGFloat>(1, top - self.frame.origin.y));
+        return;
+    }
     const CGFloat maxX = std::max(0.0, pane.bounds.size.width - self.frame.size.width);
     const CGFloat maxY = std::max(0.0, pane.bounds.size.height - self.frame.size.height);
     NSRect f = self.frame;
@@ -114,7 +136,11 @@ using namespace rabbitears::i18n;  // StringId / Tr / TrF
     f.origin.y = std::clamp(p.y - _grab.y, 0.0, maxY);
     self.frame = f;
 }
-- (void)mouseUp:(NSEvent*)__unused e { if (_onMoved) _onMoved(); }
+- (void)mouseUp:(NSEvent*)__unused e {
+    _resizing = NO;
+    [self.window invalidateCursorRectsForView:self];
+    if (_onMoved) _onMoved();
+}
 @end
 
 // One video pane in the multi-view area: a video surface (a child of the video container)
@@ -187,6 +213,18 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
 // Set at quit: a running Refresh Guide stops at its next download or transaction boundary.
 namespace {
 std::atomic<bool> g_epgCancel{false};
+// The volume slider (0..1), for the Spectrum tap's RT thread: the tap hears the output AFTER libVLC's
+// gain, and the audio needle reads the PROGRAMME's level whatever the volume (Win32 a592ee9).
+std::atomic<float> g_tapVolume{1.0f};
+// What the volume took off, given back (Win32 SpectrumTap::programmeDbfs). libVLC's mac output (auhal)
+// applies the slider v as a HAL-unit gain of v^3 — the tap hears that — so it is undone by the same law.
+// A slider at 0 (muted) leaves nothing to raise: the floor, as silence is; never past full scale.
+float programmeDbfs(float capturedDb, float slider) {
+    const float gain = slider * slider * slider;
+    if (capturedDb <= -120.0f || !(gain > 1e-5f)) return -120.0f;
+    if (gain >= 1.0f) return capturedDb;
+    return std::min(capturedDb - 20.0f * std::log10(gain), 3.0103f);
+}
 }  // namespace
 
 @implementation MainWindowController {
@@ -270,6 +308,10 @@ std::atomic<bool> g_epgCancel{false};
     BOOL           _videoOnly;     // View ▸ Video Only — all chrome hidden, video fills
     BOOL           _metersHidden;  // bottom-bar toggle: hide the whole meter line
     CGFloat        _meterPosX, _meterPosY;  // meter-bar position as a 0..1 fraction of the pane
+    int            _meterHeightDp;   // `meter_height` (dp, Win32's key): 30 standard, 50 Large, 72 Extra large
+    BOOL           _meterLabels;     // `meter_labels`: each meter's short name under it (taller rows, the bridge)
+    NSTextField*   _meterLabelViews[4];
+    MeterBridgeWindowController* _meterBridge;  // the meter bridge window (lazily made; app-lifetime)
     BOOL           _pipMoved;               // the user moved/resized the PiP inset (else default corner)
     CGFloat        _pipPosX, _pipPosY;      // PiP inset position, as a 0..1 fraction of the free travel
     CGFloat        _pipW, _pipH;            // PiP inset size in px (persisted); 0 == use the default
@@ -509,6 +551,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _volume.continuous = YES;
     [content addSubview:_volume];
     _player->setVolume(vol0);
+    g_tapVolume = std::clamp(vol0 / 100.0f, 0.0f, 1.0f);
 
     // ---- transport cluster: ⏸ ⏪ [========] ⏩  "12:34 / 1:45:00" ----------------------------
     // Hidden until libVLC says the current media is actually seekable (see -updateTransport).
@@ -660,13 +703,17 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // lays out the enabled ones inside it and sizes + positions the bar.
     _meterBar = [[DraggableMeterBar alloc] initWithFrame:NSMakeRect(0, 0, 10, kMeterH)];
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle
-    _meterBar.onMoved = ^{ [me persistMeterPos]; };
+    _meterBar.onMoved = ^{ [me persistMeterPos]; [me persistMeterHeight]; };
+    _meterBar.onResize = ^(CGFloat barH) { [me resizeMetersToBarHeight:barH]; };
     static const MeterKind meterKinds[4] = {MeterKind::Spectrum, MeterKind::Signal,
                                             MeterKind::Bitrate, MeterKind::Frames};
     for (int k = 0; k < 4; ++k) {
         _meters[k] = [[MeterView alloc] initWithKind:meterKinds[k]];
         _meters[k].hidden = YES;
         [_meterBar addSubview:_meters[k]];
+        _meterLabelViews[k] = [[NSTextField labelWithString:@""] retain];  // MRC: app-lifetime ivar
+        _meterLabelViews[k].hidden = YES;
+        [_meterBar addSubview:_meterLabelViews[k]];
     }
     [videoPane addSubview:_meterBar];  // sibling of the video, on top (floats)
     videoPane.postsFrameChangedNotifications = YES;
@@ -726,6 +773,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
 - (void)finishStartup {
     _startupFinished = YES;         // the app is now usable — re-enables the gated menu commands
     [self applyMeterConfig];        // configure + show the enabled meters (start the tap if Spectrum is on)
+    if (_db) if (auto b = _db->getSetting(L"meter_bridge"); b && *b == L"1") [self openMeterBridge];  // as left
 
     _player->attachTo(_videoView);  // hand libVLC the NSView to render into
 
@@ -1103,6 +1151,8 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     // dataSource/delegate/target back-refs → message-to-freed crash).
     if (_recordingsWC) [(RecordingsWindowController*)_recordingsWC relabelForLanguageChange];
     if (_guideWC)      [(TvGuideWindowController*)_guideWC relabelForLanguageChange];
+    [_meterBridge relabelForLanguageChange];  // the bridge's title + labels
+    [self applyMeterLayout];                  // the tray's labels re-read their text
 }
 
 // ---- playlist load / filter model ----
@@ -2347,6 +2397,10 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
     }
     if (_db) {
         if (auto h = _db->getSetting(L"meters_hidden")) _metersHidden = (*h == L"1");
+        _meterHeightDp = rabbitears::mac::kMeterHeightStd;
+        if (auto mh = _db->getSetting(L"meter_height"))
+            _meterHeightDp = rabbitears::mac::clampMeterHeightDp((int)std::wcstol(mh->c_str(), nullptr, 10));
+        if (auto ml = _db->getSetting(L"meter_labels")) _meterLabels = (*ml == L"1");
         if (auto x = _db->getSetting(L"meter_pos_x")) _meterPosX = std::clamp(std::wcstod(x->c_str(), nullptr), 0.0, 1.0);
         if (auto y = _db->getSetting(L"meter_pos_y")) _meterPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
         // PiP inset geometry (position fraction + size px). Size is re-clamped against the
@@ -2387,8 +2441,72 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
 
 // Push the loaded config into the views, relayout, and match the Spectrum tap to its
 // enabled state (creating the tap is what triggers the one-time consent prompt).
+// The top-edge drag (DraggableMeterBar): the meters' height follows the bar's wanted height, the
+// bar's bottom staying where it is. Any dp from 30 to 120 (Win32's range); persisted on mouse-up.
+- (void)resizeMetersToBarHeight:(CGFloat)barH {
+    namespace ml = rabbitears::mac;
+    const CGFloat labelH = _meterLabels ? ml::kMeterLabelRowPt : 0;
+    int dp = ml::meterHeightDpForPt(std::max<CGFloat>(1, barH - (barH > kMeterH + labelH ? labelH : 0)));
+    if (dp == _meterHeightDp) return;
+    const CGFloat bottom = _meterBar.frame.origin.y;
+    _meterHeightDp = dp;
+    [self applyMeterLayout];
+    // Keep the bottom edge where the drag started: re-derive the position fraction from it.
+    NSView* pane = _videoContainer;
+    const CGFloat availY = std::max(1.0, pane.bounds.size.height - _meterBar.frame.size.height);
+    _meterPosY = std::clamp(bottom / availY, 0.0, 1.0);
+    [self applyMeterLayout];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+}
+
+- (void)persistMeterHeight {
+    if (_db) _db->setSetting(L"meter_height", std::to_wstring(_meterHeightDp));
+}
+
+// Settings ▾ ▸ Meters ▸ Standard size / Large / Extra large (Win32 MenuMeterSize*).
+- (void)selectMeterSize:(NSMenuItem*)sender {
+    _meterHeightDp = rabbitears::mac::clampMeterHeightDp((int)sender.tag);
+    [self persistMeterHeight];
+    [self applyMeterLayout];
+    [self persistMeterPos];
+}
+
+// Settings ▾ ▸ Meters ▸ Meter labels.
+- (void)toggleMeterLabels:(id)__unused sender {
+    _meterLabels = !_meterLabels;
+    if (_db) _db->setSetting(L"meter_labels", _meterLabels ? L"1" : L"0");
+    [self applyMeterLayout];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+}
+
+// Settings ▾ ▸ Meters ▸ Meter bridge window: a separate window whose meters MIRROR the tray's.
+- (void)toggleMeterBridge:(id)__unused sender {
+    if (_meterBridge && [_meterBridge isVisible]) [self closeMeterBridge:YES];
+    else [self openMeterBridge];
+}
+
+- (void)openMeterBridge {
+    if (!_meterBridge) {
+        _meterBridge = [[MeterBridgeWindowController alloc] init];  // MRC: app-lifetime, +1 held
+        MainWindowController* __unsafe_unretained me = self;
+        _meterBridge.onClose = ^{ [me closeMeterBridge:NO]; };
+    }
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
+    for (int k = 0; k < 4; ++k) [_meters[k] setMirror:[_meterBridge meterForKind:k]];
+    [_meterBridge showNear:_window];
+    if (_db) _db->setSetting(L"meter_bridge", L"1");
+}
+
+// `byMenu`: the window is still up (the menu toggled it off) — order it out too.
+- (void)closeMeterBridge:(BOOL)byMenu {
+    for (int k = 0; k < 4; ++k) [_meters[k] setMirror:nil];  // unlinked BEFORE the twin can go
+    if (byMenu) [_meterBridge close];
+    if (_db) _db->setSetting(L"meter_bridge", L"0");
+}
+
 - (void)applyMeterConfig {
     for (int k = 0; k < 4; ++k) [_meters[k] setConfig:_meterCfg[k]];
+    [_meterBridge applyConfigs:_meterCfg labels:_meterLabels];
     [self applyMeterLayout];
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) {
         [_meters[(int)MeterKind::Spectrum] setAvailable:YES];
@@ -2406,21 +2524,38 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
     const CGFloat W = pane.bounds.size.width, H = pane.bounds.size.height;
     // (the video panes are positioned by -applyVideoPaneLayout; the meter bar floats on top)
 
-    // Lay the enabled meters left-to-right inside the bar; size the bar to fit them.
+    // Lay the enabled meters left-to-right inside the bar; size the bar to fit them. At the standard
+    // height every meter keeps its kind's width and the gap (the tray as it always was); taller, the
+    // Win32 own row's rules (MeterLayout.h): widths scale, needle looks take their instrument's own
+    // width, no gap, and the optional labels' row under them.
+    namespace ml = rabbitears::mac;
+    const bool ownRow = _meterHeightDp > ml::kMeterHeightStd;
+    // Never taller than the pane allows (the video keeps at least half), so a small window keeps the bar.
+    const CGFloat labelH = (ownRow && _meterLabels) ? ml::kMeterLabelRowPt : 0;
+    const CGFloat h = std::min(ml::meterHeightPt(_meterHeightDp), std::max(kMeterH, H * 0.5 - labelH));
+    const CGFloat gap = ownRow ? 0 : kMeterGap;
     CGFloat x = 0;
     for (int k = 0; k < 4; ++k) {
         const BOOL show = _meterCfg[k].enabled && !_videoOnly && !_metersHidden;
         _meters[k].hidden = !show;
+        _meterLabelViews[k].hidden = !show || labelH <= 0;
         if (!show) continue;
-        _meters[k].frame = NSMakeRect(x, 0, kMeterW[k], kMeterH);
-        x += kMeterW[k] + kMeterGap;
+        const CGFloat w = ml::meterWidthPt(k, _meterCfg[k].style, h, ownRow);
+        _meters[k].frame = NSMakeRect(x, labelH, w, h);
+        if (labelH > 0) {
+            _meterLabelViews[k].attributedStringValue = ml::meterLabelText(k);
+            _meterLabelViews[k].frame = NSMakeRect(x, 0, w, labelH);
+        }
+        x += w + gap;
     }
-    const CGFloat barW = x > 0 ? x - kMeterGap : 0;  // drop the trailing gap
+    const CGFloat barW = x > 0 ? x - gap : 0;  // drop the trailing gap
     _meterBar.hidden = (barW <= 0);
     if (barW <= 0) return;
+    const CGFloat barH = h + labelH;
     // Position the bar at the persisted fraction of the available range, clamped.
-    const CGFloat availX = std::max(0.0, W - barW), availY = std::max(0.0, H - kMeterH);
-    _meterBar.frame = NSMakeRect(_meterPosX * availX, _meterPosY * availY, barW, kMeterH);
+    const CGFloat availX = std::max(0.0, W - barW), availY = std::max(0.0, H - barH);
+    _meterBar.frame = NSMakeRect(_meterPosX * availX, _meterPosY * availY, barW, barH);
+    [_meterBar.window invalidateCursorRectsForView:_meterBar];
 }
 
 - (void)videoPaneResized:(NSNotification*)__unused n { [self applyVideoPaneLayout]; [self applyMeterLayout]; }
@@ -3195,6 +3330,9 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     _spectrumTap = [[SpectrumTap alloc] initWithBandCount:24
                                           spectrumHandler:^(const float* bands, int count) {
         [view pushSpectrum:bands count:count];  // RT audio thread → brief lock in the view
+    }
+                                             levelHandler:^(float db) {
+        [view pushLevel:programmeDbfs(db, g_tapVolume.load(std::memory_order_relaxed))];  // the VU needle
     }];
     if (!_spectrumTap) [_meters[s] setAvailable:NO];  // macOS < 14.2, or the tap couldn't be built
 }
@@ -3372,7 +3510,33 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     }
     layoutsItem.submenu = layouts;
 
-    [[m addItemWithTitle:Tr(StringId::MenuMeters) action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
+    // Meters ▸ (Win32's submenu): the size presets, the labels, the bridge window, then the setup dialog.
+    // (Win32's "Or drag the strip's top edge" hint and "Data-flow dots" are strip/tank items mac lacks;
+    // here the floating bar's top edge is the drag.)
+    {
+        NSMenuItem* metersItem = [m addItemWithTitle:Tr(StringId::MenuMetersSubmenu) action:nil keyEquivalent:@""];
+        NSMenu* mm = [[[NSMenu alloc] init] autorelease];  // MRC: the item retains its submenu
+        struct { StringId sid; int dp; } sizes[] = {
+            {StringId::MenuMeterSizeStandard, rabbitears::mac::kMeterHeightStd},
+            {StringId::MenuMeterSizeLarge, rabbitears::mac::kMeterHeightLarge},
+            {StringId::MenuMeterSizeXLarge, rabbitears::mac::kMeterHeightXLarge}};
+        for (const auto& sz : sizes) {
+            NSMenuItem* it = [mm addItemWithTitle:Tr(sz.sid) action:@selector(selectMeterSize:) keyEquivalent:@""];
+            it.target = self;
+            it.tag = sz.dp;
+            it.state = _meterHeightDp == sz.dp ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+        [mm addItem:[NSMenuItem separatorItem]];
+        NSMenuItem* lab = [mm addItemWithTitle:Tr(StringId::MenuMeterLabels) action:@selector(toggleMeterLabels:) keyEquivalent:@""];
+        lab.target = self;
+        lab.state = _meterLabels ? NSControlStateValueOn : NSControlStateValueOff;
+        NSMenuItem* br = [mm addItemWithTitle:Tr(StringId::MenuMeterBridge) action:@selector(toggleMeterBridge:) keyEquivalent:@""];
+        br.target = self;
+        br.state = (_meterBridge && [_meterBridge isVisible]) ? NSControlStateValueOn : NSControlStateValueOff;
+        [mm addItem:[NSMenuItem separatorItem]];
+        [[mm addItemWithTitle:Tr(StringId::MenuMeterSetup) action:@selector(showMeters:) keyEquivalent:@""] setTarget:self];
+        metersItem.submenu = mm;
+    }
 
     // Language ▸ (mirrors the Win32 gear; the AppDelegate owns the selection + live apply). Built
     // fresh on each gear open, so the ✓ tracks the active language without an explicit rebuild.
@@ -3914,6 +4078,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 - (void)volumeChanged:(id)__unused sender {
     const int v = (int)_volume.doubleValue;
     _player->setVolume(v);
+    g_tapVolume = std::clamp(v / 100.0f, 0.0f, 1.0f);
     if (v > 0) _preMuteVolume = v;
     _muteBtn.title = (v == 0) ? @"🔇" : @"🔊";
     if (_db) _db->setSetting(L"volume", std::to_wstring(v));
