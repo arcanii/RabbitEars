@@ -1392,10 +1392,12 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         //
         // ⚠ BOTH HALVES HERE ARE UNCAPPED, AND THIS IS THE ONE GRID PATH kMaxGridRows DOES NOT
         // COVER. GridFilter carries only {limit, hideDead, categories} — it cannot express the
-        // favourites/group/country predicate — so `searchChannels` below is a GLOBAL triple-LIKE
-        // over the whole library, and gridLimit() emits nothing for limit 0 (Database.cpp:260, a
-        // deliberate choice: SQLite's "LIMIT 0" returns no rows). Measured ~1.6 s on a 411k-row
-        // library; harmless at 14k, bad at Xtream scale.
+        // favourites/group/country predicate — so `searchChannels` below is a GLOBAL name search
+        // over the whole library, and gridLimit() emits nothing for limit 0 (a deliberate choice:
+        // SQLite's "LIMIT 0" returns no rows). Since schema v11 that search goes through the FTS5
+        // channel-name index (docs/CHANNEL_SEARCH.md — 0.2–1 ms for most words on 410k channels,
+        // ~45 ms for the commonest; under 3 characters a LIKE scan of the names, ~110–150 ms); it
+        // was a triple-LIKE over name/group/tvg-name, measured ~1.6 s at 411k rows, before.
         //
         // DO NOT "fix" this by capping the search half: that yields the filter-matches among the
         // first 5,000 GLOBAL hits — exactly the compose-the-wrong-way-round bug Database.h:28-36
