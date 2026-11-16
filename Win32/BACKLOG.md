@@ -236,6 +236,31 @@ Follow-ups the VU work left, none urgent:
 
 ---
 
+## 📼 A scheduled recording whose stream dies mid-airing stays `Recording` until its stop time · flagged by the macOS team, 2026-11-16
+
+Found on device during the mac 0.2.22 checklist and fixed on mac in 0.2.23 (PR "mac 0.2.23 — on-device
+fixes"). **Windows very likely has the same gap; not reproduced there.** `VlcPlayer::doRecordStart` creates
+`rec_` and plays it, but attaches **no** event manager to it (`Win32/ui/VlcPlayer.cpp`, the
+`libvlc_media_player_new_from_media(m)` call), so the only failure the scheduler ever sees is
+`ScheduledStart::RecorderFailed`, which is a refusal *at start*. A stream that answers 404 after the recorder
+opened, or a provider that drops the connection an hour in, leaves the row reading **Recording** until the
+stop time and then lands it as **Done**, with an empty or truncated file. Until then the recorder is still
+counted as busy, so the next scheduled airing on that line can be blocked, and so can a VOD sync, which
+refuses while a recording is running.
+
+**What mac did (a model, not a prescription):** mac has no libVLC events at all, so it polls
+`libvlc_media_player_get_state(recorder)` on the 30 s scheduler tick. `Ended`/`Error` → stop the recorder,
+delete the file only if it is 0 bytes (otherwise keep the partial), mark the row **Failed** through the
+status writer, and show `StatusScheduledRecordingFailed` ("Scheduled recording of {0} failed — the stream
+stopped before the programme ended.", a new shared id with en/ja/zh-Hant). On Windows, attaching
+`libvlc_MediaPlayerEndReached` + `libvlc_MediaPlayerEncounteredError` to `rec_`'s event manager and posting
+to the UI thread would be the native shape; the string is already in the catalog.
+
+Related, same PR: mac's **Cancel Selected** now stops a scheduled recording that is *in progress* (it used
+to return silently; Win32's `cb.cancel` already did this, so nothing to do on Windows there).
+
+---
+
 ## ✅ FIXED ON WINDOWS (UNRELEASED) — `updateScheduleStatus` is unverifiable, and a VOD sync can turn a recording into a silent `Missed` · flagged by the macOS team, 2026-08-09
 
 > ### What Windows did (2026-09-23), and the 🍎 follow-up it leaves for the macOS team

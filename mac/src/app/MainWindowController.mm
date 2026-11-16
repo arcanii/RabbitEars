@@ -2004,6 +2004,20 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     _activeScheduleId = 0;
 }
 
+// The Recordings window cancelled schedule `sid`: stop the recorder if that is the one it is on.
+- (void)stopScheduleIfActive:(long long)sid {
+    if (sid != 0 && sid == _activeScheduleId) {
+        diag::info(L"scheduled recording stopped by the user (id " + std::to_wstring(sid) + L")");
+        const bool fromRule = _activeScheduleRow.ruleId != 0;
+        const std::wstring file = _scheduleRecorder ? _scheduleRecorder->recordingFile() : std::wstring();
+        [self stopScheduledRecorder];
+        // Replace "● Recording (scheduled) …", which would otherwise linger: Win32's skip wording for
+        // a series airing (the rule keeps going), else where the part already recorded went.
+        if (fromRule) [self setStatus:Tr(StringId::StatusAiringSkippedRule)];
+        else if (!file.empty()) [self setStatus:TrF(StringId::StatusRecordingSaved, {ns(file)})];
+    }
+}
+
 // A schedule row by id in a listing (nullptr when the listing does not have it).
 static const rabbitears::ScheduledRecording* findScheduleRow(
     const std::vector<rabbitears::ScheduledRecording>& rows, long long id) {
@@ -2062,6 +2076,41 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
             }
         }
         if (changed) schedules = _statusWriter->listAsDecided();
+    }
+
+    // A recording whose stream DIED before its stop time (refused, a 404, the provider dropped the
+    // connection). libVLC moves the recorder to Error/Ended, but the player object stays, so nothing
+    // else notices: the row sat at "● Recording" over a file that had stopped growing, planScheduler
+    // counted the recorder busy (every other schedule blocked), the VOD-sync gate refused ("stop
+    // recording first") with no way to stop it, and at the stop time plan.stop called it Done.
+    // Found on device, 2026-11 (a 404 behind a live airing). Close it out honestly instead: stop
+    // the recorder (synchronously — its input is already over, so there is nothing to stall on, and
+    // the file is final before we look at it), drop the file if nothing was ever written (a 0-byte
+    // .ts is only litter), keep it if it has data (the part that did record), and mark the row
+    // Failed — through the writer, so a lost write is remembered rather than leaving a Recording row
+    // with nothing behind it. No retry: hammering a refusing provider every tick is worse.
+    if (_activeScheduleId != 0 && _scheduleRecorder) {
+        using RS = VlcPlayerMac::RecorderState;
+        const RS rs = _scheduleRecorder->recorderState();
+        if (rs == RS::Ended || rs == RS::Failed) {
+            const long long id = _activeScheduleId;
+            const std::wstring file = _scheduleRecorder->recordingFile();
+            _scheduleRecorder->stopRecording();
+            _activeScheduleId = 0;
+            NSString* path = file.empty() ? nil : ns(file);
+            const unsigned long long bytes =
+                path ? [[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileSize] : 0;
+            if (path && bytes == 0) [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+            rabbitears::ScheduledRecording fallback = _activeScheduleRow;  // when the listing misses it
+            fallback.status = ScheduleStatus::Recording;  // beginScheduledStart persisted this first
+            const rabbitears::ScheduledRecording* row = findScheduleRow(schedules, id);
+            _statusWriter->setTerminal(id, row ? row : &fallback, ScheduleStatus::Failed);
+            diag::warn(L"scheduled recording FAILED mid-airing (id " + std::to_wstring(id) + L"): its stream " +
+                       (rs == RS::Failed ? L"errored" : L"ended") + L" before the stop time; " +
+                       (bytes ? L"kept " + std::to_wstring(bytes) + L" bytes" : L"nothing was written, empty file removed"));
+            [self setStatus:TrF(StringId::StatusScheduledRecordingFailed, {ns(fallback.channelName)})];
+            schedules = _statusWriter->listAsDecided();
+        }
     }
 
     const long long now = (long long)time(nullptr);
@@ -2595,9 +2644,36 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
     const CGFloat labelH = (ownRow && _meterLabels) ? ml::kMeterLabelRowPt : 0;
     const CGFloat h = std::min(ml::meterHeightPt(_meterHeightDp), std::max(kMeterH, H * 0.5 - labelH));
     const CGFloat gap = ownRow ? 0 : kMeterGap;
+    const BOOL tankShow = _dataFlowOn && !_videoOnly && !_metersHidden;
+    // Which meters fit the pane. Win32 lays the tray out right-to-left with the tank pinned at the
+    // right and HIDES a meter that does not fit (MainWindowChrome), so the row never runs off the
+    // video. mac laid out left-to-right with no width check: at Extra large — or a dragged height —
+    // in an ordinary window the row outgrew the pane and the bar was clipped, losing part of Frames
+    // and the whole tank (found on device, 2026-11). Same rule here: the tank first, then each
+    // meter from the right (Frames → Spectrum) if it still fits; a narrower one further left may.
+    BOOL fits[4] = {NO, NO, NO, NO};
+    {
+        const CGFloat tankW = tankShow ? ml::tankWidthPt(h, ownRow) : 0;
+        CGFloat metersW = 0;
+        int placed = 0;
+        auto rowW = [&](CGFloat mw, int n) {  // n meters of total width mw, + the gaps, + the tank
+            CGFloat w = mw + (n > 1 ? gap * (n - 1) : 0);
+            if (tankShow) w += (n > 0 ? std::max(gap, kMeterGap) : 0) + tankW;
+            return w;
+        };
+        for (int k = 3; k >= 0; --k) {
+            if (!(_meterCfg[k].enabled && !_videoOnly && !_metersHidden)) continue;
+            const CGFloat w = ml::meterWidthPt(k, _meterCfg[k].style, h, ownRow);
+            if (rowW(metersW + w, placed + 1) <= W) {
+                fits[k] = YES;
+                metersW += w;
+                ++placed;
+            }
+        }
+    }
     CGFloat x = 0;
     for (int k = 0; k < 4; ++k) {
-        const BOOL show = _meterCfg[k].enabled && !_videoOnly && !_metersHidden;
+        const BOOL show = fits[k];
         _meters[k].hidden = !show;
         _meterLabelViews[k].hidden = !show || labelH <= 0;
         if (!show) continue;
@@ -2610,7 +2686,6 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
         x += w + gap;
     }
     // The data-flow tank, right-most, keeping its distance from the meters in either row (Win32).
-    const BOOL tankShow = _dataFlowOn && !_videoOnly && !_metersHidden;
     _tank.hidden = !tankShow;
     _tankLabel.hidden = !tankShow || labelH <= 0;
     if (tankShow) {
@@ -3682,6 +3757,10 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     if (!_recordingsWC) _recordingsWC = [[RecordingsWindowController alloc] initWithDatabase:_db.get()
                                                                      statusWriter:_statusWriter.get()];
     MainWindowController* __unsafe_unretained me = self;  // app-lifetime; no retain cycle (MRC)
+    // Cancel on a row being recorded: only the scheduler can stop its recorder (Win32 cb.cancel).
+    ((RecordingsWindowController*)_recordingsWC).onStopRecording = ^(long long sid) {
+        [me stopScheduleIfActive:sid];
+    };
     [(RecordingsWindowController*)_recordingsWC presentRelativeTo:_window onChange:^{
         [me expandRecordingRules:YES];  // a re-enabled rule should re-queue now
         [me schedulerTick];

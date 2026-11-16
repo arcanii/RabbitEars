@@ -62,6 +62,10 @@ set(APP_VERSION "0.2.22")
 # coverage line and multi-guide refresh; catch-up playback; the photoreal meter line (Backlit + Silver
 # VU, Studio LED / Backlit LCD / VFD, meter size, labels, the meter bridge, glass); and the data-flow tank,
 # which mac never had. Skin MATERIALS stay Flat on mac (no skin engine — the design doc's own note).
+#
+# 0.2.23 is mac-only: the fixes from 0.2.22's first on-device pass (a scheduled recording that can't be
+# stopped or that dies mid-airing, guide labels and search results, the meter tray and bridge clipping,
+# the Recordings window, and the libVLC plugin cache rebuilt at packaging). Windows stays 0.2.22.
 if(APPLE)
-  set(APP_VERSION "0.2.22")
+  set(APP_VERSION "0.2.23")
 endif()

@@ -715,6 +715,8 @@ enum class StringId {
     // --- GuideGrid ---
     LoadingGuideSourceTag,
     EpgGuideSourceError,
+    // --- Status ---
+    StatusScheduledRecordingFailed,
     Count  // sentinel — MUST stay last
 };
 

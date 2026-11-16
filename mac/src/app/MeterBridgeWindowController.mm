@@ -92,7 +92,14 @@ using namespace rabbitears::i18n;
         return w;
     };
     const CGFloat avail = sz.width - 2 * pad;
-    for (int i = 0; i < 40 && rowWidth(h) > avail && h > 16; ++i) h *= 0.95;  // shrink to fit the width
+    // Shrink to fit the width. The widths grow (near-)linearly with h, so jump to the proportional
+    // estimate, then step down a point at a time for the needle dials' rounding and the tank's fixed
+    // gap — Win32 MeterBridge steps by one with no cap. The old loop stopped after 40 steps of 5 %
+    // (0.95^40 ≈ 0.13): a window much taller than it is wide ended the loop with the row still too
+    // wide, and the tank was clipped off the right edge (found on device, 2026-11).
+    if (const CGFloat w0 = rowWidth(h); w0 > avail && w0 > 0)
+        h = std::max<CGFloat>(16, std::floor(h * avail / w0));
+    while (h > 16 && rowWidth(h) > avail) h -= 1;
     const CGFloat rowW = rowWidth(h);
     CGFloat x = std::max(pad, (sz.width - rowW) / 2);
     const CGFloat y = std::max(pad, (sz.height - h - labelH) / 2) + labelH;

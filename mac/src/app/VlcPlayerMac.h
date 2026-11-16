@@ -181,6 +181,14 @@ public:
     void stopRecordingAsync();
     bool isRecording() const;
     std::wstring recordingFile() const;  // the path being written, or empty
+    // What the recording's OWN input is doing. mac attaches no libVLC event callbacks, so this poll
+    // is the scheduler's only way to notice a stream that died mid-airing (refused, 404, the
+    // provider dropped it): a dead recorder still reads isRecording() — the player object exists —
+    // and would otherwise sit "Recording" over a file that stopped growing until its stop time.
+    // Starting = not delivering yet (Opening/Buffering); Running = Playing/Paused; Ended = its input
+    // reached the end (a live stream the server closed); Failed = libVLC's Error state.
+    enum class RecorderState { Idle, Starting, Running, Ended, Failed };
+    RecorderState recorderState() const;
 
 private:
     struct Impl;

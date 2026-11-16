@@ -507,4 +507,21 @@ bool VlcPlayerMac::isRecording() const {
 
 std::wstring VlcPlayerMac::recordingFile() const { return impl_->recFile; }
 
+VlcPlayerMac::RecorderState VlcPlayerMac::recorderState() const {
+#if defined(RABBITEARS_HAVE_LIBVLC)
+    if (!impl_->recorder) return RecorderState::Idle;
+    switch (libvlc_media_player_get_state(impl_->recorder)) {
+        case libvlc_NothingSpecial:
+        case libvlc_Opening:
+        case libvlc_Buffering: return RecorderState::Starting;
+        case libvlc_Playing:
+        case libvlc_Paused:    return RecorderState::Running;
+        case libvlc_Error:     return RecorderState::Failed;
+        default:               return RecorderState::Ended;  // Ended (or Stopped, which only we cause)
+    }
+#else
+    return RecorderState::Idle;
+#endif
+}
+
 }  // namespace rabbitears

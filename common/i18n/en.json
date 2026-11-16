@@ -647,5 +647,6 @@
   "MeterLookVfd": "Fluorescent (VFD)",
   "MenuMeterTankDots": "Data-flow dots grow with the meter",
   "LoadingGuideSourceTag": " — guide {0} of {1}",
-  "EpgGuideSourceError": "guide {0} of {1}: {2}"
+  "EpgGuideSourceError": "guide {0} of {1}: {2}",
+  "StatusScheduledRecordingFailed": "Scheduled recording of {0} failed — the stream stopped before the programme ended."
 }

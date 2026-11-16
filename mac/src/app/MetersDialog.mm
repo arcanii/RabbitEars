@@ -168,7 +168,9 @@ std::wstring wkey(int i, const char* suffix) {
         [root.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
         [root.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
         [root.topAnchor constraintEqualToAnchor:content.topAnchor],
-        [root.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+        // ≥, not =: the panel is resizable, and any height beyond the rows' own belongs BELOW the
+        // buttons — pinned at both ends, the stack spread it between the rows.
+        [content.bottomAnchor constraintGreaterThanOrEqualToAnchor:root.bottomAnchor],
     ]];
 
     _panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, fit.width, fit.height)
@@ -369,7 +371,11 @@ std::wstring wkey(int i, const char* suffix) {
     NSTextField* note = [NSTextField wrappingLabelWithString:Tr(StringId::MeterDataFlowNote)];
     note.font = [NSFont systemFontOfSize:10];
     note.textColor = NSColor.secondaryLabelColor;
-    [note.widthAnchor constraintLessThanOrEqualToConstant:260].active = YES;
+    // A FIXED wrap width. With only "≤ 260" the label was measured narrower when the panel sized itself
+    // (fittingSize — more lines, taller) than it is finally laid out, so the panel came out ~100 pt too
+    // tall and the stack parked the slack as a blank band under Spectrum (found on device, 2026-11).
+    note.preferredMaxLayoutWidth = 220;
+    [note.widthAnchor constraintEqualToConstant:220].active = YES;
     NSStackView* row = [NSStackView stackViewWithViews:@[ _dataFlow, fl, _fluidWell, _tankPreview, note ]];
     // Glass: [——slider——] Off/NN% — Win32's global "glass cover" over every meter and the tank.
     NSTextField* gl = [NSTextField labelWithString:Tr(StringId::MetersGlassLabel)];
