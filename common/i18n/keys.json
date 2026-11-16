@@ -4217,5 +4217,13 @@
       "{2}"
     ],
     "comment": "Refresh Guide results box, after a playlist's name and a colon: one of the several XMLTV guides that playlist's guide link lists could not be loaded. {0} = which guide (1, 2, ...), {1} = how many guides the link lists, {2} = the reason (a technical error such as \"download failed\"). When every guide failed, one of these per guide is joined with \"; \"."
+  },
+  {
+    "id": "StatusScheduledRecordingFailed",
+    "cluster": "Status",
+    "placeholders": [
+      "{0}"
+    ],
+    "comment": "Status line when a scheduled recording's stream errors or ends before the programme does. {0} = channel name. The row is marked Failed; any part already recorded is kept."
   }
 ]

@@ -243,7 +243,12 @@ static const CGFloat kBlockPad  = 6;    // text inset inside a programme block
             long long stop = p.stopUtc > p.startUtc ? p.stopUtc : p.startUtc + 1800;  // guard 0/short
             CGFloat x1 = [self xForTime:stop];
             if (x1 <= kChanColW || x0 >= NSMaxX(content)) continue;  // off-screen in X
-            NSRect block = NSInsetRect(NSMakeRect(x0, top, x1 - x0, kRowH), 1, 1);
+            // A programme that began left of the view starts its block AT the view's edge (Win32
+            // EpgGuideControl: bx0 = max(x0, colW)), so its title and time are drawn where they can
+            // be read. Drawn from x0, an on-now programme that started before the scroll position
+            // showed as a blank block — a 24-hour one had no label at all (found on device, 2026-11).
+            const CGFloat bx0 = std::max<CGFloat>(x0, kChanColW);
+            NSRect block = NSInsetRect(NSMakeRect(bx0, top, x1 - bx0, kRowH), 1, 1);
 
             const BOOL airing = (p.startUtc <= _nowUtc && _nowUtc < stop);
             const BOOL flash = i == _flashRow && p.startUtc == _flashStart;

@@ -423,11 +423,16 @@ NSAttributedString* markedText(const std::wstring& marked, NSFont* font, NSColor
     _resultsScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _resultsScroll.hasVerticalScroller = YES;
     _results = [[REGuideResultsTable alloc] initWithFrame:body];
+    // The one column spans the table. It was created at NSTableColumn's default 100 pt and only
+    // ever resized on a LATER table resize, so every result wrapped at ~100 pt — "Upcoming pro…",
+    // a title, a time and a channel each cut on its own line (found on device, 2026-11). Start it at
+    // the full width and let it follow the table; -showResultsList: re-fits it too.
     NSTableColumn* col = [[NSTableColumn alloc] initWithIdentifier:@"r"];
     col.resizingMask = NSTableColumnAutoresizingMask;
+    col.width = body.size.width;
     [_results addTableColumn:col];
     _results.headerView = nil;
-    _results.columnAutoresizingStyle = NSTableViewUniformColumnAutoresizingStyle;
+    _results.columnAutoresizingStyle = NSTableViewLastColumnOnlyAutoresizingStyle;
     _results.dataSource = self;
     _results.delegate = self;
     _results.target = self;
@@ -526,6 +531,7 @@ NSAttributedString* markedText(const std::wstring& marked, NSFont* font, NSColor
     _showingResults = show;
     _resultsScroll.hidden = !show;
     _guideView.hidden = show;
+    if (show) [_results sizeLastColumnToFit];  // the window may have been resized while it was hidden
 }
 
 - (void)clearResults {

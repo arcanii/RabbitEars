@@ -647,5 +647,6 @@
   "MeterLookVfd": "真空螢光顯示器 (VFD)",
   "MenuMeterTankDots": "資料流點陣隨量表放大",
   "LoadingGuideSourceTag": "（節目表來源 {0} / {1}）",
-  "EpgGuideSourceError": "節目表來源 {0} / {1}：{2}"
+  "EpgGuideSourceError": "節目表來源 {0} / {1}：{2}",
+  "StatusScheduledRecordingFailed": "{0} 的排程錄影失敗 — 串流在節目結束前就中斷了。"
 }

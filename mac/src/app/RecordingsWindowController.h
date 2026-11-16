@@ -22,5 +22,8 @@ namespace rabbitears::mac { class ScheduleStatusWriter; }
 // can nudge the scheduler (re-expand rules, re-derive keep-awake).
 - (void)presentRelativeTo:(NSWindow*)parent onChange:(void (^)(void))onChange;
 - (void)reload;  // re-query the DB into both tables (called from the ~30s tick when open)
+// Cancel on a row that is RECORDING asks the scheduler (which owns the recorder) to stop it before the
+// row is marked — the peer of Win32's cb.cancel calling stopScheduledRecorder. May be nil.
+@property (nonatomic, copy) void (^onStopRecording)(long long scheduleId);
 - (void)relabelForLanguageChange;  // live language switch (window reused across opens)
 @end

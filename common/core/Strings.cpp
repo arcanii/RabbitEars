@@ -714,6 +714,8 @@ constexpr std::array<const char*, N> kEn = {{
     // --- GuideGrid ---
     " — guide {0} of {1}",  // LoadingGuideSourceTag
     "guide {0} of {1}: {2}",  // EpgGuideSourceError
+    // --- Status ---
+    "Scheduled recording of {0} failed — the stream stopped before the programme ended.",  // StatusScheduledRecordingFailed
 }};
 
 // 日本語
@@ -1418,6 +1420,8 @@ constexpr std::array<const char*, N> kJa = {{
     // --- GuideGrid ---
     " — 番組表ソース {0}/{1}",  // LoadingGuideSourceTag
     "番組表ソース {0}/{1}: {2}",  // EpgGuideSourceError
+    // --- Status ---
+    "{0} の予約録画に失敗しました — 番組の終了前にストリームが止まりました。",  // StatusScheduledRecordingFailed
 }};
 
 // 繁體中文
@@ -2122,6 +2126,8 @@ constexpr std::array<const char*, N> kZhHant = {{
     // --- GuideGrid ---
     "（節目表來源 {0} / {1}）",  // LoadingGuideSourceTag
     "節目表來源 {0} / {1}：{2}",  // EpgGuideSourceError
+    // --- Status ---
+    "{0} 的排程錄影失敗 — 串流在節目結束前就中斷了。",  // StatusScheduledRecordingFailed
 }};
 
 // 繁體中文（香港）
@@ -2826,6 +2832,8 @@ constexpr std::array<const char*, N> kZhHK = {{
     // --- GuideGrid ---
     "（節目表來源 {0} / {1}）",  // LoadingGuideSourceTag
     "節目表來源 {0} / {1}：{2}",  // EpgGuideSourceError
+    // --- Status ---
+    "{0} 的排程錄影失敗 — 串流在節目結束前就中斷了。",  // StatusScheduledRecordingFailed
 }};
 
 // One row per Lang value, in enum order — trU8 indexes this by static_cast<size_t>(lang).

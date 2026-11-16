@@ -180,7 +180,11 @@ NSString* whenText(long long startUtc, long long stopUtc) {
 }
 
 - (void)buildWindowNear:(NSWindow*)parent {
-    const NSRect frame = NSMakeRect(0, 0, 720, 460);
+    // 800 wide, with the Scheduled columns below sized to fit it: Status — the column that says what a
+    // row is DOING — used to open off-screen behind a horizontal scroll (found on device, 2026-11). The
+    // columns had 720 pt of widths, and current macOS adds ~17 pt of cell spacing to EACH column, so
+    // they needed ~805 pt against the ~660 a 720-pt window gives its table.
+    const NSRect frame = NSMakeRect(0, 0, 800, 460);
     _window = [[NSWindow alloc] initWithContentRect:frame
                                           styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                      NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
@@ -202,7 +206,7 @@ NSString* whenText(long long startUtc, long long stopUtc) {
                                   columns:@[ Tr(StringId::LabelChannel), Tr(StringId::ScheduleColTitle),
                                              Tr(StringId::ScheduleColWhen), Tr(StringId::MacRecordingsColFormat),
                                              Tr(StringId::ScheduleColStatus) ]
-                                   widths:@[ @150, @200, @210, @60, @100 ]
+                                   widths:@[ @130, @170, @200, @50, @90 ]  // + ~17 pt each ≈ 725 ≤ ~757
                                       ids:@[ @"chan", @"title", @"when", @"fmt", @"status" ]];
     schedItem.view = schedScroll;
     [tabs addTabViewItem:schedItem];
@@ -254,7 +258,10 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     _ruleTable.target = self;
     _ruleTable.doubleAction = @selector(editRule:);
 
-    _hint = [NSTextField labelWithString:Tr(StringId::MacRecordingsWakeHint)];
+    // A WRAPPING label: +labelWithString: is single-line, so maximumNumberOfLines = 2 never applied
+    // and the note was cut off mid-sentence at the window edge (found on device, 2026-11).
+    _hint = [NSTextField wrappingLabelWithString:Tr(StringId::MacRecordingsWakeHint)];
+    _hint.selectable = NO;
     _hint.frame = NSMakeRect(12, 10, frame.size.width - 24, 28);
     _hint.autoresizingMask = NSViewWidthSizable;
     _hint.textColor = NSColor.secondaryLabelColor;
@@ -262,8 +269,10 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     _hint.maximumNumberOfLines = 2;
     [cv addSubview:_hint];
 
-    _window.frameAutosaveName = @"RabbitEarsRecordingsWindow";
-    if (![_window setFrameUsingName:@"RabbitEarsRecordingsWindow"]) {
+    // ".v2" (0.2.23): a NEW name, so a frame saved at the old 720-pt default — Status off-screen —
+    // is not restored over the wider default. Costs one reset of this window's size and position.
+    _window.frameAutosaveName = @"RabbitEarsRecordingsWindow.v2";
+    if (![_window setFrameUsingName:@"RabbitEarsRecordingsWindow.v2"]) {
         if (parent) [_window setFrameOrigin:NSMakePoint(NSMinX(parent.frame) + 40, NSMaxY(parent.frame) - frame.size.height - 40)];
         else [_window center];
     }
@@ -306,19 +315,26 @@ NSString* whenText(long long startUtc, long long stopUtc) {
     const NSInteger row = _schedTable.selectedRow;
     if (row < 0 || row >= (NSInteger)_schedules.size() || !_db || !_writer) return;
     const auto s = _schedules[(size_t)row];  // copy: reload below mutates _schedules
-    // A recording in progress can't be cancelled from here (the scheduler owns it).
-    if (s.status == ScheduleStatus::Recording) return;
     // A row that already carries a queued (un-landed) terminal decision is DECIDED, whatever the
     // raw column still says — relabelling it would overwrite a queued Skip/Missed/Failed.
     const std::vector<ScheduledRecording> rows = _db->listSchedules();
     const bool decided = _writer->hasLiveDecision(rows, s);
+    // A Recording row whose fate is already queued: the tick acts on that decision; nothing here may
+    // relabel it, and it must never reach the DELETE below while its recorder may still be running.
+    if (s.status == ScheduleStatus::Recording && decided) return;
     // Does the row's series rule still exist? A rule-deleted row (deleteRule keeps history, leaving
     // a dangling rule_id) has nothing to re-queue it, so it deletes like a one-off (Win32 parity).
     bool ruleListed = false;
     if (s.ruleId != 0)
         for (const auto& r : _db->listRules())
             if (r.id == s.ruleId) { ruleListed = true; break; }
-    if (s.status == ScheduleStatus::Pending && !decided) {
+    if ((s.status == ScheduleStatus::Pending || s.status == ScheduleStatus::Recording) && !decided) {
+        // A recording IN PROGRESS: stop it first (Win32 cb.cancel), then the same tombstone as a
+        // queued airing. This used to return silently ("the scheduler owns it") and nothing else on
+        // mac could stop a scheduled recording mid-airing (found on device, 2026-11). The part
+        // already written is kept, as on Windows. A stale Recording row (a previous session's) has
+        // no recorder behind it; the scheduler ignores the stop and the row is simply marked.
+        if (s.status == ScheduleStatus::Recording && _onStopRecording) _onStopRecording(s.id);
         // Mark a tombstone rather than delete, so a series rule can't re-queue the slot (the
         // expander treats a row of ANY status as owning its slot — RecordingRules.cpp:89).
         //

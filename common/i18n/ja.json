@@ -647,5 +647,6 @@
   "MeterLookVfd": "蛍光表示管 (VFD)",
   "MenuMeterTankDots": "データフローのドットをメーターに合わせて拡大",
   "LoadingGuideSourceTag": " — 番組表ソース {0}/{1}",
-  "EpgGuideSourceError": "番組表ソース {0}/{1}: {2}"
+  "EpgGuideSourceError": "番組表ソース {0}/{1}: {2}",
+  "StatusScheduledRecordingFailed": "{0} の予約録画に失敗しました — 番組の終了前にストリームが止まりました。"
 }
