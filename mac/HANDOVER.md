@@ -83,11 +83,20 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — mac **0.2.22** on `main` (2026-11-16): the Windows 0.2.18–0.2.22 gap CLOSED, NOT YET RELEASED
+## Current state — **v0.2.22-mac SHIPPED (2026-11-16)**: the Windows 0.2.18–0.2.22 gap CLOSED
 
 Windows shipped **0.2.18 → 0.2.21** (and has 0.2.22 in development) while mac sat at 0.2.17 with **zero `mac/`
 changes for two months**. This round ported all of it. `cmake/AppVersion.cmake`'s APPLE override is **0.2.22**.
-Nothing is published: **v0.2.17-mac is still what users run**.
+
+**Shipped 2026-11-16** — [`v0.2.22-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.22-mac), build **479**,
+arm64, notarized (`53637004-…`, Accepted) + stapled, 42,303,679 bytes, sha256 `46cb4308…`; appcast @ `5db07ff` (the
+live feed serves 479 ahead of 418); `--latest=false` (Windows keeps v0.2.21). **Pre-publish, on the ARTIFACT:** the
+app from inside the stapled dmg migrated a library authored by the real downloaded 0.2.17 (v9) to v11 — integrity ok,
+7/7 channels, favourites, LCN sum, the dead row + its timestamp, the film, programmes all intact, the FTS5 tables +
+triggers present and populated ("quebec" finds "TVA QUÉBEC"), 0 log errors, the seeded Xtream login nowhere in the log.
+**`v0.2.17-mac` is retitled "superseded by 0.2.22"** with a warning not to reinstall it once 0.2.22 has opened a
+library (the owner's call, made before release). `sign_update` ran in the OWNER's terminal (build-mac-release's own
+Sparkle 2.6.4 `bin/sign_update` — the old DerivedData copy is gone).
 
 | PR | What | Windows-affecting? |
 |----|------|--------------------|
@@ -108,8 +117,8 @@ local HTTP server; the tank sim draining to idle). The VU faces, cell looks, gla
 headlessly and inspected by eye. MSVC `core-selftest` passed on every PR (the `gui-build` red is the pre-existing
 `fxc` configure death — every Win32 GUI translation unit touched here only had its include path move).
 
-> **⚠ NOT VERIFIED ON DEVICE — the release gate.** No GUI was driven (computer-use is not granted). Before shipping
-> 0.2.22, run the checklist below. Two ASSUMPTIONS to confirm there: (a) the audio needle undoes libVLC's auhal
+> **⚠ SHIPPED WITHOUT AN ON-DEVICE PASS (owner's call).** No GUI was driven (computer-use is not granted). IF A BUG
+> SURFACES IN THE WILD, START WITH the checklist below. Two ASSUMPTIONS to confirm there: (a) the audio needle undoes libVLC's auhal
 > volume law as **v³** (from VLC 3's source, not measured — drop the volume to 50 % on steady programme audio: the
 > needle should not move); (b) a real Xtream line's archive plays (catch-up was verified only through the shared
 > core and selftests).

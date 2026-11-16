@@ -8,7 +8,8 @@ mac-release-deployment memory.
 
 THREE THINGS TO KNOW BEFORE ANYTHING ELSE:
 
-1. mac 0.2.22 IS ON main AND NOT RELEASED. Users still run v0.2.17-mac (build 418). PRs #49-#55 (2026-11-16)
+1. v0.2.22-mac IS SHIPPED AND LIVE (2026-11-16, build 479, arm64, notarized; appcast @ 5db07ff; v0.2.17-mac retitled
+   "superseded"). It migrated a real 0.2.17-authored library on the ARTIFACT before publishing. PRs #49-#55 (2026-11-16)
    ported everything Windows shipped in 0.2.18-0.2.22-dev: log credential masking; the scheduler's lost-
    status-write fix; the TV Guide on the shared row build (search, coverage line, multi-guide refresh on a
    worker); catch-up; the photoreal meter line (Backlit + Silver VU, Studio LED / Backlit LCD / VFD, meter
@@ -17,23 +18,26 @@ THREE THINGS TO KNOW BEFORE ANYTHING ELSE:
    GuideModel, HttpProgress.h, TimeZone.h as a seam, CatchupSync, PhotoCells behind the new
    common/platform/WinTypes.h) with their include names unchanged.
 
-2. THE RELEASE GATE IS AN ON-DEVICE PASS — nothing in this round was driven in the GUI. The selftest went
+2. IT SHIPPED WITHOUT AN ON-DEVICE PASS (owner's call) — nothing in this round was driven in the GUI; if a bug surfaces,
+   start with the HANDOVER checklist. The selftest went
    154 -> 443 (mostly Win32 CLI blocks ported verbatim, so the shared code is proven under Apple clang), the
    looks/tank/bridge were rendered headlessly and eyeballed, but: the checklist is in the HANDOVER box, and
    two ASSUMPTIONS ride on it — the audio needle undoes libVLC auhal's volume as v^3 (from VLC source, not
    measured), and a real Xtream archive playing (catch-up proven only through shared code).
 
-3. SHIPPING 0.2.22 IS A ONE-WAY DOOR: it migrates libraries to schema v11 (FTS5), and 0.2.17 (no FTS5
-   compiled in) CANNOT WRITE a v11 library (`no such module: fts5` from the channels_fts_* triggers) — while
-   v0.2.17-mac stays downloadable. v9->v11 forward was measured safe on a real 0.2.17-authored DB. Decide
-   whether to mark the old release before shipping.
+3. 0.2.22 WAS A ONE-WAY DOOR: it migrates libraries to schema v11 (FTS5), and 0.2.17 (no FTS5 compiled in)
+   CANNOT WRITE a v11 library (`no such module: fts5` from the channels_fts_* triggers). v0.2.17-mac is marked
+   superseded on GitHub; older mac releases (0.2.15 and before) carry the same limitation and are NOT marked.
+   NB the system /usr/bin/sqlite3 has no FTS5 either — query a v11 library with a tiny program against the
+   vendored third_party/sqlite (build-*/libsqlite3.a), not the CLI.
 
 What stays N/A BY DESIGN: the theme engine (so skin MATERIALS draw Flat — Windows does the same for a skin
 without one), wake-to-record, PIP always-on-top, the beta switchboard, Windows' side profile, its dark scroll
 bars, its libVLC HTTP/2 log filter (mac routes no libVLC log).
 
-NEXT: the on-device pass, then release 0.2.22 (recipe: mac-release-deployment memory; sign_update must run in
-the OWNER's terminal — the keychain ACL refuses this tooling). After that: the appcast host move (BOTH
+NEXT: the on-device pass 0.2.22 shipped without (checklist in the HANDOVER box). Release recipe: the
+mac-release-deployment memory; sign_update must run in the OWNER's terminal (the keychain ACL refuses this
+tooling). After that: the appcast host move (BOTH
 platforms), and genuinely new work — resume/watched and series/seasons/episodes exist on NEITHER platform.
 
 HARD-WON RULES (each cost real time):
