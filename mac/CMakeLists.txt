@@ -18,7 +18,8 @@ option(RABBITEARS_BUILD_MAC "Build the macOS .app bundle (needs libVLC + Sparkle
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsPlatformMac STATIC
   platform/Http.mm
-  platform/Paths.cpp)
+  platform/Paths.cpp
+  platform/TimeZone.mm)  # a named zone's offset (catch-up URLs) — implements common/platform/TimeZone.h
 target_link_libraries(RabbitEarsPlatformMac PUBLIC RabbitEarsCore "-framework Foundation")
 
 # ---------------------------------------------------------------------------

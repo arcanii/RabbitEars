@@ -335,6 +335,39 @@ NSAttributedString* markedText(const std::wstring& marked, NSFont* font, NSColor
     if (_showingResults) [self runSearch];
 }
 
+- (void)archiveDidChange {
+    if (!_window || !_db) return;
+    const rabbitears::GuideArchivePicks picks(*_db);
+    for (size_t i = 0; i < _allRows.size(); ++i) {
+        const rabbitears::GuideArchivePick pk = picks.pick(_allRows[i].playlistId, _allRows[i].channelId);
+        _allRows[i].archiveChannel = pk.channel;
+        _allRows[i].archiveDays = pk.days;
+        _allViewRows[i].archiveChannel = pk.channel;  // the same objects the grid draws from
+        _allViewRows[i].archiveDays = pk.days;
+    }
+    for (auto& h : _hits) {
+        const rabbitears::GuideArchivePick pk = picks.pick(h.playlistId, h.channelTvgId);
+        h.archiveChannelId = pk.channel;
+        h.archiveDays = pk.days;
+    }
+    _sessionReady = NO;  // the next search re-reads the channel set (the search's own picks)
+    if (_showingResults && !_preparing) {
+        __weak TvGuideWindowController* weak = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(200 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
+            TvGuideWindowController* s = weak;
+            if (!s || !s->_showingResults) return;
+            const NSInteger sel = s->_results.selectedRow;
+            const CGFloat y = s->_resultsScroll.contentView.bounds.origin.y;
+            [s beginSearchSessionMayRebuild:NO];  // quietly: no "Preparing search…", no index rebuild
+            s->_sessionReady = YES;
+            [s runSearch];
+            [s->_resultsScroll.contentView scrollToPoint:NSMakePoint(0, y)];
+            if (sel >= 0 && sel < s->_results.numberOfRows)
+                [s->_results selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)sel] byExtendingSelection:NO];
+        });
+    }
+}
+
 - (void)buildWindowNear:(NSWindow*)parent {
     const NSRect frame = NSMakeRect(0, 0, 980, 600);
     _window = [[NSWindow alloc]
@@ -563,11 +596,15 @@ NSAttributedString* markedText(const std::wstring& marked, NSFont* font, NSColor
 // Begin a search session (Win32 cb.onSearchBegin): load the channel set and, if the index is stale
 // (the first search after upgrading, a deleted playlist, a failed rebuild after a refresh), rebuild
 // it — not while Refresh Guide's worker runs (it rebuilds the index itself once it has stored).
-- (void)beginSearchSession {
+- (void)beginSearchSession { [self beginSearchSessionMayRebuild:YES]; }
+
+// `mayRebuild` NO for the quiet re-search after new catch-up flags: no "Preparing search…" is up,
+// so a stale index is searched by LIKE until the next session (Win32 onSearchBegin(mayRebuild)).
+- (void)beginSearchSessionMayRebuild:(BOOL)mayRebuild {
     const auto t0 = std::chrono::steady_clock::now();
     bool rebuilt = false;
     const bool refreshing = self.isGuideRefreshing && self.isGuideRefreshing();
-    if (!refreshing && _db->programmeSearchState() == Database::ProgrammeSearchState::NeedsRebuild)
+    if (mayRebuild && !refreshing && _db->programmeSearchState() == Database::ProgrammeSearchState::NeedsRebuild)
         rebuilt = _db->rebuildProgrammeIndex();
     const bool channels = _db->refreshProgrammeSearchChannels();
     diag::info(L"guide search session: " +
