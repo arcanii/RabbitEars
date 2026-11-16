@@ -91,6 +91,7 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     int   _vuW, _vuH;
     float _vuScale;
     PhotoCellCache _photoCache;           // the cells the photo looks shaded (Win32 photoCache)
+    __unsafe_unretained MeterView* _mirror;  // the bridge's twin (guarded by _lock for the RT feeds)
     std::vector<PhotoCell> _photoCells;
 }
 
@@ -153,6 +154,7 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     if (!bands || count <= 0) return;
     const int n = std::min(count, kMaxBands);
     os_unfair_lock_lock(&_lock);
+    if (_mirror) [_mirror pushSpectrum:bands count:count];  // under THIS lock (see -setMirror:)
     std::memcpy(_specTarget, bands, (size_t)n * sizeof(float));
     _specCount = n;
     _haveData = YES;
@@ -164,17 +166,20 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 - (void)pushLevel:(float)dbfs {
     if (!std::isfinite(dbfs)) dbfs = kSilenceDbfs;
     os_unfair_lock_lock(&_lock);
+    if (_mirror) [_mirror pushLevel:dbfs];
     _pendingLevelDb = _hasPendingLevel ? std::max(_pendingLevelDb, dbfs) : dbfs;
     _hasPendingLevel = YES;
     os_unfair_lock_unlock(&_lock);
 }
 
 - (void)setSignal:(float)strength trouble:(float)trouble {
+    [_mirror setSignal:strength trouble:trouble];
     _sigStrengthT = std::clamp(strength, 0.0f, 1.0f);
     _sigTroubleT  = std::clamp(trouble, 0.0f, 1.0f);
 }
 
 - (void)pushBitrate:(double)bytesPerSec {
+    [_mirror pushBitrate:bytesPerSec];
     _histMax = std::max(bytesPerSec, _histMax * mix(0.99f, 0.95f, _breathing));  // ceiling; 0.5 -> 0.97
     const double denom = std::max(_histMax, 1000.0);
     _hist[_histHead] = (float)std::clamp(bytesPerSec / denom, 0.0, 1.0);
@@ -183,11 +188,13 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 }
 
 - (void)setFrames:(int)fps dropsDelta:(int)dropsDelta {
+    [_mirror setFrames:fps dropsDelta:dropsDelta];
     _fpsT = (float)fps;
     if (dropsDelta > 0) _flare = 1.0f;
 }
 
 - (void)setAvailable:(BOOL)available {
+    [_mirror setAvailable:available];
     if (_available == available) return;
     _available = available;
     // The strip is too narrow for the real instruction — put it in the tooltip.
@@ -202,6 +209,28 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     [self setNeedsDisplay:YES];
 }
 
+- (void)setMirror:(MeterView*)mirror {
+    if (mirror == self) mirror = nil;
+    if (mirror) {  // seed the twin with what this meter already shows
+        std::memcpy(mirror->_hist, _hist, sizeof _hist);
+        mirror->_histHead = _histHead;
+        mirror->_histMax = _histMax;
+        std::memcpy(mirror->_specLevel, _specLevel, sizeof _specLevel);
+        std::memcpy(mirror->_specPeak, _specPeak, sizeof _specPeak);
+        mirror->_drawBands = _drawBands;
+        mirror->_sigStrength = _sigStrength;
+        mirror->_sigStrengthT = _sigStrengthT;
+        mirror->_fps = _fps;
+        mirror->_fpsT = _fpsT;
+        mirror->_vuNeedle = _vuNeedle;
+        [mirror setAvailable:_available];
+        [mirror setNeedsDisplay:YES];
+    }
+    os_unfair_lock_lock(&_lock);  // waits out an RT forward in flight
+    _mirror = mirror;
+    os_unfair_lock_unlock(&_lock);
+}
+
 - (BOOL)consumeHadEnergy {
     os_unfair_lock_lock(&_lock);
     const BOOL e = _hadEnergy;
@@ -211,6 +240,7 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 }
 
 - (void)reset {
+    [_mirror reset];
     std::memset(_specLevel, 0, sizeof _specLevel);
     std::memset(_specPeak, 0, sizeof _specPeak);
     _sigStrength = _sigTrouble = _sigStrengthT = _sigTroubleT = 0;

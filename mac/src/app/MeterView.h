@@ -44,4 +44,11 @@
 - (void)setAvailable:(BOOL)available;  // NO => "grant audio permission" placeholder
 - (BOOL)consumeHadEnergy;              // any band > floor since last call (thread-safe, clears)
 - (void)relabelForLanguageChange;      // live language switch: re-apply toolTip + repaint
+
+// The meter bridge's twin (Win32 miniMeterSetMirror): every feed and reset this meter receives is
+// forwarded to `mirror` too — the RT-thread ones under this meter's lock, so -setMirror:nil (main
+// thread) returns only once no forward is in flight; the caller keeps the twin alive until then.
+// Linking seeds the twin with this meter's Bitrate history and spectrum, so it does not start empty.
+// Not retained; nil unlinks.
+- (void)setMirror:(MeterView*)mirror;
 @end

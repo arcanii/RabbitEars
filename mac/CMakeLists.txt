@@ -73,6 +73,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/SpectrumTap.mm
     src/app/MeterView.mm
     src/app/VuDialMac.mm      # the two VU instruments (port of Win32/ui/VuDial; no retained ObjC — MRC)
+    src/app/MeterBridgeWindowController.mm
     src/app/MetersDialog.mm
     src/app/PlaylistsDialog.mm
     src/app/CategoriesDialog.mm
@@ -102,7 +103,7 @@ if(RABBITEARS_BUILD_MAC)
     src/app/SpectrumTap.mm src/app/MetersDialog.mm src/app/MeterView.mm
     src/app/PlaylistsDialog.mm src/app/CategoriesDialog.mm src/app/TermsDialog.mm
     src/app/EpgGuideView.mm src/app/TvGuideWindowController.mm
-    src/app/RecordingsWindowController.mm src/app/LogoLoader.mm
+    src/app/RecordingsWindowController.mm src/app/LogoLoader.mm src/app/MeterBridgeWindowController.mm
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
   target_include_directories(RabbitEars PRIVATE
