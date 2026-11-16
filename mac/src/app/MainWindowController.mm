@@ -18,6 +18,7 @@
 #include <string>
 #include <utility>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "core/GuideSources.h"  // a guide link naming several guides: split + merge
@@ -29,6 +30,7 @@
 #include "core/RecordingScheduler.h"
 #include "core/UrlCanon.h"
 #include "core/XmltvParser.h"
+#include "core/XtreamClient.h"  // catch-up: timeshift URLs
 #include "models/Programme.h"
 #include "models/RecordingRule.h"
 #include "models/ScheduledRecording.h"
@@ -39,6 +41,7 @@
 #include "platform/Log.h"
 #include "platform/HttpProgress.h"  // the guide download's running byte count
 #include "platform/LogSecrets.h"
+#include "platform/TimeZone.h"  // catch-up: the server's zone on the programme's day
 #include "platform/Updater.h"
 
 #if __has_include("generated/version.h")
@@ -123,6 +126,10 @@ struct MacVideoPane {
     rabbitears::Channel                    channel;      // currently playing (empty when idle)
     long long                              channelId = 0;
     bool                                   everPlayed = false;  // reached Playing since last play() (dead-status heuristic)
+    // Catch-up: this pane plays an archive (-playCatchup:), and whether it ever reached Playing — an
+    // archive that has nothing for that time fails before it plays, and the status says so plainly.
+    bool                                   catchup = false;
+    bool                                   catchupPlayed = false;
 };
 
 // Filter popup tags.
@@ -251,6 +258,9 @@ std::atomic<bool> g_epgCancel{false};
     // Every terminal schedule status goes through this: a write lost to DB contention is
     // remembered and replayed (ScheduleStatusWriter.h). Shared with the Recordings window.
     std::unique_ptr<rabbitears::mac::ScheduleStatusWriter> _statusWriter;
+    // Catch-up: channel id -> days of archive (Database::channelArchiveDays) — the grid's ↺ markers
+    // and what -playCatchup: checks. Re-read whenever the provider sync writes the flags.
+    std::unordered_map<long long, int> _archiveDays;
     long long      _rulesExpandedAt;    // last rule-expansion time (throttled; 0 == never)
     id             _recordingsWC;       // RecordingsWindowController (lazily created; app-lifetime)
     NSView*        _topBar;      // top command bar (add / settings / search / filter)
@@ -379,6 +389,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         _db.reset();  // make the unusable state explicit; the guards below surface it
     }
     if (_db) _statusWriter = std::make_unique<rabbitears::mac::ScheduleStatusWriter>(_db.get());
+    if (_db) _archiveDays = _db->channelArchiveDays();  // the grid's ↺ markers, before the first fill
 
     // Log level FIRST, ahead of every other restore: a tester who set Detailed/Everything to chase
     // a startup problem must have it in force before the interesting logging happens. It is a
@@ -1523,6 +1534,8 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         switch (ph) {
             case rabbitears::mac::VodSyncPhase::Contacting:
                 [me setStatus:Tr(StringId::StatusVodSyncContacting)]; break;
+            case rabbitears::mac::VodSyncPhase::Catchup:
+                [me setStatus:Tr(StringId::StatusVodSyncFetchingCatchup)]; break;
             case rabbitears::mac::VodSyncPhase::Fetching:
                 [me setStatus:Tr(StringId::StatusVodSyncFetching)]; break;
             case rabbitears::mac::VodSyncPhase::Saving:
@@ -1531,6 +1544,9 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         }
     };
     req.onDone = [me](rabbitears::mac::VodSyncReport rep) { [me vodSyncDidFinish:rep]; };
+    // Catch-up flags written mid-sync: the grid's ↺ markers, the flags -playCatchup: checks and an
+    // open TV Guide follow them now, not after the films (Win32 WM_APP_VOD_ARCHIVE).
+    req.onArchive = [me]() { [me refreshArchiveMarkers]; };
 
     if (rabbitears::mac::startVodSync(std::move(req)) != rabbitears::mac::VodSyncStart::Started) return;
     _vodSyncRunning = YES;
@@ -1600,6 +1616,13 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
                       : TrF(StringId::StatusVodSyncFailed, {ns(rep.detail)});
             break;
     }
+    // Catch-up, after whatever the films said: how many channels now keep an archive, or why the
+    // flags were left as they were. With two Xtream lines, one can succeed and the other fail: both.
+    if (rep.archiveChannels >= 0)
+        msg = [msg stringByAppendingString:TrF(StringId::StatusCatchupChannels,
+                                               {[NSString stringWithFormat:@"%d", rep.archiveChannels]})];
+    if (!rep.archiveDetail.empty())
+        msg = [msg stringByAppendingString:TrF(StringId::StatusCatchupNotUpdated, {ns(rep.archiveDetail)})];
     [self setStatus:msg];
 }
 
@@ -1853,6 +1876,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
         [self updateRecordButton];
         [self syncKeepAwake];  // another pane may still record — re-derive, don't assume
         [self setStatus:TrF(StringId::StatusRecordingSaved, {ns(file)})];
+        return;
+    }
+    if (p->catchup) {  // a programme from the archive, not a channel: nothing to record live
+        [self setStatus:Tr(StringId::StatusCatchupNoRecord)];
         return;
     }
     if (p->channelId == 0) { [self setStatus:Tr(StringId::StatusPlayChannelFirst)]; return; }
@@ -2248,6 +2275,19 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
                 break;
             }
             [_table reloadData];  // re-grey / drop; preserves the selection (unlike -refreshChannels)
+        }
+    }
+
+    // Catch-up: an archive with nothing for that time fails BEFORE it ever plays — say so plainly,
+    // once, instead of the generic silence (Win32 StatusCatchupNotInArchive).
+    if (MacVideoPane* ap = [self activePane]; ap && ap->catchup) {
+        const auto ps = ap->player->playState();
+        if (ps == VlcPlayerMac::PlayState::Playing) {
+            ap->catchupPlayed = true;
+        } else if (!ap->catchupPlayed && (ps == VlcPlayerMac::PlayState::Error ||
+                                          ps == VlcPlayerMac::PlayState::Ended)) {
+            ap->catchupPlayed = true;  // said once
+            [self setStatus:TrF(StringId::StatusCatchupNotInArchive, {ns(ap->channel.name)})];
         }
     }
 
@@ -3458,6 +3498,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // active playlist is now gone or disabled, fall back to the last still-enabled one
 // (or the empty state); otherwise just rebuild the filters + reload counts.
 - (void)reloadAfterPlaylistChange {
+    [self refreshArchiveMarkers];  // a deleted playlist takes its channels' flags with it
     if (!_db) return;
     const auto playlists = _db->listPlaylists();
     bool currentOK = false;
@@ -3598,6 +3639,69 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     [self showResults:summary info:detail];
 }
 
+
+// ---- catch-up (Xtream archives — the mac peer of Win32 playCatchup / refreshArchiveMarkers) ------
+
+// The provider sync wrote new catch-up flags (or a playlist changed): re-read them for the grid's ↺
+// markers and -playCatchup:, and let an open TV Guide take its new archive picks in place.
+- (void)refreshArchiveMarkers {
+    if (!_db) return;
+    auto fresh = _db->channelArchiveDays();
+    const bool changed = fresh != _archiveDays;
+    _archiveDays = std::move(fresh);
+    if (!changed) return;
+    [_table reloadData];  // the ↺ after a name (cells only — the rows and selection stay)
+    [(TvGuideWindowController*)_guideWC archiveDidChange];
+}
+
+// Play `title` (startUtc..stopUtc) out of `archiveChannel`'s archive in the active pane. NO, with an
+// explanation, when it cannot even try. The URL is never logged here; the player's own line has it,
+// masked by the log's redaction (the /timeshift/USER/PASS/ shape).
+- (BOOL)playCatchup:(long long)archiveChannel title:(NSString*)title start:(long long)startUtc stop:(long long)stopUtc {
+    auto explain = [&](NSString* why) {
+        diag::warn(L"catch-up refused: " + ws(why));
+        [self showResults:Tr(StringId::CatchupUnavailableHeading) info:why];
+    };
+    const std::optional<Channel> ch = _db ? _db->channelById(archiveChannel) : std::nullopt;  // enabled playlists
+    const auto daysIt = _archiveDays.find(archiveChannel);
+    if (!ch || daysIt == _archiveDays.end()) { explain(Tr(StringId::CatchupNoArchive)); return NO; }
+    const long long now = (long long)time(nullptr);
+    if (startUtc >= now) { explain(Tr(StringId::CatchupNotStarted)); return NO; }  // offered only once started
+    if (startUtc < now - (long long)daysIt->second * 86400) {
+        explain(TrF(StringId::CatchupTooOld, {ns(ch->name), [NSString stringWithFormat:@"%d", daysIt->second]}));
+        return NO;
+    }
+    // The login from the playlist's own URL (as the movie sync's); the stream id from the channel's.
+    rabbitears::XtreamCreds creds;
+    bool haveCreds = false;
+    for (const auto& pl : _db->listPlaylists())
+        if (pl.id == ch->playlistId) haveCreds = rabbitears::parseXtreamPlaylistUrl(pl.sourceUrl, creds);
+    const long long streamId = rabbitears::xtreamLiveStreamId(ch->streamUrl);
+    if (!haveCreds || streamId <= 0) { explain(Tr(StringId::CatchupNoArchive)); return NO; }
+    // The panel reads the start on ITS clock: the zone it named at the last sync, on the programme's
+    // day (daylight saving); else the offset measured then; else UTC.
+    const std::wstring pid = std::to_wstring(ch->playlistId);
+    int offset = 0;
+    const std::wstring zone = _db->getSetting(L"archive_tz_" + pid).value_or(L"");
+    if (!rabbitears::utcOffsetAt(zone, startUtc, &offset))
+        offset = (int)std::wcstol(_db->getSetting(L"archive_utc_offset_" + pid).value_or(L"0").c_str(), nullptr, 10);
+    const int minutes = (int)std::max<long long>(1, (stopUtc - startUtc + 59) / 60);
+    Channel c = *ch;
+    c.id = 0;  // not a channel: no "last channel", no dead-link verdict
+    c.streamUrl = rabbitears::xtreamTimeshiftUrl(creds, streamId, startUtc, minutes, offset);
+    c.name = ws(TrF(StringId::CatchupNowPlayingName, {ns(ch->name), title}));
+    if (c.streamUrl.empty()) { explain(Tr(StringId::CatchupNoArchive)); return NO; }
+    diag::info(L"catch-up: #" + std::to_wstring(ch->id) + L" \"" + ch->name + L"\", " + std::to_wstring(minutes) +
+               L" min from " + std::to_wstring(startUtc) + L" (server zone " + (zone.empty() ? L"?" : zone) +
+               L", UTC" + (offset >= 0 ? L"+" : L"") + std::to_wstring(offset) + L" s)");
+    [self playChannel:c intoPane:_activePane];
+    if (MacVideoPane* ap = [self activePane]) {
+        ap->catchup = true;
+        ap->catchupPlayed = false;
+    }
+    return YES;
+}
+
 // Lazily create the guide window controller and wire its recording callbacks once. Both
 // -showGuide: and -showInGuide: go through this so the Schedule/Record-Series actions on a
 // programme are always connected.
@@ -3627,6 +3731,13 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
             [me setStatus:TrF(ch->favourite ? StringId::StatusRemovedFavourite : StringId::StatusAddedFavourite, {name})];
         };
         g.isGuideRefreshing = ^BOOL { return me->_epgRefreshing; };
+        // Catch-up (experimental): play a programme from its channel's archive; YES hides the guide
+        // so the programme is visible (Win32 cb.onPlayFromStart).
+        g.onPlayFromStart = ^BOOL(long long arch, NSString* title, long long a, long long b) {
+            if (![me playCatchup:arch title:title start:a stop:b]) return NO;
+            [me->_window makeKeyAndOrderFront:nil];
+            return YES;
+        };
     }
     return _guideWC;
 }
@@ -3898,6 +4009,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     p->channel = c;
     p->channelId = c.id;
     p->everPlayed = false;  // new play attempt — reset the "was ever live" flag (dead-status heuristic)
+    p->catchup = false;     // -playCatchup: sets it again after this call; any other play is a channel
+    p->catchupPlayed = false;
     if (idx != _activePane) {
         [self setStatus:TrF(StringId::MacMainWindowPlayingInPane,
                          {Tr(_viewMode == ViewMode::Pip ? StringId::MacMainWindowPipShort
@@ -3906,7 +4019,8 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         return;
     }
     if (_meterCfg[(int)MeterKind::Spectrum].enabled) [self startSpectrumTap];  // Spectrum is opt-in
-    if (_db) _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
+    if (_db && c.id != 0)  // a catch-up programme is not a channel: nothing to resume
+        _db->setSetting(L"last_channel_id", std::to_wstring(c.id));  // resume this on next launch
     _window.title = TrF(StringId::MacMainWindowTitleWithChannel, {ns(c.name)});
     [self setStatus:TrF(StringId::StatusPlaying, {ns(c.name)})];
 }
@@ -3933,6 +4047,9 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
         return img ?: _logoPlaceholder;
     }
     if ([id_ isEqualToString:@"group"]) return ns(c.groupTitle);
+    // A channel that keeps a catch-up archive: a ↺ after its name (Win32 ChannelGridControl).
+    if (!_archiveDays.empty() && _archiveDays.count(c.id))
+        return [ns(c.name) stringByAppendingString:@"  ↺"];
     return ns(c.name);  // "name"
 }
 

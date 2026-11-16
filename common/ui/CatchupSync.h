@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// CatchupSync — the decisions "Sync movies from provider" makes about catch-up (ui/VodSync
-// syncArchive), without the network or a window: which of a playlist's channels keep an archive,
-// whether that answer may replace the stored flags, and which server time zone to keep. Compiled into
-// the CLI too, so --selftest pins them.
+// CatchupSync — the decisions "Sync movies from provider" makes about catch-up (Win32/ui/VodSync and
+// mac/src/app/VodSync syncArchive), without the network or a window: which of a playlist's channels
+// keep an archive, whether that answer may replace the stored flags, and which server time zone to
+// keep. In common/ (RabbitEarsCore) since the mac sync adopted it; both self-tests pin it.
 #pragma once
 
 #include <optional>

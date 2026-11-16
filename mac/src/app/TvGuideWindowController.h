@@ -66,4 +66,8 @@ typedef NS_ENUM(NSInteger, REGuideShowResult) {
 // Refresh Guide stored new programmes: an open guide rebuilds its rows in place (keeping the time
 // scroll, the filter and the search text), and the next search starts a new session.
 - (void)guideDidChange;
+// The catch-up flags changed (a provider sync, a playlist deleted): every row and listed result takes
+// its new archive pick IN PLACE (no rebuild — the scroll and the filter stay); the search session
+// ends, and a results list on screen searches again quietly (Win32 epgGuideUpdateArchive).
+- (void)archiveDidChange;
 @end

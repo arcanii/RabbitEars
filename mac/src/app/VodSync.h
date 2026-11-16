@@ -48,7 +48,7 @@ enum class VodSyncResult {
     DatabaseError,
 };
 
-enum class VodSyncPhase { Contacting, Fetching, Saving };
+enum class VodSyncPhase { Contacting, Catchup, Fetching, Saving };  // Catchup: the live list, for the archive flags
 
 // The counts a completed run reports. `detail` is NOT localized — it is raw HTTP/JSON text for the
 // log and the status tail, where a translated string would destroy the diagnostic.
@@ -60,6 +60,11 @@ struct VodSyncReport {
     int  unusable  = 0;    // items the provider listed that carried no id or no container
     bool retireRefused = false;
     std::wstring detail;
+    // Catch-up (best-effort, before the films; never decides `result`): how many library channels
+    // were flagged as keeping an archive (-1 = the flags were not written for any line), and, when a
+    // line's flags were left as they were, why (not localized, like `detail`). Win32 VodSyncReport.
+    int archiveChannels = -1;
+    std::wstring archiveDetail;
 };
 
 struct VodSyncTarget {
@@ -79,6 +84,9 @@ struct VodSyncRequest {
     // Both callbacks are invoked on the MAIN queue. onDone runs exactly once per started run.
     std::function<void(VodSyncPhase, int)> onProgress;
     std::function<void(VodSyncReport)>     onDone;
+    // A line's catch-up flags were just written (mid-sync, before its films): the channel list's
+    // markers, the flags catch-up checks and an open TV Guide follow them now. May be empty.
+    std::function<void()>                  onArchive;
 };
 
 VodSyncStart startVodSync(VodSyncRequest req);

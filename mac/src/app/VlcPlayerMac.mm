@@ -253,6 +253,7 @@ VlcPlayerMac::PlayState VlcPlayerMac::playState() const {
     switch (libvlc_media_player_get_state(impl_->player)) {
         case libvlc_Playing: return PlayState::Playing;
         case libvlc_Error:   return PlayState::Error;
+        case libvlc_Ended:   return PlayState::Ended;
         default:             return PlayState::Other;
     }
 #else

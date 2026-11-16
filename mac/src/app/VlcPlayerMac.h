@@ -60,7 +60,10 @@ public:
     // Error = a FATAL player error (any — an open failure OR a mid-playback input error, and terminal);
     // Other = idle/opening/buffering/ended. The caller only demotes a channel to Dead on Error when it
     // never reached Playing this attempt (a true open failure), so a mid-playback blip can't latch it dead.
-    enum class PlayState { Other, Playing, Error };
+    // Ended: the input reached its end (libvlc_Ended) — a catch-up archive that ends before it ever
+    // played had nothing recorded for that time (the panel answers an empty 200). Callers that only
+    // care about Playing/Error treat it as Other.
+    enum class PlayState { Other, Playing, Error, Ended };
     PlayState playState() const;
 
     // Whether this player is holding (or about to hold) a connection to the provider — true from

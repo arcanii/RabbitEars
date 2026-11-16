@@ -6,8 +6,8 @@
 # ---------------------------------------------------------------------------
 # RabbitEarsPlatformWin — the Windows platform layer the core deliberately
 # excludes: WinHTTP download (Http.cpp) + the %LOCALAPPDATA% db path (Paths.cpp,
-# which implements Database::defaultDbPath) + a named time zone's offset
-# (TimeZone.cpp — catch-up URLs; here so the CLI selftest can reach it). Linked by the CLI
+# which implements Database::defaultDbPath) + a named time zone's offset (TimeZone.cpp — catch-up
+# URLs; it implements the seam ../common/platform/TimeZone.h, which mac implements too). Linked by the CLI
 # and the GUI. The macOS peers are ../mac/platform/*. Log-credential masking
 # (platform/UrlRedact.{h,cpp}, platform/LogSecrets.h) moved to ../common/platform — it is pure,
 # and the mac log sink uses it too; the same "platform/…" include names still resolve.
@@ -17,8 +17,8 @@ add_library(RabbitEarsPlatformWin STATIC
   platform/Paths.cpp
   platform/TimeZone.cpp)
 target_link_libraries(RabbitEarsPlatformWin PUBLIC RabbitEarsCore shell32 ole32 winhttp)
-# Win32/ as an include root: for this library's own sources (platform/TimeZone.h; HttpProgress.h
-# moved to ../common/platform, the seam both platforms' Http implements) and, PUBLIC, for the CLI. The GUI targets add it too.
+# Win32/ as an include root: for this library's own sources (platform/TimeZone.h and HttpProgress.h
+# moved to ../common/platform — seams both platforms implement) and, PUBLIC, for the CLI. The GUI targets add it too.
 target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---------------------------------------------------------------------------
@@ -26,12 +26,11 @@ target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_
 # XtreamRecon.cpp is a deliberately self-contained, deletable probe (--xtream) for
 # gate 1 of the VOD epic — it is NOT the production JSON path. See its header.
 # ---------------------------------------------------------------------------
-# ui/CatchupSync.cpp (the provider sync's catch-up decisions, no window code) is compiled here too,
-# for --selftest; ui/PhotoCells.cpp (the photoreal cell looks' rasteriser — pixels only, no GDI)
-# too, so --selftest can check what it draws. The TV Guide's row build (ui/GuideModel) moved to
-# ../common/ui — the mac guide builds its rows with it too; --selftest/--guidebench reach it there.
-add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp ui/CatchupSync.cpp
-  ui/PhotoCells.cpp)
+# ui/PhotoCells.cpp (the photoreal cell looks' rasteriser — pixels only, no GDI) is compiled here
+# too, so --selftest can check what it draws. The TV Guide's row build (ui/GuideModel) and the
+# provider sync's catch-up decisions (ui/CatchupSync) moved to ../common/ui — the mac app uses both;
+# --selftest/--guidebench reach them there.
+add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp ui/PhotoCells.cpp)
 target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsPlatformWin)
 add_test(NAME selftest COMMAND RabbitEarsCli --selftest)  # peer of mac/'s selftest
 
@@ -86,7 +85,6 @@ if(RABBITEARS_BUILD_GUI)
     ui/VuDial.cpp
     ui/DeadLinkSweep.cpp
     ui/VodSync.cpp
-    ui/CatchupSync.cpp
     ui/MeterBridge.cpp
     ui/MeterLabels.cpp
     ui/Dialogs.cpp

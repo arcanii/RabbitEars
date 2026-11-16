@@ -21,6 +21,13 @@
 
 #include "core/Http.h"
 #include "platform/Log.h"
+#include "platform/TimeZone.h"
+#include "ui/CatchupSync.h"  // matchArchiveFlags / serverZoneToStore (shared with Win32)
+
+#include <algorithm>
+#include <chrono>
+#include <optional>
+#include <thread>
 
 namespace rabbitears {
 namespace mac {
@@ -31,14 +38,118 @@ namespace {
 constexpr int kMinUsablePercent   = 50;
 constexpr int kAccountTimeoutMs   = 15000;
 constexpr int kCatalogueTimeoutMs = 30000;
+constexpr int kLiveListTimeoutMs  = 60000;  // get_live_streams: every live stream of the line
 
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_cancel{false};
+
+// ---- 1b. Catch-up flags (the mac peer of Win32/ui/VodSync.cpp syncArchive) -------------------
+// Which of this line's channels keep an archive, from get_live_streams (tv_archive /
+// tv_archive_duration), matched to the playlist's live channels by stream id WITH ITS OWN LOGIN, and
+// written to channel_archive. Before that, the server's clock: its time zone is kept only while it
+// agrees with the offset measured from the probe (CatchupSync serverZoneToStore) — a panel set to "UTC"
+// whose clock reads CEST would put every catch-up URL two hours off. Best-effort: nothing here changes
+// the film result; a failure leaves the stored flags as they were and says why in the report.
+void syncArchive(Database& db, const VodSyncTarget& t, const XtreamAccount& acct, VodSyncReport& rep,
+                 const std::function<void()>& onArchive) {
+    auto notUpdated = [&](const std::wstring& why) {
+        diag::warn(L"VOD sync: catch-up info NOT updated for \"" + t.name + L"\": " + why);
+        if (rep.archiveDetail.empty()) rep.archiveDetail = why;
+    };
+    if (!db.channelArchiveReady()) {
+        notUpdated(L"no channel_archive table");
+        return;
+    }
+    {
+        const std::wstring pid = std::to_wstring(t.id);
+        int offset = 0;
+        const bool haveOffset = xtreamServerUtcOffset(acct, &offset);
+        const std::optional<std::wstring> stored = db.getSetting(L"archive_tz_" + pid);
+        const std::optional<std::wstring> zone =
+            serverZoneToStore(acct.timezone, stored, acct.serverTime, haveOffset ? &offset : nullptr);
+        const bool hadOffset = db.getSetting(L"archive_utc_offset_" + pid).has_value();
+        if (zone) db.setSetting(L"archive_tz_" + pid, *zone);
+        if (haveOffset) db.setSetting(L"archive_utc_offset_" + pid, std::to_wstring(offset));
+        // What the URLs will read the server's clock by (playCatchup: the zone if one is kept, else the
+        // stored offset, else UTC), and why a zone named is not the one used.
+        const std::wstring kept = zone ? *zone : stored.value_or(L"");
+        auto quoted = [](const std::wstring& z) { return L"\"" + z + L"\""; };
+        const std::wstring measured =
+            haveOffset ? L"UTC" + std::wstring(offset >= 0 ? L"+" : L"") + std::to_wstring(offset) + L" s" : L"";
+        std::wstring line = L"VOD sync: server clock for " + quoted(t.name) + L": ";
+        int unusedOffset = 0;
+        const bool keptKnown = !kept.empty() && utcOffsetAt(kept, static_cast<long long>(time(nullptr)), &unusedOffset);
+        if (keptKnown) {
+            line += L"zone " + kept + L" decides" + (haveOffset ? L" (measured " + measured + L")" : L"");
+        } else {
+            line += kept.empty() ? std::wstring(L"no zone") : L"zone " + kept + L" unknown here";
+            line += haveOffset ? L" — the measured " + measured + L" decides"
+                    : hadOffset ? std::wstring(L", the clock unreadable — the stored offset decides")
+                                : std::wstring(L", no offset — UTC is assumed");
+        }
+        if (!acct.timezone.empty() && acct.timezone != kept)
+            line += L"; " + quoted(acct.timezone) +
+                    (zone ? (haveOffset ? L" refused: unknown here, or it disagrees with the clock"
+                                        : L" refused: unknown here")
+                          : std::wstring(L" not stored: nothing measured to check it by") +
+                                (kept.empty() ? L" (an earlier one was refused)" : L""));
+        diag::info(line);
+    }
+    std::string body;
+    std::wstring err;
+    bool got = false;
+    for (int attempt = 1; attempt <= 3 && !got && !g_cancel.load(); ++attempt) {
+        if (attempt > 1) {
+            diag::warn(L"VOD sync: get_live_streams failed (" + err + L") — attempt " + std::to_wstring(attempt));
+            for (int i = 0; i < 30 && !g_cancel.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (g_cancel.load()) break;
+        }
+        got = httpGet(xtreamApiUrl(t.creds, L"get_live_streams"), body, err, kLiveListTimeoutMs);
+    }
+    if (g_cancel.load()) return;  // the user's playback wins; no flags written
+    if (!got) {
+        notUpdated(err.empty() ? std::wstring(L"get_live_streams failed") : err);
+        return;
+    }
+    std::vector<XtreamArchive> arch;
+    size_t total = 0;
+    if (!parseXtreamLiveArchive(body, arch, &total, &err)) {
+        notUpdated(L"get_live_streams unparseable: " + err);
+        return;
+    }
+    body.clear();
+    body.shrink_to_fit();
+    // An empty list is not evidence that every archive is gone — a panel hiccup looks the same.
+    if (total == 0) {
+        notUpdated(L"get_live_streams listed no channels");
+        return;
+    }
+    // Only URLs carrying THIS playlist's login: another shape in the same playlist is not stream N.
+    const ArchiveMatch match = matchArchiveFlags(db.liveChannelUrls(t.id, t.creds.username), arch, t.creds);
+    if (g_cancel.load()) return;
+    if (!match.usable) {
+        notUpdated(L"none of this playlist's channel URLs reads as a live stream of its login");
+        return;
+    }
+    if (!db.replaceChannelArchive(t.id, match.flags)) {
+        notUpdated(L"writing the flags failed: " + db.lastError());
+        return;
+    }
+    rep.archiveChannels = std::max(rep.archiveChannels, 0) + static_cast<int>(match.flags.size());
+    if (onArchive) {
+        std::function<void()> cb = onArchive;  // the block keeps its own copy
+        dispatch_async(dispatch_get_main_queue(), ^{ cb(); });
+    }
+    diag::info(L"VOD sync: catch-up for \"" + t.name + L"\": " + std::to_wstring(arch.size()) + L" of " +
+               std::to_wstring(total) + L" live streams keep an archive; " + std::to_wstring(match.flags.size()) +
+               L" library channels flagged");
+}
 
 // The body of one run. Returns through `rep`; every early exit sets a result FIRST.
 void runSync(const std::wstring& dbPath,
              const std::vector<VodSyncTarget>& targets,
              const std::function<void(VodSyncPhase, int)>& progress,
+             const std::function<void()>& onArchive,
              VodSyncReport& rep) {
     // Its OWN connection — see the header. Opening it here also means the v8/v9 migration can run
     // on THIS queue rather than the main one if the app has never opened the DB, which is a bonus
@@ -89,6 +200,12 @@ void runSync(const std::wstring& dbPath,
             rep.detail = acct.status.empty() ? L"auth rejected" : acct.status;
             break;
         }
+        if (g_cancel.load()) { rep.result = VodSyncResult::Cancelled; break; }
+
+        // ---- 1b. Catch-up flags (best-effort; never decides the result) -------------------
+        // Before the films, so a movie catalogue that fails cannot cost the archive flags too.
+        progress(VodSyncPhase::Catchup, 0);
+        syncArchive(db, t, acct, rep, onArchive);
         if (g_cancel.load()) { rep.result = VodSyncResult::Cancelled; break; }
 
         // ---- 2. Two requests for the whole catalogue ------------------------------------
@@ -263,6 +380,7 @@ VodSyncStart startVodSync(VodSyncRequest req) {
     const std::vector<VodSyncTarget> targets = req.targets;
     auto onProgress = req.onProgress;
     auto onDone = req.onDone;
+    auto onArchive = req.onArchive;  // syncArchive hops it to the main queue itself
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         VodSyncReport rep;
@@ -271,7 +389,7 @@ VodSyncStart startVodSync(VodSyncRequest req) {
             if (!onProgress) return;
             dispatch_async(dispatch_get_main_queue(), ^{ onProgress(ph, n); });
         };
-        runSync(dbPath, targets, progress, rep);
+        runSync(dbPath, targets, progress, onArchive, rep);
 
         // The single exit. Drop the flag BEFORE handing the report to the main queue: the
         // completion re-enables the menu item, and a completion that ran while the flag was still

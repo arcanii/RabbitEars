@@ -40,7 +40,7 @@
 #include "platform/Encoding.h"
 #include "platform/TimeZone.h"
 #include "platform/UrlRedact.h"
-#include "ui/CatchupSync.h"  // Win32/ui — the provider sync's catch-up decisions
+#include "ui/CatchupSync.h"  // common/ui — the provider sync's catch-up decisions (shared with mac)
 #include "ui/DockLayout.h"
 #include "ui/GuideModel.h"  // common/ui — the TV Guide's row build (shared with the mac guide)
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
