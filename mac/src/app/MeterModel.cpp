@@ -44,19 +44,29 @@ SkinColor meterColorFromToken(const std::string& tok, const SkinColor& fallback)
 
 std::string meterStyleToString(MeterStyle s) {
     switch (s) {
-        case MeterStyle::Led:   return "led";
-        case MeterStyle::Tube:  return "tube";
-        case MeterStyle::Lcd:   return "lcd";
-        case MeterStyle::Scope: return "scope";
+        case MeterStyle::Led:        return "led";
+        case MeterStyle::Tube:       return "tube";
+        case MeterStyle::Lcd:        return "lcd";
+        case MeterStyle::Scope:      return "scope";
+        case MeterStyle::Vu:         return "vu";
+        case MeterStyle::VuSilver:   return "vu_silver";
+        case MeterStyle::StudioLed:  return "led_studio";
+        case MeterStyle::BacklitLcd: return "lcd_backlit";
+        case MeterStyle::Vfd:        return "vfd";
     }
     return "led";
 }
 
 MeterStyle meterStyleFromString(const std::string& s, MeterStyle fallback) {
-    if (s == "led")   return MeterStyle::Led;
-    if (s == "tube")  return MeterStyle::Tube;
-    if (s == "lcd")   return MeterStyle::Lcd;
-    if (s == "scope") return MeterStyle::Scope;
+    if (s == "led")         return MeterStyle::Led;
+    if (s == "tube")        return MeterStyle::Tube;
+    if (s == "lcd")         return MeterStyle::Lcd;
+    if (s == "scope")       return MeterStyle::Scope;
+    if (s == "vu")          return MeterStyle::Vu;
+    if (s == "vu_silver")   return MeterStyle::VuSilver;
+    if (s == "led_studio")  return MeterStyle::StudioLed;
+    if (s == "lcd_backlit") return MeterStyle::BacklitLcd;
+    if (s == "vfd")         return MeterStyle::Vfd;
     return fallback;
 }
 

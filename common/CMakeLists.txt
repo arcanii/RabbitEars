@@ -27,6 +27,7 @@ add_library(RabbitEarsCore STATIC
   ui/CatchupSync.cpp  # the provider sync's catch-up decisions (both apps; needs platform/TimeZone) — unit-tested
   ui/Skin.cpp         # shared skin model + codecs (theme engine) — unit-tested headlessly
   ui/GlassMask.cpp    # pure "glass cover" mask math for the meters — unit-tested headlessly
+  ui/PhotoCells.cpp   # the photoreal cell looks' rasteriser (pixels only; both apps) — unit-tested
   ui/VuLamp.cpp       # pure VU dial illumination math — unit-tested headlessly
   ui/VideoGrid.cpp)   # pure multi-pane video layout (split/PIP) — unit-tested headlessly
 target_include_directories(RabbitEarsCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

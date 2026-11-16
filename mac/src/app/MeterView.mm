@@ -7,6 +7,10 @@
 #include <cmath>
 #include <cstring>
 #include <os/lock.h>
+#include <vector>
+
+#include "VuDialMac.h"     // the two needle instruments (port of Win32/ui/VuDial)
+#include "ui/PhotoCells.h" // the photoreal cell looks' rasteriser (shared with Win32)
 
 using namespace rabbitears::mac;
 using namespace rabbitears;
@@ -14,7 +18,27 @@ using namespace rabbitears::i18n;  // StringId
 
 namespace {
 constexpr int kMaxBands = 64;
-constexpr int kHist     = 96;  // bitrate history depth
+constexpr int kHist     = 256;  // bitrate history depth (Win32 kBitrateHistory: a tall cell dial fills)
+constexpr float kSilenceDbfs = -120.0f;        // Win32 SpectrumTap::kSilenceDbfs
+constexpr float kVuReferenceDbfs = -18.0f;     // 0 VU (the EBU alignment level) — Win32 MiniMeter.h
+constexpr float kVuSensSpanDb = 12.0f;         // the Sens knob: ±12 dB at its ends
+constexpr float kVuAudioSpanDb = 30.0f;        // the audio needle: dB of input the arc spans
+constexpr float kVuRedFrom = 0.8f;             // non-audio kinds: the level where the red zone begins
+inline float vuReadingOfDbfs(float dbfs, float sensitivity) {
+    return dbfs - kVuReferenceDbfs + (sensitivity - 0.5f) * 2.0f * kVuSensSpanDb;
+}
+COLORREF cref(const rabbitears::SkinColor& c) { return RGB(c.r, c.g, c.b); }
+COLORREF lerpCol(COLORREF a, COLORREF b, float t) {  // Win32 MiniMeter.cpp lerpCol
+    t = std::clamp(t, 0.0f, 1.0f);
+    auto m = [t](int x, int y) { return x + static_cast<int>((y - x) * t); };
+    return RGB(m(GetRValue(a), GetRValue(b)), m(GetGValue(a), GetGValue(b)), m(GetBValue(a), GetBValue(b)));
+}
+rabbitears::mac::VuFace vuFaceOf(rabbitears::mac::MeterStyle s) {
+    return s == rabbitears::mac::MeterStyle::VuSilver ? rabbitears::mac::VuFace::Silver : rabbitears::mac::VuFace::Backlit;
+}
+// The mac panel behind a meter when its Bg inherits (the strip's own dark surround).
+constexpr COLORREF kInheritPanel = RGB(20, 20, 20);  // == colorWithWhite:0.08
+constexpr COLORREF kChromeBorder = RGB(56, 56, 56);  // == colorWithWhite:0.22 (the 1-px frame)
 NSColor* nscolor(const rabbitears::SkinColor& c) {
     return [NSColor colorWithSRGBRed:c.r / 255.0 green:c.g / 255.0 blue:c.b / 255.0 alpha:c.a / 255.0];
 }
@@ -49,6 +73,25 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     double _histMax;
     // Frames (UI thread)
     float _fpsT, _fps, _flare;
+
+    // ---- the needle + photoreal looks --------------------------------------------------------
+    MeterPalette _palette;     // the RAW palette (the photo / VU looks read COLORREFs from it)
+    float _sensitivity;        // tuning.sensitivity as set (the audio needle takes it in dB)
+    // The programme's level, latched from the RT thread under _lock (Win32 hasPendingLevel).
+    float _pendingLevelDb;
+    BOOL  _hasPendingLevel;
+    BOOL  _audioLevelOn;       // a level has been pushed: the audio needle reads it
+    int   _audioStale;         // ticks since the last one (5 = the sound stopped)
+    float _audioDb, _audioAmp; // the latest level, and its amplitude eased with VU ballistics
+    float _vuNeedle, _vuPeak;  // the needle's level (0..1) and the PEAK lamp's glow (0..1)
+    std::vector<uint32_t> _px;            // the frame, 0x00RRGGBB top-down, backing pixels
+    std::vector<uint32_t> _vuStatic;      // the VU face without its needle (rebuilt on change)
+    VuDialLayout _vuLay;
+    VuDialSpec   _vuSpec;
+    int   _vuW, _vuH;
+    float _vuScale;
+    PhotoCellCache _photoCache;           // the cells the photo looks shaded (Win32 photoCache)
+    std::vector<PhotoCell> _photoCells;
 }
 
 - (instancetype)initWithKind:(MeterKind)kind {
@@ -85,7 +128,10 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 - (BOOL)isFlipped { return NO; }
 
 - (void)setConfig:(const MeterConfig&)cfg {
+    if (!isPhotoCellLook(cfg.style)) _photoCache = PhotoCellCache();  // dropped when it leaves those looks
     _style = cfg.style;
+    _palette = cfg.palette;
+    _sensitivity = std::isfinite(cfg.tuning.sensitivity) ? std::clamp(cfg.tuning.sensitivity, 0.0f, 1.0f) : 0.5f;
     _gain      = std::clamp(cfg.tuning.sensitivity * 2.0f, 0.05f, 4.0f);  // 0.5 knob == unity
     _glow      = std::clamp(cfg.tuning.glow, 0.0f, 1.0f);
     _smoothing = std::clamp(cfg.tuning.smoothing, 0.0f, 1.0f);
@@ -112,6 +158,14 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     _haveData = YES;
     for (int i = 0; i < n; ++i)
         if (bands[i] > 0.02f) { _hadEnergy = YES; break; }
+    os_unfair_lock_unlock(&_lock);
+}
+
+- (void)pushLevel:(float)dbfs {
+    if (!std::isfinite(dbfs)) dbfs = kSilenceDbfs;
+    os_unfair_lock_lock(&_lock);
+    _pendingLevelDb = _hasPendingLevel ? std::max(_pendingLevelDb, dbfs) : dbfs;
+    _hasPendingLevel = YES;
     os_unfair_lock_unlock(&_lock);
 }
 
@@ -164,7 +218,11 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     _histHead = 0;
     _histMax = 1.0;
     _fps = _fpsT = _flare = 0;
+    _vuNeedle = _vuPeak = 0;
+    _audioAmp = 0;
+    _audioDb = kSilenceDbfs;
     os_unfair_lock_lock(&_lock);
+    _hasPendingLevel = NO;
     _specCount = 0;
     _haveData = NO;
     _hadEnergy = NO;
@@ -216,7 +274,83 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
         case MeterKind::Bitrate:
             break;  // push-driven redraw
     }
+    if ([self tickNeedle]) changed = YES;
     if (changed) [self setNeedsDisplay:YES];
+}
+
+// The 0..1 quantity the needle shows, as ONE number (Win32 scalarLevel). Sensitivity applies once:
+// mac's band levels already carry the gain (the tick multiplies the target), the others take it here;
+// the audio needle takes the Sens knob in dB instead.
+- (float)scalarLevel {
+    float raw = 0.0f;
+    switch (_kind) {
+        case MeterKind::Spectrum: {
+            if (_audioLevelOn) {
+                const float db = 20.0f * std::log10(std::max(_audioAmp, 1e-6f));
+                const float vu = vuReadingOfDbfs(db, _sensitivity);
+                return std::clamp(1.0f - (vuDialFullScaleDb(vuFaceOf(_style)) - vu) / kVuAudioSpanDb, 0.0f, 1.0f);
+            }
+            const int n = std::clamp(_drawBands, 1, kMaxBands);
+            float sum = 0.0f;
+            for (int i = 0; i < n; ++i) sum += std::clamp(_specLevel[i], 0.0f, 1.0f);
+            return std::clamp(sum / (float)n, 0.0f, 1.0f);
+        }
+        case MeterKind::Bitrate: raw = _hist[((_histHead - 1) % kHist + kHist) % kHist]; break;
+        case MeterKind::Signal: raw = _sigStrength; break;
+        case MeterKind::Frames: raw = _fps / 60.0f; break;
+    }
+    return std::clamp(raw * _gain, 0.0f, 1.0f);
+}
+
+// Where a level puts the needle on the printed scale (Win32 vuPosition): the audio kind is already
+// in dB, so linearly over the top kVuAudioSpanDb; the others (not dB quantities) keep the linear law,
+// the red zone the top fifth.
+- (float)vuPosition:(float)level face:(VuFace)face {
+    if (!std::isfinite(level)) level = 0.0f;
+    level = std::clamp(level, 0.0f, 1.0f);
+    const float full = vuDialFullScaleDb(face);
+    if (_kind == MeterKind::Spectrum) return vuDialPositionOfDb(face, full - (1.0f - level) * kVuAudioSpanDb);
+    const float f0 = vuDialPositionOfDb(face, 0.0f), fEnd = vuDialPositionOfDb(face, full);
+    return level <= kVuRedFrom ? level / kVuRedFrom * f0
+                               : f0 + (level - kVuRedFrom) / (1.0f - kVuRedFrom) * (fEnd - f0);
+}
+
+// VU needle ballistics, integrated EVERY tick whatever the look (switching to a VU shows a needle
+// already tracking). A real movement settles 99 % in ~300 ms, symmetric: ~0.40 a 33-ms tick, the
+// Smoothing knob scaling it. The audio needle eases the programme's AMPLITUDE, then shows it in dB.
+// PEAK lights whenever the needle is in the red zone, fading over ~1/4 s. (Win32 onTick.) Returns
+// whether a needle look needs a redraw.
+- (BOOL)tickNeedle {
+    if (_kind == MeterKind::Spectrum) {
+        os_unfair_lock_lock(&_lock);
+        if (_hasPendingLevel) {
+            _audioDb = _pendingLevelDb;
+            _audioLevelOn = YES;
+            _audioStale = 0;
+            _hasPendingLevel = NO;
+        } else if (_audioLevelOn) {
+            if (_audioStale < 5) ++_audioStale;
+            if (_audioStale >= 5) _audioDb = kSilenceDbfs;  // the sound stopped: rest
+        }
+        os_unfair_lock_unlock(&_lock);
+    }
+    const float vuCoef = std::clamp(0.40f * (1.35f - _smoothing * 0.70f), 0.06f, 0.75f);
+    const bool audioNeedle = _kind == MeterKind::Spectrum && _audioLevelOn;
+    if (audioNeedle) {
+        const float target = std::pow(10.0f, _audioDb / 20.0f);
+        _audioAmp += (target - _audioAmp) * vuCoef;
+        if (!std::isfinite(_audioAmp)) _audioAmp = 0.0f;
+    }
+    const float before = _vuNeedle, peakBefore = _vuPeak;
+    const float level = [self scalarLevel];
+    if (audioNeedle) _vuNeedle = level;
+    else _vuNeedle += (level - _vuNeedle) * vuCoef;
+    if (!std::isfinite(_vuNeedle)) _vuNeedle = 0.0f;
+    const VuFace face = vuFaceOf(_style);
+    const bool inRed = [self vuPosition:_vuNeedle face:face] >= vuDialPositionOfDb(face, 0.0f);
+    _vuPeak = inRed ? 1.0f : _vuPeak * 0.80f;
+    if (_vuPeak < 0.01f) _vuPeak = 0.0f;
+    return isVuLook(_style) && (std::fabs(_vuNeedle - before) > 1e-4f || _vuPeak != peakBefore);
 }
 
 // ---- rendering --------------------------------------------------------------
@@ -250,6 +384,7 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     [[NSColor colorWithWhite:0.22 alpha:1.0] set];
     NSFrameRectWithWidth(b, 1);
     if (_kind == MeterKind::Spectrum && !_available) { [self drawUnavailable:b]; return; }
+    if (isVuLook(_style) || isPhotoCellLook(_style)) { [self drawPixelLook:b]; return; }
     if (_style == MeterStyle::Scope) { [self drawScope:b]; return; }
     switch (_kind) {
         case MeterKind::Spectrum: [self drawSpectrum:b]; break;
@@ -351,6 +486,176 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
         for (int r = 0; r < rows; ++r)
             [self fillCell:NSMakeRect(x, pad + r * (cellH + gapY), cellW, cellH) color:base lit:on];
     }
+}
+
+// ---- the pixel looks: the VU instruments and the photoreal cells ---------------------------------
+// Both are drawn into a backing-resolution 0x00RRGGBB buffer, as Win32 draws them into its DIB, then
+// blitted: the panel, the 1-px frame, then the dial inside the meter's chrome band (Win32 onPaint).
+
+// The colour roles as drawn (Win32 meterDrawnPalette, the part that applies on mac's dark panel): on
+// the needle looks the STOCK accent means the face's own black needle.
+- (MeterPalette)drawnPalette {
+    MeterPalette d = _palette;
+    if (isVuLook(_style)) {
+        const MeterPalette stock = defaultMeterPalette(MeterKind::Spectrum);
+        if (d.accent.r == stock.accent.r && d.accent.g == stock.accent.g && d.accent.b == stock.accent.b) {
+            const COLORREF n = vuDialNeedleColour(vuFaceOf(_style));
+            d.accent = SkinColor{GetRValue(n), GetGValue(n), GetBValue(n)};
+        }
+    }
+    return d;
+}
+
+- (void)drawPixelLook:(NSRect)b {
+    const NSRect pb = [self convertRectToBacking:b];
+    const int W = (int)std::lround(pb.size.width), H = (int)std::lround(pb.size.height);
+    if (W < 4 || H < 4) return;
+    const float scale = (float)(pb.size.width / std::max<CGFloat>(1, b.size.width));
+    const UINT dpi = (UINT)std::lround(96.0f * scale);
+    // The VU looks keep the strip's panel round the instrument (its Bg is the LAMP, not a panel).
+    const COLORREF panel = (isVuLook(_style) || _palette.bg.inherit) ? kInheritPanel : cref(_palette.bg);
+    _px.assign((size_t)W * (size_t)H, ((uint32_t)GetRValue(panel) << 16) | ((uint32_t)GetGValue(panel) << 8) |
+                                          (uint32_t)GetBValue(panel));
+    const uint32_t border = ((uint32_t)GetRValue(kChromeBorder) << 16) | ((uint32_t)GetGValue(kChromeBorder) << 8) |
+                            (uint32_t)GetBValue(kChromeBorder);
+    for (int x = 0; x < W; ++x) { _px[(size_t)x] = border; _px[(size_t)(H - 1) * W + x] = border; }
+    for (int y = 0; y < H; ++y) { _px[(size_t)y * W] = border; _px[(size_t)y * W + W - 1] = border; }
+    const MeterPalette dp = [self drawnPalette];
+    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef g = CGBitmapContextCreate(_px.data(), (size_t)W, (size_t)H, 8, (size_t)W * 4, cs,
+                                           kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+    if (g) {
+        CGContextTranslateCTM(g, 0, H);  // y down, as the Win32 renderers draw
+        CGContextScaleCTM(g, 1, -1);
+    }
+    if (isVuLook(_style)) {
+        const int inset = MulDiv(2, (int)dpi, 96);  // meterChromePx
+        const int w = W - 2 * inset, h = H - 2 * inset;
+        if (w >= 8 && h >= 8) {
+            VuDialSpec spec;
+            spec.face = vuFaceOf(_style);
+            spec.lamp = _palette.bg.inherit ? CLR_INVALID : cref(_palette.bg);
+            spec.redZone = cref(dp.high);
+            if (_vuStatic.empty() || _vuW != w || _vuH != h || _vuScale != scale || !(_vuSpec == spec)) {
+                buildVuDialStatic(spec, w, h, scale, _vuStatic, _vuLay);
+                _vuSpec = spec;
+                _vuW = w;
+                _vuH = h;
+                _vuScale = scale;
+            }
+            if (_vuStatic.size() == (size_t)w * (size_t)h) {
+                for (int y = 0; y < h; ++y)
+                    std::memcpy(_px.data() + (size_t)(inset + y) * W + inset, _vuStatic.data() + (size_t)y * w,
+                                (size_t)w * 4);
+                drawVuDialNeedle(g, inset, inset, _vuLay, [self vuPosition:_vuNeedle face:spec.face], _vuPeak,
+                                 cref(dp.accent));
+            }
+        }
+    } else {
+        [self drawPhotoCellsW:W h:H dpi:dpi panel:panel palette:dp];
+    }
+    if (g) {
+        CGContextFlush(g);
+        CGImageRef img = CGBitmapContextCreateImage(g);
+        if (img) {
+            CGContextRef cg = NSGraphicsContext.currentContext.CGContext;
+            CGContextSaveGState(cg);
+            CGContextSetInterpolationQuality(cg, kCGInterpolationNone);
+            CGContextDrawImage(cg, NSRectToCGRect(b), img);  // upright: a CGImage's first row is its top
+            CGContextRestoreGState(cg);
+            CGImageRelease(img);
+        }
+        CGContextRelease(g);
+    }
+    CGColorSpaceRelease(cs);
+}
+
+// The photoreal cells (Win32 drawPhotoCells + photoSpectrum/Signal/Bitrate/Frames): the classic
+// painters' readings on a grid that scales with the meter. mac has no skin material, so the frame is
+// Flat — the chrome band only, as Win32 draws for a skin without one.
+- (void)drawPhotoCellsW:(int)W h:(int)H dpi:(UINT)dpi panel:(COLORREF)panel palette:(const MeterPalette&)dp {
+    const int bz = photoBezelPx(H, dpi, SkinMaterial::Flat);
+    const RECT in{bz, bz, W - bz, H - bz};
+    if (in.right <= in.left || in.bottom <= in.top) return;
+    const PhotoRows g = photoRows(in.bottom - in.top, dpi);
+    _photoCells.clear();
+    std::vector<PhotoCell>& out = _photoCells;
+    const COLORREF low = cref(dp.low), mid = cref(dp.mid), high = cref(dp.high), accent = cref(dp.accent),
+                   peak = cref(dp.peak), rawPeak = cref(_palette.peak);
+    auto ramp = [&](float frac) { return frac < 0.60f ? low : frac < 0.85f ? mid : high; };
+    const int Wd = in.right - in.left;
+    switch (_kind) {
+        case MeterKind::Spectrum: {
+            const int bands = std::max(1, _drawBands);
+            const PhotoCols cols = photoCols(Wd, std::max(2, Wd / bands), g.gap, bands);
+            for (int c = 0; c < cols.cols; ++c) {  // mac's levels already carry the Sens gain
+                const LONG x0 = in.left + cols.cellLeft(c), x1 = x0 + cols.colW - g.gap;
+                const int litN = (int)std::lround(std::clamp(_specLevel[c], 0.0f, 1.0f) * g.rows);
+                const int peakRow = (int)std::lround(std::clamp(_specPeak[c], 0.0f, 1.0f) * g.rows);
+                for (int r = 0; r < g.rows; ++r) {
+                    bool on = r < litN;
+                    COLORREF lit = ramp((float)r / g.rows);
+                    if (peakRow > 0 && r == peakRow) { on = true; lit = peak; }
+                    out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, lit, on});
+                }
+            }
+            break;
+        }
+        case MeterKind::Signal: {
+            const int bars = 5;
+            const PhotoCols cols = photoCols(Wd, std::max(2, Wd / bars), g.gap, bars);
+            const float sl = std::clamp(_sigStrength * _gain, 0.0f, 1.0f);
+            const int litBars = (int)std::ceil(sl * bars - 0.001f);
+            COLORREF base = sl > 0.6f ? low : (sl > 0.3f ? mid : high);
+            base = lerpCol(base, high, _sigTrouble * 0.6f);
+            for (int j = 0; j < cols.cols; ++j) {
+                const LONG x0 = in.left + cols.cellLeft(j), x1 = x0 + cols.colW - g.gap;
+                const int n = photoSignalCells(j, g.rows);
+                for (int r = 0; r < n; ++r)
+                    out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, base, j < litBars});
+            }
+            break;
+        }
+        case MeterKind::Bitrate: {
+            const PhotoCols cols = photoCols(Wd, photoBitrateColW(g), g.gap, kHist);
+            const int n = std::min(cols.cols, kHist);
+            for (int k = 0; k < n; ++k) {  // k = 0: the newest sample, in the rightmost column
+                const int idx = ((_histHead - 1 - k) % kHist + kHist) % kHist;
+                const float frac = std::clamp(_hist[idx] * _gain, 0.0f, 1.0f);
+                const int litN = (int)std::lround(frac * g.rows);
+                const LONG x0 = in.left + cols.cellLeft(cols.cols - 1 - k), x1 = x0 + cols.colW - g.gap;
+                for (int r = 0; r < g.rows; ++r) {
+                    // The ramp heats toward the RAW peak (meterDrawnPalette says why).
+                    const COLORREF lit = lerpCol(accent, rawPeak, (float)r / g.rows * 0.5f);
+                    out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, lit, r < litN});
+                }
+            }
+            break;
+        }
+        case MeterKind::Frames: {
+            const PhotoCols cols = photoCols(Wd, photoFramesColW(g), g.gap, 1 << 16);
+            const float frac = std::clamp(_fps / 60.0f * _gain, 0.0f, 1.0f);
+            const int lit = (int)std::lround(frac * cols.cols);
+            const int fps = (int)std::lround(_fps);
+            COLORREF base = fps >= 24 ? low : (fps >= 15 ? mid : high);
+            base = lerpCol(base, high, _flare);
+            for (int c = 0; c < cols.cols; ++c) {
+                const LONG x0 = in.left + cols.cellLeft(c), x1 = x0 + cols.colW - g.gap;
+                for (int r = 0; r < g.rows; ++r)
+                    out.push_back({RECT{x0, in.top + g.cellTop(r), x1, in.top + g.cellBottom(r)}, base, c < lit});
+            }
+            break;
+        }
+    }
+    PhotoScene sc;
+    sc.finish = _style == MeterStyle::BacklitLcd ? CellFinish::Lcd : _style == MeterStyle::Vfd ? CellFinish::Vfd
+                                                                                               : CellFinish::Led;
+    sc.panel = panel;
+    sc.off = cref(dp.off);
+    sc.hot = rawPeak;  // an LED's core is "the hottest light" — the RAW peak
+    sc.glow = _glow;
+    sc.pitch = g.pitch;
+    paintPhotoCells(_px.data(), W, H, in, sc, out, _photoCache);
 }
 
 // ---- Scope style: a phosphor oscilloscope trace of each kind's level series -------

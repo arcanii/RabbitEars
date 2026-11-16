@@ -56,6 +56,11 @@ struct SpectrumFft {
     int      bandHi[kMaxBands];
 
     void (^handler)(const float*, int) = nil;  // ARC-managed (this .mm is -fobjc-arc)
+    void (^levelHandler)(float) = nil;         // the window's level (dBFS) — optional
+    // The level: each channel's sum of squares over the window in progress (the FIFO is mono, the
+    // level is the LOUDER channel's, as Win32's). Reset at every window.
+    static constexpr int kLevelChannels = 8;
+    double chSumSq[kLevelChannels] = {};
 
     bool init(int bc) {
         bandCount = std::clamp(bc, 1, kMaxBands);
@@ -98,7 +103,11 @@ struct SpectrumFft {
             const int frames = (int)(b0.mDataByteSize / sizeof(float) / (UInt32)ch0);
             for (int f = 0; f < frames; ++f) {
                 float acc = 0.0f;
-                for (int c = 0; c < ch0; ++c) acc += s[f * ch0 + c];
+                for (int c = 0; c < ch0; ++c) {
+                    const float v = s[f * ch0 + c];
+                    acc += v;
+                    if (c < kLevelChannels) chSumSq[c] += (double)v * v;
+                }
                 pushSample(acc / (float)ch0);
             }
         } else {
@@ -112,6 +121,7 @@ struct SpectrumFft {
                     const float* s = (const float*)abl->mBuffers[bi].mData;
                     if (s && (UInt32)f < abl->mBuffers[bi].mDataByteSize / sizeof(float)) {
                         acc += s[f];
+                        if (bi < (UInt32)kLevelChannels) chSumSq[bi] += (double)s[f] * s[f];
                         ++cnt;
                     }
                 }
@@ -148,6 +158,18 @@ struct SpectrumFft {
             bands[b] = std::isfinite(lvl) ? std::clamp(lvl, 0.0f, 1.0f) : 0.0f;
         }
         if (handler) handler(bands, bandCount);
+        // The level of this window: the louder channel's RMS, sine-calibrated (+3.01 dB, so a full-scale
+        // sine reads 0 dBFS — Win32 SpectrumTap::rmsDbfs exactly), floored at -120.
+        double loud = 0.0;
+        for (int c = 0; c < kLevelChannels; ++c) {
+            loud = std::max(loud, chSumSq[c]);
+            chSumSq[c] = 0.0;
+        }
+        if (levelHandler) {
+            float db = -120.0f;
+            if (loud > 0.0) db = (float)std::max(20.0 * std::log10(std::sqrt(loud / kFFTN)) + 3.0103, -120.0);
+            levelHandler(std::isfinite(db) ? db : -120.0f);
+        }
     }
 };
 
@@ -168,6 +190,12 @@ struct SpectrumFft {
 
 - (nullable instancetype)initWithBandCount:(int)bandCount
                            spectrumHandler:(void (^)(const float*, int))handler {
+    return [self initWithBandCount:bandCount spectrumHandler:handler levelHandler:nil];
+}
+
+- (nullable instancetype)initWithBandCount:(int)bandCount
+                           spectrumHandler:(void (^)(const float*, int))handler
+                              levelHandler:(void (^)(float))levelHandler {
     if (!(self = [super init])) return nil;
     _tapID = kAudioObjectUnknown;
     _aggregate = kAudioObjectUnknown;
@@ -180,6 +208,7 @@ struct SpectrumFft {
         return nil;
     }
     _fft->handler = [handler copy];
+    _fft->levelHandler = [levelHandler copy];
     if (@available(macOS 14.2, *)) {
         if ([self start]) return self;
     }

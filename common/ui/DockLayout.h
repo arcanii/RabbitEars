@@ -13,13 +13,9 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32)
-#include <windows.h>  // RECT
-#else
-// Non-Windows: DockLayout only needs RECT's four long fields (no Win32 UI here).
-// Layout-compatible with the Win32 RECT so the same code compiles on both.
-struct RECT { long left; long top; long right; long bottom; };
-#endif
+// RECT: <windows.h>'s on Windows; elsewhere the portable one (LONG fields, 32-bit as on Windows) that
+// the shared pixel code uses too — one definition, so a TU can include both (common/platform/WinTypes.h).
+#include "platform/WinTypes.h"
 
 namespace rabbitears {
 

@@ -26,11 +26,10 @@ target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_
 # XtreamRecon.cpp is a deliberately self-contained, deletable probe (--xtream) for
 # gate 1 of the VOD epic — it is NOT the production JSON path. See its header.
 # ---------------------------------------------------------------------------
-# ui/PhotoCells.cpp (the photoreal cell looks' rasteriser — pixels only, no GDI) is compiled here
-# too, so --selftest can check what it draws. The TV Guide's row build (ui/GuideModel) and the
-# provider sync's catch-up decisions (ui/CatchupSync) moved to ../common/ui — the mac app uses both;
-# --selftest/--guidebench reach them there.
-add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp ui/PhotoCells.cpp)
+# The TV Guide's row build (ui/GuideModel), the provider sync's catch-up decisions (ui/CatchupSync)
+# and the photoreal cell looks' rasteriser (ui/PhotoCells — pixels only, no GDI) moved to
+# ../common/ui — the mac app uses all three; --selftest/--guidebench reach them there.
+add_executable(RabbitEarsCli cli/RabbitEarsCli.cpp cli/XtreamRecon.cpp)
 target_link_libraries(RabbitEarsCli PRIVATE RabbitEarsPlatformWin)
 add_test(NAME selftest COMMAND RabbitEarsCli --selftest)  # peer of mac/'s selftest
 
@@ -81,7 +80,6 @@ if(RABBITEARS_BUILD_GUI)
     ui/EpgStore.cpp
     ui/BufferMeter.cpp
     ui/MiniMeter.cpp
-    ui/PhotoCells.cpp
     ui/VuDial.cpp
     ui/DeadLinkSweep.cpp
     ui/VodSync.cpp
@@ -137,7 +135,6 @@ if(RABBITEARS_BUILD_GUI)
   add_executable(RabbitEarsRender
     render/RabbitEarsRender.cpp
     ui/MiniMeter.cpp
-    ui/PhotoCells.cpp
     ui/VuDial.cpp
     ui/BufferMeter.cpp
     ui/MeterLabels.cpp)

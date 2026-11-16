@@ -20,7 +20,8 @@
 //     grid's fine mesh over it.
 //
 // Split like VuDial: the geometry is header-inline pure arithmetic (the painters in MiniMeter.cpp and
-// --selftest use it); the rasteriser (PhotoCells.cpp) writes pixels, never calls GDI, and keeps each cell it
+// --selftest use it); the rasteriser (PhotoCells.cpp) writes pixels, never calls GDI — so it lives in
+// common/ (RabbitEarsCore) and the mac MeterView draws the same cells through it — and keeps each cell it
 // shades in a per-meter cache, so a frame is a fill, row copies, the lit cells' glow blends and (VFD) one pass
 // over the window — against the classic Tube's GDI+ ellipses per lit cell, ~10 ms a frame for a Tube Bitrate
 // meter at 120 dp.
@@ -30,7 +31,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <windows.h>
+#include "platform/WinTypes.h"  // COLORREF / RECT / UINT / MulDiv — <windows.h> on Windows
 
 #include "ui/Skin.h"  // SkinMaterial — the bezel's material (common/, pure C++)
 

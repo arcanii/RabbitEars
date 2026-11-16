@@ -187,6 +187,18 @@ static const int kMaxPanes = 4;  // 2×2 is the largest grid
 // Set at quit: a running Refresh Guide stops at its next download or transaction boundary.
 namespace {
 std::atomic<bool> g_epgCancel{false};
+// The volume slider (0..1), for the Spectrum tap's RT thread: the tap hears the output AFTER libVLC's
+// gain, and the audio needle reads the PROGRAMME's level whatever the volume (Win32 a592ee9).
+std::atomic<float> g_tapVolume{1.0f};
+// What the volume took off, given back (Win32 SpectrumTap::programmeDbfs). libVLC's mac output (auhal)
+// applies the slider v as a HAL-unit gain of v^3 — the tap hears that — so it is undone by the same law.
+// A slider at 0 (muted) leaves nothing to raise: the floor, as silence is; never past full scale.
+float programmeDbfs(float capturedDb, float slider) {
+    const float gain = slider * slider * slider;
+    if (capturedDb <= -120.0f || !(gain > 1e-5f)) return -120.0f;
+    if (gain >= 1.0f) return capturedDb;
+    return std::min(capturedDb - 20.0f * std::log10(gain), 3.0103f);
+}
 }  // namespace
 
 @implementation MainWindowController {
@@ -509,6 +521,7 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
     _volume.continuous = YES;
     [content addSubview:_volume];
     _player->setVolume(vol0);
+    g_tapVolume = std::clamp(vol0 / 100.0f, 0.0f, 1.0f);
 
     // ---- transport cluster: ⏸ ⏪ [========] ⏩  "12:34 / 1:45:00" ----------------------------
     // Hidden until libVLC says the current media is actually seekable (see -updateTransport).
@@ -3195,6 +3208,9 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
     _spectrumTap = [[SpectrumTap alloc] initWithBandCount:24
                                           spectrumHandler:^(const float* bands, int count) {
         [view pushSpectrum:bands count:count];  // RT audio thread → brief lock in the view
+    }
+                                             levelHandler:^(float db) {
+        [view pushLevel:programmeDbfs(db, g_tapVolume.load(std::memory_order_relaxed))];  // the VU needle
     }];
     if (!_spectrumTap) [_meters[s] setAvailable:NO];  // macOS < 14.2, or the tap couldn't be built
 }
@@ -3914,6 +3930,7 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 - (void)volumeChanged:(id)__unused sender {
     const int v = (int)_volume.doubleValue;
     _player->setVolume(v);
+    g_tapVolume = std::clamp(v / 100.0f, 0.0f, 1.0f);
     if (v > 0) _preMuteVolume = v;
     _muteBtn.title = (v == 0) ? @"🔇" : @"🔊";
     if (_db) _db->setSetting(L"volume", std::to_wstring(v));

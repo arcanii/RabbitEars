@@ -28,9 +28,17 @@ namespace rabbitears::mac {
 // Signal/Bitrate/Frames run off libVLC stream stats (FlowStats) — no consent prompt.
 enum class MeterKind { Spectrum, Signal, Bitrate, Frames };
 
-// The visual "look" of a meter. Led is the classic dot-matrix; the others are added
-// incrementally — an unimplemented look renders as Led. (mirrors Win32 MeterStyle.)
-enum class MeterStyle { Led, Tube, Lcd, Scope };
+// The visual "look" of a meter (mirrors Win32 MeterStyle, same order and tokens, so a meter_style
+// written by either platform reads on the other). Led/Tube/Lcd/Scope are the classic looks; Vu
+// (a backlit desktop VU) and VuSilver (a 1970s cassette-deck VU) are the needle instruments
+// (VuDialMac); StudioLed / BacklitLcd / Vfd are the photoreal cell looks whose cells scale with the
+// meter (common/ui/PhotoCells).
+enum class MeterStyle { Led, Tube, Lcd, Scope, Vu, VuSilver, StudioLed, BacklitLcd, Vfd };
+constexpr int kMeterStyleCount = static_cast<int>(MeterStyle::Vfd) + 1;  // keep = the last look + 1
+inline bool isVuLook(MeterStyle s) { return s == MeterStyle::Vu || s == MeterStyle::VuSilver; }
+inline bool isPhotoCellLook(MeterStyle s) {
+    return s == MeterStyle::StudioLed || s == MeterStyle::BacklitLcd || s == MeterStyle::Vfd;
+}
 
 // Per-meter colour palette. The roles map onto the "how much is lit" ramp so every
 // look can honour them. `bg.inherit` means "follow the theme's window background"
@@ -79,7 +87,8 @@ inline MeterTuning  defaultMeterTuning() { return MeterTuning{}; }
 // shared skin. Exact-arity-or-whole-fallback with per-field fallback within a valid
 // token count (the "meter discipline" — see Skin.cpp).
 
-// Style: "led" | "tube" | "lcd" | "scope"; unknown -> fallback.
+// Style: "led" | "tube" | "lcd" | "scope" | "vu" | "vu_silver" | "led_studio" | "lcd_backlit" | "vfd"
+// (Win32's tokens exactly); unknown -> fallback.
 std::string meterStyleToString(MeterStyle s);
 MeterStyle  meterStyleFromString(const std::string& s, MeterStyle fallback);
 

@@ -30,6 +30,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable instancetype)initWithBandCount:(int)bandCount
                            spectrumHandler:(void (^)(const float* bands, int count))handler;
 
+// The same, plus `levelHandler`: each analysis window's level as CAPTURED — the RMS of its louder
+// channel in dBFS, sine-calibrated (a full-scale sine reads 0 dBFS; Win32 SpectrumTap::rmsDbfs), or
+// -120 for silence. Same RT thread as `handler`, right after it. The caller raises it by what the
+// app's volume took off (the tap hears the output AFTER libVLC's gain) to get the programme's level.
+- (nullable instancetype)initWithBandCount:(int)bandCount
+                           spectrumHandler:(void (^)(const float* bands, int count))handler
+                              levelHandler:(nullable void (^)(float dbfs))levelHandler;
+
 - (void)stop;   // idempotent; also invoked from -dealloc
 
 @end
