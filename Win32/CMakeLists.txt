@@ -6,19 +6,19 @@
 # ---------------------------------------------------------------------------
 # RabbitEarsPlatformWin — the Windows platform layer the core deliberately
 # excludes: WinHTTP download (Http.cpp) + the %LOCALAPPDATA% db path (Paths.cpp,
-# which implements Database::defaultDbPath) + log-credential masking
-# (UrlRedact.cpp — pure, here so the CLI selftest can reach it) + a named time zone's offset
-# (TimeZone.cpp — catch-up URLs; here for the same reason). Linked by the CLI
-# and the GUI. The macOS peers are ../mac/platform/* (UrlRedact has none).
+# which implements Database::defaultDbPath) + a named time zone's offset
+# (TimeZone.cpp — catch-up URLs; here so the CLI selftest can reach it). Linked by the CLI
+# and the GUI. The macOS peers are ../mac/platform/*. Log-credential masking
+# (platform/UrlRedact.{h,cpp}, platform/LogSecrets.h) moved to ../common/platform — it is pure,
+# and the mac log sink uses it too; the same "platform/…" include names still resolve.
 # ---------------------------------------------------------------------------
 add_library(RabbitEarsPlatformWin STATIC
   platform/Http.cpp
   platform/Paths.cpp
-  platform/TimeZone.cpp
-  platform/UrlRedact.cpp)
+  platform/TimeZone.cpp)
 target_link_libraries(RabbitEarsPlatformWin PUBLIC RabbitEarsCore shell32 ole32 winhttp)
 # Win32/ as an include root: for this library's own sources (platform/HttpProgress.h,
-# platform/UrlRedact.h) and, PUBLIC, for the CLI's platform/UrlRedact.h. The GUI targets add it too.
+# platform/TimeZone.h) and, PUBLIC, for the CLI. The GUI targets add it too.
 target_include_directories(RabbitEarsPlatformWin PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # ---------------------------------------------------------------------------

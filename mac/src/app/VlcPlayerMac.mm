@@ -19,6 +19,7 @@
 #include "VlcEngineMac.h"
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "platform/Log.h"
+#include "platform/LogSecrets.h"
 
 #if defined(RABBITEARS_HAVE_LIBVLC)
 #include <vlc/vlc.h>
@@ -104,6 +105,7 @@ void VlcPlayerMac::play(const std::wstring& url, const std::wstring& userAgent,
                         const std::wstring& referrer) {
 #if defined(RABBITEARS_HAVE_LIBVLC)
     if (!impl_->vlc || !impl_->player) return;
+    diag::addSecretsFromUrl(url);  // a known account's path spelling (platform/LogSecrets.h)
     libvlc_media_t* media = libvlc_media_new_location(impl_->vlc, utf8FromWide(url).c_str());
     if (!media) return;
     if (!userAgent.empty())
@@ -405,6 +407,7 @@ bool VlcPlayerMac::startRecording(const std::wstring& url, const std::wstring& u
 #if defined(RABBITEARS_HAVE_LIBVLC)
     stopRecording();  // one recording per player
     if (!impl_->vlc) return false;
+    diag::addSecretsFromUrl(url);  // before anything below logs it (platform/LogSecrets.h)
     libvlc_media_t* m = libvlc_media_new_location(impl_->vlc, utf8FromWide(url).c_str());
     if (!m) { diag::error(L"record: media_new failed for " + url); return false; }
 
