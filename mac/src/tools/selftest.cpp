@@ -7,26 +7,46 @@
 // calls in src/cli/RabbitEarsCli.cpp (which is Windows-only: wmain, GetTempPathW,
 // DeleteFileW, SetConsoleOutputCP). Assertions mirror RabbitEarsCli --selftest.
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <ctime>
+#include <thread>
 #include <cstdio>
+
+#include <arpa/inet.h>   // the local HTTP server
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <zlib.h>        // a real .xml.gz body
 #include <cstdlib>  // setenv
 #include <filesystem>
+#include <map>
+#include <optional>
+#include <set>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
 #include "core/GuideSources.h"
 #include "core/M3uParser.h"
+#include "core/RecordingRules.h"
+#include "core/SearchFold.h"
+#include "core/UrlCanon.h"
+#include "core/XmltvParser.h"
 #include "core/XtreamClient.h"  // XtreamCreds — the UrlRedact pin against its path encoder
 #include "core/Strings.h"  // shared i18n catalog — completeness + placeholder-parity gate below
 #include "db/Database.h"
 #include "platform/Encoding.h"  // non-Windows branch of the shared header
 #include "platform/UrlRedact.h"
 #include "ui/DockLayout.h"
+#include "ui/GuideModel.h"
 
-#include "MeterModel.h"
+#include "GuideRefresh.h"  // Refresh Guide's worker — run against a local HTTP server below
+#include "MeterModel.h"  // mac-local meter model (rabbitears::mac) — codecs tested below
 #include "ScheduleStatusWriter.h"  // mac scheduler write-behind glue — tested below
 #include "core/RecordingScheduler.h"
-#include "sqlite3.h"  // a second connection holding the writer lock (genuine contention)  // mac-local meter model (rabbitears::mac) — codecs tested below
+#include "sqlite3.h"  // second connections (genuine lock contention) + hand-built tables
 
 using namespace rabbitears;
 
@@ -60,6 +80,100 @@ bool hasChannelNamed(const std::vector<Channel>& v, const std::wstring& name) {
     for (const auto& c : v)
         if (c.name == name) return true;
     return false;
+}
+
+
+// ---- a tiny local HTTP server, for the Refresh Guide worker test ------------------------------
+// Serves fixed bodies by path on 127.0.0.1 (an ephemeral port), "HTTP/1.1 200" or 404, one request
+// per connection; runs until stop(). Enough for NSURLSession, nothing more.
+class LocalHttp {
+public:
+    explicit LocalHttp(std::map<std::string, std::string> bodies) : bodies_(std::move(bodies)) {
+        fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        int one = 1;
+        ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_port = 0;
+        if (::bind(fd_, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(fd_, 16) != 0) return;
+        socklen_t len = sizeof a;
+        ::getsockname(fd_, reinterpret_cast<sockaddr*>(&a), &len);
+        port_ = ntohs(a.sin_port);
+        thread_ = std::thread([this] { loop(); });
+    }
+    ~LocalHttp() { stop(); }
+    int port() const { return port_; }
+    int requests() const { return requests_; }
+    void stop() {
+        stop_ = true;
+        if (thread_.joinable()) thread_.join();
+        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+    }
+
+private:
+    void loop() {
+        while (!stop_) {
+            pollfd pf{fd_, POLLIN, 0};
+            if (::poll(&pf, 1, 100) <= 0) continue;
+            const int c = ::accept(fd_, nullptr, nullptr);
+            if (c < 0) continue;
+            std::string req;
+            char buf[4096];
+            while (req.find("\r\n\r\n") == std::string::npos) {
+                const ssize_t n = ::recv(c, buf, sizeof buf, 0);
+                if (n <= 0) break;
+                req.append(buf, static_cast<size_t>(n));
+            }
+            ++requests_;
+            const size_t sp1 = req.find(' '), sp2 = req.find(' ', sp1 + 1);
+            const std::string path = sp1 == std::string::npos ? "" : req.substr(sp1 + 1, sp2 - sp1 - 1);
+            const auto it = bodies_.find(path);
+            std::string resp;
+            if (it == bodies_.end()) {
+                resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            } else {
+                resp = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " +
+                       std::to_string(it->second.size()) + "\r\nConnection: close\r\n\r\n" + it->second;
+            }
+            for (size_t off = 0; off < resp.size();) {
+                const ssize_t n = ::send(c, resp.data() + off, resp.size() - off, 0);
+                if (n <= 0) break;
+                off += static_cast<size_t>(n);
+            }
+            ::close(c);
+        }
+    }
+    std::map<std::string, std::string> bodies_;
+    int fd_ = -1, port_ = 0;
+    std::atomic<int> requests_{0};
+    std::atomic<bool> stop_{false};
+    std::thread thread_;
+};
+
+// gzip `raw` (a real .xml.gz body, as a provider serves it — the worker must gunzip it).
+std::string gzipped(const std::string& raw) {
+    z_stream z{};
+    deflateInit2(&z, Z_BEST_SPEED, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);  // +16 = gzip wrapper
+    std::string out(deflateBound(&z, raw.size()) + 32, '\0');
+    z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(raw.data()));
+    z.avail_in = static_cast<uInt>(raw.size());
+    z.next_out = reinterpret_cast<Bytef*>(out.data());
+    z.avail_out = static_cast<uInt>(out.size());
+    deflate(&z, Z_FINISH);
+    out.resize(z.total_out);
+    deflateEnd(&z);
+    return out;
+}
+
+// An XMLTV timestamp for `utc`.
+std::string xmltvTime(long long utc) {
+    const std::time_t t = static_cast<std::time_t>(utc);
+    std::tm g{};
+    gmtime_r(&t, &g);
+    char b[32];
+    std::strftime(b, sizeof b, "%Y%m%d%H%M%S +0000", &g);
+    return b;
 }
 
 }  // namespace
@@ -970,6 +1084,1088 @@ int main() {
                "after the lock: the Skip lands (A kept as a Skipped tombstone), B's prediction cleared");
         expect(w.deleteRule(ruleId), "with nothing un-landed, the rule deletes");
         expect(db.deleteSchedule(a), "writer fixture: cleaned up");
+    }
+
+    // The five blocks below are PORTED from Win32/cli/RabbitEarsCli.cpp --selftest (temp-file
+    // deletes and sqlite3_open16 swapped for portable ones): the shared programme search, search
+    // marking, guide-row build, other-connection store and channel search the mac guide now calls,
+    // proven under Apple clang. Keep them in step with the Win32 originals.
+    const std::wstring wdir = wideFromUtf8(dir.string());
+    out("== Programme search (schema v10, FTS5) ==\n");
+    {
+        using State = Database::ProgrammeSearchState;
+        const std::wstring spath = wdir + L"/search_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(spath + sfx)), ec_); }
+        const long long now = 1'800'000'000;  // a fixed "now": everything below is relative to it
+        auto mk = [](const wchar_t* ch, long long s, long long e, const wchar_t* t, const wchar_t* d) {
+            Programme p;
+            p.channelId = ch;
+            p.startUtc = s;
+            p.stopUtc = e;
+            p.title = t;
+            p.descr = d;
+            return p;
+        };
+        auto titles = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + h.programme.title;
+            return s;
+        };
+        auto chan = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            return c;
+        };
+        long long p1 = 0, p2 = 0;
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: a fresh DB opens");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: a fresh DB reaches v10 (tables exist, index not built yet)");
+            p1 = sdb.addPlaylist(L"P1", L"http://p1", true, 1000, L"http://p1/epg");
+            p2 = sdb.addPlaylist(L"P2", L"http://p2", true, 1000, L"http://p2/epg");
+            sdb.bulkInsertChannels(p1, {chan(L"CBC Toronto", L"CBCToronto.ca@HD", L"http://s/1"),
+                                        chan(L"Global", L"Global.ca", L"http://s/2"),
+                                        chan(L"ERT", L"Ert.gr", L"http://s/3"),
+                                        chan(L"BBC", L"bbc.uk", L"http://s/4")},
+                                   1000);
+            sdb.bulkInsertChannels(p2, {chan(L"Disabled Chan", L"dis.xx", L"http://s/5")}, 1000);
+            std::vector<Programme> g1 = {
+                mk(L"cbctoronto.ca", now + 100, now + 200, L"Toronto Tonight", L"local news"),
+                mk(L"global.ca", now + 300, now + 400, L"The Québec Hour", L"a tour of Montréal"),
+                mk(L"ert.gr", now + 500, now + 600, L"ΕΛΛΑΔΑ Σήμερα", L""),
+                mk(L"ert.gr", now + 610, now + 620, L"ΣΉΜΕΡΑ", L""),    // a capital with a tonos
+                mk(L"ert.gr", now + 630, now + 640, L"Ο κόσμος", L""),  // a final sigma
+                mk(L"cbctoronto.ca", now - 900, now - 100, L"Past Toronto Show", L"already over"),
+                mk(L"unknown.xx", now + 100, now + 200, L"Hidden Toronto", L"no such channel"),
+                mk(L"bbc.uk", now + 900, now + 999, L"Doctor Who", L"the doctor travels in time"),
+                mk(L"bbc.uk", now + 700, now + 800, L"Who Knows", L"a quiz about the doctor"),
+                mk(L"bbc.uk", now + 50, now + 60, L"Crime (Beat) \"AND\" OR*", L"literal syntax"),
+            };
+            for (int k = 0; k < 30; ++k)  // 30 upcoming "Loop" shows on an allowed channel...
+                g1.push_back(mk(L"global.ca", now + 1000 + k, now + 2000 + k, L"Loop Show", L""));
+            for (int k = 0; k < 5; ++k)   // ...and 5 EARLIER ones the user cannot play
+                g1.push_back(mk(L"unknown.xx", now + 10 + k, now + 20 + k, L"Loop Hidden", L""));
+            expect(sdb.bulkInsertProgrammes(p1, g1, 5000) == static_cast<int>(g1.size()),
+                   "search: fixture guide stored");
+            expect(sdb.bulkInsertProgrammes(p2, {mk(L"dis.xx", now + 100, now + 200,
+                                                    L"Toronto Disabled", L"")}, 5000) == 1,
+                   "search: second playlist's guide stored");
+            expect(sdb.rebuildProgrammeIndex() && sdb.programmeSearchState() == State::Ready,
+                   "search: rebuildProgrammeIndex -> Ready");
+            // Load the channel set while P2 is still enabled, THEN disable it: its channel stays in
+            // the set, so only the query's own enabled-playlist guard can drop its programme.
+            expect(sdb.refreshProgrammeSearchChannels(), "search: channel set loaded");
+            sdb.setPlaylistEnabled(p2, false);
+
+            auto r = sdb.searchProgrammes(L"ronto", now, 200);
+            expect(titles(r) == L"Toronto Tonight",
+                   "search: title substring; past, unknown-channel and disabled-playlist rows dropped (got " +
+                       utf8FromWide(titles(r)) + ")");
+            expect(r.size() == 1 && r[0].inTitle &&
+                       r[0].markedTitle.find(L'\x02') != std::wstring::npos &&
+                       r[0].markedTitle.find(L'\x03') != std::wstring::npos,
+                   "search: a title match is marked (U+0002 ... U+0003)");
+            r = sdb.searchProgrammes(L"quebec", now, 200);
+            expect(titles(r) == L"The Québec Hour",
+                   "search: accent-insensitive title ('quebec' finds 'Québec')");
+            expect(r.size() == 1 && r[0].markedTitle == L"The \x02Québec\x03 Hour",
+                   "search: ... and marks the accented 'Québec' it found");
+            r = sdb.searchProgrammes(L"ελλαδα", now, 200);
+            expect(!r.empty(), "search: non-Latin case folding (Greek lower finds upper)");
+            expect(r.size() == 1 && r[0].markedTitle == L"\x02ΕΛΛΑΔΑ\x03 Σήμερα",
+                   "search: ... and marks the upper-case Greek it found");
+            r = sdb.searchProgrammes(L"σήμερα", now, 200);
+            expect(titles(r) == L"ΕΛΛΑΔΑ Σήμερα|ΣΉΜΕΡΑ" && r[0].markedTitle == L"ΕΛΛΑΔΑ \x02Σήμερα\x03" &&
+                       r[1].markedTitle == L"\x02ΣΉΜΕΡΑ\x03",
+                   "search: a Greek word with a tonos finds AND marks its capitals (Ή = ή) (got " +
+                       utf8FromWide(titles(r)) + ")");
+            r = sdb.searchProgrammes(L"ΚΌΣΜΟΣ", now, 200);
+            expect(titles(r) == L"Ο κόσμος" && r[0].markedTitle == L"Ο \x02κόσμος\x03",
+                   "search: Greek capitals find AND mark a final sigma (Σ = ς) (got " + utf8FromWide(titles(r)) +
+                       ")");
+            r = sdb.searchProgrammes(L"montreal", now, 200);
+            expect(r.size() == 1 && !r[0].inTitle && !r[0].snippet.empty(),
+                   "search: a description word matches accent-insensitively ('montreal' -> 'Montréal')");
+            expect(r.size() == 1 && r[0].snippet == L"a tour of \x02Montréal\x03",
+                   "search: ... and the snippet marks 'Montréal'");
+            // searchFold's Latin edges: accents dropped, letters of their own kept (lower-cased).
+            expect(searchFold(L'É') == L'e' && searchFold(L'ç') == L'c' && searchFold(L'Ł') == L'l' &&
+                       searchFold(L'Ÿ') == L'y' && searchFold(L'ÿ') == L'y' && searchFold(L'Ĺ') == L'l' &&
+                       searchFold(L'ž') == L'z' && searchFold(L'ſ') == L's',
+                   "searchFold: Latin accents fold to the base letter");
+            expect(searchFold(L'Æ') == L'æ' && searchFold(L'Œ') == L'œ' && searchFold(L'Ĳ') == L'ĳ' &&
+                       searchFold(L'ß') == L'ß' && searchFold(L'×') == L'×' && searchFold(L'÷') == L'÷' &&
+                       searchFold(L'ı') == L'ı' && searchFold(L'ĸ') == L'ĸ',
+                   "searchFold: ligatures and letters of their own keep their identity");
+            expect(searchFold(L'Σ') == L'σ' && searchFold(L'Ж') == L'ж' && searchFold(L'Ё') == L'ё' &&
+                       searchFold(L'東') == L'東' && searchFold(L'Z') == L'z' && searchFold(L'-') == L'-',
+                   "searchFold: Greek + Cyrillic case; CJK and punctuation unchanged");
+            expect(searchFold(L'Ά') == L'ά' && searchFold(L'Έ') == L'έ' && searchFold(L'Ί') == L'ί' &&
+                       searchFold(L'Ό') == L'ό' && searchFold(L'Ώ') == L'ώ' && searchFold(L'Ϋ') == L'ϋ' &&
+                       searchFold(L'ς') == L'σ' && searchFold(L'ά') == L'ά',
+                   "searchFold: Greek as FTS5 folds it (case only, the tonos kept; final sigma = sigma)");
+            expect(searchFold(L'Ș') == L's' && searchFold(L'ș') == L's' && searchFold(L'Ț') == L't' &&
+                       searchFold(L'ț') == L't',
+                   "searchFold: Romanian comma-below letters");
+            expect(searchFold(L'µ') == L'μ' && searchFold(L'Ґ') == L'ґ' && searchFold(L'ґ') == L'ґ',
+                   "searchFold: micro sign and Ukrainian Ґ, as FTS5 folds them");
+            r = sdb.searchProgrammes(L"local", now, 200);
+            expect(r.size() == 1 && !r[0].inTitle &&
+                       r[0].snippet == L"\x02local\x03 news",
+                   "search: a description-only match carries a marked snippet");
+            expect(r.size() == 1 && r[0].channelName == L"CBC Toronto" && r[0].channelTvgId == L"CBCToronto.ca@HD",
+                   "search: a hit names the user's channel and its FULL tvg-id (for Play/Schedule)");
+            {  // the TV Guide's coverage count: distinct guide ids, as the guide joins them, live only
+                const long long p3 = sdb.addPlaylist(L"P3", L"http://p3", true, 1000);
+                ParsedChannel mv = chan(L"A Movie", L"movie.id", L"http://s/m1");
+                mv.kind = Channel::Kind::Movie;
+                sdb.bulkInsertChannels(p3, {chan(L"CNN HD", L"CNN.us@HD", L"http://s/c1"),
+                                            chan(L"CNN SD", L"cnn.us@SD", L"http://s/c2"),
+                                            chan(L"Local", L"", L"http://s/c3"), mv},
+                                       1000);
+                std::map<long long, int> ids;
+                for (const auto& [plId, count] : sdb.distinctLiveGuideIds()) ids[plId] = count;
+                expect(ids.size() == 3 && ids[p1] == 4 && ids[p2] == 1 && ids[p3] == 1,
+                       "distinctLiveGuideIds: per playlist (disabled ones too); CNN.us@HD = cnn.us@SD; no-id "
+                       "rows and movies not counted");
+            }
+            r = sdb.searchProgrammes(L"travel", now, 200);
+            expect(titles(r) == L"Doctor Who" && !r[0].inTitle,
+                   "search: the last description word is a prefix ('travel' finds 'travels')");
+            expect(titles(sdb.searchProgrammes(L"doctor", now, 200)) == L"Doctor Who|Who Knows",
+                   "search: title matches rank before description-only ones, even when later");
+            expect(titles(sdb.searchProgrammes(L"(Beat) \"AND\" OR*", now, 200)) ==
+                       L"Crime (Beat) \"AND\" OR*",
+                   "search: typed FTS5 syntax is searched literally");
+            for (const wchar_t* odd : {L"-", L"\"", L"NEAR(", L"a\"b", L"*", L"AND", L"(((", L"  "}) {
+                sdb.searchProgrammes(odd, now, 200);  // must not throw, crash or poison the connection
+            }
+            expect(titles(sdb.searchProgrammes(L"ronto", now, 200)) == L"Toronto Tonight",
+                   "search: odd input left the connection usable");
+            expect(titles(sdb.searchProgrammes(L"to", now, 200)).find(L"Toronto Tonight") != std::wstring::npos,
+                   "search: a 2-character term falls back to a title scan");
+            bool more = false;
+            r = sdb.searchProgrammes(L"loop", now, 10, &more);
+            expect(r.size() == 10 && more && titles(r).find(L"Hidden") == std::wstring::npos,
+                   "search: the limit counts only playable rows, and reports there were more");
+
+            // A refresh makes the index stale: until rebuilt it is never READ (LIKE answers).
+            expect(sdb.bulkInsertProgrammes(p1, {mk(L"cbctoronto.ca", now + 100, now + 200,
+                                                    L"Fresh Title", L"brand new description")},
+                                            6000) == 1,
+                   "search: refresh stored");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: a refresh leaves NeedsRebuild");
+            expect(titles(sdb.searchProgrammes(L"fresh", now, 200)) == L"Fresh Title" &&
+                       sdb.searchProgrammes(L"ronto", now, 200).empty(),
+                   "search: a stale index is bypassed (LIKE finds the new title, not the old)");
+            expect(sdb.rebuildProgrammeIndex() && titles(sdb.searchProgrammes(L"fresh", now, 200)) ==
+                                                       L"Fresh Title",
+                   "search: after the rebuild the index finds the new title");
+            sdb.deletePlaylist(p2);
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: deleting a playlist leaves NeedsRebuild");
+            expect(sdb.rebuildProgrammeIndex(), "search: rebuilt after the delete");
+        }
+        {   // A FRESH connection must read the saved stamp as current — else every launch would pay a
+            // full rebuild (~1.5 s on the owner's guide) before its first search.
+            Database sdb;
+            expect(sdb.open(spath), "search: reopens after the rebuild");
+            expect(sdb.programmeSearchState() == State::Ready,
+                   "search: a new connection finds the saved index current (no rebuild per launch)");
+        }
+        // An OLDER build's refresh (no re-index), simulated on a raw connection: a same-sized
+        // re-import that reuses the same ids — only epg_refreshed_<id> tells it apart.
+        auto rawExec = [&spath](const char* sql) {
+            sqlite3* raw = nullptr;
+            bool ok = false;
+            if (sqlite3_open(utf8FromWide(spath).c_str(), &raw) == SQLITE_OK)
+                ok = sqlite3_exec(raw, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+            if (raw) sqlite3_close(raw);
+            return ok;
+        };
+        const std::string oldRefresh =
+            "BEGIN; UPDATE epg_programmes SET title='Old Build Title';"
+            " INSERT INTO settings(key,value) VALUES('epg_refreshed_" + std::to_string(p1) +
+            "','7777') ON CONFLICT(key) DO UPDATE SET value=excluded.value; COMMIT;";
+        expect(rawExec(oldRefresh.c_str()), "search: simulated older-build refresh applied");
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: reopens");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: an older build's same-sized refresh is detected (epg_refreshed changed)");
+        }
+        // v9 -> v10 on an existing library must NOT re-run v9's URL rewrite (a canary row in a
+        // spelling v9 would rewrite), and a failed v10 must leave v9 with search still answering.
+        // A REAL v9 database has no channel index either (v11): drop it too, so the retry below builds
+        // it from scratch — the v9 -> v10 -> v11 path in one open.
+        const std::string downgrade =
+            "BEGIN; DROP TABLE epg_fts_title; DROP TABLE epg_fts_descr;"
+            " DROP TRIGGER channels_fts_ai; DROP TRIGGER channels_fts_ad; DROP TRIGGER channels_fts_au;"
+            " DROP TABLE channels_fts;"
+            " UPDATE channels SET stream_url='http://Canary.EXAMPLE:80/x.ts' WHERE name='Global';"
+            " CREATE TABLE epg_fts_title(x); PRAGMA user_version=9; COMMIT;";
+        expect(rawExec(downgrade.c_str()), "search: fixture turned into a v9 DB with a squatter table");
+        expect(canonicalStreamUrl(L"http://Canary.EXAMPLE:80/x.ts") != L"http://Canary.EXAMPLE:80/x.ts",
+               "search: the canary is a spelling v9 WOULD rewrite (else the next checks prove nothing)");
+        auto canaryUrl = [](Database& d, long long pid) {
+            for (const auto& c : d.channelsByPlaylist(pid))
+                if (c.name == L"Global") return c.streamUrl;
+            return std::wstring(L"<missing>");
+        };
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: the v9 DB opens");
+            expect(sdb.programmeSearchState() == State::Unavailable,
+                   "search: v10 failed (a non-FTS table squats the name) -> Unavailable, not a crash");
+            expect(canaryUrl(sdb, p1) == L"http://Canary.EXAMPLE:80/x.ts",
+                   "search: v9's URL rewrite was NOT re-run on a v9 DB");
+            sdb.refreshProgrammeSearchChannels();
+            expect(titles(sdb.searchProgrammes(L"brand new", now, 200)) == L"Old Build Title",
+                   "search: with no index, LIKE still searches descriptions");
+        }
+        expect(rawExec("DROP TABLE epg_fts_title;"), "search: squatter removed");
+        {
+            Database sdb;
+            expect(sdb.open(spath), "search: reopens after the squatter is gone");
+            expect(sdb.programmeSearchState() == State::NeedsRebuild,
+                   "search: the retried v10 lands on the next open");
+            expect(canaryUrl(sdb, p1) == L"http://Canary.EXAMPLE:80/x.ts",
+                   "search: ...still without re-running v9");
+            expect(sdb.channelSearchIndexed() &&
+                       rawExec("INSERT INTO channels_fts(channels_fts, rank) VALUES('integrity-check', 1)") &&
+                       !sdb.searchChannels(L"toronto").empty(),
+                   "search: ...and v11 follows in the same open, the channel index built from the v9 rows");
+        }
+        {   // Performance guard: a large synthetic guide stays fast to search — THROUGH THE INDEX.
+            Database sdb;
+            expect(sdb.open(spath), "search/perf: opens");
+            std::vector<Programme> big;
+            big.reserve(40000);
+            for (int k = 0; k < 40000; ++k)
+                big.push_back(mk(L"global.ca", now + k, now + k + 30,
+                                 (L"Show " + std::to_wstring(k % 997) + L" news").c_str(),
+                                 L"the evening news and weather"));
+            expect(sdb.bulkInsertProgrammes(p1, big, 8000) == 40000, "search/perf: 40,000 stored");
+            expect(sdb.rebuildProgrammeIndex() && sdb.programmeSearchState() == State::Ready,
+                   "search/perf: indexed (so the timing below is the index path, not LIKE)");
+            sdb.refreshProgrammeSearchChannels();
+            const auto t0 = std::chrono::steady_clock::now();
+            const auto hits = sdb.searchProgrammes(L"news", now, 200);
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t0).count();
+            expect(hits.size() == 200 && ms < 500,
+                   "search: 40,000 programmes, a word in every row, 200 results in " + std::to_string(ms) +
+                       " ms (< 500)");
+        }
+        {   // One playlist: a refresh empties the table, so its new rows REUSE the old ids — a stale
+            // index read by mistake would answer "alpha" with whatever now sits at alpha's id. Plus
+            // two description cases the marking must handle: CJK (no word boundaries) and a word
+            // right after typographic punctuation.
+            const std::wstring rpath = wdir + L"/search_reuse.db";
+            for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(rpath + sfx)), ec_); }
+            Database rdb;
+            expect(rdb.open(rpath), "search/reuse: opens");
+            const long long rp = rdb.addPlaylist(L"R", L"http://r", true, 1000, L"http://r/epg");
+            rdb.bulkInsertChannels(rp, {chan(L"Chan", L"chan.xx", L"http://s/9")}, 1000);
+            expect(rdb.bulkInsertProgrammes(rp, {mk(L"chan.xx", now + 10, now + 20, L"Alpha Show", L"")},
+                                            5000) == 1,
+                   "search/reuse: first guide stored");
+            expect(rdb.rebuildProgrammeIndex() && rdb.refreshProgrammeSearchChannels(),
+                   "search/reuse: indexed");
+            const auto a = rdb.searchProgrammes(L"alpha", now, 200);
+            expect(titles(a) == L"Alpha Show", "search/reuse: 'alpha' found through the index");
+            expect(rdb.bulkInsertProgrammes(rp, {mk(L"chan.xx", now + 10, now + 20, L"Beta Show", L"")},
+                                            6000) == 1,
+                   "search/reuse: refreshed (index now stale)");
+            const auto b = rdb.searchProgrammes(L"beta", now, 200);
+            expect(!a.empty() && b.size() == 1 && b[0].id == a[0].id,
+                   "search/reuse: the refresh really reused alpha's id (else the next check proves nothing)");
+            expect(rdb.searchProgrammes(L"alpha", now, 200).empty(),
+                   "search/reuse: the stale index is not read (it would answer 'alpha' with 'Beta Show')");
+
+            const std::wstring tokyo = L"東京都の天気予報です";
+            expect(rdb.bulkInsertProgrammes(
+                       rp, {mk(L"chan.xx", now + 10, now + 20, L"Weather", tokyo.c_str()),
+                            mk(L"chan.xx", now + 30, now + 40, L"Special",
+                               L"It’s a “Doctor Who” special")},
+                       7000) == 2 &&
+                       rdb.rebuildProgrammeIndex(),
+                   "search/reuse: CJK + punctuation fixture indexed");
+            auto w = rdb.searchProgrammes(L"天気", now, 200);  // 2 CJK characters: a whole word
+            expect(titles(w) == L"Weather" && !w[0].inTitle &&
+                       w[0].snippet == L"東京都の\x02天気\x03予報です",
+                   "search/reuse: a 2-character CJK word is found in a description, and marked mid-run");
+            expect(titles(rdb.searchProgrammes(L"天気予", now, 200)) == L"Weather",
+                   "search/reuse: a 3-character CJK term (index path) still searches descriptions");
+            auto d = rdb.searchProgrammes(L"doctor", now, 200);
+            expect(titles(d) == L"Special" && d[0].snippet.find(L"\x02" L"Doctor\x03") != std::wstring::npos,
+                   "search/reuse: a word right after a curly quote is found AND marked");
+        }
+    }
+
+
+    out("== Search marking follows the match (core/SearchFold ftsFold) ==\n");
+    {
+        // 1. ftsFold IS FTS5's fold: every BMP and plane-1 character (plane 1 holds every cased script
+        //    beyond the BMP; FTS5 folds only Deseret there), through the vendored SQLite's own two tokenizers.
+        sqlite3* fdb = nullptr;
+        const bool opened =
+            sqlite3_open(":memory:", &fdb) == SQLITE_OK &&
+            sqlite3_exec(fdb,
+                         "CREATE VIRTUAL TABLE t USING fts5(x, tokenize='trigram remove_diacritics 1');"
+                         "CREATE VIRTUAL TABLE ti USING fts5vocab(t, 'instance');"
+                         "CREATE VIRTUAL TABLE u USING fts5(x, tokenize='unicode61 remove_diacritics 2');"
+                         "CREATE VIRTUAL TABLE ui USING fts5vocab(u, 'instance');",
+                         nullptr, nullptr, nullptr) == SQLITE_OK;
+        auto utf8Of = [](char32_t cp) {
+            std::string s;
+            if (cp < 0x80) {
+                s += static_cast<char>(cp);
+            } else if (cp < 0x800) {
+                s += static_cast<char>(0xC0 | (cp >> 6));
+                s += static_cast<char>(0x80 | (cp & 0x3F));
+            } else if (cp < 0x10000) {
+                s += static_cast<char>(0xE0 | (cp >> 12));
+                s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                s += static_cast<char>(0x80 | (cp & 0x3F));
+            } else {
+                s += static_cast<char>(0xF0 | (cp >> 18));
+                s += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                s += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                s += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            return s;
+        };
+        auto codePoints32 = [](const std::string& s) {  // strict enough for SQLite's own output
+            std::vector<char32_t> v;
+            for (size_t i = 0; i < s.size();) {
+                const unsigned char b = static_cast<unsigned char>(s[i]);
+                const int n = b < 0x80 ? 1 : b < 0xE0 ? 2 : b < 0xF0 ? 3 : 4;
+                char32_t cp = n == 1 ? b : n == 2 ? (b & 0x1F) : n == 3 ? (b & 0x0F) : (b & 0x07);
+                for (int k = 1; k < n && i + k < s.size(); ++k)
+                    cp = (cp << 6) | (static_cast<unsigned char>(s[i + k]) & 0x3F);
+                v.push_back(cp);
+                i += n;
+            }
+            return v;
+        };
+        std::vector<char32_t> cps;
+        for (char32_t cp = 1; cp <= 0xFFFF; ++cp)
+            if (cp < 0xD800 || cp > 0xDFFF) cps.push_back(cp);
+        for (char32_t cp = 0x10000; cp <= 0x1FFFF; ++cp) cps.push_back(cp);
+        std::unordered_map<long long, std::string> tri, uni;
+        bool likeAsciiOnly = false, accentInsideToken = false;
+        if (opened) {
+            sqlite3_exec(fdb, "BEGIN", nullptr, nullptr, nullptr);
+            sqlite3_stmt* insT = nullptr;
+            sqlite3_stmt* insU = nullptr;
+            sqlite3_prepare_v2(fdb, "INSERT INTO t(rowid, x) VALUES (?, ?)", -1, &insT, nullptr);
+            sqlite3_prepare_v2(fdb, "INSERT INTO u(rowid, x) VALUES (?, ?)", -1, &insU, nullptr);
+            for (char32_t cp : cps) {
+                const std::string one = utf8Of(cp), three = one + one + one;  // trigram: ONE token
+                sqlite3_bind_int64(insT, 1, cp);
+                sqlite3_bind_text(insT, 2, three.c_str(), static_cast<int>(three.size()), SQLITE_TRANSIENT);
+                sqlite3_step(insT);
+                sqlite3_reset(insT);
+                sqlite3_bind_int64(insU, 1, cp);
+                sqlite3_bind_text(insU, 2, one.c_str(), static_cast<int>(one.size()), SQLITE_TRANSIENT);
+                sqlite3_step(insU);
+                sqlite3_reset(insU);
+            }
+            sqlite3_finalize(insT);
+            sqlite3_finalize(insU);
+            sqlite3_exec(fdb, "COMMIT", nullptr, nullptr, nullptr);
+            for (auto [sql, into] : {std::pair<const char*, std::unordered_map<long long, std::string>*>{
+                                         "SELECT doc, term FROM ti", &tri},
+                                     {"SELECT doc, term FROM ui", &uni}}) {
+                sqlite3_stmt* q = nullptr;
+                sqlite3_prepare_v2(fdb, sql, -1, &q, nullptr);
+                while (sqlite3_step(q) == SQLITE_ROW)
+                    (*into)[sqlite3_column_int64(q, 0)] = reinterpret_cast<const char*>(sqlite3_column_text(q, 1));
+                sqlite3_finalize(q);
+            }
+            // LIKE's own rule, which the Like marking mirrors: ASCII letters case-blind, the rest exact.
+            sqlite3_stmt* q = nullptr;
+            sqlite3_prepare_v2(fdb, "SELECT 'Af' LIKE 'aF', 'Á' LIKE 'a', 'Á' LIKE 'á', 'Ｑ' LIKE 'ｑ'", -1, &q,
+                               nullptr);
+            likeAsciiOnly = sqlite3_step(q) == SQLITE_ROW && sqlite3_column_int(q, 0) == 1 &&
+                            sqlite3_column_int(q, 1) == 0 && sqlite3_column_int(q, 2) == 0 &&
+                            sqlite3_column_int(q, 3) == 0;
+            sqlite3_finalize(q);
+            // unicode61 keeps a dropped accent INSIDE its token ("e + U+0301 cole" is one word, "ecole"),
+            // which is why marking skips it within a word and looking back for a word's start.
+            accentInsideToken =
+                sqlite3_exec(fdb,
+                             "CREATE VIRTUAL TABLE w USING fts5(x, tokenize='unicode61 remove_diacritics 2');"
+                             "CREATE VIRTUAL TABLE wi USING fts5vocab(w, 'instance');"
+                             "INSERT INTO w(x) VALUES ('e\xCC\x81" "cole');",
+                             nullptr, nullptr, nullptr) == SQLITE_OK;
+            q = nullptr;
+            sqlite3_prepare_v2(fdb, "SELECT group_concat(term, '|') FROM wi", -1, &q, nullptr);
+            accentInsideToken = accentInsideToken && sqlite3_step(q) == SQLITE_ROW && sqlite3_column_text(q, 0) &&
+                                std::string(reinterpret_cast<const char*>(sqlite3_column_text(q, 0))) == "ecole";
+            sqlite3_finalize(q);
+            sqlite3_close(fdb);
+        }
+        size_t bad = 0, badUni = 0, dropped = 0;
+        std::string firstBad;
+        for (char32_t cp : cps) {
+            char32_t want = 0;  // no trigram at all: the tokenizer drops it
+            if (const auto t = tri.find(cp); t != tri.end()) {
+                const std::vector<char32_t> v = codePoints32(t->second);
+                want = (v.size() == 3 && v[0] == v[1] && v[1] == v[2]) ? v[0] : 0xFFFFFFFF;
+            } else {
+                ++dropped;
+            }
+            if (ftsFoldCodePoint(cp) != want) {
+                ++bad;
+                if (firstBad.size() < 120) {
+                    char b[40];
+                    snprintf(b, sizeof b, " U+%04X->%X(fts %X)", static_cast<unsigned>(cp),
+                             static_cast<unsigned>(ftsFoldCodePoint(cp)), static_cast<unsigned>(want));
+                    firstBad += b;
+                }
+            }
+            if (const auto u = uni.find(cp); u != uni.end()) {  // a character unicode61 keeps
+                const std::vector<char32_t> v = codePoints32(u->second);
+                if (v.size() != 1 || v[0] != want) ++badUni;
+            }
+        }
+        expect(opened && !tri.empty() && bad == 0,
+               "ftsFold == the vendored FTS5's fold for all " + std::to_string(cps.size()) +
+                   " code points (BMP + plane 1; trigram; " + std::to_string(bad) + " differ" + firstBad + ")");
+        expect(opened && uni.size() > 40000 && badUni == 0,
+               "ftsFold: unicode61 (descriptions) folds every character it keeps as trigram does (" +
+                   std::to_string(uni.size()) + " kept, " + std::to_string(badUni) + " differ)");
+        expect(dropped > 0 && ftsFold(L'\u0301') == 0 && ftsFoldCodePoint(0x10400) == 0x10428,
+               "ftsFold: combining accents the tokenizers drop fold to 0; Deseret capitals fold (+40)");
+        expect(likeAsciiOnly, "LIKE (vendored SQLite): ASCII letters case-blind, accents and fullwidth exact");
+        expect(accentInsideToken, "unicode61 (vendored SQLite) keeps a dropped accent inside its word (e+U+0301 "
+                                  "cole -> 'ecole')");
+        // 2. searchFold: ftsFold one character for one, plus the stroke letters FTS5 keeps.
+        expect(searchFold(L'ộ') == L'o' && searchFold(L'Ǎ') == L'a' && searchFold(L'Ａ') == L'ａ' &&
+                   searchFold(L'Ƀ') == L'ƀ' && searchFold(L'\u2126') == L'ω' && searchFold(L'\u0301') == L'\u0301',
+               "searchFold: FTS5's fold beyond Latin-1/Extended-A (Vietnamese, pinyin, fullwidth, Latin "
+               "Extended-B, the ohm sign); a dropped accent stays itself (one for one)");
+        expect(searchFold(L'Ø') == L'o' && searchFold(L'đ') == L'd' && searchFold(L'Ħ') == L'h' &&
+                   searchFold(L'ŀ') == L'l' && searchFold(L'Ł') == L'l' && searchFold(L'ŧ') == L't' &&
+                   ftsFold(L'Ł') == L'ł' && ftsFold(L'Ø') == L'ø',
+               "searchFold folds the stroke letters Ø Đ Ħ Ŀ Ł Ŧ; ftsFold keeps them, as FTS5 does");
+
+        // 3. Marking, through the real search: marked the way each result was matched.
+        const std::wstring mpath = wdir + L"/mark_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(mpath + sfx)), ec_); }
+        const long long now = 1'800'000'000;
+        auto mk = [](long long s, const wchar_t* t, const wchar_t* d) {
+            Programme p;
+            p.channelId = L"mark.tv";
+            p.startUtc = s;
+            p.stopUtc = s + 5;
+            p.title = t;
+            p.descr = d;
+            return p;
+        };
+        auto marked = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + (h.inTitle ? h.markedTitle : h.snippet);
+            return s;
+        };
+        Database mdb;
+        const bool mopen = mdb.open(mpath);
+        const long long mp = mopen ? mdb.addPlaylist(L"M", L"http://m", true, 1000, L"http://m/epg") : 0;
+        ParsedChannel mc;
+        mc.name = L"Mark TV";
+        mc.tvgId = L"mark.tv";
+        mc.streamUrl = L"http://s/m";
+        std::wstring pasted;  // a pasted sentence longer than the excerpt's 90 characters after a match
+        for (int k = 0; k < 20; ++k) pasted += (k ? L" " : L"") + std::wstring(L"qwert");
+        const std::wstring pastedDescr = L"x " + pasted + L" y" + std::wstring(50, L'z');
+        const std::vector<Programme> mg = {
+            mk(now + 10, L"Hà Nội Tonight", L""),
+            mk(now + 20, L"Lodz vs Łódź", L""),
+            mk(now + 30, L"Que\u0301bec Morning", L""),  // decomposed: e + a combining acute
+            mk(now + 40, L"Cafe\u0301 Hour", L""),
+            mk(now + 50, L"ＮＨＫ World", L""),
+            mk(now + 60, L"África or Africa", L""),
+            mk(now + 70, L"Weather", L"明日の東京 天気 予報、天気"),
+            mk(now + 80, L"Evening", L"the sunnews hour"),
+            mk(now + 90, L"VTV Morning", L"tin tức Hà Nội hôm nay"),
+            mk(now + 100, L"東京 天気 特集", L""),
+            // A spaced term matched deep into a long description with no space after it: the excerpt
+            // must not end inside the match.
+            mk(now + 110, L"Long Weather", (std::wstring(L"明日の大阪 天気") + std::wstring(100, L'晴')).c_str()),
+            mk(now + 120, L"Accent Start", L"x \u0301abcd"),  // a dropped accent before a word
+            mk(now + 130, L"Pasted", pastedDescr.c_str()),
+        };
+        expect(mopen && mp > 0 && mdb.bulkInsertChannels(mp, {mc}, 1000) == 1 &&
+                   mdb.bulkInsertProgrammes(mp, mg, 5000) == static_cast<int>(mg.size()) &&
+                   mdb.rebuildProgrammeIndex() && mdb.refreshProgrammeSearchChannels(),
+               "mark: fixture guide stored and indexed");
+        std::wstring got = marked(mdb.searchProgrammes(L"noi", now, 200));
+        expect(got == L"Hà \x02Nội\x03 Tonight|tin tức Hà \x02Nội\x03 hôm nay",
+               "mark: Vietnamese 'noi' found by the index AND marked on 'Nội', in a title and a description (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"lodz", now, 200));
+        expect(got == L"\x02Lodz\x03 vs Łódź",
+               "mark: 'lodz' marks 'Lodz' only - the index keeps Ł, so 'Łódź' is not what it matched (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"quebec", now, 200));
+        expect(got == L"\x02Que\u0301bec\x03 Morning",
+               "mark: a decomposed 'Québec' is marked whole, its combining accent inside (got " + utf8FromWide(got) +
+                   ")");
+        got = marked(mdb.searchProgrammes(L"que\u0301bec", now, 200));
+        expect(got == L"\x02Que\u0301bec\x03 Morning",
+               "mark: a combining accent TYPED in the search is skipped too (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"bec", now, 200));
+        expect(got == L"Que\u0301\x02" L"bec\x03 Morning",
+               "mark: an occurrence never starts on a dropped accent (it belongs to the letter before) (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"cafe", now, 200));
+        expect(got == L"\x02" L"Cafe\u0301\x03 Hour",
+               "mark: a combining accent on the last letter is inside the mark (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"ｎｈｋ", now, 200));
+        expect(got == L"\x02ＮＨＫ\x03 World",
+               "mark: fullwidth letters fold case as the index does (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"af", now, 200));
+        expect(got == L"C\x02" L"af\x03" L"e\u0301 Hour|África or \x02" L"Af\x03rica",
+               "mark: a 2-character term (LIKE) marks as LIKE matched - ASCII case only, 'Áf' left (got " +
+                   utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"東京 天気", now, 200));
+        expect(got == L"\x02東京 天気\x03 特集|明日の\x02東京 天気\x03 予報、天気",
+               "mark: a CJK term - its title by the index, a description (LIKE) as the whole term once, not each "
+               "word (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"大阪 天気", now, 200));
+        expect(got == L"明日の\x02大阪 天気\x03" + std::wstring(85, L'晴') + L"…",
+               "mark: an excerpt never ends inside a spaced term's match (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(L"abcd", now, 200));
+        expect(got == L"x \u0301\x02" L"abcd\x03",
+               "mark: a word start is found looking back past an accent the index drops (got " + utf8FromWide(got) +
+                   ")");
+        expect(mdb.bulkInsertProgrammes(mp, mg, 6000) == static_cast<int>(mg.size()) &&
+                   mdb.programmeSearchState() != Database::ProgrammeSearchState::Ready,
+               "mark: (fixture) the guide stored again - the index is stale, so searches use LIKE");
+        got = marked(mdb.searchProgrammes(L"news", now, 200));
+        expect(got == L"the sun\x02news\x03 hour",
+               "mark: a description LIKE found mid-word is marked there (got " + utf8FromWide(got) + ")");
+        got = marked(mdb.searchProgrammes(pasted, now, 200));
+        expect(got == L"x \x02" + pasted + L"\x03…",
+               "mark: an excerpt runs past its 90 characters to the end of a longer match (got " + utf8FromWide(got) +
+                   ")");
+    }
+
+
+    out("== TV Guide rows + coverage (buildGuideModel) ==\n");
+    {
+        const std::wstring gpath = wdir + L"/guide_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(gpath + sfx)), ec_); }
+        const long long now = 1'800'000'000;
+        auto ch = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url, int chno = -1,
+                     Channel::Kind kind = Channel::Kind::Live) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            c.chno = chno;
+            c.kind = kind;
+            return c;
+        };
+        auto pr = [](const wchar_t* cid, long long s, long long e, const wchar_t* t) {
+            Programme p;
+            p.channelId = cid;
+            p.startUtc = s;
+            p.stopUtc = e;
+            p.title = t;
+            p.descr = std::wstring(L"about ") + t;
+            return p;
+        };
+        Database gdb;
+        expect(gdb.open(gpath), "guide: a fresh DB opens");
+        // A: has a guide link. Two feeds of one channel, where channel number, insertion order and
+        // name disagree about which comes first (channel number decides — channelsByPlaylist's
+        // order); a film carrying a guide id; a channel the guide has nothing for; one with no id.
+        const long long pa = gdb.addPlaylist(L"A", L"http://a", true, 1000, L"http://a/epg");
+        gdb.bulkInsertChannels(pa, {ch(L"CNN HD", L"CNN.us@HD", L"http://s/a1", 9),
+                                    ch(L"CNN SD", L"cnn.us@SD", L"http://s/a2", 5),
+                                    ch(L"A Film", L"movie.xx", L"http://s/a3", -1, Channel::Kind::Movie),
+                                    ch(L"BBC", L"BBC.uk", L"http://s/a4"),
+                                    ch(L"Quiet", L"none.xx", L"http://s/a5"),
+                                    ch(L"Plain", L"", L"http://s/a6")},
+                               1000);
+        // B: no guide link; one of its ids is on A's guide. C: disabled, with a guide of its own.
+        const long long pb = gdb.addPlaylist(L"B", L"http://b", true, 1000);
+        gdb.bulkInsertChannels(pb, {ch(L"Local", L"local.xx", L"http://s/b1"),
+                                    ch(L"Zed", L"zzz.xx", L"http://s/b2")},
+                               1000);
+        const long long pc = gdb.addPlaylist(L"C", L"http://c", true, 1000, L"http://c/epg");
+        gdb.bulkInsertChannels(pc, {ch(L"Hidden", L"dis.xx", L"http://s/c1")}, 1000);
+        expect(gdb.bulkInsertProgrammes(pa, {pr(L"cnn.us", now + 3600, now + 7200, L"Late"),
+                                             pr(L"cnn.us", now - 600, now + 3600, L"Early"),
+                                             pr(L"cnn.us", now - 90000, now - 86400, L"Yesterday"),  // out of the window
+                                             pr(L"bbc.uk", now, now + 1800, L"Football"),
+                                             pr(L"movie.xx", now, now + 1800, L"Film Guide"),
+                                             pr(L"zzz.xx", now, now + 1800, L"Zed Show"),
+                                             pr(L"other.xx", now, now + 1800, L"Nobody's")},
+                                        now) == 7,
+               "guide: A's guide stored");
+        expect(gdb.bulkInsertProgrammes(pc, {pr(L"dis.xx", now, now + 1800, L"Disabled Show")}, now) == 1,
+               "guide: C's guide stored");
+        gdb.setPlaylistEnabled(pc, false);
+
+        // The join's channel list is channelsByPlaylist's live, id-carrying channels, in its order.
+        auto viaList = [&](long long pid) {
+            std::vector<std::pair<std::wstring, std::wstring>> v;
+            for (const auto& c : gdb.channelsByPlaylist(pid))
+                if (!c.tvgId.empty() && c.kind == Channel::Kind::Live) v.emplace_back(c.name, c.tvgId);
+            return v;
+        };
+        std::map<long long, std::vector<std::pair<std::wstring, std::wstring>>> viaQuery;
+        long long lastPid = -1;
+        bool grouped = true;  // each playlist's channels arrive together, playlists in id order
+        for (const auto& c : gdb.liveGuideChannels()) {
+            if (c.playlistId < lastPid) grouped = false;
+            lastPid = c.playlistId;
+            viaQuery[c.playlistId].emplace_back(c.name, c.tvgId);
+        }
+        expect(grouped && viaQuery[pa] == viaList(pa) && viaQuery[pb] == viaList(pb) &&
+                   viaQuery[pc] == viaList(pc) && viaQuery[pa].size() == 4,
+               "guide: liveGuideChannels = channelsByPlaylist's live channels with an id, same order");
+
+        const GuideModel m = buildGuideModel(gdb, now);
+        std::wstring got;
+        for (const auto& r : m.rows) {
+            got += (got.empty() ? L"" : L" | ") + r.channelName + L" [" + r.channelId + L"]:";
+            for (const auto& p : r.programmes) got += L" " + p.title;
+        }
+        expect(got == L"BBC [BBC.uk]: Football | CNN SD [cnn.us@SD]: Early Late",
+               "guide: rows by name; the lower channel number names a shared id; films, the disabled "
+               "playlist and the out-of-window show left out (got " + utf8FromWide(got) + ")");
+        expect(!m.rows.empty() && m.rows[0].programmes[0].descr == L"about Football",
+               "guide: a programme's description reaches its block");
+        const GuideCoverage& cv = m.coverage;
+        expect(cv.valid && cv.withId == 5 && cv.shown == 2 && cv.noProgrammes == 1 && cv.inNoLinkPlaylists == 2 &&
+                   cv.guideUnmatched == 2,
+               "guide: coverage — 5 ids, 2 shown, 1 without programmes, 2 in the unlinked playlist, "
+               "2 guide channels matching none (the film's and other.xx; zzz.xx is B's) (got " +
+                   std::to_string(cv.withId) + "/" + std::to_string(cv.shown) + "/" +
+                   std::to_string(cv.noProgrammes) + "/" + std::to_string(cv.inNoLinkPlaylists) + "/" +
+                   std::to_string(cv.guideUnmatched) + ")");
+    }
+
+
+    out("== Guide stored on another connection (Win32's store worker) ==\n");
+    {
+        using State = Database::ProgrammeSearchState;
+        const std::wstring rpath = wdir + L"/store2_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(rpath + sfx)), ec_); }
+        const long long now = 1'800'000'000;
+        auto pr = [](const wchar_t* cid, long long s, const wchar_t* t) {
+            Programme p;
+            p.channelId = cid;
+            p.startUtc = s;
+            p.stopUtc = s + 600;
+            p.title = t;
+            return p;
+        };
+        auto titles = [](const std::vector<Database::ProgrammeHit>& hs) {
+            std::wstring s;
+            for (const auto& h : hs) s += (s.empty() ? L"" : L"|") + h.programme.title;
+            return s;
+        };
+        auto chan = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            return c;
+        };
+        Database ui;  // the app's connection: it searches, and remembers what it learnt about the index
+        expect(ui.open(rpath), "store2: the app's connection opens");
+        const long long p1 = ui.addPlaylist(L"P1", L"http://r1", true, 1000, L"http://r1/epg");
+        const long long p2 = ui.addPlaylist(L"P2", L"http://r2", true, 1000, L"http://r2/epg");
+        ui.bulkInsertChannels(p1, {chan(L"One", L"one.xx", L"http://r/1")}, 1000);
+        ui.bulkInsertChannels(p2, {chan(L"Two", L"two.xx", L"http://r/2")}, 1000);
+        expect(ui.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Alpha Show")}, now) == 1 &&
+                   ui.rebuildProgrammeIndex() && ui.refreshProgrammeSearchChannels() &&
+                   titles(ui.searchProgrammes(L"alpha", now, 50)) == L"Alpha Show" &&
+                   ui.programmeSearchState() == State::Ready,
+               "store2: the app's connection has searched, and remembers Ready");
+
+        Database worker;  // the store worker's connection
+        expect(worker.open(rpath, nullptr, /*upgradeSchema=*/false), "store2: a worker connection opens");
+        // The worker stores; its rebuild has not run yet. The new first row takes alpha's freed id, so
+        // the old index would answer "alpha" with Beta Show — through the app's connection, which was
+        // never told. It must notice the other connection's commit by itself.
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Beta Show"),
+                                                pr(L"one.xx", now + 900, L"Gamma Show")}, now) == 2,
+               "store2: the worker stores a new guide");
+        expect(ui.programmeSearchState() == State::NeedsRebuild,
+               "store2: the app's connection sees the index went stale (another connection committed)");
+        expect(ui.searchProgrammes(L"alpha", now, 50).empty() &&
+                   titles(ui.searchProgrammes(L"beta", now, 50)) == L"Beta Show",
+               "store2: meanwhile its search reads the new guide, not the stale index (LIKE)");
+        expect(worker.rebuildProgrammeIndex() && ui.programmeSearchState() == State::Ready &&
+                   titles(ui.searchProgrammes(L"show", now, 50)) == L"Beta Show|Gamma Show",
+               "store2: after the worker's rebuild, Ready again, and the index answers");
+
+        // An error that ends the whole transaction (here a trigger's RAISE(ROLLBACK); for real, a full
+        // disk) must stop the store: nothing after it may commit on its own in autocommit.
+        expect(worker.bulkInsertProgrammes(p2, {pr(L"two.xx", now + 200, L"Delta Show")}, now) == 1,
+               "store2: P2's guide stored");
+        {
+            sqlite3* raw = nullptr;
+            sqlite3_open(utf8FromWide(rpath).c_str(), &raw);
+            const bool made = raw && sqlite3_exec(raw,
+                                                  "CREATE TRIGGER boom BEFORE INSERT ON epg_programmes"
+                                                  " WHEN NEW.title='BOOM' BEGIN SELECT RAISE(ROLLBACK,'boom'); END",
+                                                  nullptr, nullptr, nullptr) == SQLITE_OK;
+            sqlite3_close(raw);
+            expect(made, "store2: (fixture) a trigger that rolls the transaction back");
+        }
+        const std::wstring refreshedBefore = worker.getSetting(L"epg_refreshed_" + std::to_wstring(p1)).value_or(L"");
+        const int boom = worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Zeta Show"),
+                                                          pr(L"one.xx", now + 200, L"BOOM"),
+                                                          pr(L"one.xx", now + 300, L"Eta Show")}, now + 5);
+        std::wstring p1Titles;
+        for (const auto& p : worker.programmesInWindow(p1, 0, now + 100000))
+            p1Titles += (p1Titles.empty() ? L"" : L"|") + p.title;
+        expect(boom == 0 && p1Titles == L"Beta Show|Gamma Show" &&
+                   worker.getSetting(L"epg_refreshed_" + std::to_wstring(p1)).value_or(L"") == refreshedBefore,
+               "store2: a rolled-back store leaves the old guide whole — no rows after it committed alone (got " +
+                   utf8FromWide(p1Titles) + ")");
+        expect(worker.lastError().find(L"boom") != std::wstring::npos,
+               "store2: and says why (lastError)");
+        expect(worker.bulkInsertProgrammes(p2, {pr(L"two.xx", now + 400, L"Theta Show")}, now) == 1,
+               "store2: the connection is not left inside a transaction — the next store works");
+
+        // Failures that end only their STATEMENT must still roll the whole guide back: the old guide's
+        // DELETE, and the refresh-time write (a stamp left unchanged could match the old index's).
+        auto rawExec = [&](const char* sql) {
+            sqlite3* raw = nullptr;
+            sqlite3_open(utf8FromWide(rpath).c_str(), &raw);
+            const bool ok = raw && sqlite3_exec(raw, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+            sqlite3_close(raw);
+            return ok;
+        };
+        auto p1Now = [&]() {
+            std::wstring t;
+            for (const auto& p : worker.programmesInWindow(p1, 0, now + 100000)) t += (t.empty() ? L"" : L"|") + p.title;
+            return t;
+        };
+        expect(rawExec("CREATE TRIGGER nodel BEFORE DELETE ON epg_programmes WHEN OLD.title='Gamma Show'"
+                       " BEGIN SELECT RAISE(ABORT,'nodel'); END"),
+               "store2: (fixture) a DELETE that fails on its own");
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Kappa Show")}, now + 6) == 0 &&
+                   p1Now() == L"Beta Show|Gamma Show" && worker.lastError().find(L"nodel") != std::wstring::npos,
+               "store2: a failed DELETE stores nothing — no new rows on top of the old guide (got " +
+                   utf8FromWide(p1Now()) + ")");
+        expect(rawExec("DROP TRIGGER nodel") &&
+                   rawExec("CREATE TRIGGER noset BEFORE UPDATE ON settings WHEN NEW.key LIKE 'epg_refreshed_%'"
+                           " BEGIN SELECT RAISE(ABORT,'noset'); END"),
+               "store2: (fixture) a refresh-time write that fails on its own");
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Kappa Show")}, now + 7) == 0 &&
+                   p1Now() == L"Beta Show|Gamma Show" &&
+                   worker.getSetting(L"epg_refreshed_" + std::to_wstring(p1)).value_or(L"") == refreshedBefore &&
+                   worker.lastError().find(L"noset") != std::wstring::npos,
+               "store2: a failed refresh-time write stores nothing, and says why (got " + utf8FromWide(p1Now()) + ")");
+        expect(rawExec("DROP TRIGGER noset") &&
+                   rawExec("CREATE TRIGGER nomu BEFORE INSERT ON epg_programmes WHEN NEW.title='Mu Show'"
+                           " BEGIN SELECT RAISE(ABORT,'nomu'); END"),
+               "store2: (fixture) rows that fail on their own");
+        // Every row failing keeps what there was; SOME failing stores the rest and says why.
+        expect(worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Mu Show"),
+                                                pr(L"one.xx", now + 200, L"Mu Show")}, now + 8) == 0 &&
+                   p1Now() == L"Beta Show|Gamma Show" && worker.lastError().find(L"nomu") != std::wstring::npos,
+               "store2: a batch whose every row fails stores nothing — the old guide stays (got " +
+                   utf8FromWide(p1Now()) + ")");
+        const int partial = worker.bulkInsertProgrammes(p1, {pr(L"one.xx", now + 100, L"Mu Show"),
+                                                             pr(L"one.xx", now + 200, L"Nu Show")}, now + 9);
+        const std::wstring afterPartial = p1Now();  // (read first: expect's arguments have no set order)
+        expect(partial == 1 && afterPartial == L"Nu Show" && worker.lastError().find(L"nomu") != std::wstring::npos,
+               "store2: a row failing on its own is skipped, the rest stored, the failure named (got " +
+                   utf8FromWide(afterPartial) + ")");
+        expect(rawExec("DROP TRIGGER nomu"), "store2: (fixture) dropped");
+        // A playlist deleted while its guide downloaded: nothing lands — not even a refresh time.
+        const long long gone = 987654;
+        expect(worker.bulkInsertProgrammes(gone, {pr(L"one.xx", now + 100, L"Lambda Show")}, now) == 0 &&
+                   worker.bulkInsertProgrammes(gone, {}, now) == 0 &&
+                   !worker.getSetting(L"epg_refreshed_" + std::to_wstring(gone)).has_value() &&
+                   !worker.lastError().empty(),
+               "store2: a store for a deleted playlist lands nothing — not even a refresh time, even when empty");
+        // An empty feed for a real playlist IS stored — the old guide replaced by nothing — with no error.
+        expect(worker.bulkInsertProgrammes(p2, {}, now + 10) == 0 && worker.lastError().empty() &&
+                   worker.programmesInWindow(p2, 0, now + 100000).empty(),
+               "store2: an empty guide is stored (0, no error), as before");
+    }
+
+
+    out("== Channel search (schema v11, FTS5 + triggers) ==\n");
+    {
+        const std::wstring cpath = wdir + L"/chsearch.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(cpath + sfx)), ec_); }
+        auto ch = [](const wchar_t* name, const wchar_t* group, const wchar_t* url,
+                     Channel::Kind kind = Channel::Kind::Live) {
+            ParsedChannel c;
+            c.name = name;
+            c.groupTitle = group;
+            c.streamUrl = url;
+            c.kind = kind;
+            return c;
+        };
+        auto names = [](const std::vector<Channel>& v) {
+            std::wstring s;
+            for (const auto& c : v) s += (s.empty() ? L"" : L"|") + c.name;
+            return s;
+        };
+        // A raw connection for what Database does not expose (it runs beside an open Database: WAL).
+        auto rawQuery = [&](const char* sql) {
+            sqlite3* r = nullptr;
+            long long v = -1;
+            if (sqlite3_open(utf8FromWide(cpath).c_str(), &r) == SQLITE_OK) {
+                sqlite3_stmt* q = nullptr;
+                if (sqlite3_prepare_v2(r, sql, -1, &q, nullptr) == SQLITE_OK && sqlite3_step(q) == SQLITE_ROW)
+                    v = sqlite3_column_int64(q, 0);
+                if (q) sqlite3_finalize(q);
+            }
+            if (r) sqlite3_close(r);
+            return v;
+        };
+        auto rawExec = [&](const char* sql) {
+            sqlite3* r = nullptr;
+            bool ok = false;
+            if (sqlite3_open(utf8FromWide(cpath).c_str(), &r) == SQLITE_OK)
+                ok = sqlite3_exec(r, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+            if (r) sqlite3_close(r);
+            return ok;
+        };
+        // FTS5's own check of an external-content index against its content table: an index out of
+        // step with `channels` (a missed insert, delete or rename) fails it.
+        auto indexInStep = [&] {
+            return rawExec("INSERT INTO channels_fts(channels_fts, rank) VALUES('integrity-check', 1)");
+        };
+        const std::vector<ParsedChannel> base = {ch(L"TVA QUÉBEC HD", L"CA French", L"http://c/1"),
+                                                 ch(L"CBC Toronto", L"CA English", L"http://c/2"),
+                                                 ch(L"Sky Sport 1", L"DE Sport", L"http://c/3"),
+                                                 ch(L"100% Hits", L"Music", L"http://c/4")};
+        long long p1 = 0;
+        {
+            Database cdb;
+            expect(cdb.open(cpath), "chsearch: a fresh DB opens");
+            expect(cdb.channelSearchIndexed() && rawQuery("PRAGMA user_version") == 11,
+                   "chsearch: a fresh DB reaches v11 (the channel index exists)");
+            p1 = cdb.addPlaylist(L"C1", L"http://c1", true, 1000);
+            expect(cdb.bulkInsertChannels(p1, base, 1000) == 4, "chsearch: 4 channels stored");
+            expect(names(cdb.searchChannels(L"quebec")) == L"TVA QUÉBEC HD",
+                   "chsearch: case- and accent-blind through the index ('quebec' finds 'TVA QUÉBEC HD')");
+            expect(names(cdb.searchChannels(L"ky spo")) == L"Sky Sport 1", "chsearch: a substring, across a space");
+            expect(cdb.searchChannels(L"french").empty(),
+                   "chsearch: NAMES only — a group title no longer matches (owner, 2026-09-25)");
+            expect(names(cdb.searchChannels(L"To")) == L"CBC Toronto",
+                   "chsearch: 2 characters take the LIKE path, names only");
+            expect(names(cdb.searchChannels(L"%")) == L"100% Hits" && cdb.searchChannels(L"_").empty(),
+                   "chsearch: the LIKE path takes a typed % and _ literally");
+            expect(names(cdb.searchChannels(L"0% H")) == L"100% Hits", "chsearch: ...and so does the index path");
+            expect(cdb.countUncoveredChannelNames(L"toronto", {}, 100) == 1 &&
+                       cdb.countUncoveredChannelNames(L"to", {}, 100) == -1,
+                   "chsearch: countUncoveredChannelNames by name; -1 under 3 characters");
+            // A refresh renaming a channel keeps its stream URL: the upsert's UPDATE path.
+            std::vector<ParsedChannel> renamed = base;
+            renamed[0].name = L"TVA Montréal HD";
+            expect(cdb.bulkInsertChannels(p1, renamed, 2000) == 4, "chsearch: refreshed with one channel renamed");
+            expect(cdb.searchChannels(L"quebec").empty() && names(cdb.searchChannels(L"montreal")) == L"TVA Montréal HD",
+                   "chsearch: a rename reaches the index (the update trigger)");
+            // Movies: searched, but not counted as channels; retired by a VOD sync; gone with their playlist.
+            const long long p2 = cdb.addPlaylist(L"C2", L"http://c2", true, 1000);
+            expect(cdb.bulkInsertChannels(p2, {ch(L"Toronto Story", L"Drama", L"http://c/m1", Channel::Kind::Movie),
+                                               ch(L"Toronto Nights", L"Drama", L"http://c/m2", Channel::Kind::Movie)},
+                                          1000) == 2,
+                   "chsearch: two movies stored");
+            expect(cdb.searchChannels(L"toronto").size() == 3 && cdb.countUncoveredChannelNames(L"toronto", {}, 100) == 1,
+                   "chsearch: movies are searched, but not counted as live channel names");
+            // Asked of the INDEX itself: searchChannels joins back to `channels`, so a stale entry for a
+            // deleted row would stay invisible there — and wrong the day its rowid is reused.
+            expect(cdb.retireMissingChannels(p2, static_cast<int>(Channel::Kind::Movie), {L"http://c/m1"}) == 1 &&
+                       rawQuery("SELECT COUNT(*) FROM channels_fts WHERE channels_fts MATCH '\"nights\"'") == 0,
+                   "chsearch: a retired movie leaves the index (the delete trigger)");
+            cdb.setPlaylistEnabled(p1, false);
+            expect(cdb.searchChannels(L"sky sport").empty(), "chsearch: a disabled playlist's channels are not found");
+            cdb.setPlaylistEnabled(p1, true);
+            cdb.deletePlaylist(p2);
+            expect(rawQuery("SELECT COUNT(*) FROM channels_fts WHERE channels_fts MATCH '\"story\"'") == 0,
+                   "chsearch: a deleted playlist's channels leave the index (the cascade fires the trigger)");
+            // The guide note's count: a name is "not in the guide" only when none of its channels carries
+            // a guide row's id — another feed of a channel the guide shows (an FHD beside the HD) is in it.
+            const long long p4 = cdb.addPlaylist(L"C4", L"http://c4", true, 1000);
+            auto idd = [&](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+                ParsedChannel c = ch(name, L"CA", url);
+                c.tvgId = tvg;
+                return c;
+            };
+            expect(cdb.bulkInsertChannels(p4, {idd(L"CBC Toronto HD", L"CBC.ca@HD", L"http://c/41"),
+                                               idd(L"CBC Toronto FHD", L"cbc.ca@FHD", L"http://c/42"),
+                                               idd(L"Toronto One", L"one.ca", L"http://c/43"),
+                                               idd(L"Toronto Radio", L"", L"http://c/44")},
+                                          1000) == 4,
+                   "chsearch: an id-carrying fixture stored");
+            // A same-named channel elsewhere with NO id does not uncover a name the guide has (the rule
+            // is "none of its channels covered", not whichever channel is read last — this one is).
+            const long long p5 = cdb.addPlaylist(L"C5", L"http://c5", true, 1000);
+            expect(cdb.bulkInsertChannels(p5, {ch(L"CBC Toronto HD", L"CA", L"http://c/51")}, 1000) == 1,
+                   "chsearch: a same-named, id-less channel in another playlist stored");
+            const std::unordered_set<std::wstring> guideRows{L"cbc.ca"};
+            expect(cdb.countUncoveredChannelNames(L"toronto", guideRows, 100) == 3,
+                   "chsearch: countUncoveredChannelNames skips both feeds of the guide's cbc.ca (3 = CBC Toronto, "
+                   "Toronto One, Toronto Radio)");
+            expect(cdb.countUncoveredChannelNames(L"toronto", guideRows, 5) == -1,
+                   "chsearch: ...and gives up (-1) past maxRows matching channels (6 here)");
+            // A guide row plays by tvg-id: a movie carrying the same id, listed FIRST, must not win.
+            const long long p6 = cdb.addPlaylist(L"C6", L"http://c6", true, 1000);
+            ParsedChannel film = idd(L"Dup Film", L"dup.xx", L"http://c/61");
+            film.kind = Channel::Kind::Movie;
+            expect(cdb.bulkInsertChannels(p6, {film, idd(L"Dup Live", L"dup.xx", L"http://c/62")}, 1000) == 2,
+                   "chsearch: a movie and a live channel sharing a tvg-id stored (the movie first)");
+            const auto byId = cdb.channelByTvgId(L"dup.xx");
+            expect(byId && byId->name == L"Dup Live", "channelByTvgId: the live channel wins over a movie sorted first");
+            expect(indexInStep(), "chsearch: the index is in step with channels after inserts, a rename, a "
+                                  "retirement and a playlist delete (FTS5 integrity-check)");
+        }
+        // v10 -> v11 on an existing library: the build fills the index from the rows already there.
+        expect(rawExec("BEGIN; DROP TRIGGER channels_fts_ai; DROP TRIGGER channels_fts_ad;"
+                       " DROP TRIGGER channels_fts_au; DROP TABLE channels_fts; PRAGMA user_version=10; COMMIT;"),
+               "chsearch: fixture turned back into a v10 DB");
+        {
+            Database cdb;
+            expect(cdb.open(cpath) && cdb.channelSearchIndexed(), "chsearch: a v10 DB lands v11 on open");
+            expect(names(cdb.searchChannels(L"montreal")) == L"TVA Montréal HD" && indexInStep(),
+                   "chsearch: ...with the existing channels indexed");
+        }
+        // A failed v11 (an ordinary table squats the name) leaves v10 with NO triggers — channel writes
+        // keep working — and search on LIKE; the next open, squatter gone, lands v11.
+        expect(rawExec("BEGIN; DROP TRIGGER channels_fts_ai; DROP TRIGGER channels_fts_ad;"
+                       " DROP TRIGGER channels_fts_au; DROP TABLE channels_fts; CREATE TABLE channels_fts(x);"
+                       " PRAGMA user_version=10; COMMIT;"),
+               "chsearch: fixture turned into a v10 DB with a squatter table");
+        {
+            Database cdb;
+            expect(cdb.open(cpath) && !cdb.channelSearchIndexed() && rawQuery("PRAGMA user_version") == 10,
+                   "chsearch: v11 failed -> stays v10, no crash");
+            expect(rawQuery("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'channels_fts%'") == 0,
+                   "chsearch: ...and left no trigger behind");
+            expect(cdb.bulkInsertChannels(p1, {ch(L"Late Arrival", L"X", L"http://c/9")}, 3000) == 1,
+                   "chsearch: ...so channel writes still work");
+            expect(names(cdb.searchChannels(L"sky sport")) == L"Sky Sport 1", "chsearch: ...and search answers by LIKE");
+        }
+        expect(rawExec("DROP TABLE channels_fts;"), "chsearch: squatter removed");
+        {
+            Database cdb;
+            expect(cdb.open(cpath) && cdb.channelSearchIndexed(), "chsearch: the retried v11 lands on the next open");
+            expect(names(cdb.searchChannels(L"arrival")) == L"Late Arrival" && indexInStep(),
+                   "chsearch: ...indexing the channel written while it was at v10");
+        }
+    }
+
+
+
+    // Refresh Guide's worker (mac/src/app/GuideRefresh) end to end: a local HTTP server serves the
+    // guides, the worker fetches them (a link naming THREE guides — one gzipped, one missing — plus
+    // a one-guide playlist and a playlist whose guide 404s), merges, stores on its OWN connection and
+    // re-indexes; then the guide rows (buildGuideModel) and the search see the result.
+    out("== Refresh Guide worker (GuideRefresh: split, fetch, merge, store, index) ==\n");
+    {
+        const std::wstring rpath = wdir + L"/refresh_selftest.db";
+        for (const wchar_t* sfx : {L"", L"-wal", L"-shm"}) { std::error_code ec_; std::filesystem::remove(std::filesystem::path(utf8FromWide(rpath + sfx)), ec_); }
+        const long long now = (long long)time(nullptr);
+        auto prog = [&](const char* ch, long long start, const char* title) {
+            return std::string("<programme start=\"") + xmltvTime(start) + "\" stop=\"" + xmltvTime(start + 1800) +
+                   "\" channel=\"" + ch + "\"><title>" + title + "</title></programme>\n";
+        };
+        auto tv = [](const std::string& body) { return "<?xml version=\"1.0\"?>\n<tv>\n" + body + "</tv>\n"; };
+        const long long t1 = now + 600, t2 = now + 2400;
+        std::map<std::string, std::string> bodies;
+        bodies["/a.xml"] = tv(prog("one.uk", t1, "Alpha One") + prog("one.uk", t2, "Alpha Two") + prog("two.uk", t1, "Alpha Three"));
+        // b: two.uk is a's (dropped), three.uk and film.uk are b's own.
+        bodies["/b.xml.gz"] = gzipped(tv(prog("two.uk", t1, "Beta Two") + prog("three.uk", t1, "Beta Three") +
+                                         prog("film.uk", t1, "Beta Film")));
+        bodies["/c.xml"] = tv(prog("four.uk", t1, "Gamma Four"));
+        LocalHttp srv(bodies);
+        expect(srv.port() > 0, "refresh fixture: local HTTP server listening");
+        const std::wstring base = L"http://127.0.0.1:" + std::to_wstring(srv.port());
+
+        Database rdb;
+        std::wstring err;
+        expect(rdb.open(rpath, &err), "refresh fixture: database opens (schema created)");
+        auto live = [](const wchar_t* name, const wchar_t* tvg, const wchar_t* url) {
+            ParsedChannel c;
+            c.name = name;
+            c.tvgId = tvg;
+            c.streamUrl = url;
+            return c;
+        };
+        const std::wstring multi = base + L"/a.xml, " + base + L"/b.xml.gz , " + base + L"/missing.xml";
+        const long long p1 = rdb.addPlaylist(L"Multi", L"http://p/1.m3u", true, now, multi);
+        const long long p2 = rdb.addPlaylist(L"Single", L"http://p/2.m3u", true, now, base + L"/c.xml");
+        const long long p3 = rdb.addPlaylist(L"Broken", L"http://p/3.m3u", true, now, base + L"/404.xml");
+        ParsedChannel film = live(L"A Film", L"film.uk", L"http://s/film.mkv");
+        film.kind = Channel::Kind::Movie;  // a film carrying a tvg-id must never name a guide row
+        rdb.bulkInsertChannels(p1, {live(L"One", L"One.UK@HD", L"http://s/1"), live(L"Two", L"two.uk", L"http://s/2"),
+                                    live(L"Three", L"three.uk", L"http://s/3"), film}, now);
+        rdb.bulkInsertChannels(p2, {live(L"Four", L"four.uk", L"http://s/4")}, now);
+        rdb.bulkInsertChannels(p3, {live(L"Five", L"five.uk", L"http://s/5")}, now);
+
+        std::vector<std::wstring> lines;
+        int forced = 0;
+        const std::atomic<bool> noCancel{false};
+        const auto res = rabbitears::mac::refreshGuides(
+            {{p1, L"Multi", multi}, {p2, L"Single", base + L"/c.xml"}, {p3, L"Broken", base + L"/404.xml"}}, rpath,
+            [&](const std::wstring& l, bool force) { lines.push_back(l); forced += force ? 1 : 0; }, noCancel);
+        expect(res.fetches.size() == 3, "refresh: one result per playlist");
+        if (res.fetches.size() == 3) {
+            const auto& m = res.fetches[0];
+            expect(m.error.empty() && m.stored == 5,
+                   "multi-guide link: a's 3 + b's own 2 stored, b's copy of a's channel left out (got " +
+                       std::to_string(m.stored) + ")");
+            expect(m.sourceErrors.size() == 1 && m.sourceErrors[0].find(L"3") != std::wstring::npos,
+                   "...and the missing third guide is reported beside them (\"guide 3 of 3: …\")");
+            expect(m.sourceLog.size() == 2, "...with a merge log line per guide that loaded");
+            expect(res.fetches[1].error.empty() && res.fetches[1].stored == 1, "a one-guide playlist stores as before");
+            expect(!res.fetches[2].error.empty() && res.fetches[2].stored == 0 &&
+                       res.fetches[2].error.find(L"404") != std::wstring::npos,
+                   "a guide that 404s fails its playlist, saying so (" + utf8FromWide(res.fetches[2].error) + ")");
+        }
+        expect(res.storeError.empty() && res.index == rabbitears::mac::GuideRefreshResult::Index::Rebuilt,
+               "stored on the worker's own connection, then the search index rebuilt once");
+        bool sawGuideTag = false;
+        for (const auto& l : lines) sawGuideTag = sawGuideTag || l.find(L"3") != std::wstring::npos;
+        expect(forced >= 8 && sawGuideTag, "progress: a step line per download, parse and store (" +
+                                                std::to_string(forced) + " forced lines)");
+        expect(srv.requests() >= 5, "every guide was requested (" + std::to_string(srv.requests()) + " requests)");
+
+        // The app's connection sees the worker's commits: the guide rows, without the film.
+        const rabbitears::GuideModel gm = rabbitears::buildGuideModel(rdb, now);
+        std::set<std::wstring> rowNames;
+        for (const auto& r : gm.rows) rowNames.insert(r.channelName);
+        expect(rowNames == std::set<std::wstring>{L"One", L"Two", L"Three", L"Four"},
+               "guide rows: the four live channels with programmes — never the film carrying a tvg-id");
+        expect(rdb.programmeSearchState() == Database::ProgrammeSearchState::Ready,
+               "the app's connection reads the worker's index as current");
+        rdb.refreshProgrammeSearchChannels();
+        const auto hits = rdb.searchProgrammes(L"Beta", now, 50);
+        std::set<std::wstring> titles;
+        for (const auto& h : hits) titles.insert(h.programme.title);
+        expect(titles == std::set<std::wstring>{L"Beta Three"},
+               "search: b's own live programme is found; its copy of a's channel was never stored, the film is no row");
+
+        // A cancel before it starts stores nothing.
+        const std::atomic<bool> cancelled{true};
+        const auto none = rabbitears::mac::refreshGuides({{p2, L"Single", base + L"/c.xml"}}, rpath,
+                                                         [](const std::wstring&, bool) {}, cancelled);
+        expect(none.fetches.size() == 1 && !none.fetches[0].error.empty() && none.fetches[0].stored == 0,
+               "cancelled (quit): nothing fetched or stored");
+        srv.stop();
+        rdb.close();
     }
 
     // ---- i18n catalog gate (twin of the Win32 CLI block) -------------------------------------

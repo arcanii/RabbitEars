@@ -23,6 +23,7 @@ add_library(RabbitEarsCore STATIC
   platform/UrlRedact.cpp  # mask provider logins in the log (both log sinks) — unit-tested headlessly
   db/Database.cpp
   ui/DockLayout.cpp   # pure layout-tree logic (no HWNDs) — unit-tested headlessly
+  ui/GuideModel.cpp   # the TV Guide's rows + coverage counts from the DB (both GUIs) — unit-tested
   ui/Skin.cpp         # shared skin model + codecs (theme engine) — unit-tested headlessly
   ui/GlassMask.cpp    # pure "glass cover" mask math for the meters — unit-tested headlessly
   ui/VuLamp.cpp       # pure VU dial illumination math — unit-tested headlessly

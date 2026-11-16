@@ -42,7 +42,7 @@
 #include "platform/UrlRedact.h"
 #include "ui/CatchupSync.h"  // Win32/ui — the provider sync's catch-up decisions
 #include "ui/DockLayout.h"
-#include "ui/GuideModel.h"  // Win32/ui — the TV Guide's row build
+#include "ui/GuideModel.h"  // common/ui — the TV Guide's row build (shared with the mac guide)
 #include "ui/MeterTray.h"   // Win32/ui — the transport strip's meter geometry (header-only)
 #include "ui/MiniMeter.h"  // Win32/ui — only its header-inline parts: needle width, audio reading, the look codec
                            // and count (no GUI code)

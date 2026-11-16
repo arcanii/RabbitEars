@@ -17,4 +17,6 @@ namespace rabbitears { class Database; }
 // Present as a modal sheet on `parent`. `onChange` runs after each enable/disable/
 // delete so the caller can re-sync the channel grid.
 - (void)presentForWindow:(NSWindow*)parent onChange:(void (^)(void))onChange;
+// Set Guide URL's "Download the guide now?" — Yes runs this (the host's Refresh Guide). nil = not asked.
+@property (nonatomic, copy) void (^onRefreshGuide)(void);
 @end
