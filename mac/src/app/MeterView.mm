@@ -11,6 +11,8 @@
 
 #include "VuDialMac.h"     // the two needle instruments (port of Win32/ui/VuDial)
 #include "ui/PhotoCells.h" // the photoreal cell looks' rasteriser (shared with Win32)
+#include "ui/GlassMask.h"  // the glass cover's LUTs (shared with Win32)
+#include <atomic>
 
 using namespace rabbitears::mac;
 using namespace rabbitears;
@@ -44,6 +46,14 @@ NSColor* nscolor(const rabbitears::SkinColor& c) {
 }
 inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in 0..1
 }  // namespace
+
+namespace {
+std::atomic<float> g_meterGlass{0.0f};
+}  // namespace
+void REMeterSetGlass(float strength) {
+    g_meterGlass = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
+}
+float REMeterGlass() { return g_meterGlass.load(std::memory_order_relaxed); }
 
 @implementation MeterView {
     MeterKind  _kind;
@@ -92,6 +102,10 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     float _vuScale;
     PhotoCellCache _photoCache;           // the cells the photo looks shaded (Win32 photoCache)
     __unsafe_unretained MeterView* _mirror;  // the bridge's twin (guarded by _lock for the RT feeds)
+    // The glass LUTs, rebuilt only when the size, the chrome or the strength changes (frame-invariant).
+    std::vector<uint8_t> _glassAdd, _glassMul;
+    float _glassBuilt;
+    int   _glassW, _glassH, _glassChrome;
     std::vector<PhotoCell> _photoCells;
 }
 
@@ -409,12 +423,79 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
 
 - (void)drawRect:(NSRect)__unused dirty {
     const NSRect b = self.bounds;
+    const bool unavailable = _kind == MeterKind::Spectrum && !_available;
+    if (!unavailable && (isVuLook(_style) || isPhotoCellLook(_style))) { [self drawPixelLook:b]; return; }
+    // The classic looks draw straight into the view — unless the glass is on: then into the backing buffer
+    // (the same code, through an NSGraphicsContext over it), so the cover can go over the finished frame.
+    if (REMeterGlass() > 0.0f) { [self drawClassicThroughBuffer:b]; return; }
+    [self drawClassic:b];
+}
+
+- (void)drawClassicThroughBuffer:(NSRect)b {
+    const NSRect pb = [self convertRectToBacking:b];
+    const int W = (int)std::lround(pb.size.width), H = (int)std::lround(pb.size.height);
+    if (W < 4 || H < 4) { [self drawClassic:b]; return; }
+    const CGFloat scale = pb.size.width / std::max<CGFloat>(1, b.size.width);
+    _px.assign((size_t)W * (size_t)H, 0);
+    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef g = CGBitmapContextCreate(_px.data(), (size_t)W, (size_t)H, 8, (size_t)W * 4, cs,
+                                           (CGBitmapInfo)kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+    if (!g) { CGColorSpaceRelease(cs); [self drawClassic:b]; return; }
+    CGContextScaleCTM(g, scale, scale);  // view points -> backing pixels, y up as in the view
+    [NSGraphicsContext saveGraphicsState];
+    NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithCGContext:g flipped:NO];
+    [self drawClassic:b];
+    [NSGraphicsContext restoreGraphicsState];
+    CGContextFlush(g);
+    [self applyGlassW:W h:H dpi:(UINT)std::lround(96.0 * scale)];
+    [self blitContext:g into:b];
+    CGContextRelease(g);
+    CGColorSpaceRelease(cs);
+}
+
+- (void)blitContext:(CGContextRef)g into:(NSRect)b {
+    CGImageRef img = CGBitmapContextCreateImage(g);
+    if (!img) return;
+    CGContextRef cg = NSGraphicsContext.currentContext.CGContext;
+    CGContextSaveGState(cg);
+    CGContextSetInterpolationQuality(cg, kCGInterpolationNone);
+    CGContextDrawImage(cg, NSRectToCGRect(b), img);  // upright: a CGImage's first row is its top
+    CGContextRestoreGState(cg);
+    CGImageRelease(img);
+}
+
+// The glass over the finished frame in _px (Win32 MiniMeter applyGlass): the shared mask's two byte tables,
+// rebuilt only on a change of size, chrome (meterChromePx — mac has no skin frame) or strength.
+- (void)applyGlassW:(int)W h:(int)H dpi:(UINT)dpi {
+    const float want = REMeterGlass();
+    if (!(want > 0.0f) || _px.size() != (size_t)W * (size_t)H) return;
+    const int chrome = MulDiv(2, (int)dpi, 96);
+    if (_glassBuilt != want || _glassW != W || _glassH != H || _glassChrome != chrome) {
+        buildGlassMask(W, H, GlassParams{want, chrome}, _glassAdd, _glassMul);
+        _glassBuilt = want;
+        _glassW = W;
+        _glassH = H;
+        _glassChrome = chrome;
+    }
+    const size_t n = (size_t)W * (size_t)H;
+    if (_glassAdd.size() != n || _glassMul.size() != n) return;
+    auto* px = reinterpret_cast<uint8_t*>(_px.data());  // B, G, R, X — the bytes Win32 walks too
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned mul = _glassMul[i], add = _glassAdd[i];
+        for (int ch = 0; ch < 3; ++ch) {
+            unsigned v = px[i * 4 + ch];
+            v = (v * mul) / 255u + add;
+            px[i * 4 + ch] = (uint8_t)(v > 255u ? 255u : v);
+        }
+    }
+}
+
+- (void)drawClassic:(NSRect)b {
     [_bg setFill];
     NSRectFill(b);
     [[NSColor colorWithWhite:0.22 alpha:1.0] set];
     NSFrameRectWithWidth(b, 1);
     if (_kind == MeterKind::Spectrum && !_available) { [self drawUnavailable:b]; return; }
-    if (isVuLook(_style) || isPhotoCellLook(_style)) { [self drawPixelLook:b]; return; }
     if (_style == MeterStyle::Scope) { [self drawScope:b]; return; }
     switch (_kind) {
         case MeterKind::Spectrum: [self drawSpectrum:b]; break;
@@ -586,15 +667,8 @@ inline float mix(float a, float b, float t) { return a + (b - a) * t; }  // t in
     }
     if (g) {
         CGContextFlush(g);
-        CGImageRef img = CGBitmapContextCreateImage(g);
-        if (img) {
-            CGContextRef cg = NSGraphicsContext.currentContext.CGContext;
-            CGContextSaveGState(cg);
-            CGContextSetInterpolationQuality(cg, kCGInterpolationNone);
-            CGContextDrawImage(cg, NSRectToCGRect(b), img);  // upright: a CGImage's first row is its top
-            CGContextRestoreGState(cg);
-            CGImageRelease(img);
-        }
+        [self applyGlassW:W h:H dpi:dpi];  // last, over the finished dial (Win32 onPaint's order)
+        [self blitContext:g into:b];
         CGContextRelease(g);
     }
     CGColorSpaceRelease(cs);

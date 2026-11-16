@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "TankSim.h"
+#include "ui/GlassMask.h"
+#import "MeterView.h"  // REMeterGlass — ONE strength, shared with the meters
 
 using namespace rabbitears;
 using namespace rabbitears::mac;
@@ -35,6 +37,9 @@ bool REDataFlowScaledDots() { return g_scaledDots.load(); }
     NSTimer*               _timer;     // ~30 fps while the tank has something to show
     NSString*              _metrics;
     __weak TankView*       _mirror;
+    std::vector<uint8_t>   _glassAdd, _glassMul;
+    float                  _glassBuilt;
+    int                    _glassW, _glassH, _glassChrome;
 }
 
 - (instancetype)initWithFrame:(NSRect)f {
@@ -120,7 +125,34 @@ bool REDataFlowScaledDots() { return g_scaledDots.load(); }
     TankColors c;
     c.fluid = g_fluid.load();
     c.scaledDots = g_scaledDots.load();
-    _sim.render(_px.data(), W, H, (UINT)std::lround(96.0f * scale), c);
+    // The glass (Win32 ensureGlass/applyGlass): the grid insets by exactly the band the mask will use.
+    const UINT dpi = (UINT)std::lround(96.0f * scale);
+    const float glass = REMeterGlass();
+    const int chrome = MulDiv(2, (int)dpi, 96);
+    int inset = 0;
+    if (glass > 0.0f) {
+        if (_glassBuilt != glass || _glassW != W || _glassH != H || _glassChrome != chrome) {
+            buildGlassMask(W, H, GlassParams{glass, chrome}, _glassAdd, _glassMul);
+            _glassBuilt = glass;
+            _glassW = W;
+            _glassH = H;
+            _glassChrome = chrome;
+        }
+        inset = glassChromePx(W, H, chrome);
+    }
+    _sim.render(_px.data(), W, H, dpi, c, inset);
+    if (glass > 0.0f && _glassAdd.size() == _px.size() && _glassMul.size() == _px.size()) {
+        auto* p = reinterpret_cast<uint8_t*>(_px.data());
+        for (size_t i = 0; i < _px.size(); ++i) {
+            const unsigned mul = _glassMul[i], add = _glassAdd[i];
+            for (int ch = 0; ch < 3; ++ch) {
+                unsigned v = p[i * 4 + ch];
+                v = (v * mul) / 255u + add;
+                p[i * 4 + ch] = (uint8_t)(v > 255u ? 255u : v);
+            }
+        }
+    }
+    const CGFloat insetPt = inset / std::max<CGFloat>(1, scale);
     CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef g = CGBitmapContextCreate(_px.data(), (size_t)W, (size_t)H, 8, (size_t)W * 4, cs,
                                            (CGBitmapInfo)kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
@@ -149,7 +181,10 @@ bool REDataFlowScaledDots() { return g_scaledDots.load(); }
                             NSForegroundColorAttributeName: [NSColor colorWithWhite:0.92 alpha:1.0],
                             NSShadowAttributeName: sh};
         const NSSize sz = [_metrics sizeWithAttributes:a];
-        [_metrics drawAtPoint:NSMakePoint(b.size.width - sz.width - 4, b.size.height - sz.height - 1) withAttributes:a];
+        // Inside the glass bezel when there is one (Win32 drawMetrics' inset rule).
+        const CGFloat right = std::max<CGFloat>(4, insetPt + 2);
+        [_metrics drawAtPoint:NSMakePoint(b.size.width - sz.width - right, b.size.height - sz.height - 1 - insetPt)
+               withAttributes:a];
     }
 }
 

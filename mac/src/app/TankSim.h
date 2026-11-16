@@ -76,7 +76,9 @@ public:
     void step();               // one ~33-ms frame of the simulation
     bool active() const;       // worth stepping: a target, or fluid still draining out
     // Render into `px` (W*H, 0x00RRGGBB, top-down). `dpi` = 96 * the backing scale.
-    void render(uint32_t* px, int W, int H, UINT dpi, const TankColors& colors);
+    // `inset`: the glass bezel's band (0 when the glass is off — the grid is then edge-to-edge, exactly
+    // Win32's pre-glass grid).
+    void render(uint32_t* px, int W, int H, UINT dpi, const TankColors& colors, int inset = 0);
     // Start a twin where this tank IS (the bridge's mirror): its targets, so it does not sit empty.
     void seedFrom(const TankSim& other);
     float fillTarget() const;

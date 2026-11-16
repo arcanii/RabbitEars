@@ -49,6 +49,29 @@ rabbitears::SkinColor skinFromNS(NSColor* col) {
 }
 
 // ASCII widen/narrow — settings keys and codec values are all ASCII (hex, "led", "1").
+// Which tuning fields each KIND feeds (Win32 kMtrKnobDesc): 0 glow, 1 smoothing, 2 sensitivity,
+// 3 peakHold, 4 breathing. Spectrum {0,1,2,3}, Signal {0,1,2}, Bitrate {0,2,4}, Frames {0,1,2}.
+bool kindFeeds(int kind, int f) {
+    static const bool kFeeds[4][5] = {{true, true, true, true, false}, {true, true, true, false, false},
+                                      {true, false, true, false, true}, {true, true, true, false, false}};
+    return kind >= 0 && kind < 4 && f >= 0 && f < 5 && kFeeds[kind][f];
+}
+// Does field `f` change anything for this (kind, LOOK)? Win32 knobApplies, case for case: glow only
+// where a look blooms (Tube, Scope, VFD, and the Studio LED on a dark panel); peakHold only on the
+// Spectrum's cell looks; smoothing (Damping on a needle), sensitivity and breathing everywhere they
+// are fed. A needle drops glow and peak hold — it has no cells to bloom and no cap.
+bool knobApplies(int f, int kind, MeterStyle style, bool darkPanel) {
+    switch (f) {
+        case 0:
+            return style == MeterStyle::Tube || style == MeterStyle::Scope || style == MeterStyle::Vfd ||
+                   (style == MeterStyle::StudioLed && darkPanel);
+        case 3:
+            return kind == 0 && style != MeterStyle::Scope && !isVuLook(style);
+        default:
+            return true;
+    }
+}
+
 std::wstring widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 std::string  narrow(const std::wstring& s) { return std::string(s.begin(), s.end()); }
 std::wstring wkey(int i, const char* suffix) {
@@ -66,6 +89,7 @@ std::wstring wkey(int i, const char* suffix) {
     NSPopUpButton* _style[4];
     NSColorWell*   _well[4][7];  // bg, off, low, mid, high, accent, peak
     NSSlider*      _tune[4][5];  // glow, smoothing, sensitivity, peakHold, breathing
+    NSTextField*   _tuneLabel[4][5];  // their captions ("Smooth" reads "Damping" on a needle)
     MeterView*     _preview[4];  // live preview, fed synthetic data by _previewTimer
     NSTimer*       _previewTimer;
     double         _phase;
@@ -74,6 +98,8 @@ std::wstring wkey(int i, const char* suffix) {
     NSButton*      _dataFlow;
     NSColorWell*   _fluidWell;
     TankView*      _tankPreview;
+    NSSlider*      _glass;       // the ONE app-wide glass strength (live preview; Cancel restores)
+    NSTextField*   _glassValue;
 }
 
 - (instancetype)initWithDatabase:(Database*)db {
@@ -233,6 +259,7 @@ std::wstring wkey(int i, const char* suffix) {
         sl.toolTip = TrF(StringId::MacMetersKnobTooltip, {Tr(kTuneLabels[j])});
         [sl.widthAnchor constraintEqualToConstant:56].active = YES;
         _tune[i][j] = sl;
+        _tuneLabel[i][j] = lbl;
         [tune addObject:lbl];
         [tune addObject:sl];
     }
@@ -245,7 +272,27 @@ std::wstring wkey(int i, const char* suffix) {
     col.orientation = NSUserInterfaceLayoutOrientationVertical;
     col.alignment = NSLayoutAttributeLeading;
     col.spacing = 5;
+    [self updateKnobsForKind:i];
     return col;
+}
+
+// Show only the knobs that do something for this row's kind AND look (Win32 knobsForRow — a control
+// that does nothing is worse than fewer controls). A hidden knob leaves the stack, so the band
+// compacts. Its VALUE is kept and saved either way: switching back finds it where it was.
+- (void)updateKnobsForKind:(int)i {
+    if (i < 0 || i >= 4 || !_style[i]) return;
+    const MeterStyle style = (MeterStyle)[_style[i] indexOfSelectedItem];
+    // The Studio LED's bloom needs a dark panel (PhotoCells): mac's inherited panel is dark; a picked
+    // Bg is judged by its luma.
+    bool dark = true;
+    if (NSColor* bg = [_well[i][0].color colorUsingColorSpace:NSColorSpace.sRGBColorSpace])
+        dark = (299 * bg.redComponent + 587 * bg.greenComponent + 114 * bg.blueComponent) * 255 / 1000 < 128;
+    for (int j = 0; j < 5; ++j) {
+        const BOOL show = kindFeeds(i, j) && knobApplies(j, i, style, dark);
+        _tune[i][j].hidden = !show;
+        _tuneLabel[i][j].hidden = !show;
+        if (j == 1) _tuneLabel[i][j].stringValue = Tr(isVuLook(style) ? StringId::MeterKnobDamping : kTuneLabels[1]);
+    }
 }
 
 - (NSView*)buildButtonRow {
@@ -294,11 +341,11 @@ std::wstring wkey(int i, const char* suffix) {
 - (void)controlChanged:(NSControl*)sender {
     const int kind = [sender isKindOfClass:[NSSlider class]] ? (int)(sender.tag / 10) : (int)sender.tag;
     if (kind < 0 || kind >= 4) return;
+    [self updateKnobsForKind:kind];  // the look (or the Bg) may have changed what the knobs do
     [_preview[kind] setConfig:[self configForKind:kind]];
     if (kKinds[kind] == MeterKind::Spectrum) [_preview[kind] setAvailable:YES];
 }
 
-// Feed each preview synthetic, animated data so the look is visible at rest.
 // [✓ Data flow]  Fluid [■]  [tank preview]  — and the note on what it is.
 - (NSView*)buildDataFlowRow {
     _dataFlow = [NSButton checkboxWithTitle:Tr(StringId::MeterDataFlowCheckbox) target:nil action:nil];
@@ -324,10 +371,40 @@ std::wstring wkey(int i, const char* suffix) {
     note.textColor = NSColor.secondaryLabelColor;
     [note.widthAnchor constraintLessThanOrEqualToConstant:260].active = YES;
     NSStackView* row = [NSStackView stackViewWithViews:@[ _dataFlow, fl, _fluidWell, _tankPreview, note ]];
+    // Glass: [——slider——] Off/NN% — Win32's global "glass cover" over every meter and the tank.
+    NSTextField* gl = [NSTextField labelWithString:Tr(StringId::MetersGlassLabel)];
+    _glass = [NSSlider sliderWithValue:REMeterGlass() minValue:0.0 maxValue:1.0 target:self action:@selector(glassChanged:)];
+    _glass.continuous = YES;
+    [_glass.widthAnchor constraintEqualToConstant:140].active = YES;
+    _glassValue = [NSTextField labelWithString:@""];
+    _glassValue.font = [NSFont systemFontOfSize:11];
+    [self showGlassValue];
+    NSStackView* gRow = [NSStackView stackViewWithViews:@[ gl, _glass, _glassValue ]];
+    gRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    gRow.alignment = NSLayoutAttributeCenterY;
+    gRow.spacing = 8;
+    NSStackView* both = [NSStackView stackViewWithViews:@[ gRow ]];
+    both.orientation = NSUserInterfaceLayoutOrientationVertical;
+    both.alignment = NSLayoutAttributeLeading;
+    [both insertArrangedSubview:row atIndex:0];
     row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     row.alignment = NSLayoutAttributeCenterY;
     row.spacing = 8;
-    return row;
+    return both;
+}
+
+- (void)showGlassValue {
+    const double v = _glass.doubleValue;
+    _glassValue.stringValue = v <= 0.0 ? Tr(StringId::MetersGlassOff) : [NSString stringWithFormat:@"%d%%", (int)std::lround(v * 100)];
+}
+
+// The glass previews live, app-wide (the real meters behind the sheet too); Cancel puts it back.
+- (void)glassChanged:(NSSlider*)s {
+    REMeterSetGlass((float)s.doubleValue);
+    [self showGlassValue];
+    for (int i = 0; i < 4; ++i) [_preview[i] setNeedsDisplay:YES];
+    [_tankPreview setNeedsDisplay:YES];
+    if (self.onGlassChanged) self.onGlassChanged();
 }
 
 // The fluid previews live (the tank re-reads the app-wide colour every frame); Cancel puts it back.
@@ -337,6 +414,7 @@ std::wstring wkey(int i, const char* suffix) {
                             (unsigned)std::lround(c.blueComponent * 255));
 }
 
+// Feed each preview synthetic, animated data so the look is visible at rest.
 - (void)pumpPreviews {
     _phase += 0.09;
     [_tankPreview setFlow:std::clamp(0.6f + 0.35f * (float)std::sin(_phase * 0.8), 0.0f, 1.0f) trouble:0.0f];
@@ -377,6 +455,9 @@ std::wstring wkey(int i, const char* suffix) {
         char hex[8];
         snprintf(hex, sizeof hex, "%02X%02X%02X", r, g, b);
         _db->setSetting(L"buffer_fluid_color", widen(hex));
+        char gs[16];
+        snprintf(gs, sizeof gs, "%.3f", REMeterGlass());
+        _db->setSetting(L"meter_glass", widen(gs));
     }
     for (int i = 0; i < 4; ++i) {
         _cfg[i] = [self configForKind:i];
@@ -392,6 +473,12 @@ std::wstring wkey(int i, const char* suffix) {
 }
 
 - (void)cancel:(id)__unused sender {
+    // The glass previewed live, app-wide: put the stored strength back.
+    float glass = 0.0f;
+    if (_db)
+        if (auto gs = _db->getSetting(L"meter_glass"); gs && !gs->empty()) glass = std::wcstof(gs->c_str(), nullptr);
+    REMeterSetGlass(glass);
+    if (self.onGlassChanged) self.onGlassChanged();
     // The fluid well previewed live, app-wide: put the stored colour back.
     if (_db)
         if (auto fc = _db->getSetting(L"buffer_fluid_color"); fc && fc->size() == 6) {
@@ -419,6 +506,7 @@ std::wstring wkey(int i, const char* suffix) {
         for (int j = 0; j < 5; ++j) _tune[i][j].doubleValue = knobs[j];
         [_preview[i] setConfig:[self configForKind:i]];
         if (kKinds[i] == MeterKind::Spectrum) [_preview[i] setAvailable:YES];
+        [self updateKnobsForKind:i];
     }
 }
 

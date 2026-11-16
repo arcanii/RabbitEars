@@ -2442,6 +2442,8 @@ static const rabbitears::ScheduledRecording* findScheduleRow(
             if (end && *end == L'\0') REDataFlowSetFluidColor((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
         }
         if (auto sd = _db->getSetting(L"buffer_scaled_dots")) REDataFlowSetScaledDots(*sd == L"1");
+        if (auto gs = _db->getSetting(L"meter_glass"); gs && !gs->empty())  // absent = 0 (off)
+            REMeterSetGlass(std::wcstof(gs->c_str(), nullptr));
         if (auto x = _db->getSetting(L"meter_pos_x")) _meterPosX = std::clamp(std::wcstod(x->c_str(), nullptr), 0.0, 1.0);
         if (auto y = _db->getSetting(L"meter_pos_y")) _meterPosY = std::clamp(std::wcstod(y->c_str(), nullptr), 0.0, 1.0);
         // PiP inset geometry (position fraction + size px). Size is re-clamped against the
@@ -3691,6 +3693,12 @@ std::optional<SavedLayout> parseLayout(const std::wstring& blob) {
 // Settings ▾ ▸ Meters… — the config dialog (peer of Win32 Settings → Meters).
 - (void)showMeters:(id)__unused sender {
     MetersDialog* dlg = [[MetersDialog alloc] initWithDatabase:_db.get()];
+    MainWindowController* __unsafe_unretained me = self;
+    dlg.onGlassChanged = ^{  // the live glass preview reaches the real meters (and the bridge's) too
+        for (int k = 0; k < 4; ++k) [me->_meters[k] setNeedsDisplay:YES];
+        [me->_tank setNeedsDisplay:YES];
+        [me->_meterBridge applyConfigs:me->_meterCfg labels:me->_meterLabels tank:me->_dataFlowOn];
+    };
     [dlg presentForWindow:_window onApply:^{
         [self loadMeterConfig];
         [self applyMeterConfig];
