@@ -20,6 +20,7 @@ add_library(RabbitEarsCore STATIC
   core/RecordingScheduler.cpp  # pure recording-scheduler decision core — unit-tested headlessly
   core/UrlCanon.cpp   # one canonical spelling for a stream URL (dedupe) — unit-tested headlessly
   core/XmltvParser.cpp  # XMLTV EPG parser — unit-tested headlessly
+  platform/UrlRedact.cpp  # mask provider logins in the log (both log sinks) — unit-tested headlessly
   db/Database.cpp
   ui/DockLayout.cpp   # pure layout-tree logic (no HWNDs) — unit-tested headlessly
   ui/Skin.cpp         # shared skin model + codecs (theme engine) — unit-tested headlessly

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Tell the Win32 log sink which provider logins to mask (implemented in platform/Log.cpp, so
-// GUI-only — the CLI does not link the sink).
+// Tell the log sink which provider logins to mask — a seam like platform/Log.h, implemented by
+// each platform's sink (Win32/platform/Log.cpp, mac/platform/Log.mm), so GUI-only: neither
+// selftest links a sink.
 //
 // Every line diag::write() records is passed through redactUrls() (platform/UrlRedact.h). On its
 // own that masks the credentials it can recognise by shape INSIDE a scheme:// URL (user-info,

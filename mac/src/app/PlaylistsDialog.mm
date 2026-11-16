@@ -7,6 +7,7 @@
 #include "core/M3uParser.h"
 #include "db/Database.h"
 #include "platform/Encoding.h"
+#include "platform/LogSecrets.h"
 
 #include <ctime>
 #include <memory>
@@ -281,6 +282,7 @@ std::wstring ws(NSString* s) { return rabbitears::wideFromUtf8(s.UTF8String ?: "
         if (resp != NSAlertFirstButtonReturn) return;  // Save is the first button
         NSString* url = [input.stringValue
             stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        diag::addSecretsFromUrl(ws(url));  // before anything logs it (platform/LogSecrets.h)
         if (_db) _db->setPlaylistEpgUrl(pid, ws(url));  // empty clears the override
         if (_onChange) _onChange();
         [self reloadRows];  // refresh the (unchanged) list; keeps the panel in sync

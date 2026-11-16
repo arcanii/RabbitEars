@@ -8,8 +8,8 @@
 // be sent to someone after something went wrong — so without masking, sending it hands over the
 // account.
 //
-// Pure functions (no Win32 state); the log sink (platform/Log.cpp) applies redactUrls() to every
-// line. Windows-only: the mac log sink is mac/platform/Log.mm and is not covered by this.
+// Pure functions (no platform state), compiled into RabbitEarsCore: BOTH log sinks —
+// Win32/platform/Log.cpp and mac/platform/Log.mm — apply redactUrls() to every line.
 #pragma once
 
 #include <string>

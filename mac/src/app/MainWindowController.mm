@@ -33,6 +33,7 @@
 #include "platform/Encoding.h"
 #include "ui/VideoGrid.h"  // computeVideoPanes + ViewMode — multi-view pane geometry
 #include "platform/Log.h"
+#include "platform/LogSecrets.h"
 #include "platform/Updater.h"
 
 #if __has_include("generated/version.h")
@@ -370,6 +371,14 @@ static std::wstring friendlyName(const std::wstring& src, bool isUrl) {
         // log can tell at a glance what threshold produced the file, and its absence is the honest
         // signal that the level is below Info.
         diag::info(L"log level: " + wideFromUtf8(diag::levelToString(diag::level())));
+        // The provider logins to mask in the log (platform/LogSecrets.h), registered before
+        // anything below can log a playlist, guide or stream URL — the Win32 peer does the same
+        // at the same point (MainWindow.cpp, the first DB block).
+        for (const auto& pl : _db->listPlaylists()) {
+            diag::addSecretsFromUrl(pl.sourceUrl);
+            diag::addSecretsFromUrl(pl.epgUrl);
+        }
+        diag::scrubPreviousLog();  // one written before masking existed kept them in clear
     }
 
     // The Terms-of-Use gate used to run here (blocking, before the window was built). It now
@@ -1357,6 +1366,7 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
 - (void)loadPlaylistFromURL:(NSString*)u {
     const std::wstring url = ws(u);
     const uint64_t token = ++_loadToken;
+    diag::addSecretsFromUrl(url);  // before anything logs it (platform/LogSecrets.h)
     [self setStatus:Tr(StringId::StatusDownloadingPlaylist)];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         std::string bytes;
@@ -1394,6 +1404,10 @@ static bool trimToGridCap(std::vector<Channel>& ch) {
     // Pass doc.epgUrl (the M3U x-tvg-url) through so the playlist carries its XMLTV guide
     // source — without it, Refresh Guide has nothing to fetch (the Win32 peer at
     // MainWindowCommands.cpp:108 does the same).
+    // The playlist's own guide URL (its x-tvg-url) can carry the login too — and for a playlist
+    // imported from a FILE it is the only place we can learn it from. Register it now, not at the
+    // next launch, so this session's stream lines are masked (platform/LogSecrets.h).
+    diag::addSecretsFromUrl(doc.epgUrl);
     const long long pid = _db->addPlaylist(name, source, isUrl, now, doc.epgUrl);
     if (pid == 0) {
         [self setStatus:Tr(StringId::StatusAddPlaylistFailedDb)];
