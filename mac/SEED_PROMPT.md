@@ -26,8 +26,9 @@ THREE THINGS TO KNOW BEFORE ANYTHING ELSE:
    measured), and a real Xtream archive playing (catch-up proven only through shared code).
 
 3. 0.2.22 WAS A ONE-WAY DOOR: it migrates libraries to schema v11 (FTS5), and 0.2.17 (no FTS5 compiled in)
-   CANNOT WRITE a v11 library (`no such module: fts5` from the channels_fts_* triggers). v0.2.17-mac is marked
-   superseded on GitHub; older mac releases (0.2.15 and before) carry the same limitation and are NOT marked.
+   CANNOT WRITE a v11 library (`no such module: fts5` from the channels_fts_* triggers). EVERY older mac release
+   (v0.1.7-v0.2.17) is retitled "superseded by 0.2.22" with a do-not-reinstall warning — v0.1.7's says "on macOS 26+",
+   since the feed still offers it (minimumSystemVersion 11.0) to macOS 11-15, where 0.2.22 cannot run.
    NB the system /usr/bin/sqlite3 has no FTS5 either — query a v11 library with a tiny program against the
    vendored third_party/sqlite (build-*/libsqlite3.a), not the CLI.
 

@@ -94,8 +94,9 @@ live feed serves 479 ahead of 418); `--latest=false` (Windows keeps v0.2.21). **
 app from inside the stapled dmg migrated a library authored by the real downloaded 0.2.17 (v9) to v11 — integrity ok,
 7/7 channels, favourites, LCN sum, the dead row + its timestamp, the film, programmes all intact, the FTS5 tables +
 triggers present and populated ("quebec" finds "TVA QUÉBEC"), 0 log errors, the seeded Xtream login nowhere in the log.
-**`v0.2.17-mac` is retitled "superseded by 0.2.22"** with a warning not to reinstall it once 0.2.22 has opened a
-library (the owner's call, made before release). `sign_update` ran in the OWNER's terminal (build-mac-release's own
+**Every older mac release (v0.1.7–v0.2.17) is retitled "superseded by 0.2.22"** with a warning not to reinstall it
+once 0.2.22 has opened a library (the owner's call). v0.1.7's reads "on macOS 26+": the appcast still offers it
+(minimumSystemVersion 11.0) to macOS 11–15, where 0.2.22 cannot run. `sign_update` ran in the OWNER's terminal (build-mac-release's own
 Sparkle 2.6.4 `bin/sign_update` — the old DerivedData copy is gone).
 
 | PR | What | Windows-affecting? |
