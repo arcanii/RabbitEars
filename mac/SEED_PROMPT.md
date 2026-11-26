@@ -1,14 +1,20 @@
 Read mac/HANDOVER.md and the recalled memory. RabbitEars is a cross-platform native IPTV player
 (Windows + macOS) in ONE repo (common/ + Win32/ + mac/, unified root CMake; playback libVLC, storage
 SQLite). main carries BOTH platforms at decoupled versions in cmake/AppVersion.cmake (APP_VERSION =
-Windows 0.2.22-dev, 0.2.21 shipped; an if(APPLE) override = mac 0.2.22) — that file is the recurring
+Windows 0.2.22-dev, 0.2.21 shipped; an if(APPLE) override = mac 0.2.23) — that file is the recurring
 cross-team merge conflict, keep both lines. App min macOS 26 (Apple-Silicon-only; arm64-only builds are
 fine). Build: scripts/build-mac.sh --app -DCMAKE_OSX_ARCHITECTURES=arm64. Release recipe + gotchas: the
 mac-release-deployment memory.
 
-THREE THINGS TO KNOW BEFORE ANYTHING ELSE:
+FOUR THINGS TO KNOW BEFORE ANYTHING ELSE:
 
-1. v0.2.22-mac IS SHIPPED AND LIVE (2026-11-16, build 479, arm64, notarized; appcast @ 5db07ff; v0.2.17-mac retitled
+0. v0.2.23-mac IS THE LATEST MAC RELEASE (2026-11-26, build 485, arm64, notarized; no schema change). It fixes
+   the 8 bugs the 0.2.22 on-device pass found (PR #56): stop/fail handling for scheduled recordings (mid-airing
+   death is POLLED on the 30 s tick — mac has no libVLC events), guide titles + search width, bridge/tray meter
+   fit, the Recordings Status column, and package-mac.sh now rebuilds + signs libVLC's plugins.dat after signing
+   (launch ~0.8 s faster). Windows' twin gap (rec_ has no events) is flagged in Win32/BACKLOG.md.
+
+1. v0.2.22-mac SHIPPED (2026-11-16, build 479, arm64, notarized; appcast @ 5db07ff; v0.2.17-mac retitled
    "superseded"). It migrated a real 0.2.17-authored library on the ARTIFACT before publishing. PRs #49-#55 (2026-11-16)
    ported everything Windows shipped in 0.2.18-0.2.22-dev: log credential masking; the scheduler's lost-
    status-write fix; the TV Guide on the shared row build (search, coverage line, multi-guide refresh on a
@@ -18,8 +24,9 @@ THREE THINGS TO KNOW BEFORE ANYTHING ELSE:
    GuideModel, HttpProgress.h, TimeZone.h as a seam, CatchupSync, PhotoCells behind the new
    common/platform/WinTypes.h) with their include names unchanged.
 
-2. IT SHIPPED WITHOUT AN ON-DEVICE PASS (owner's call) — nothing in this round was driven in the GUI; if a bug surfaces,
-   start with the HANDOVER checklist. The selftest went
+2. 0.2.22 SHIPPED WITHOUT AN ON-DEVICE PASS, AND THE PASS WAS RUN AFTERWARDS (2026-11-16, computer use): all
+   items passed and both assumptions below held; its bugs are the 0.2.23 fixes. The rig (stub Xtream panel with
+   live ffmpeg streams, `open -n --env RABBITEARS_DATA_DIR=`) is in the recalled memory. The selftest went
    154 -> 443 (mostly Win32 CLI blocks ported verbatim, so the shared code is proven under Apple clang), the
    looks/tank/bridge were rendered headlessly and eyeballed, but: the checklist is in the HANDOVER box, and
    two ASSUMPTIONS ride on it — the audio needle undoes libVLC auhal's volume as v^3 (from VLC source, not
@@ -36,7 +43,7 @@ What stays N/A BY DESIGN: the theme engine (so skin MATERIALS draw Flat — Wind
 without one), wake-to-record, PIP always-on-top, the beta switchboard, Windows' side profile, its dark scroll
 bars, its libVLC HTTP/2 log filter (mac routes no libVLC log).
 
-NEXT: the on-device pass 0.2.22 shipped without (checklist in the HANDOVER box). Release recipe: the
+NEXT: nothing is pending on mac. Release recipe: the
 mac-release-deployment memory; sign_update must run in the OWNER's terminal (the keychain ACL refuses this
 tooling). After that: the appcast host move (BOTH
 platforms), and genuinely new work — resume/watched and series/seasons/episodes exist on NEITHER platform.
