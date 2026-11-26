@@ -83,7 +83,37 @@ HLS stream (confirm the `.ts`/`.mp4` plays), schedule ~1 min out (watch the ~30s
 confirm the PiP-switch fix on real IPTV. A failure here means a 0.2.8-mac patch, not a blocked merge. **On-device
 traps that cost hours are listed under Working rules.**
 
-## Current state — **v0.2.22-mac SHIPPED (2026-11-16)**: the Windows 0.2.18–0.2.22 gap CLOSED
+## Current state — **v0.2.23-mac SHIPPED (2026-11-26)**: the fixes from 0.2.22's on-device pass
+
+A mac-only bug-fix release; Windows stays 0.2.22 (`cmake/AppVersion.cmake`'s APPLE override is **0.2.23**). **No
+schema change**: 0.2.23 opens the same v11 library 0.2.22 does, so nothing was retitled and no migration test applied.
+
+**Shipped** — [`v0.2.23-mac`](https://github.com/arcanii/RabbitEars/releases/tag/v0.2.23-mac), build **485**, arm64,
+notarized (`5a2c5849-…`, Accepted) + stapled, 42,312,705 bytes, sha256 `ddff4ef3…`; `--latest=false` (Windows keeps
+v0.2.21). The app inside the stapled dmg started clean (banner `0.2.23 (485)`, 0 log errors), and the EdDSA signature
+was checked against the app's `SUPublicEDKey` with `openssl pkeyutl -verify -rawin` (no keychain prompt, unlike
+`sign_update --verify`). `sign_update` ran in the OWNER's terminal. The release sat 10 days between upload and appcast;
+the scratchpad copy was cleaned meanwhile, so the signed file is the re-downloaded asset (sha256-identical) in
+`build-mac-release/release0223/`.
+
+**What it fixes (PR #56, every row verified on device with computer use against an isolated library + a local stub
+Xtream panel serving live ffmpeg streams):** Cancel Selected stops an in-progress scheduled recording (keeps the part
+written); a recording whose stream dies is noticed on the 30 s tick (`VlcPlayerMac::recorderState()` polls
+`libvlc_media_player_get_state` — mac attaches no libVLC events) → **Failed**, partial kept / 0-byte file removed, new
+shared `StatusScheduledRecordingFailed`; the TV Guide draws a title for a programme that began left of the view
+(`bx0 = max(x0, colW)`, as Win32) and sizes its search results; the meter bridge's size search no longer gives up
+early; the meter tray decides what fits (tank first) before laying out; Recordings opens at 800 pt with Status on
+screen (current macOS adds ~17 pt of spacing PER column — widening alone wasn't enough; frame autosave renamed
+`.v2`) and its wake note wraps (`+labelWithString:` is single-line, so `maximumNumberOfLines` never applied); the
+Meter setup gap is gone; and **`package-mac.sh` rebuilds libVLC's `plugins.dat` after signing the plugins** (signing
+changed every dylib, so each launch found all ~340 cache entries stale and rescanned: `libvlc_new` ~850 ms → 8–14 ms
+in the shipped bundle) and codesigns the new file (under `Contents/PlugIns` codesign treats it as code).
+
+**Flagged for Windows, not changed:** `Win32/BACKLOG.md` — Win32's recorder `rec_` has no event manager either, so a
+stream that dies mid-airing is only ever marked **Done** at the stop time. **Left alone on purpose:** `UrlRedact`
+masking the comma after a credential in a comma list (over-masking is the safe side of security-sensitive code).
+
+## Before it — **v0.2.22-mac SHIPPED (2026-11-16)**: the Windows 0.2.18–0.2.22 gap CLOSED
 
 Windows shipped **0.2.18 → 0.2.21** (and has 0.2.22 in development) while mac sat at 0.2.17 with **zero `mac/`
 changes for two months**. This round ported all of it. `cmake/AppVersion.cmake`'s APPLE override is **0.2.22**.
@@ -118,6 +148,10 @@ local HTTP server; the tank sim draining to idle). The VU faces, cell looks, gla
 headlessly and inspected by eye. MSVC `core-selftest` passed on every PR (the `gui-build` red is the pre-existing
 `fxc` configure death — every Win32 GUI translation unit touched here only had its include path move).
 
+> **✅ ON-DEVICE PASS RUN AFTER SHIPPING (2026-11-16): every item below passed, BOTH assumptions held (v³ — slider
+> 25 = −36 dB, needle unmoved; catch-up builds the timeshift URL in the SERVER's clock), and the 8 bugs it found
+> shipped fixed in 0.2.23 (above).** The original note follows.
+>
 > **⚠ SHIPPED WITHOUT AN ON-DEVICE PASS (owner's call).** No GUI was driven (computer-use is not granted). IF A BUG
 > SURFACES IN THE WILD, START WITH the checklist below. Two ASSUMPTIONS to confirm there: (a) the audio needle undoes libVLC's auhal
 > volume law as **v³** (from VLC 3's source, not measured — drop the volume to 50 % on steady programme audio: the
